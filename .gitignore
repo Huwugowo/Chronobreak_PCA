@@ -1,0 +1,12 @@
+# Build output
+/recorder/target/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,39 @@
+[package]
+name = "league-replay-recorder"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Hardware-accelerated League of Legends recorder"
+license = "MIT"
+
+[[bin]]
+name = "recorder"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+sysinfo = "0.39"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tray-icon = "0.24"
+winit = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

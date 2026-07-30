@@ -1,0 +1,3299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>League Replay Tool — Complete Documentation</title>
+  <style>
+    :root {
+      --bg: #090d13;
+      --panel: #101720;
+      --panel-2: #151e29;
+      --text: #dce7f3;
+      --muted: #8fa1b5;
+      --faint: #516174;
+      --line: #263445;
+      --accent: #55d6be;
+      --accent-2: #75a7ff;
+      --code: #071019;
+      --quote: #111e28;
+      --max: 980px;
+      --sidebar: 280px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 28px; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 85% -10%, rgba(85, 214, 190, .10), transparent 28rem),
+        radial-gradient(circle at -10% 20%, rgba(117, 167, 255, .08), transparent 30rem),
+        var(--bg);
+      line-height: 1.7;
+    }
+
+    a { color: var(--accent-2); text-decoration-thickness: 1px; text-underline-offset: .18em; }
+    a:hover { color: var(--accent); }
+
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: var(--sidebar);
+      padding: 28px 20px;
+      overflow-y: auto;
+      border-right: 1px solid var(--line);
+      background: rgba(9, 13, 19, .94);
+      backdrop-filter: blur(14px);
+      z-index: 10;
+    }
+
+    .brand {
+      display: block;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 760;
+      letter-spacing: -.02em;
+      line-height: 1.25;
+      margin-bottom: 20px;
+    }
+    .brand small {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: .75rem;
+      font-weight: 500;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .search {
+      width: 100%;
+      padding: 10px 12px;
+      margin: 0 0 18px;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      outline: none;
+      font: inherit;
+      font-size: .88rem;
+    }
+    .search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(85, 214, 190, .10); }
+
+    .doc-nav { display: grid; gap: 3px; }
+    .doc-link {
+      display: grid;
+      grid-template-columns: 26px 1fr;
+      gap: 7px;
+      align-items: baseline;
+      padding: 7px 8px;
+      border-radius: 7px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: .88rem;
+    }
+    .doc-link span { color: var(--faint); font: 650 .68rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .doc-link:hover, .doc-link.active { color: var(--text); background: var(--panel-2); }
+    .doc-link.active span { color: var(--accent); }
+
+    .outline {
+      margin: 18px 0 0 8px;
+      padding: 16px 0 0 12px;
+      border-top: 1px solid var(--line);
+    }
+    .outline-title {
+      margin: 0 0 8px;
+      color: var(--faint);
+      font-size: .68rem;
+      font-weight: 750;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .outline a {
+      display: block;
+      padding: 4px 0;
+      color: var(--muted);
+      font-size: .78rem;
+      line-height: 1.35;
+      text-decoration: none;
+    }
+    .outline a[data-level="3"] { padding-left: 12px; color: var(--faint); }
+    .outline a:hover { color: var(--accent); }
+
+    main { margin-left: var(--sidebar); }
+    .hero {
+      min-height: 72vh;
+      display: grid;
+      place-items: center;
+      padding: 80px 48px;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero-inner { width: min(100%, var(--max)); }
+    .eyebrow {
+      color: var(--accent);
+      font: 700 .74rem ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      max-width: 850px;
+      margin: 16px 0 18px;
+      font-size: clamp(2.5rem, 7vw, 5.8rem);
+      line-height: .98;
+      letter-spacing: -.055em;
+    }
+    .hero p { max-width: 680px; color: var(--muted); font-size: 1.08rem; }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 30px;
+    }
+    .hero-meta a {
+      padding: 7px 11px;
+      color: var(--muted);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: .8rem;
+      text-decoration: none;
+    }
+    .hero-meta a:hover { color: var(--text); border-color: var(--accent); }
+
+    .document {
+      width: min(calc(100% - 64px), var(--max));
+      margin: 0 auto;
+      padding: 90px 0 110px;
+      border-bottom: 1px solid var(--line);
+    }
+    .document-kicker {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 26px;
+      color: var(--muted);
+      font: 700 .75rem ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .document-number { color: var(--accent); }
+    .markdown-body > h1:first-child { margin-top: 0; }
+
+    h1, h2, h3, h4, h5, h6 {
+      position: relative;
+      color: #f5f8fb;
+      line-height: 1.22;
+      letter-spacing: -.025em;
+    }
+    h1 { margin: 0 0 28px; font-size: clamp(2.15rem, 5vw, 3.6rem); }
+    h2 {
+      margin: 2.4em 0 .8em;
+      padding-bottom: .3em;
+      border-bottom: 1px solid var(--line);
+      font-size: 1.75rem;
+    }
+    h3 { margin: 2em 0 .65em; font-size: 1.25rem; }
+    h4 { margin: 1.6em 0 .5em; font-size: 1.05rem; }
+    h2 a.heading-anchor, h3 a.heading-anchor {
+      position: absolute;
+      left: -1.1em;
+      color: var(--faint);
+      text-decoration: none;
+      opacity: 0;
+    }
+    h2:hover a.heading-anchor, h3:hover a.heading-anchor { opacity: 1; }
+
+    p, ul, ol { margin: 0 0 1.1em; }
+    li + li { margin-top: .28em; }
+    strong { color: #f2f6fa; }
+    hr { margin: 3.2rem 0; border: 0; border-top: 1px solid var(--line); }
+    blockquote {
+      margin: 1.5em 0;
+      padding: 1em 1.2em;
+      color: #b8c7d7;
+      background: var(--quote);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+    }
+    blockquote > :last-child { margin-bottom: 0; }
+
+    code {
+      padding: .14em .38em;
+      color: #9ee8d8;
+      background: var(--code);
+      border: 1px solid #1b2b38;
+      border-radius: 4px;
+      font: .88em ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      position: relative;
+      margin: 1.35em 0;
+      padding: 18px 20px;
+      overflow: auto;
+      color: #cad8e5;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      line-height: 1.5;
+      tab-size: 2;
+    }
+    pre code { padding: 0; color: inherit; background: none; border: 0; border-radius: 0; overflow-wrap: normal; }
+    .copy-code {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 4px 8px;
+      color: var(--muted);
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: .7rem;
+      opacity: 0;
+    }
+    pre:hover .copy-code, .copy-code:focus { opacity: 1; }
+
+    .table-wrap { margin: 1.4em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: #f3f7fa; background: var(--panel-2); font-size: .78rem; letter-spacing: .025em; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) { background: rgba(255,255,255,.017); }
+
+    .back-to-top {
+      display: inline-block;
+      margin-top: 42px;
+      color: var(--muted);
+      font-size: .82rem;
+      text-decoration: none;
+    }
+    mark { color: inherit; background: rgba(255, 213, 79, .3); border-radius: 2px; }
+    .search-status { min-height: 1.3em; margin: -10px 2px 12px; color: var(--faint); font-size: .72rem; }
+
+    @media (max-width: 900px) {
+      .sidebar {
+        position: sticky;
+        width: 100%;
+        height: auto;
+        padding: 12px 16px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand { display: none; }
+      .search { margin: 0; }
+      .search-status, .outline { display: none; }
+      .doc-nav { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; }
+      .doc-link { display: block; flex: 0 0 auto; padding: 5px 9px; white-space: nowrap; }
+      .doc-link span { margin-right: 5px; }
+      main { margin-left: 0; }
+      .hero { min-height: 60vh; padding: 64px 24px; }
+      .document { width: min(calc(100% - 40px), var(--max)); padding: 64px 0 80px; }
+    }
+
+    @media print {
+      :root { --text: #17202a; --muted: #4c5b67; --line: #ccd3d8; --code: #f4f6f7; --quote: #f5f7f8; }
+      body { color: var(--text); background: #fff; font-size: 10pt; }
+      .sidebar, .hero-meta, .back-to-top, .copy-code { display: none !important; }
+      main { margin: 0; }
+      .hero { min-height: 0; padding: 1cm 0 1.5cm; }
+      .hero h1, h1, h2, h3, h4 { color: #111; }
+      .document { width: 100%; padding: 1cm 0; break-before: page; }
+      pre, blockquote, table { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar" aria-label="Document navigation">
+    <a class="brand" href="#top">League Replay Tool<small>Complete documentation</small></a>
+    <input class="search" id="search" type="search" placeholder="Search all documents…" aria-label="Search documentation">
+    <div class="search-status" id="search-status" aria-live="polite"></div>
+    <nav class="doc-nav"><a class="doc-link" href="#doc-spec"><span>01</span>Shared specification</a>
+<a class="doc-link" href="#doc-recorder"><span>02</span>Recorder</a>
+<a class="doc-link" href="#doc-viewer"><span>03</span>Viewer</a>
+<a class="doc-link" href="#doc-clip"><span>04</span>Clip exporter</a>
+<a class="doc-link" href="#doc-library"><span>05</span>Library &amp; settings</a>
+<a class="doc-link" href="#doc-phases"><span>06</span>Build phases</a></nav>
+    <nav class="outline" id="outline" aria-label="Current document outline"></nav>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="eyebrow">Unified technical documentation</div>
+        <h1>League Replay Tool</h1>
+        <p>Six source documents, combined into one searchable and printable reference. Use the navigation to jump between the shared specification, recorder, application screens, and build phases.</p>
+        <div class="hero-meta"><a class="hero-link" href="#doc-spec"><span>01</span>Shared specification</a>
+<a class="hero-link" href="#doc-recorder"><span>02</span>Recorder</a>
+<a class="hero-link" href="#doc-viewer"><span>03</span>Viewer</a>
+<a class="hero-link" href="#doc-clip"><span>04</span>Clip exporter</a>
+<a class="hero-link" href="#doc-library"><span>05</span>Library &amp; settings</a>
+<a class="hero-link" href="#doc-phases"><span>06</span>Build phases</a></div>
+      </div>
+    </section>
+
+        <article class="document" id="doc-spec" data-source="SPEC.md">
+          <header class="document-kicker">
+            <span class="document-number">01</span>
+            <span>SPEC.md</span>
+          </header>
+          <div class="markdown-body">
+            <h1 id="league-replay-tool-project-specification">League Replay Tool — Project Specification</h1>
+<blockquote>
+<p><strong>How to use this document family:</strong>
+This file is the shared vocabulary. Open it alongside whichever module document you are working on. It defines the data contracts, file paths, and enum values that all modules must agree on. Never modify the JSON schemas or file system layout without updating this file first.</p>
+</blockquote>
+<hr>
+<h2 id="document-family">Document Family</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SPEC.md</code> ← <em>this file</em></td>
+<td>Architecture, data contracts, constraints, limitations</td>
+</tr>
+<tr>
+<td><code>RECORDER.md</code></td>
+<td>Process 1 — Rust recorder binary</td>
+</tr>
+<tr>
+<td><code>APP-VIEWER.md</code></td>
+<td>Process 2 — Viewer screen (windowed + fullscreen modes, Stats tab, clip mode)</td>
+</tr>
+<tr>
+<td><code>APP-CLIP.md</code></td>
+<td>Process 2 — Clip exporter screen</td>
+</tr>
+<tr>
+<td><code>APP-LIBRARY.md</code></td>
+<td>Process 2 — Game library screen + settings</td>
+</tr>
+<tr>
+<td><code>PHASES.md</code></td>
+<td>Build order, entry conditions, validation criteria</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="1-project-overview">1. Project Overview</h2>
+<p>A two-process desktop application for League of Legends players that:
+- <strong>Records every game automatically</strong> with zero meaningful performance impact using hardware-accelerated encoding
+- <strong>Enriches the recording</strong> with granular game data polled from the League Live Client Data API during the game
+- <strong>Provides a post-game viewer</strong> with a synchronized stats panel, event timeline, and gold diff graph
+- <strong>Enables frictionless clip creation</strong> with auto-suggested moments, adjustable endpoints, optional music, and export as a universally compatible MP4 file</p>
+<h3 id="core-design-philosophy">Core Design Philosophy</h3>
+<ul>
+<li>The recorder must be completely invisible and have zero performance impact on the game</li>
+<li>The app only runs post-game — performance constraints are relaxed on the app side</li>
+<li>Core functionality requires no external accounts, API keys, or credentials — the app works fully offline</li>
+<li>Match V5 enrichment (damage stats, vision score, exact item timestamps) is optional and requires a Riot ID — the app degrades gracefully without it</li>
+<li>Output is always a plain H.264 MP4 file — no proprietary formats, no upload links, no accounts</li>
+</ul>
+<hr>
+<h2 id="2-high-level-architecture">2. High-Level Architecture</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                  PROCESS 1 — RECORDER                        │
+│              (Rust binary, system tray, always on)           │
+│                                                              │
+│  Process Watcher                                             │
+│    → detects League launch/close via process name            │
+│                                                              │
+│  On game launch:                                             │
+│    → spawns ffmpeg (hardware encoded fragmented MP4 capture) │
+│    → polls /allgamedata until a valid gameTime is available  │
+│      · calibrates game clock zero against video time         │
+│    → spawns two concurrent async tasks once API is live:     │
+│      · Event Loop: /eventdata, continuous polling            │
+│      · Snapshot Loop: /allgamedata, every 10s                │
+│                                                              │
+│  On game close:                                              │
+│    → stops ffmpeg gracefully and closes video.mp4            │
+│    → finalizes game_log.json                                 │
+│    → writes metadata.json                                    │
+│    → bundles everything into /games/{timestamp}/             │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ writes to disk
+┌─────────────────────────────────────────────────────────────┐
+│              SHARED FILE SYSTEM (game bundles)               │
+│                                                              │
+│  /games/{timestamp}/                                         │
+│    ├── video.mp4         ← crash-tolerant fragmented capture │
+│    ├── game_log.json     ← events, snapshots, derived changes│
+│    └── metadata.json     ← champion, win, matchv5_fetched    │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ reads from disk
+┌─────────────────────────────────────────────────────────────┐
+│                  PROCESS 2 — APP                             │
+│         (Tauri v2 + React + TypeScript, opened on demand)    │
+│                                                              │
+│  Games Tab     → grid of recorded game bundles               │
+│  Clips Tab     → grid of exported clips                      │
+│  Viewer        → windowed or fullscreen video player         │
+│  Stats Tab     → end-of-game scoreboard, expandable rows     │
+│  Clip Exporter → trim, music, ffmpeg export to MP4           │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The two processes share <strong>only the file system</strong>. No IPC, no sockets, no shared memory. The recorder writes, the app reads. They can run simultaneously without conflict.</p>
+<hr>
+<h2 id="3-data-contracts">3. Data Contracts</h2>
+<h3 id="31-data-sources-overview">3.1 Data Sources Overview</h3>
+<p>Three data sources are used, with different availability and optionality:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>When available</th>
+<th>Required?</th>
+<th>What it provides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>localhost:2999</code> Live Client API</td>
+<td>During the game only</td>
+<td>✅ Always</td>
+<td>Events, snapshots, real-time state</td>
+</tr>
+<tr>
+<td>Riot Match V5 Timeline API</td>
+<td>Post-game, via Riot servers</td>
+<td>⚙️ Optional</td>
+<td>Damage stats, exact item timestamps, vision/CC/ward data, fight boundaries</td>
+</tr>
+<tr>
+<td>Riot Data Dragon CDN</td>
+<td>Anytime, static per patch</td>
+<td>✅ Always</td>
+<td>Item names, item icons, champion icons</td>
+</tr>
+</tbody>
+</table>
+<p>The app is <strong>fully functional without Match V5</strong>. Features that depend on it degrade gracefully — columns are hidden rather than shown empty, and clip positioning falls back to heuristics. See Section 3.5 for the degradation map.</p>
+<hr>
+<h3 id="32-live-client-data-api">3.2 Live Client Data API</h3>
+<p><strong>Base URL:</strong> <code>https://127.0.0.1:2999/liveclientdata/</code></p>
+<p>Note: The API uses HTTPS with a self-signed Riot certificate. Requests must either use the official Riot root certificate (<code>riotgames.pem</code>) or disable SSL verification. The recorder uses <code>reqwest</code> with certificate pinning or verification disabled.</p>
+<p><strong>Two polling loops run concurrently post-GameStart</strong> (see <code>RECORDER.md</code> Section 5 for implementation):</p>
+<table>
+<thead>
+<tr>
+<th>Loop</th>
+<th>Endpoint</th>
+<th>Interval</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Event loop</td>
+<td><code>/eventdata</code></td>
+<td>As fast as response allows (~continuous)</td>
+<td>Capture all named events with millisecond precision</td>
+</tr>
+<tr>
+<td>Snapshot loop</td>
+<td><code>/allgamedata</code></td>
+<td>Every 10s</td>
+<td>Capture player state (gold, HP, items, CS, level)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Named events from <code>/eventdata</code></strong> — these are the only events the API fires. This list is complete and confirmed from Riot's official static file:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Key fields</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GameStart</code></td>
+<td>EventTime</td>
+<td>Logged as a semantic event; its arrival time is not a sync anchor</td>
+</tr>
+<tr>
+<td><code>MinionsSpawning</code></td>
+<td>EventTime</td>
+<td>~1:05 in every game</td>
+</tr>
+<tr>
+<td><code>FirstBrick</code></td>
+<td>EventTime, KillerName</td>
+<td>First turret plate destroyed</td>
+</tr>
+<tr>
+<td><code>TurretKilled</code></td>
+<td>EventTime, TurretKilled, KillerName, Assisters</td>
+<td>TurretKilled is the turret ID string</td>
+</tr>
+<tr>
+<td><code>InhibKilled</code></td>
+<td>EventTime, InhibKilled, KillerName, Assisters</td>
+<td></td>
+</tr>
+<tr>
+<td><code>InhibRespawningSoon</code></td>
+<td>EventTime, InhibRespawningSoon</td>
+<td>Warning before respawn</td>
+</tr>
+<tr>
+<td><code>InhibRespawned</code></td>
+<td>EventTime, InhibRespawned</td>
+<td></td>
+</tr>
+<tr>
+<td><code>DragonKill</code></td>
+<td>EventTime, DragonType, Stolen, KillerName, Assisters</td>
+<td>DragonType: Air/Earth/Fire/Water/Hextech/Chemtech/Elder</td>
+</tr>
+<tr>
+<td><code>HeraldKill</code></td>
+<td>EventTime, Stolen, KillerName, Assisters</td>
+<td>Rift Herald</td>
+</tr>
+<tr>
+<td><code>BaronKill</code></td>
+<td>EventTime, Stolen, KillerName, Assisters</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ChampionKill</code></td>
+<td>EventTime, VictimName, KillerName, Assisters</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Multikill</code></td>
+<td>EventTime, KillerName, KillStreak</td>
+<td>KillStreak: 2=Double … 5=Penta</td>
+</tr>
+<tr>
+<td><code>Ace</code></td>
+<td>EventTime, Acer, AcingTeam</td>
+<td></td>
+</tr>
+<tr>
+<td><code>GameEnd</code></td>
+<td>EventTime, Result</td>
+<td>Not reliable; ignored for stop detection and win/loss</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong><code>GameEnd</code> and win/loss:</strong> Empirical capture showed that the Live Client API can disappear without exposing a <code>GameEnd</code> event. The recorder therefore never depends on <code>GameEnd</code>: API unavailability after successful polling is the game-stop signal. Win/loss comes from Match V5 <code>GAME_END</code>; if Match V5 is unavailable, derive it from the final gold differential when possible, otherwise set <code>win: null</code>. Record the derivation method as <code>win_method: "matchv5" | "derived" | "unknown"</code>.</p>
+</blockquote>
+<p><strong>Items, level changes, and gold changes are NOT named events.</strong> They are state fields in <code>/allgamedata</code> snapshots. They are detected by diffing consecutive snapshots:</p>
+<table>
+<thead>
+<tr>
+<th>Change detected</th>
+<th>How</th>
+<th>Timestamp precision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Item purchased</td>
+<td>Item appears in player's items array</td>
+<td>Snapshot interval (~10s)</td>
+</tr>
+<tr>
+<td>Item sold</td>
+<td>Item disappears from player's items array</td>
+<td>Snapshot interval (~10s)</td>
+</tr>
+<tr>
+<td>Level up</td>
+<td>Player's level field increases</td>
+<td>Snapshot interval (~10s)</td>
+</tr>
+<tr>
+<td>Gold change</td>
+<td>Player's gold field changes</td>
+<td>Snapshot interval (~10s)</td>
+</tr>
+</tbody>
+</table>
+<p>This means <strong>build order timestamps from the Live Client API are approximate</strong> — accurate to within the snapshot interval. Exact timestamps require Match V5 (see Section 3.3).</p>
+<p><strong>Snapshots from <code>/allgamedata</code> (every 10s):</strong> gold (current), HP (current + max), CS, XP, level, items (all slots) per player, plus runes and summoner spells (stable — only needed from first snapshot).</p>
+<h3 id="33-match-v5-timeline-api-optional-enrichment">3.3 Match V5 Timeline API (Optional Enrichment)</h3>
+<p><strong>Base URL:</strong> <code>https://{region}.api.riotgames.com/lol/match/v5/</code></p>
+<p>Fetched once, post-game, by the app on launch if a Riot ID is configured in settings. The result is merged into the game bundle and cached — the API is never called twice for the same game.</p>
+<p><strong>Fetch sequence:</strong></p>
+<pre><code>1. GET /riot/account/v1/accounts/by-riot-id/{gameName}/{tagLine}  → PUUID
+2. GET /lol/match/v5/matches/by-puuid/{puuid}/ids?count=1         → latest match ID
+3. GET /lol/match/v5/matches/{matchId}                            → match result + per-player stats
+4. GET /lol/match/v5/matches/{matchId}/timeline                   → full event timeline
+</code></pre>
+<p><strong>What Match V5 uniquely provides</strong> (not available from Live Client API):</p>
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Source</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>totalDamageDealtToChampions</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>totalDamageTaken</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>totalHealsOnTeammates</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>totalDamageShieldedOnTeammates</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>visionScore</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>wardsPlaced</code> / <code>wardsKilled</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>totalTimeCCDealt</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>totalTimeSpentDead</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>objectivesStolen</code></td>
+<td>Match result</td>
+<td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>ITEM_PURCHASED</code> events with exact timestamps</td>
+<td>Timeline</td>
+<td>Exact build order</td>
+</tr>
+<tr>
+<td><code>ITEM_UNDO</code> events</td>
+<td>Timeline</td>
+<td>Accurate build history</td>
+</tr>
+<tr>
+<td><code>SKILL_LEVEL_UP</code> events for all players</td>
+<td>Timeline</td>
+<td>Skill order for all 10 players</td>
+</tr>
+<tr>
+<td><code>victimDamageReceived[]</code> timestamps per kill</td>
+<td>Timeline</td>
+<td>Exact fight-start for clip auto-positioning</td>
+</tr>
+<tr>
+<td><code>GAME_END</code> event with <code>winningTeam</code></td>
+<td>Timeline</td>
+<td>Definitive win/loss</td>
+</tr>
+<tr>
+<td><code>DRAGON_SOUL_GIVEN</code> event</td>
+<td>Timeline</td>
+<td>Dragon soul in objective timeline</td>
+</tr>
+<tr>
+<td><code>TURRET_PLATE_DESTROYED</code> events</td>
+<td>Timeline</td>
+<td>Plate gold in objective timeline</td>
+</tr>
+</tbody>
+</table>
+<p><strong>API key progression:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Key type</th>
+<th>User friction</th>
+<th>Rate limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Development</td>
+<td>Personal dev key (free, instant)</td>
+<td>User enters key in settings. Key expires every 24h.</td>
+<td>20 req/s</td>
+</tr>
+<tr>
+<td>Early distribution</td>
+<td>Production key (your key, server-side)</td>
+<td>User enters Riot ID only. App calls your backend.</td>
+<td>Higher, permanent</td>
+</tr>
+<tr>
+<td>Scaled distribution</td>
+<td>RSO (per-user OAuth)</td>
+<td>"Connect with Riot" button — no manual input</td>
+<td>Per-user</td>
+</tr>
+</tbody>
+</table>
+<p>The app backend (thin server, one endpoint) holds the production key. The distributed binary never contains a key. See Section 7 for compliance notes.</p>
+<p><strong>Graceful degradation:</strong> see Section 3.5.</p>
+<hr>
+<h3 id="34-data-dragon-static-data">3.4 Data Dragon (Static Data)</h3>
+<p><strong>Base URL:</strong> <code>https://ddragon.leagueoflegends.com/</code></p>
+<p>Free Riot CDN, no authentication required. Used to resolve item IDs and champion IDs to display names and icon URLs.</p>
+<p><strong>Fetch strategy:</strong>
+- On app launch, check current patch version: <code>GET /api/versions.json</code> → first element is current patch
+- If cached version matches current patch: use cache
+- If different: fetch fresh data and update cache
+- Cache location: <code>{app_data}/ddragon/{patch_version}/</code></p>
+<p><strong>Data fetched:</strong>
+- <code>GET /cdn/{version}/data/en_US/item.json</code> — maps item ID → name, description, icon path
+- <code>GET /cdn/{version}/data/en_US/champion.json</code> — maps champion key → name, icon path
+- Icons: <code>GET /cdn/{version}/img/item/{itemId}.png</code> — fetched on demand, cached locally</p>
+<p>The app never shows raw item IDs to the user. Every item ID from the Live Client API or Match V5 is resolved through this cache before display.</p>
+<hr>
+<h3 id="35-degradation-map-without-match-v5">3.5 Degradation Map (Without Match V5)</h3>
+<p>When Match V5 data is unavailable (no Riot ID configured, or API call failed), the app degrades as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>With Match V5</th>
+<th>Without Match V5</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Damage dealt / taken / healing columns</td>
+<td>Shown</td>
+<td>Hidden (not shown as empty)</td>
+</tr>
+<tr>
+<td>Vision score</td>
+<td>Shown</td>
+<td>Hidden</td>
+</tr>
+<tr>
+<td>Ward stats</td>
+<td>Shown</td>
+<td>Hidden</td>
+</tr>
+<tr>
+<td>CC score / time dead</td>
+<td>Shown</td>
+<td>Hidden</td>
+</tr>
+<tr>
+<td>Item build order timestamps</td>
+<td>Exact (ms precision)</td>
+<td>Approximate (±10s from snapshot)</td>
+</tr>
+<tr>
+<td>Skill order</td>
+<td>All 10 players</td>
+<td>Local player only</td>
+</tr>
+<tr>
+<td>Clip auto-positioning</td>
+<td>Exact fight start from <code>victimDamageReceived</code></td>
+<td>Heuristic — see <code>APP-VIEWER.md</code> §11.1</td>
+</tr>
+<tr>
+<td>Win/loss</td>
+<td>Definitive from <code>GAME_END</code></td>
+<td>Derived from final gold diff when possible</td>
+</tr>
+</tbody>
+</table>
+<p><strong>UI treatment:</strong> a non-blocking banner at the top of the Stats tab reads: <em>"Connect your Riot account to unlock damage stats, vision score, and precise build timings. [Connect →]"</em> Users who ignore it get a complete experience minus those columns.</p>
+<hr>
+<h3 id="36-timestamp-sync">3.6 Timestamp Sync</h3>
+<p>The video recording starts when <code>League of Legends.exe</code> is detected — this includes the loading screen, typically 2–4 minutes before in-game clock 0:00.</p>
+<p><strong>Sync mechanism:</strong></p>
+<ol>
+<li>Record <code>video_start_monotonic_ms</code> when video capture starts. Use a monotonic clock, never UTC wall time, for synchronization.</li>
+<li>Poll <code>/allgamedata</code> continuously until responses contain a valid <code>gameData.gameTime</code>. A valid response means the game is live; do not wait for the <code>GameStart</code> event.</li>
+<li>For five rapid successful responses, record the monotonic timestamp immediately after receiving each response body and calculate:</li>
+</ol>
+<pre><code>game_zero_monotonic_ms =
+    response_received_monotonic_ms - (gameTime_seconds × 1000)
+</code></pre>
+<ol start="4">
+<li>Take the median of the five candidates. This rejects bootstrap or request-timing outliers.</li>
+<li>Calculate the position of game clock zero in the video:</li>
+</ol>
+<pre><code>video_offset_ms =
+    game_zero_monotonic_ms - video_start_monotonic_ms
+</code></pre>
+<ol start="6">
+<li>Map every named event and snapshot-derived change using the timestamp supplied by the game clock:</li>
+</ol>
+<pre><code>video_time_ms = video_offset_ms + (EventTime_seconds × 1000)
+</code></pre>
+<p>For snapshot-derived changes, substitute the snapshot's <code>gameTime</code> for <code>EventTime</code>.</p>
+<p><code>GameStart</code> is still written to the event log, but the time at which it is first observed is never used for synchronization. Event lists are cumulative and may expose <code>GameStart</code> after the game clock has already advanced. In the 2026-07-30 capture, <code>GameStart.EventTime</code> was <code>0.0095s</code> but the event was first observed at <code>gameTime = 2.1195s</code>; arrival-time anchoring would have made every marker about 2.11 seconds late. After the first bootstrap response was excluded, <code>response_received_monotonic - gameTime</code> stayed within a 1.8ms range over the capture.</p>
+<h3 id="37-game_logjson-schema">3.7 <code>game_log.json</code> Schema</h3>
+<pre><code class="language-json">{
+  &quot;game_start_video_offset_ms&quot;: 142300,
+  &quot;snapshots&quot;: [
+    {
+      &quot;game_time_ms&quot;: 0,
+      &quot;players&quot;: [
+        {
+          &quot;summoner_name&quot;: &quot;Player1&quot;,
+          &quot;team&quot;: &quot;ORDER&quot;,
+          &quot;champion&quot;: &quot;Jinx&quot;,
+          &quot;gold&quot;: 500,
+          &quot;hp&quot;: 580,
+          &quot;hp_max&quot;: 580,
+          &quot;cs&quot;: 0,
+          &quot;xp&quot;: 0,
+          &quot;level&quot;: 1,
+          &quot;items&quot;: [
+            { &quot;item_id&quot;: 1055, &quot;slot&quot;: 0, &quot;count&quot;: 1 }
+          ],
+          &quot;summoner_spells&quot;: [&quot;SummonerFlash&quot;, &quot;SummonerIgnite&quot;],
+          &quot;keystone_id&quot;: 8128,
+          &quot;rune_ids&quot;: [8128, 8126, 8138, 8135, 8304, 8345]
+        }
+      ]
+    }
+  ],
+  &quot;events&quot;: [
+    {
+      &quot;type&quot;: &quot;ChampionKill&quot;,
+      &quot;game_time_ms&quot;: 214500,
+      &quot;killer&quot;: &quot;Player3&quot;,
+      &quot;victim&quot;: &quot;Player7&quot;,
+      &quot;assisters&quot;: [&quot;Player1&quot;],
+      &quot;video_time_ms&quot;: 356800
+    },
+    {
+      &quot;type&quot;: &quot;Multikill&quot;,
+      &quot;game_time_ms&quot;: 217000,
+      &quot;killer&quot;: &quot;Player3&quot;,
+      &quot;kill_streak&quot;: 2,
+      &quot;video_time_ms&quot;: 359300
+    }
+  ],
+  &quot;snapshot_derived_changes&quot;: [
+    {
+      &quot;game_time_ms&quot;: 220000,
+      &quot;player&quot;: &quot;Player1&quot;,
+      &quot;change_type&quot;: &quot;ItemPurchased&quot;,
+      &quot;item_id&quot;: 3006,
+      &quot;video_time_ms&quot;: 362000
+    }
+  ],
+  &quot;matchv5&quot;: null
+}
+</code></pre>
+<p><code>summoner_spells</code>, <code>keystone_id</code>, and <code>rune_ids</code> are only present on the <strong>first snapshot</strong> — they are stable for the entire game and do not need re-recording.</p>
+<p><code>video_time_ms</code> is pre-computed on each event and snapshot-derived change at write time.</p>
+<p><code>matchv5</code> is <code>null</code> until enrichment is fetched post-game. When populated it contains the merged Match V5 match result and timeline data. The app reads this field to populate damage/vision columns and exact item timestamps.</p>
+<p><code>snapshot_derived_changes</code> records item purchases, sales, and level-ups detected by diffing consecutive snapshots. Timestamps are approximate (±10s). Valid <code>change_type</code> values: <code>"ItemPurchased"</code>, <code>"ItemSold"</code>, <code>"LevelUp"</code>.</p>
+<h3 id="38-metadatajson-schema">3.8 <code>metadata.json</code> Schema</h3>
+<pre><code class="language-json">{
+  &quot;recorded_at&quot;: &quot;2026-03-06T14:32:00Z&quot;,
+  &quot;duration_ms&quot;: 2134000,
+  &quot;game_mode&quot;: &quot;CLASSIC&quot;,
+  &quot;local_player_summoner_name&quot;: &quot;PlayerName&quot;,
+  &quot;local_player_champion&quot;: &quot;Jinx&quot;,
+  &quot;local_player_team&quot;: &quot;ORDER&quot;,
+  &quot;video_offset_ms&quot;: 142300,
+  &quot;encoder_used&quot;: &quot;nvenc&quot;,
+  &quot;recording_resolution&quot;: &quot;1920x1080&quot;,
+  &quot;recording_fps&quot;: 60,
+  &quot;win&quot;: null,
+  &quot;win_method&quot;: &quot;unknown&quot;,
+  &quot;matchv5_fetched&quot;: false,
+  &quot;saved&quot;: false
+}
+</code></pre>
+<p><code>win_method</code> values: <code>"matchv5"</code> (Match V5 <code>GAME_END</code>), <code>"derived"</code> (final gold differential fallback), <code>"unknown"</code>.</p>
+<p><code>matchv5_fetched: false</code> = app should attempt to fetch on next launch if Riot ID is configured.</p>
+<p><code>saved: false</code> = eligible for auto-deletion. All clips have <code>saved: true</code> by default.</p>
+<hr>
+<h2 id="4-file-system-layout">4. File System Layout</h2>
+<pre><code>{output_path}/                          ← default: ~/LeagueReplays
+│
+├── games/
+│   ├── {unix_timestamp}/               ← one directory per game
+│   │   ├── video.mp4                   ← hardware-encoded recording
+│   │   ├── game_log.json               ← events, snapshots, snapshot-derived changes, matchv5 field
+│   │   └── metadata.json              ← champion, mode, duration, offset, win, matchv5_fetched, saved
+│   │
+│   └── {unix_timestamp}/
+│       └── ...
+│
+└── clips/
+    ├── {game_ts}_{clip_ts}.mp4         ← exported clip
+    ├── {game_ts}_{clip_ts}.jpg         ← thumbnail sidecar (first frame, generated at export time)
+    └── ...
+</code></pre>
+<p>No database. Everything is derived from these files at app launch. The game library is built by scanning <code>/games/</code> and reading each <code>metadata.json</code>.</p>
+<hr>
+<h2 id="5-tech-stack">5. Tech Stack</h2>
+<h3 id="recorder-process-1">Recorder (Process 1)</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Tool</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Language</td>
+<td>Rust (stable)</td>
+</tr>
+<tr>
+<td>Async runtime</td>
+<td>tokio</td>
+</tr>
+<tr>
+<td>Process detection</td>
+<td>sysinfo crate</td>
+</tr>
+<tr>
+<td>HTTP client</td>
+<td>reqwest (async)</td>
+</tr>
+<tr>
+<td>JSON</td>
+<td>serde + serde_json</td>
+</tr>
+<tr>
+<td>Child process</td>
+<td>tokio::process</td>
+</tr>
+<tr>
+<td>Window detection</td>
+<td>windows-rs (Windows), core-graphics (macOS)</td>
+</tr>
+<tr>
+<td>System tray</td>
+<td>tray-icon crate</td>
+</tr>
+<tr>
+<td>Config</td>
+<td>toml crate</td>
+</tr>
+<tr>
+<td>Logging</td>
+<td>tracing crate</td>
+</tr>
+</tbody>
+</table>
+<h3 id="app-process-2">App (Process 2)</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Tool</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Framework</td>
+<td>Tauri v2</td>
+</tr>
+<tr>
+<td>Language</td>
+<td>TypeScript + React 18</td>
+</tr>
+<tr>
+<td>Styling</td>
+<td>Tailwind CSS</td>
+</tr>
+<tr>
+<td>Graphs</td>
+<td>Recharts</td>
+</tr>
+<tr>
+<td>Video</td>
+<td>HTML5 <code>&lt;video&gt;</code> via Rust local HTTP server</td>
+</tr>
+<tr>
+<td>Clip export</td>
+<td>ffmpeg via Rust backend</td>
+</tr>
+<tr>
+<td>Video streaming</td>
+<td>Rust <code>hyper</code> or Tauri asset protocol</td>
+</tr>
+<tr>
+<td>State</td>
+<td>React Context + useReducer</td>
+</tr>
+<tr>
+<td>File system</td>
+<td>Tauri fs plugin</td>
+</tr>
+<tr>
+<td>Build</td>
+<td>Vite</td>
+</tr>
+</tbody>
+</table>
+<h3 id="shared">Shared</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Tool</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Video processing</td>
+<td>ffmpeg (bundled, not system-installed)</td>
+</tr>
+<tr>
+<td>Distribution</td>
+<td>Tauri Bundler (.msi + .exe, .dmg)</td>
+</tr>
+<tr>
+<td>Auto-update</td>
+<td>Tauri Updater plugin</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-platform-support">6. Platform Support</h2>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Status</th>
+<th>Screen capture</th>
+<th>Audio</th>
+<th>GPU</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows 10+</td>
+<td>✅ Supported</td>
+<td>DXGI / gdigrab</td>
+<td>dshow loopback</td>
+<td>NVENC / AMF / QSV</td>
+</tr>
+<tr>
+<td>macOS 12+</td>
+<td>✅ Supported</td>
+<td>ScreenCaptureKit / avfoundation</td>
+<td>coreaudio</td>
+<td>VideoToolbox (all)</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>❌ Not supported</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>macOS requires notarization (Apple Developer account, $99/yr) for distribution.</p>
+<hr>
+<h2 id="7-constraints-compliance">7. Constraints &amp; Compliance</h2>
+<h3 id="riot-games-tos-permitted">Riot Games ToS — Permitted</h3>
+<ul>
+<li><code>localhost:2999</code> Live Client Data API</li>
+<li>Screen/window capture via OS APIs</li>
+</ul>
+<h3 id="riot-games-tos-banned-must-never-implement">Riot Games ToS — Banned (must never implement)</h3>
+<ul>
+<li>Direct game memory reading</li>
+<li>Process injection</li>
+<li>Any interaction with the game process beyond detection by name</li>
+</ul>
+<h3 id="vanguard-anti-cheat">Vanguard Anti-Cheat</h3>
+<p>Architecturally identical to OBS, Medal, and Nvidia ShadowPlay — all Vanguard-compatible. No injection, no kernel drivers, standard OS APIs only.</p>
+<h3 id="api-keys">API Keys</h3>
+<p>The Live Client Data API requires no key. The Riot Match V5 API requires a key if used — the key is never bundled in the distributed binary. It is held server-side (production key phase) or entered by the user (dev key phase). See Section 3.3 for the key progression plan.</p>
+<hr>
+<h2 id="8-known-limitations">8. Known Limitations</h2>
+<table>
+<thead>
+<tr>
+<th>Limitation</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No spell cast data</td>
+<td>Riot API does not expose this at any granularity. Video fills the gap.</td>
+</tr>
+<tr>
+<td>No skillshot dodge detection</td>
+<td>Riot tracks challenge totals, not per-game events.</td>
+</tr>
+<tr>
+<td>Gold/HP snapshots at 10s granularity</td>
+<td>Sufficient for graph display.</td>
+</tr>
+<tr>
+<td>No minimap heatmaps</td>
+<td>Not in Live Client API or Match V5. Possible future addition if Riot exposes it.</td>
+</tr>
+<tr>
+<td>Damage stats require Match V5</td>
+<td>Not available from Live Client API. App degrades gracefully without them.</td>
+</tr>
+<tr>
+<td>Item timestamps approximate without Match V5</td>
+<td>Live Client API snapshots at 10s — exact timestamps need Match V5 post-game.</td>
+</tr>
+<tr>
+<td>Live Client API dies with game</td>
+<td>Entire polling architecture exists for this reason.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="9-defaulted-decisions">9. Defaulted Decisions</h2>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Default</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Auto-delete duration</td>
+<td>30 days</td>
+<td>Balances storage vs accessibility</td>
+</tr>
+<tr>
+<td>Multi-monitor capture</td>
+<td>Auto-detect League window</td>
+<td>Avoids user configuration</td>
+</tr>
+<tr>
+<td>Share mechanism</td>
+<td>Open file in Finder/Explorer</td>
+<td>User drags to Discord/Twitter</td>
+</tr>
+<tr>
+<td>Clip pre/post-roll</td>
+<td>Kill-type dependent (see <code>APP-VIEWER.md</code> §11.1)</td>
+<td>Solo kills need less context than teamfights</td>
+</tr>
+<tr>
+<td>Default recording resolution</td>
+<td>Match game resolution</td>
+<td>No upscale/downscale artifacts</td>
+</tr>
+<tr>
+<td>Default bitrate</td>
+<td>20 Mbps</td>
+<td>~5GB per 35min game</td>
+</tr>
+<tr>
+<td>Match V5 enrichment</td>
+<td>Optional, off by default</td>
+<td>Requires Riot ID — zero friction for users who don't want it</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="10-rejected-approaches">10. Rejected Approaches</h2>
+<h3 id="rofl-replay-files"><code>.rofl</code> Replay Files</h3>
+<p>Rejected: expire after ~2 patches (~4 weeks); low quality; custom viewer requires client hooking (ToS risk) or format reverse engineering (legal grey area).</p>
+<h3 id="riot-match-v5-as-primary-live-data-source">Riot Match V5 as Primary / Live Data Source</h3>
+<p>Rejected as a live data source: unavailable during the game; requires credentials; 1-minute granularity too coarse for event timeline. <strong>Accepted as an optional post-game enrichment source</strong> — see Section 3.3.</p>
+<h3 id="electron">Electron</h3>
+<p>Rejected: ~150MB bundle, ~300MB RAM at idle. Contradicts performance focus. Tauri provides identical DX with ~3–10MB bundle.</p>
+<h3 id="dear-imgui">Dear ImGui</h3>
+<p>Rejected: no native video player; building scrubber + graphs + clip UI in ImGui is a significant separate project; performance advantage is irrelevant for a post-game tool.</p>
+<h3 id="software-encoding">Software Encoding</h3>
+<p>Rejected: x264/x265 causes 5–15% FPS drop during gameplay. Hardware encoding (NVENC/AMF/QSV/VideoToolbox) achieves same quality at 1–3% overhead.</p>
+          </div>
+          <a class="back-to-top" href="#top">Back to contents ↑</a>
+        </article>
+
+
+        <article class="document" id="doc-recorder" data-source="RECORDER.md">
+          <header class="document-kicker">
+            <span class="document-number">02</span>
+            <span>RECORDER.md</span>
+          </header>
+          <div class="markdown-body">
+            <h1 id="recordermd-process-1-rust-recorder-binary">RECORDER.md — Process 1: Rust Recorder Binary</h1>
+<blockquote>
+<p><strong>Context:</strong> This document is self-contained. It covers everything needed to build the recorder binary. For data schemas (<code>game_log.json</code>, <code>metadata.json</code>) and file system layout, refer to <code>SPEC.md</code> sections 3 and 4.</p>
+<p><strong>What this process does:</strong> Watches for League of Legends to launch, records the screen with hardware encoding, polls the Live Client Data API to build a structured event log, then finalises the game bundle on game close.</p>
+<p><strong>What this process does NOT do:</strong> It has no UI beyond a system tray icon. It never reads from disk. It never communicates with the app.</p>
+<p><strong>Phase 1 boundary:</strong> Phase 1 implements process watching, hardware-accelerated fragmented MP4 capture, and the tray states only. It does not connect to either League API and writes no JSON or other metadata. A Phase 1 game directory contains exactly <code>video.mp4</code>; there is no post-game container conversion. Live Client polling and all structured bundle data begin in Phase 2.</p>
+</blockquote>
+<hr>
+<h2 id="1-overview">1. Overview</h2>
+<p>A lean Rust binary. No UI framework. Single system tray icon. Auto-starts with the OS. The user never needs to open or interact with it during normal use.</p>
+<p><strong>Crate structure:</strong></p>
+<pre><code>recorder/
+  Cargo.toml
+  src/
+    main.rs        ← startup, tray, top-level event loop
+    watcher.rs     ← process detection
+    encoder.rs     ← ffmpeg capture lifecycle
+    storage.rs     ← Phase 1 video directory allocation
+    poller.rs      ← Live Client Data API polling (Phase 2)
+    writer.rs      ← game_log.json / metadata.json writes (Phase 2)
+    config.rs      ← config.toml read/write
+</code></pre>
+<hr>
+<h2 id="2-startup-sequence">2. Startup Sequence</h2>
+<pre><code>1. Launch → check for existing config.toml in platform config dir
+2. If no config → write defaults (see Section 8)
+3. Query GPU vendor via sysinfo → select encoder (see Section 8)
+4. Show system tray icon (idle state)
+5. Spawn async task: Process Watcher
+6. Run tray event loop (blocking main thread)
+</code></pre>
+<hr>
+<h2 id="3-process-watcher">3. Process Watcher</h2>
+<ul>
+<li>Polls running processes every <strong>2 seconds</strong> using the <code>sysinfo</code> crate</li>
+<li>Target process names:</li>
+<li>Windows: <code>League of Legends.exe</code></li>
+<li>macOS: <code>League of Legends</code></li>
+<li>On process <strong>appears</strong> → trigger Recording Start (Section 4)</li>
+<li>On process <strong>disappears</strong> → trigger Recording Stop (Section 6)</li>
+<li>Handles League crashes identically to a normal close — process disappears, stop sequence runs</li>
+</ul>
+<hr>
+<h2 id="4-recording-start-sequence">4. Recording Start Sequence</h2>
+<p>Phase 1:</p>
+<pre><code>1. Create output directory: {output_path}/games/{unix_timestamp}/
+2. Detect League window position and display (see Section 6)
+3. Spawn ffmpeg child process (see Section 9)
+   - Output: {output_path}/games/{unix_timestamp}/video.mp4
+   - Two-second keyframe fragments keep completed footage decodable after interruption
+4. Update tray icon → recording state (red circle)
+</code></pre>
+<p>Phase 2 extends this sequence:</p>
+<pre><code>5. Record video capture start using a monotonic clock (used later for video_offset_ms calculation)
+6. Start game-clock calibration poller (see Section 5.1)
+   - On first valid gameTime: collect five rapid clock samples, calibrate video_offset_ms, then spawn Event Loop + Snapshot Loop concurrently (see Section 5.2 and 5.3)
+</code></pre>
+<hr>
+<h2 id="5-live-client-data-poller">5. Live Client Data Poller</h2>
+<p>Two independent async tasks run concurrently after GameStart, sharing access to the in-memory game log via <code>Arc&lt;Mutex&lt;GameLog&gt;&gt;</code>. They have different polling rates because they serve different purposes: events need to be captured as close to real time as possible, while snapshots are inherently coarse state.</p>
+<h3 id="51-pre-game-clock-calibration-allgamedata-continuous">5.1 Pre-Game Clock Calibration — <code>/allgamedata</code> (continuous)</h3>
+<p>Before the Live Client API becomes available, only the calibration loop runs. All synchronization timestamps use a monotonic clock such as <code>std::time::Instant</code>.</p>
+<pre><code>loop:
+  GET https://127.0.0.1:2999/liveclientdata/allgamedata
+
+  → ConnectionError / 503:
+      API not ready yet (loading screen)
+      sleep 1s, continue
+
+  → 200 with valid gameData.gameTime:
+      · the game is live; do not wait for the GameStart event
+      · collect five successful responses without a fixed sleep
+      · immediately after each response body is received:
+          candidate_game_zero_ms =
+              response_received_monotonic_ms - gameTime_ms
+      · game_zero_monotonic_ms = median(five candidates)
+      · video_offset_ms =
+          game_zero_monotonic_ms - video_capture_start_monotonic_ms
+      · write video_offset_ms to in-memory metadata
+      · spawn Event Loop task (Section 5.2)
+      · spawn Snapshot Loop task (Section 5.3)
+      · exit this calibration loop
+</code></pre>
+<p>The first API response may be a bootstrap outlier, so a single sample is not sufficient. The median also makes ordinary request-latency variation harmless. Buffer raw event <code>EventTime</code> values until calibration is ready, or start the Event Loop immediately after calibration; <code>/eventdata</code> is cumulative, so the initial events remain available.</p>
+<p><strong>Never calculate <code>video_offset_ms</code> from the time at which <code>GameStart</code> is observed.</strong> In the empirical capture, <code>GameStart.EventTime</code> was <code>0.0095s</code>, but it first appeared in a response at <code>gameTime = 2.1195s</code>. Arrival-time anchoring would shift every video marker approximately 2.11 seconds late.</p>
+<h3 id="52-post-gamestart-event-loop-continuous">5.2 Post-GameStart — Event Loop (continuous)</h3>
+<p>Polls <code>/eventdata</code> as fast as the API responds. No fixed sleep interval — the next request fires immediately after the previous response is processed. This ensures named events (kills, objectives) are captured with minimum latency.</p>
+<pre><code class="language-rust">tokio::spawn(async move {
+    let mut last_event_count = 0;
+    loop {
+        match client.get(&quot;.../eventdata&quot;).send().await {
+            Err(_) =&gt; {
+                // ConnectionError = game ended
+                // signal stop sequence and exit
+                break;
+            }
+            Ok(response) =&gt; {
+                let events = parse_events(response).await;
+
+                // diff: new events are always appended, never reordered
+                let new_events = &amp;events[last_event_count..];
+                last_event_count = events.len();
+
+                for event in new_events {
+                    let video_time_ms =
+                        video_offset_ms + event.event_time_seconds * 1000.0;
+                    let mut log = game_log.lock().unwrap();
+                    log.push_event(event, video_time_ms);
+                    // flush to disk atomically after each batch
+                }
+
+                // no sleep — fire next request immediately
+            }
+        }
+    }
+});
+</code></pre>
+<p><strong>Why continuous polling:</strong> The API responds in 10–200ms on localhost. Continuous polling gives sub-second event capture. Kill events, multikills, and objective events are captured nearly in real time.</p>
+<p><strong>Game end detection:</strong> A <code>ConnectionError</code> after a period of successful responses means the API has gone offline — the game has ended. This is the only Live Client game-end signal used by the recorder. <code>GameEnd</code> is not reliable and must not control stopping or win/loss.</p>
+<h3 id="53-post-gamestart-snapshot-loop-every-10s">5.3 Post-GameStart — Snapshot Loop (every 10s)</h3>
+<p>Polls <code>/allgamedata</code> every 10 seconds. Detects item changes, level changes, and gold trajectory by diffing consecutive snapshots.</p>
+<pre><code class="language-rust">tokio::spawn(async move {
+    let mut prev_snapshot: Option&lt;Snapshot&gt; = None;
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        match client.get(&quot;.../allgamedata&quot;).send().await {
+            Err(_) =&gt; break, // game ended, event loop will handle stop
+            Ok(response) =&gt; {
+                let snapshot = parse_snapshot(response).await;
+
+                // detect changes vs previous snapshot
+                if let Some(prev) = &amp;prev_snapshot {
+                    let changes = diff_snapshots(prev, &amp;snapshot);
+                    // changes: ItemPurchased, ItemSold, LevelUp per player
+                    // each change gets video_time_ms = snapshot.game_time_ms + video_offset_ms
+                    let mut log = game_log.lock().unwrap();
+                    for change in changes {
+                        log.push_snapshot_change(change);
+                    }
+                }
+
+                let mut log = game_log.lock().unwrap();
+                log.push_snapshot(snapshot.clone());
+                prev_snapshot = Some(snapshot);
+                // flush to disk atomically
+            }
+        }
+    }
+});
+</code></pre>
+<p><strong>Snapshot diff logic:</strong></p>
+<pre><code class="language-rust">fn diff_snapshots(prev: &amp;Snapshot, curr: &amp;Snapshot) -&gt; Vec&lt;SnapshotChange&gt; {
+    let mut changes = vec![];
+    for (prev_player, curr_player) in prev.players.iter().zip(curr.players.iter()) {
+        // items: detect additions and removals by item_id
+        for item in &amp;curr_player.items {
+            if !prev_player.items.contains(item) {
+                changes.push(SnapshotChange::ItemPurchased { player: &amp;curr_player.name, item_id: item.item_id });
+            }
+        }
+        for item in &amp;prev_player.items {
+            if !curr_player.items.contains(item) {
+                changes.push(SnapshotChange::ItemSold { player: &amp;curr_player.name, item_id: item.item_id });
+            }
+        }
+        // level
+        if curr_player.level &gt; prev_player.level {
+            changes.push(SnapshotChange::LevelUp { player: &amp;curr_player.name, new_level: curr_player.level });
+        }
+    }
+    changes
+}
+</code></pre>
+<p>Timestamps on snapshot-derived changes are approximate — accurate to within the 10s snapshot interval. Exact timestamps are available post-game via Match V5.</p>
+<h3 id="54-shared-state">5.4 Shared State</h3>
+<p>Both tasks share <code>Arc&lt;Mutex&lt;GameLog&gt;&gt;</code>. The lock is held only during the append + flush operation, never during the HTTP request. Contention is negligible.</p>
+<pre><code class="language-rust">let game_log = Arc::new(Mutex::new(GameLog::new()));
+let log_for_events   = Arc::clone(&amp;game_log);
+let log_for_snapshots = Arc::clone(&amp;game_log);
+// each clone is moved into its respective task
+</code></pre>
+<h3 id="55-incremental-write-strategy">5.5 Incremental Write Strategy</h3>
+<p><code>game_log.json</code> is written to disk after every batch of changes (both tasks flush after each successful poll). Not held in memory until game end:</p>
+<pre><code>1. Lock game_log
+2. Append new data
+3. Serialize to JSON
+4. Write to game_log.json.tmp
+5. Rename .tmp → game_log.json  (atomic on all target platforms)
+6. Release lock
+</code></pre>
+<hr>
+<h2 id="6-recording-stop-sequence">6. Recording Stop Sequence</h2>
+<p>Video recording stops when the Process Watcher detects that the League game process has disappeared. This is the Phase 1 trigger and remains authoritative in later phases. Neither <code>GameEnd</code> nor Live Client API availability controls the video lifetime.</p>
+<p>Phase 1:</p>
+<pre><code>1. Send graceful stop signal to ffmpeg (write 'q' to ffmpeg stdin)
+2. Wait for ffmpeg to exit cleanly (max 10s timeout → force kill if exceeded)
+3. Verify video.mp4 is non-empty
+4. Update tray icon → idle state (grey circle)
+</code></pre>
+<p>There is no full-file read, copy, or remux at game end. If ffmpeg is interrupted, <code>video.mp4</code> remains playable through its last completed fragment. With a two-second fragment interval, at most approximately two seconds of trailing footage may be lost.</p>
+<p>Phase 2 additionally:</p>
+<pre><code>1. Stop the calibration, Event Loop, and Snapshot Loop tasks
+2. Write metadata.json with:
+   - win: null and win_method: &quot;unknown&quot; (resolved post-game)
+   - matchv5_fetched: false  ← always false at this point; app fetches post-game
+   - All other fields (see SPEC.md §3.8 for full schema)
+3. Finalise game_log.json (write one last flush to ensure all data is on disk)
+</code></pre>
+<p><strong>Note on win/loss:</strong> The recorder does not consume <code>GameEnd</code>. It writes <code>win: null</code> and <code>win_method: "unknown"</code> at stop time. The app resolves the result via Match V5 on next launch; if Match V5 is unavailable, it may derive the result from the final gold differential and set <code>win_method: "derived"</code>.</p>
+<p><strong>Why fragmented MP4:</strong>
+Ordinary MP4 depends on final index data and may be unreadable after interruption. Fragmented MP4 stores packet metadata alongside short media fragments, so completed fragments remain decodable without a final full-file conversion. This keeps game-end finalization effectively immediate. The trade-off is lower compatibility with some older players and editors; the app playback and stream-copy clip paths must remain part of validation.</p>
+<hr>
+<h2 id="7-window-capture-strategy">7. Window Capture Strategy</h2>
+<h3 id="windows">Windows</h3>
+<pre><code>1. Find League window handle by process name (windows-rs crate)
+2. Attempt window capture: ffmpeg -f gdigrab -i hwnd:{handle}
+3. If League is fullscreen exclusive: ffmpeg -f d3d11grab (DXGI Desktop Duplication)
+4. Fallback: capture full primary monitor
+</code></pre>
+<h3 id="macos">macOS</h3>
+<pre><code>ffmpeg -f avfoundation -capture_cursor 0 -i {window_index}
+Window index resolved by matching window title &quot;League of Legends&quot;
+</code></pre>
+<p><strong>Multi-monitor:</strong> auto-detect which monitor the League window is on using window position + monitor bounds. No user configuration needed.</p>
+<hr>
+<h2 id="8-hardware-encoder-selection">8. Hardware Encoder Selection</h2>
+<p>Run once on startup. Result is stored in memory and used for all subsequent recordings.</p>
+<pre><code>Query GPU vendor via sysinfo:
+
+Windows:
+  &quot;NVIDIA&quot; → h264_nvenc
+  &quot;AMD&quot;    → h264_amf
+  &quot;Intel&quot;  → h264_qsv
+  Multiple GPUs → prefer discrete (NVIDIA &gt; AMD &gt; Intel)
+
+macOS:
+  always → h264_videotoolbox
+  (works on Intel, AMD, and Apple Silicon M-series)
+</code></pre>
+<p>Encoder used is recorded in <code>metadata.json</code> (<code>encoder_used</code> field). The app layer has no awareness of which encoder was used — the output is always H.264 MP4.</p>
+<hr>
+<h2 id="9-ffmpeg-recording-commands">9. ffmpeg Recording Commands</h2>
+<h3 id="windows-nvenc">Windows — NVENC</h3>
+<pre><code class="language-bash">ffmpeg \
+  -f gdigrab -framerate {fps} -i hwnd:{handle} \
+  -f dshow -i audio=&quot;Stereo Mix&quot; \
+  -vcodec h264_nvenc \
+  -preset p4 \
+  -b:v {bitrate_kbps}k \
+  -maxrate {bitrate_kbps * 1.5}k \
+  -bufsize {bitrate_kbps * 2}k \
+  -g {fps * 2} \
+  -vf scale={width}:{height} \
+  -acodec aac -b:a 192k \
+  -movflags +frag_keyframe+empty_moov+default_base_moof \
+  -y {output_path}/games/{timestamp}/video.mp4
+</code></pre>
+<blockquote>
+<p><strong>Audio note:</strong> "Stereo Mix" is a Windows loopback device that captures all system audio. It is disabled by default on many machines (enable via Sound settings → Recording → Show Disabled Devices). If unavailable, fall back to <code>audio="WASAPI loopback"</code> or omit audio entirely (record video-only with a silent audio track) rather than failing the recording. Document the fallback in the implementation.</p>
+</blockquote>
+<h3 id="windows-amf-amd">Windows — AMF (AMD)</h3>
+<p>Replace <code>-vcodec h264_nvenc -preset p4</code> with <code>-vcodec h264_amf -quality quality</code></p>
+<h3 id="windows-quicksync-intel">Windows — QuickSync (Intel)</h3>
+<p>Replace with <code>-vcodec h264_qsv -preset medium</code></p>
+<h3 id="macos-videotoolbox">macOS — VideoToolbox</h3>
+<pre><code class="language-bash">ffmpeg \
+  -f avfoundation -framerate {fps} -i {window_index}:default \
+  -vcodec h264_videotoolbox \
+  -b:v {bitrate_kbps}k \
+  -g {fps * 2} \
+  -vf scale={width}:{height} \
+  -acodec aac -b:a 192k \
+  -movflags +frag_keyframe+empty_moov+default_base_moof \
+  -y {output_path}/games/{timestamp}/video.mp4
+</code></pre>
+<hr>
+<h2 id="10-configuration-configtoml">10. Configuration (<code>config.toml</code>)</h2>
+<p>Default location:
+- Windows: <code>%APPDATA%\LeagueReplay\config.toml</code>
+- macOS: <code>~/Library/Application Support/LeagueReplay/config.toml</code></p>
+<p>Both the recorder and the app read and write this file. The recorder uses <code>[recording]</code>, <code>[storage]</code>, and <code>[app]</code> sections. The app additionally reads and writes <code>[riot_account]</code>. The recorder ignores <code>[riot_account]</code> entirely.</p>
+<pre><code class="language-toml">[recording]
+resolution = &quot;source&quot;       # &quot;source&quot; | &quot;1920x1080&quot; | &quot;2560x1440&quot;
+fps = 60                    # 30 | 60
+bitrate_kbps = 20000        # default 20 Mbps
+
+[storage]
+output_path = &quot;~/LeagueReplays&quot;
+auto_delete_days = 30       # recordings older than this deleted on app launch
+                            # unless metadata.saved == true
+
+[app]
+autostart = true            # register OS startup entry on first launch
+
+[riot_account]
+riot_id = &quot;&quot;                # &quot;gameName#tagLine&quot; — empty means enrichment disabled
+api_key = &quot;&quot;                # personal dev key (expires 24h) or left empty in production phase
+</code></pre>
+<hr>
+<h2 id="11-tray-icon-states">11. Tray Icon States</h2>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Icon</th>
+<th>Condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Idle</td>
+<td>Grey circle</td>
+<td>Waiting for League to launch</td>
+</tr>
+<tr>
+<td>Recording</td>
+<td>Red circle</td>
+<td>League running, ffmpeg active</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Right-click context menu:</strong>
+- Open App
+- Settings
+- Quit</p>
+<hr>
+<h2 id="12-crash-resilience">12. Crash Resilience</h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ffmpeg killed mid-game</td>
+<td>Completed MP4 fragments remain playable; up to the current approximately two-second fragment may be lost.</td>
+</tr>
+<tr>
+<td>Recorder crashes mid-game</td>
+<td>game_log.json has all data up to last successful atomic write.</td>
+</tr>
+<tr>
+<td>OS power loss</td>
+<td>Completed MP4 fragments survive. game_log.json survives to last atomic write.</td>
+</tr>
+<tr>
+<td>Incomplete bundle on next launch</td>
+<td><code>video.mp4</code> is already playable; no video recovery conversion is required. Phase 2 writes incomplete structured metadata as needed.</td>
+</tr>
+<tr>
+<td>Live Client API ends without a result</td>
+<td>win: null, win_method: "unknown" in metadata. App resolves via Match V5 on next launch if Riot ID configured.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="13-build-output">13. Build &amp; Output</h2>
+<pre><code class="language-bash">cd recorder
+cargo build --release
+</code></pre>
+<p>Output: <code>recorder/target/release/recorder.exe</code> (Windows) or <code>recorder/target/release/recorder</code> (macOS).</p>
+<p>Single binary, no runtime dependencies, ~2–5MB. ffmpeg is referenced from the bundled path set in config.</p>
+<p><strong>ffmpeg:</strong> bundled with the app under <code>resources/ffmpeg</code>. The recorder resolves the path at startup — it does not rely on a system-installed ffmpeg.</p>
+          </div>
+          <a class="back-to-top" href="#top">Back to contents ↑</a>
+        </article>
+
+
+        <article class="document" id="doc-viewer" data-source="APP-VIEWER.md">
+          <header class="document-kicker">
+            <span class="document-number">03</span>
+            <span>APP-VIEWER.md</span>
+          </header>
+          <div class="markdown-body">
+            <h1 id="app-viewermd-process-2-viewer-screen">APP-VIEWER.md — Process 2: Viewer Screen</h1>
+<blockquote>
+<p><strong>Context:</strong> This document covers the Viewer screen only. For data schemas, file paths, and shared architecture, refer to <code>SPEC.md</code>. For the clip exporter that follows clip creation, refer to <code>APP-CLIP.md</code>. For the game library that precedes the viewer, refer to <code>APP-LIBRARY.md</code>.</p>
+<p><strong>What this screen does:</strong> Plays back a recorded game bundle. It has two tabs — Replay and Stats. The Replay tab has two render modes: windowed (panel layout) and fullscreen (overlay layout). The Stats tab is a static scoreboard with no video. Clip mode is activated from the Replay tab (Section 11).</p>
+</blockquote>
+<hr>
+<h2 id="1-screen-structure">1. Screen Structure</h2>
+<p>The viewer screen has two top-level tabs, always visible:</p>
+<pre><code>[ ▶  Replay ]   [ ≡  Stats ]
+</code></pre>
+<p><strong>Replay tab</strong> — video playback with synced data overlays. Has two render modes.</p>
+<p><strong>Stats tab</strong> — static end-of-game scoreboard. No video. Documented in Section 15.</p>
+<p>Both tabs share the same header bar (champion, KDA, game duration, date). Switching tabs pauses the video and preserves playhead position — returning to Replay resumes from the same point.</p>
+<hr>
+<h2 id="2-replay-tab-two-render-modes">2. Replay Tab — Two Render Modes</h2>
+<p>The Replay tab has two distinct render modes. They are toggled by the user and share the same underlying state (playhead position, gold graph open/closed, etc.).</p>
+<h3 id="21-windowed-mode-default">2.1 Windowed Mode (default)</h3>
+<p>The default view when a game is opened. The video occupies roughly 60% of the window. Panels sit alongside and below it — always visible, no interaction required to reveal data.</p>
+<pre><code>┌─────────────────────────────────┬───────────────────┐
+│                                 │  Champion  KDA     │
+│         VIDEO (60%)             │  Gold diff         │
+│                                 │  CS  Level         │
+│                                 ├───────────────────┤
+│                                 │  Events feed       │
+│                                 │  (scrollable)      │
+├─────────────────────────────────┴───────────────────┤
+│  Scrubber  ·  Controls  ·  Timeline                  │
+└──────────────────────────────────────────────────────┘
+</code></pre>
+<p>In windowed mode the scrubber, gold graph, and event feed are always visible — no hover or click required. The USG panel layout (as prototyped in <code>league-replay-usgfx-v3.jsx</code>) is the reference for this mode.</p>
+<h3 id="22-fullscreen-mode">2.2 Fullscreen Mode</h3>
+<p>Activated by: double-clicking the video, pressing <code>F</code>, or clicking the fullscreen button in the windowed controls.</p>
+<p>The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, tick strip, event panel, typography, colours, state summary) apply exclusively to fullscreen mode. Section 3 (video playback architecture), Section 11 (clip mode), and Section 15 (Stats tab) apply to both modes.</p>
+<p>Exited by: pressing <code>Escape</code>, pressing <code>F</code> again, or clicking the exit button that appears in the top bar. Returns to windowed mode with playhead and state preserved.</p>
+<p><strong>What persists between modes:</strong> playhead position, play/pause state, gold graph open/closed state, event panel open/closed state.</p>
+<hr>
+<h2 id="3-video-playback-architecture">3. Video Playback Architecture</h2>
+<p>Video files are large (5–10GB). They must never be loaded into memory.</p>
+<ul>
+<li>The Rust backend runs a local HTTP server with <strong>range request support</strong></li>
+<li>The React frontend uses a standard HTML5 <code>&lt;video&gt;</code> tag pointed at <code>http://127.0.0.1:{port}/games/{timestamp}/video.mp4</code></li>
+<li>Seeking, buffering, and playback rate are all handled natively by the browser engine</li>
+<li>No custom video decoding is implemented</li>
+</ul>
+<p><strong>Sync between video and data:</strong></p>
+<p>The video element emits <code>timeupdate</code> events. The frontend listens and converts the video's <code>currentTime</code> (seconds) to <code>video_time_ms</code>:</p>
+<pre><code class="language-ts">videoElement.addEventListener('timeupdate', () =&gt; {
+  const videoTimeMs = videoElement.currentTime * 1000;
+  // use videoTimeMs to drive scrubber, gold graph cursor, event highlighting
+});
+</code></pre>
+<p>Game clock time is derived as: <code>game_clock_ms = video_time_ms - metadata.video_offset_ms</code></p>
+<hr>
+<h2 id="4-layout-overview-fullscreen-mode">4. Layout — Overview (Fullscreen Mode)</h2>
+<p>The viewer is a <strong>fullscreen experience</strong>. The video occupies 100% of the window. All UI elements are overlays that float above the footage. Nothing sits beside or below the video — the frame is never cropped or letterboxed to make room for panels.</p>
+<p><strong>Guiding principle:</strong> nothing requires the user to look away from the video. Every element appears over the footage at the moment it is relevant, and disappears when it is not.</p>
+<pre><code>┌─────────────────────────────────────────────────────────┬────┐
+│  [TOP BAR — fades after 3.2s idle]                      │    │
+│  REPLAY · JINX · 8/2/11 · +1800G        14:32 · REC    │ ·  │
+│                                                         │ ·  │
+│                                                         │ ·  │ ← TICK
+│              VIDEO (fullscreen, 100%)                   │ ·  │   STRIP
+│                                                         │ ·  │   (28px,
+│  [EVENT CARD — animates in on event proximity]          │ ·  │   always
+│  ┌──────────────────┐                                   │ ·  │   visible)
+│  │ MULTI-KILL       │                                   │ ·  │
+│  │ DOUBLE KILL      │                                   │ ·  │
+│  │ JINX × 2 UNITS   │                                   │ ·  │
+│  └──────────────────┘                                   │    │
+│                                                         │    │
+│  [GOLD GRAPH — slides up when triggered]                │    │
+│  ┌─────────────────────────────────────────────────┐    │    │
+│  │ Gold Differential          +1800G · ADVANTAGE   │    │    │
+│  │ ▁▂▄▆▅▃▄▇██▅▃▄▆████                             │    │    │
+│  └─────────────────────────────────────────────────┘    │    │
+│  [▴ GOLD +1800]   ← gold tab, always present            │    │
+├─────────────────────────────────────────────────────────┤    │
+│  0:00 ·····|●|·····|●|·····|●|·····|●|·····|●·· 32:14  │    │
+│  [▶ Play] [▴ Gold] | 14:32 / 32:14 | [✦ Clip]          │    │
+└─────────────────────────────────────────────────────────┴────┘
+</code></pre>
+<p><strong>Z-index layer order (bottom to top):</strong>
+1. <code>&lt;video&gt;</code> — base layer
+2. Top bar overlay
+3. Gold graph drawer
+4. Gold tab
+5. Scrubber zone
+6. Tick strip + event panel (right side)
+7. Event card
+8. Grain texture overlay</p>
+<hr>
+<h2 id="5-top-bar">5. Top Bar</h2>
+<p><strong>Position:</strong> absolute, top: 0, left: 0, right: 0.</p>
+<p><strong>Content (left to right):</strong>
+- App wordmark ("REPLAY") + company line in mono type
+- Divider
+- Champion name + KDA (kills / deaths / assists)
+- <strong>Right side:</strong> current gold differential, match clock, REC indicator (pulsing dot)</p>
+<p><strong>Visibility behaviour:</strong>
+- Fades <strong>out</strong> after <strong>3.2 seconds</strong> of mouse inactivity anywhere in the window. Transition: <code>opacity 1→0</code>, 350ms ease.
+- Fades <strong>in</strong> instantly on any mouse movement anywhere in the window (<code>mousemove</code> event on the root container, resets a <code>setTimeout</code>). Transition: <code>opacity 0→1</code>, 150ms ease.
+- When hidden: <code>opacity: 0</code>, <code>pointer-events: none</code> — does not intercept clicks.</p>
+<p><strong>Interaction with event card:</strong>
+- When the top bar is visible, the event card sits at <code>top: 58px</code> (below the bar).
+- When the top bar is hidden, the event card shifts to <code>top: 20px</code>. Transition: <code>top 200ms ease</code>.</p>
+<hr>
+<h2 id="6-scrubber-zone">6. Scrubber Zone</h2>
+<p><strong>Position:</strong> absolute, bottom: 0, left: 0, right: 250px (leaves room for tick strip + panel).</p>
+<h3 id="61-two-states">6.1 Two States</h3>
+<p><strong>Ambient state</strong> (default):
+- Height: <strong>44px</strong>
+- Visible: gradient fade (dark at bottom, transparent above), bare scrubber rail with event markers and playhead, current timestamp in small mono type (bottom-left)
+- Gradient opacity: 60%</p>
+<p><strong>Active state</strong> (mouse is within scrubber zone):
+- Height: <strong>96px</strong> — expands upward over 250ms, <code>cubic-bezier(.4,0,.2,1)</code>
+- Reveals: minute tick marks, time labels, controls row
+- Gradient opacity: 90%
+- Returns to ambient 0ms after mouse leaves (no delay)</p>
+<h3 id="62-scrubber-rail">6.2 Scrubber Rail</h3>
+<ul>
+<li>Full width (left: 0 to right edge of scrubber zone)</li>
+<li>Background track: 2px, <code>rgba(255,255,255,.15)</code></li>
+<li>Fill (played portion): 2px, blue <code>#002FA7</code>, with subtle blue glow (<code>box-shadow: 0 0 6px #002FA7</code>)</li>
+<li>Playhead: 12×12px square, blue fill, white border — always visible in both states</li>
+<li>Transition on seek: <code>left 0.04s linear</code></li>
+</ul>
+<p><strong>Minute tick marks</strong> (visible in active state only):
+- Minor ticks every 1 minute: 4px tall, <code>rgba(255,255,255,.10)</code>
+- Major ticks every 4 minutes: 8px tall, <code>rgba(255,255,255,.28)</code>
+- Positioned absolutely above the rail</p>
+<p><strong>Time labels</strong> (visible in active state only):
+- Shown at: 0:00, 8:00, 16:00, 24:00, match end time
+- Font: monospace (TX-02), 7px, <code>rgba(255,255,255,.30)</code></p>
+<h3 id="63-event-markers">6.3 Event Markers</h3>
+<p>Event markers are <strong>always visible</strong> in both ambient and active states.</p>
+<ul>
+<li>Shape: small downward-pointing pin (8px × 12px: rectangle + triangle)</li>
+<li>Ally events: blue <code>#002FA7</code></li>
+<li>Enemy events: red <code>#C2001C</code></li>
+<li>Positioned at <code>left: (event.video_time_ms / total_duration_ms) * 100%</code></li>
+<li>Clicking a marker seeks the video to that event's <code>video_time_ms</code></li>
+<li><code>e.stopPropagation()</code> — marker clicks do not propagate to the rail's seek handler</li>
+</ul>
+<h3 id="64-controls-row">6.4 Controls Row</h3>
+<p>Visible in active state. Semi-visible (opacity 0.6) in ambient state.</p>
+<p><strong>Layout (left to right):</strong>
+- <code>▶ Play</code> / <code>⏸ Pause</code> button — blue filled (primary action)
+- <code>▴ Gold</code> toggle button — ghost style, toggles gold graph drawer
+- Divider
+- Time readout: <code>14:32 / 32:14</code> — mono type
+- Divider
+- <code>✦ Clip</code> button — ghost style, activates clip mode</p>
+<hr>
+<h2 id="7-gold-graph-drawer">7. Gold Graph Drawer</h2>
+<h3 id="71-behaviour">7.1 Behaviour</h3>
+<ul>
+<li>Position: absolute, left: 0, right: 250px, bottom: 0.</li>
+<li><strong>Closed:</strong> <code>transform: translateY(100%)</code> — fully hidden below scrubber.</li>
+<li><strong>Open:</strong> <code>transform: translateY(0)</code> — slides up over 300ms, <code>cubic-bezier(.4,0,.2,1)</code>.</li>
+<li>Background: <code>linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.76) 100%)</code>.</li>
+<li>Border-top: 1px, <code>rgba(255,255,255,.07)</code>.</li>
+<li>Covers the lower ~25% of the video when open.</li>
+</ul>
+<p><strong>Triggers to open:</strong> clicking the gold tab, or clicking the "▴ Gold" button in controls.
+<strong>Triggers to close:</strong> clicking either trigger again.</p>
+<p><strong>Bottom padding:</strong> dynamically adjusts — increases when scrubber is active (96px) vs ambient (44px), so graph content is never occluded by the scrubber expanding.</p>
+<h3 id="72-gold-graph-content">7.2 Gold Graph Content</h3>
+<p><strong>Header row:</strong>
+- Left: section label "Gold Differential" in condensed caps
+- Right: current gold value + "ADVANTAGE" / "DEFICIT" label, coloured blue or red</p>
+<p><strong>Graph:</strong>
+- X axis: match duration (0 to end)
+- Y axis: gold differential (your team total − enemy team total), range ±4500
+- Area above zero: faint blue fill
+- Area below zero: faint red fill
+- Line: blue when positive, red when negative, 1.8px stroke
+- Vertical cursor: tracks current video time, same colour as line, with diamond marker at intersection
+- Granularity: 10s (matches snapshot interval)
+- Hovering the graph does <strong>not</strong> seek — it is read-only display. Seeking is via the scrubber only.</p>
+<p><strong>X-axis labels:</strong> 0:00, 8:00, 16:00, 24:00, match end — mono type.
+<strong>Y-axis labels:</strong> +4K, +2K, 0, -2K, -4K — mono type.</p>
+<h3 id="73-gold-tab">7.3 Gold Tab</h3>
+<ul>
+<li>Position: absolute, just above the scrubber zone (bottom adjusts with scrubber state), left: 20px.</li>
+<li>Always present — never hidden.</li>
+<li>Opacity: 0.5 at rest, 1.0 when scrubber is active or drawer is open.</li>
+<li>Content: chevron icon (▴/▾) + "GOLD" label + current gold value (coloured blue or red).</li>
+<li>Clicking toggles the drawer open/closed.</li>
+</ul>
+<hr>
+<h2 id="8-floating-event-card">8. Floating Event Card</h2>
+<h3 id="81-trigger">8.1 Trigger</h3>
+<p>The frontend evaluates on every <code>timeupdate</code>:</p>
+<pre><code class="language-ts">const nearEvent = events.find(e =&gt;
+  Math.abs(videoTimeMs - e.video_time_ms) &lt; 1000 // within 1 second
+);
+</code></pre>
+<p>When <code>nearEvent</code> changes to a new event (not the same event as currently shown):
+- Dismiss current card (if any) with exit animation
+- Show new card with enter animation</p>
+<h3 id="82-appearance">8.2 Appearance</h3>
+<ul>
+<li>Position: absolute, top (variable — see top bar interaction), left: 20px.</li>
+<li>Background: <code>rgba(6,6,10,.93)</code>, border: <code>1px solid rgba(255,255,255,.10)</code>.</li>
+<li>Left border: 3px, blue for ally events / red for enemy events.</li>
+<li><code>pointer-events: none</code> — never intercepts clicks.</li>
+<li>Min-width: 200px.</li>
+</ul>
+<p><strong>Content:</strong>
+- Event category (e.g. "ELIMINATION") — mono, 7px, dimmed
+- Event label (e.g. "DOUBLE KILL") — condensed bold, 17px, coloured blue or red
+- Event detail line (e.g. "JINX × 2 UNITS") — mono, 8px, dimmed</p>
+<h3 id="83-animations">8.3 Animations</h3>
+<p><strong>Enter:</strong> <code>translateX(-12px) → translateX(0)</code>, opacity 0→1, 250ms, <code>cubic-bezier(.22,1,.36,1)</code>.</p>
+<p><strong>Auto-dismiss:</strong> after <strong>3.5 seconds</strong>, exit animation plays.</p>
+<p><strong>Exit:</strong> <code>translateX(0) → translateX(-8px)</code>, opacity 1→0, 220ms ease. Card is unmounted after exit completes.</p>
+<hr>
+<h2 id="9-right-tick-strip">9. Right Tick Strip</h2>
+<p><strong>Position:</strong> absolute, top: 0, bottom: 0, right: 0.
+<strong>Width:</strong> 28px. Never hides, never fades.
+<strong>Background:</strong> <code>rgba(0,0,0,.55)</code>.</p>
+<p><strong>Purpose:</strong> gives the user instant awareness of event density and team split across the full match, without opening the event panel.</p>
+<h3 id="91-content">9.1 Content</h3>
+<p><strong>Event dots:</strong>
+- One dot per event, 6px square
+- Blue (<code>#002FA7</code>) for ally events, red (<code>#C2001C</code>) for enemy events
+- Vertical position: proportional to <code>video_time_ms / total_duration_ms</code>, within the strip's usable height (top 48px reserved for the expand affordance, bottom 56px reserved for scrubber zone)
+- The dot nearest the current playhead enlarges to 8px and glows (<code>box-shadow: 0 0 6px {color}</code>)
+- Transition on size/glow: 150ms</p>
+<p><strong>Playhead needle:</strong>
+- Thin horizontal line (1px, <code>rgba(255,255,255,.40)</code>) spanning the full strip width
+- Positioned at the same proportional height as the current video time
+- Moves in real time with <code>timeupdate</code>
+- <code>pointer-events: none</code></p>
+<p><strong>Expand affordance:</strong>
+- Three short horizontal lines stacked at the top of the strip (10px, 7px, 4px wide), faint blue
+- Visual hint that the strip is clickable / the panel can open</p>
+<h3 id="92-interactions">9.2 Interactions</h3>
+<ul>
+<li><strong>Click any dot</strong> → seek video to that event's <code>video_time_ms</code> (<code>e.stopPropagation()</code>)</li>
+<li><strong>Click strip</strong> (anywhere other than a dot) → toggle event panel open/closed</li>
+</ul>
+<hr>
+<h2 id="10-event-panel">10. Event Panel</h2>
+<p><strong>Position:</strong> slides in from the right edge, adjacent to the tick strip.</p>
+<p><strong>Closed state:</strong> width 0, <code>overflow: hidden</code>. Tick strip remains fully visible.</p>
+<p><strong>Open state:</strong> width 230px, slides in over 280ms, <code>cubic-bezier(.4,0,.2,1)</code>.
+Background: <code>rgba(8,8,12,.94)</code>. Left border: 2px, <code>rgba(255,255,255,.10)</code>.</p>
+<h3 id="101-panel-structure">10.1 Panel Structure</h3>
+<p><strong>Header:</strong>
+- Left: "Events" — condensed caps, 11px
+- Right: event count + "REC." — mono, 7px, dimmed</p>
+<p><strong>Scrollable event list:</strong></p>
+<p>Each row contains:
+- Category label — mono, 7px, dimmed, top-left
+- Timestamp — mono, 8px, dimmed, top-right
+- Event label — condensed bold, 14px, full width
+- Detail line — mono, 7.5px, dimmed</p>
+<p><strong>Row states:</strong>
+- Default: transparent background
+- Hover: faint blue tint (<code>rgba(0,47,167,.10)</code>)
+- Active (playhead within ~1s of event, ally): blue left border (2px), faint blue background (<code>rgba(0,47,167,.15)</code>)
+- Active (playhead within ~1s of event, enemy): red left border, faint red background</p>
+<p><strong>Clicking any row</strong> seeks video to that event's <code>video_time_ms</code>.</p>
+<p><strong>Bottom readout</strong> (below the list, always visible within panel):
+- Gold diff — coloured blue or red
+- CS score
+- Gold advantage percentage bar — 5px tall, blue or red fill</p>
+<h3 id="102-panel-does-not-cover-the-scrubber">10.2 Panel does not cover the scrubber</h3>
+<p>The scrubber zone spans <code>left: 0</code> to <code>right: 250px</code>. The right drawer (<code>tick strip + panel</code>) spans from <code>right: 0</code>. They do not overlap. The tick strip is always 28px. When the panel is open, it occupies an additional 230px to the left of the strip, for a total right-side width of 258px. The scrubber <code>right</code> offset can remain fixed at 250px — the panel opening may briefly overlap the scrubber's rightmost ~8px but this is acceptable.</p>
+<hr>
+<h2 id="11-clip-mode-activation">11. Clip Mode Activation</h2>
+<p>Clip mode is triggered from the viewer. It does not navigate to a new screen — it modifies the scrubber in place.</p>
+<p><strong>Triggers:</strong>
+- Clicking any event marker on the scrubber
+- Clicking the "✦ Clip" button in the controls row</p>
+<p><strong>On activation:</strong>
+- Smart default clip window is calculated (see below)
+- Two draggable endpoint handles appear on the scrubber rail
+- The rail fill between endpoints is highlighted distinctly (lighter blue)
+- A "Export Clip →" button replaces the "✦ Clip" button in controls</p>
+<p><strong>Dragging endpoints:</strong>
+- Handles are draggable along the rail
+- Minimum clip duration: 5 seconds
+- Endpoints snap to event marker positions when within 2 seconds
+- Both endpoints are clamped to 0 and total duration</p>
+<p><strong>On "Export Clip →":</strong> navigate to the Clip Exporter screen (see <code>APP-CLIP.md</code>), passing <code>{ gameTimestamp, clipStartMs, clipEndMs }</code>.</p>
+<hr>
+<h3 id="111-clip-auto-positioning">11.1 Clip Auto-Positioning</h3>
+<p>The default clip window is calculated at activation time. Two modes depending on Match V5 data availability.</p>
+<p><strong>With Match V5 data (precise mode):</strong></p>
+<p>The <code>CHAMPION_KILL</code> event in the Match V5 timeline includes <code>victimDamageReceived[]</code> — an array of every damage instance the victim took, each with a timestamp in game-clock milliseconds. The earliest timestamp is when the fight actually started.</p>
+<p>Match V5 timestamps are in game-clock time and must be converted to <code>video_time_ms</code> before use:</p>
+<pre><code>fight_start_game_ms = min(victimDamageReceived[].timestamp)
+clip_start = (fight_start_game_ms - 1000) + game_log.game_start_video_offset_ms
+clip_end   = kill_event.video_time_ms + 3000
+</code></pre>
+<p><code>kill_event.video_time_ms</code> is already pre-computed in <code>game_log.json</code> at write time — use it directly. Only the fight-start timestamp from Match V5 requires the conversion.</p>
+<p><strong>Without Match V5 data (heuristic mode):</strong></p>
+<p>Fall back to kill-type-aware windows based on the event's fields:</p>
+<table>
+<thead>
+<tr>
+<th>Kill type</th>
+<th>Detection</th>
+<th>Pre-roll</th>
+<th>Post-roll</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Solo kill</td>
+<td><code>assisters</code> array is empty</td>
+<td>8s</td>
+<td>5s</td>
+</tr>
+<tr>
+<td>Kill with assisters (teamfight)</td>
+<td><code>assisters</code> has ≥1 entry</td>
+<td>15s</td>
+<td>8s</td>
+</tr>
+<tr>
+<td>Multi-kill</td>
+<td><code>Multikill</code> event fired within 5s</td>
+<td>20s</td>
+<td>10s</td>
+</tr>
+<tr>
+<td>Penta kill</td>
+<td><code>Multikill.KillStreak == 5</code></td>
+<td>25s</td>
+<td>15s</td>
+</tr>
+</tbody>
+</table>
+<p>Pre-roll is always longer than post-roll — the fight buildup is the interesting part, not the aftermath.</p>
+<p>Both modes produce a starting point that the user can then adjust by dragging the endpoint handles.</p>
+<hr>
+<h2 id="12-typography-system">12. Typography System</h2>
+<p>Three type faces used throughout the viewer:</p>
+<table>
+<thead>
+<tr>
+<th>Alias</th>
+<th>Actual font</th>
+<th>Weight</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TX-96</td>
+<td>Barlow Condensed</td>
+<td>900</td>
+<td>Champion name, large clock, KDA digits, stamp</td>
+</tr>
+<tr>
+<td>TX-76</td>
+<td>Barlow Condensed</td>
+<td>800</td>
+<td>Nav, buttons, section labels, event labels</td>
+</tr>
+<tr>
+<td>TX-02</td>
+<td>DM Mono / Berkeley Mono</td>
+<td>400</td>
+<td>All data values, timestamps, mono readouts</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rule:</strong> TX-02 for any number or technical string. TX-76 for any label or action. TX-96 for any hero display element.</p>
+<hr>
+<h2 id="13-colour-reference">13. Colour Reference</h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Hex</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Blue</td>
+<td><code>#002FA7</code></td>
+<td>Ally events, scrubber fill, play button, gold positive</td>
+</tr>
+<tr>
+<td>Blue Light</td>
+<td><code>#4A70E0</code></td>
+<td>Gold graph line (positive), glow accents</td>
+</tr>
+<tr>
+<td>Red</td>
+<td><code>#C2001C</code></td>
+<td>Enemy events, gold negative, death states</td>
+</tr>
+<tr>
+<td>White</td>
+<td><code>#F8F5EF</code></td>
+<td>Primary text on dark backgrounds</td>
+</tr>
+<tr>
+<td>Ink</td>
+<td><code>#0C0C0C</code></td>
+<td>Video background</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="14-state-summary-fullscreen-mode-only">14. State Summary — Fullscreen Mode Only</h2>
+<p>The following table describes visibility behaviour for overlay elements. These elements only exist in fullscreen mode (Section 2.2). In windowed mode, all panels are always visible and no hover/idle logic applies.</p>
+<table>
+<thead>
+<tr>
+<th>Element</th>
+<th>Always visible</th>
+<th>Trigger to show</th>
+<th>Trigger to hide</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Video</td>
+<td>✅</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Top bar</td>
+<td>On mouse activity</td>
+<td>Any mouse move</td>
+<td>3.2s idle timer</td>
+</tr>
+<tr>
+<td>Scrubber (ambient)</td>
+<td>✅</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Scrubber (active)</td>
+<td>—</td>
+<td>Mouse enters scrubber zone</td>
+<td>Mouse leaves</td>
+</tr>
+<tr>
+<td>Gold tab</td>
+<td>✅ (dim)</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Gold graph drawer</td>
+<td>—</td>
+<td>Click gold tab or Gold button</td>
+<td>Click again</td>
+</tr>
+<tr>
+<td>Event card</td>
+<td>—</td>
+<td>Playhead within ~1s of event</td>
+<td>3.5s auto-dismiss</td>
+</tr>
+<tr>
+<td>Tick strip</td>
+<td>✅</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Event panel</td>
+<td>—</td>
+<td>Click tick strip</td>
+<td>Click tick strip</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="15-stats-tab">15. Stats Tab</h2>
+<p>The Stats tab is a static end-of-game scoreboard. No video plays. No animation. Pure data.</p>
+<h3 id="151-layout">15.1 Layout</h3>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  ← Back   JINX  8/2/11  +3800G  32:14  Mar 6 2026           │
+│  [ ▶ Replay ]  [ ≡ Stats ●]                                  │
+├──────────────────────────────────────────────────────────────┤
+│  [Connect Riot account to unlock damage &amp; vision stats →]    │  ← only if matchv5_fetched = false
+├──────────────────────────────────────────────────────────────┤
+│  BLUE TEAM  ·  VICTORY                                       │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ Champion  Spells  KDA   CS    Gold  Items              │  │
+│  │ ─────────────────────────────────────────────────────  │  │
+│  │ ▸ Jinx ★  F/I    8/2/11  187  14.2k  [items row]      │  │  ← local player, expandable
+│  │   Thresh   F/I   3/4/12  22   9.1k   [items row]      │  │
+│  │   ...                                                  │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  RED TEAM  ·  DEFEAT                                         │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │   ...                                                  │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="152-scoreboard-columns">15.2 Scoreboard Columns</h3>
+<p>Always shown (available from Live Client API):</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Data source</th>
+<th>Format</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Champion icon + name</td>
+<td>Snapshot / Data Dragon</td>
+<td>Icon + TX-76 name</td>
+</tr>
+<tr>
+<td>Summoner spells</td>
+<td>First snapshot</td>
+<td>Two spell icons</td>
+</tr>
+<tr>
+<td>Keystone rune</td>
+<td>First snapshot</td>
+<td>Icon</td>
+</tr>
+<tr>
+<td>KDA</td>
+<td>Kill events</td>
+<td>K / D / A with kill participation %</td>
+</tr>
+<tr>
+<td>CS</td>
+<td>Last snapshot <code>scores.creepScore</code></td>
+<td>Integer + CS/min</td>
+</tr>
+<tr>
+<td>Gold</td>
+<td>Last snapshot <code>gold</code></td>
+<td>Formatted (14.2k)</td>
+</tr>
+<tr>
+<td>Level</td>
+<td>Last snapshot <code>level</code></td>
+<td>Integer</td>
+</tr>
+<tr>
+<td>Items</td>
+<td>Last snapshot items array</td>
+<td>6 item icons + trinket, resolved via Data Dragon</td>
+</tr>
+<tr>
+<td>Multi-kill badge</td>
+<td>Multikill events</td>
+<td>Double / Triple / Quadra / Penta</td>
+</tr>
+</tbody>
+</table>
+<p>Shown only when <code>matchv5_fetched = true</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Match V5 field</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Damage dealt</td>
+<td><code>totalDamageDealtToChampions</code></td>
+</tr>
+<tr>
+<td>Damage taken</td>
+<td><code>totalDamageTaken</code></td>
+</tr>
+<tr>
+<td>Vision score</td>
+<td><code>visionScore</code></td>
+</tr>
+<tr>
+<td>Wards placed / killed</td>
+<td><code>wardsPlaced</code> / <code>wardsKilled</code></td>
+</tr>
+</tbody>
+</table>
+<p>When Match V5 columns are hidden, a compact notice appears in the column header area rather than empty columns.</p>
+<h3 id="153-expanded-row">15.3 Expanded Row</h3>
+<p>Clicking any player row expands it inline (accordion). The row height grows to reveal:</p>
+<p><strong>Build timeline</strong> — item icons in purchase order, each with a timestamp below it:
+- With Match V5: exact timestamps from <code>ITEM_PURCHASED</code> events
+- Without Match V5: approximate timestamps from snapshot diffs, displayed as "~8:40"</p>
+<p><strong>Skill order</strong> — Q/W/E/R boxes in the order they were levelled:
+- With Match V5: all 10 players
+- Without Match V5: local player only — other players show "Skill order unavailable"</p>
+<p><strong>Full rune page</strong> — keystone + 5 runes + 3 stat shards, icon grid</p>
+<p><strong>Additional stats</strong> (Match V5 only, shown when available):
+- Healing done (self) and to teammates
+- CC time dealt
+- Time spent dead
+- Objectives stolen badge</p>
+<p>Clicking the row again collapses it. Only one row can be expanded at a time.</p>
+<h3 id="154-team-level-aggregates">15.4 Team-Level Aggregates</h3>
+<p>Below each team's player rows, a summary bar:</p>
+<ul>
+<li>Total team kills / deaths</li>
+<li>Total objectives (dragons, baron, heralds, turrets, inhibitors)</li>
+<li>Total team gold</li>
+</ul>
+<h3 id="155-typography-and-colour">15.5 Typography and Colour</h3>
+<p>Follows the system-wide USG aesthetic. Numbers in TX-02, labels in TX-76, champion names in TX-76. Local player row has a subtle blue-tinted background. Win team has a faint blue header, losing team a faint red header. Items shown at 28px icon size in the collapsed row, 32px in expanded.</p>
+          </div>
+          <a class="back-to-top" href="#top">Back to contents ↑</a>
+        </article>
+
+
+        <article class="document" id="doc-clip" data-source="APP-CLIP.md">
+          <header class="document-kicker">
+            <span class="document-number">04</span>
+            <span>APP-CLIP.md</span>
+          </header>
+          <div class="markdown-body">
+            <h1 id="app-clipmd-process-2-clip-exporter-screen">APP-CLIP.md — Process 2: Clip Exporter Screen</h1>
+<blockquote>
+<p><strong>Context:</strong> This screen is reached from the Viewer after the user sets clip endpoints. For viewer clip mode activation (endpoint handles, smart auto-positioning, scrubber behaviour in clip mode), refer to <code>APP-VIEWER.md</code> Section 11. For data schemas and file paths, refer to <code>SPEC.md</code>.</p>
+<p><strong>What this screen does:</strong> Lets the user preview a clip window, optionally mix in music, and export a clean H.264 MP4 file to disk. The exported clip appears in the Clips tab of the library (see <code>APP-LIBRARY.md</code> Section 4).</p>
+</blockquote>
+<hr>
+<h2 id="1-entry-point">1. Entry Point</h2>
+<p>The viewer passes the following state when navigating to this screen:</p>
+<pre><code class="language-ts">{
+  gameTimestamp: string,   // unix timestamp, identifies the game bundle
+  clipStartMs:  number,    // milliseconds into video.mp4
+  clipEndMs:    number,    // milliseconds into video.mp4
+}
+</code></pre>
+<p>Clip duration = <code>clipEndMs - clipStartMs</code>. Minimum 5 seconds (enforced in viewer).</p>
+<hr>
+<h2 id="2-screen-layout">2. Screen Layout</h2>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  ← Back to Viewer                                            │
+│                                                              │
+│  ┌────────────────────────────────────┐                      │
+│  │                                    │  Duration: 0:32      │
+│  │       Clip preview / thumbnail     │  Start:   14:17      │
+│  │         (first frame of clip)      │  End:     14:49      │
+│  │                                    │                      │
+│  └────────────────────────────────────┘                      │
+│                                                              │
+│  ──── MUSIC ──────────────────────────────────────────────   │
+│  ○  No music                                                 │
+│  ●  Built-in library     [ Track name          ▼ ]  [ ▶ ]   │
+│  ○  Import file          [ Browse...               ]         │
+│                                                              │
+│  ──── AUDIO MIX ──────────────────────────────────────────   │
+│  Game audio   [────●────────────] 80%                        │
+│  Music        [──────────────●──] 100%                       │
+│                                                              │
+│  ──── EXPORT ─────────────────────────────────────────────   │
+│  Output: ~/LeagueReplays/clips/1741267920_1741268352.mp4     │
+│                                                              │
+│  [ Export MP4 ]                              [ Cancel ]      │
+│                                                              │
+│  ─── after export ─────────────────────────────────────────  │
+│  ✓ Exported (0:04)   [ Open in Finder ]   [ Copy path ]      │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="3-clip-preview">3. Clip Preview</h2>
+<ul>
+<li>Displays the first frame of the clip window as a static thumbnail</li>
+<li>Achieved by seeking an off-screen <code>&lt;video&gt;</code> element to <code>clipStartMs / 1000</code> seconds and capturing a canvas frame</li>
+<li>Not a live preview — no playback in this screen</li>
+<li>Shows duration, start time, end time (formatted as <code>MM:SS</code>) alongside the thumbnail</li>
+</ul>
+<hr>
+<h2 id="4-music-options">4. Music Options</h2>
+<p>Three mutually exclusive radio options:</p>
+<h3 id="41-no-music">4.1 No Music</h3>
+<p>Default selection. Export uses game audio only at the configured volume.</p>
+<h3 id="42-built-in-library">4.2 Built-in Library</h3>
+<ul>
+<li>Dropdown of bundled royalty-free tracks</li>
+<li>~10–15 tracks at launch, various moods</li>
+<li>All tracks pre-cleared for use in content shared on Twitter/Discord/YouTube</li>
+<li><code>[ ▶ ]</code> button plays a 10-second preview of the selected track through the system audio output</li>
+<li>Preview stops when the user picks a different track or changes the music option</li>
+</ul>
+<h3 id="43-import-file">4.3 Import File</h3>
+<ul>
+<li>Opens a native file picker (Tauri dialog) filtered to <code>.mp3</code> and <code>.wav</code></li>
+<li>Selected file path is displayed truncated</li>
+<li>File is referenced by path only — it is not copied into the app</li>
+</ul>
+<hr>
+<h2 id="5-audio-mix-sliders">5. Audio Mix Sliders</h2>
+<p>Two range sliders, 0–100%, shown when a music option is selected (hidden when "No music" is selected):</p>
+<ul>
+<li><strong>Game audio</strong> — controls volume of the original recording's audio track. Default: 80%.</li>
+<li><strong>Music</strong> — controls volume of the selected music track. Default: 100%.</li>
+</ul>
+<p>Both values are passed directly to ffmpeg as volume multipliers (0.0–1.0).</p>
+<hr>
+<h2 id="6-export-pipeline">6. Export Pipeline</h2>
+<p>Export is triggered by the "Export MP4" button. The frontend calls a Tauri command which executes ffmpeg on the Rust backend.</p>
+<h3 id="61-output-path">6.1 Output Path</h3>
+<pre><code>{output_path}/clips/{game_timestamp}_{clip_timestamp}.mp4
+</code></pre>
+<p><code>clip_timestamp</code> = Unix timestamp at export time.</p>
+<h3 id="62-ffmpeg-command-with-music">6.2 ffmpeg Command — With Music</h3>
+<pre><code class="language-bash">ffmpeg \
+  -ss {clip_start_seconds} \
+  -i {game_bundle_path}/video.mp4 \
+  -t {clip_duration_seconds} \
+  -stream_loop -1 -i {music_file_path} \
+  -filter_complex \
+    &quot;[0:a]volume={game_audio_vol}[a1]; \
+     [1:a]volume={music_vol}[a2]; \
+     [a1][a2]amix=inputs=2:duration=first[aout]&quot; \
+  -map 0:v \
+  -map &quot;[aout]&quot; \
+  -vcodec copy \
+  -acodec aac -b:a 192k \
+  -t {clip_duration_seconds} \
+  {output_path}/clips/{clip_filename}.mp4
+</code></pre>
+<p><code>-stream_loop -1</code> loops the music track infinitely. <code>amix=duration=first</code> cuts the mixed audio to the length of the first input (the game audio, which is exactly <code>clip_duration_seconds</code> long). The final <code>-t {clip_duration_seconds}</code> on the output is a safety guard ensuring the clip never exceeds the intended duration regardless of muxer behaviour.</p>
+<h3 id="63-ffmpeg-command-no-music">6.3 ffmpeg Command — No Music</h3>
+<pre><code class="language-bash">ffmpeg \
+  -ss {clip_start_seconds} \
+  -i {game_bundle_path}/video.mp4 \
+  -t {clip_duration_seconds} \
+  -filter_complex &quot;[0:a]volume={game_audio_vol}[aout]&quot; \
+  -map 0:v \
+  -map &quot;[aout]&quot; \
+  -vcodec copy \
+  -acodec aac -b:a 192k \
+  {output_path}/clips/{clip_filename}.mp4
+</code></pre>
+<h3 id="64-thumbnail-sidecar">6.4 Thumbnail Sidecar</h3>
+<p>After the clip MP4 is written, extract the first frame as a JPEG sidecar:</p>
+<pre><code class="language-bash">ffmpeg \
+  -ss 0 \
+  -i {output_path}/clips/{clip_filename}.mp4 \
+  -frames:v 1 \
+  -q:v 3 \
+  {output_path}/clips/{clip_filename}.jpg
+</code></pre>
+<p>This sidecar is used by the Clips tab in the library (see <code>APP-LIBRARY.md</code> §4). It is always generated immediately after export — the Clips tab should never need to generate thumbnails at render time.</p>
+<h3 id="65-key-ffmpeg-flags">6.5 Key ffmpeg Flags</h3>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-ss</code> before <code>-i</code></td>
+<td>Fast seek (input seeking) — much faster than output seeking for large files</td>
+</tr>
+<tr>
+<td><code>-vcodec copy</code></td>
+<td>Video is not re-encoded. Export is near-instant regardless of clip length.</td>
+</tr>
+<tr>
+<td><code>-stream_loop -1</code></td>
+<td>Loops music infinitely so it always fills the clip duration</td>
+</tr>
+<tr>
+<td><code>amix=duration=first</code></td>
+<td>Cuts mixed audio to game audio length — never shorter than the clip</td>
+</tr>
+<tr>
+<td><code>-t {clip_duration_seconds}</code></td>
+<td>Explicit output duration cap — safety guard</td>
+</tr>
+</tbody>
+</table>
+<h3 id="66-no-stats-overlay">6.6 No Stats Overlay</h3>
+<p>Exported clips contain <strong>clean footage + audio only</strong>. No stats, no event markers, no UI elements are burned into the video. The viewer overlay exists only in the app.</p>
+<hr>
+<h2 id="7-export-progress-completion">7. Export Progress &amp; Completion</h2>
+<p>During export:
+- "Export MP4" button is replaced with a progress indicator
+- ffmpeg stdout/stderr is piped to the Rust backend and progress percentage is derived from the <code>time=</code> output
+- Progress is sent to the frontend via Tauri event</p>
+<p>On completion:
+- Success state: green checkmark + "Exported (elapsed time)"
+- Two action buttons appear: "Open in Finder / Explorer" (opens the output folder), "Copy file path" (copies absolute path to clipboard)
+- The clip is <strong>not</strong> auto-opened or auto-shared — the user decides what to do with it</p>
+<p>On error:
+- Error state: red indicator + ffmpeg error message (truncated, last line)
+- "Try again" button re-runs the export with the same parameters</p>
+<hr>
+<h2 id="8-clip-storage">8. Clip Storage</h2>
+<ul>
+<li>Output written to <code>{output_path}/clips/</code> as two files: <code>{clip_filename}.mp4</code> and <code>{clip_filename}.jpg</code> (thumbnail sidecar)</li>
+<li>Clips have <code>saved: true</code> by default — they are <strong>never auto-deleted</strong></li>
+<li>Clips are not linked back to a game bundle in any structured way — the filename convention (<code>{game_ts}_{clip_ts}</code>) is the only association</li>
+<li>Exported clips appear in the <strong>Clips tab</strong> of the app library (see <code>APP-LIBRARY.md</code> Section 4), not in the Games tab</li>
+<li>Clips and their sidecars are included in the storage usage breakdown shown in Settings</li>
+<li>Deleting a clip must delete both the <code>.mp4</code> and the <code>.jpg</code> sidecar</li>
+</ul>
+<hr>
+<h2 id="9-built-in-music-library">9. Built-in Music Library</h2>
+<ul>
+<li>Royalty-free tracks bundled inside the Tauri app under <code>resources/music/</code></li>
+<li>Format: MP3, 192kbps minimum</li>
+<li>Naming convention: <code>{mood}_{title}.mp3</code> (e.g. <code>hype_overdrive.mp3</code>, <code>chill_aftermath.mp3</code>)</li>
+<li>Metadata (display name, mood tag, duration) stored in a bundled <code>music.json</code> manifest</li>
+<li>The dropdown in the UI is populated from this manifest</li>
+</ul>
+<pre><code class="language-json">[
+  {
+    &quot;filename&quot;: &quot;hype_overdrive.mp3&quot;,
+    &quot;display_name&quot;: &quot;Overdrive&quot;,
+    &quot;mood&quot;: &quot;hype&quot;,
+    &quot;duration_s&quot;: 142
+  }
+]
+</code></pre>
+          </div>
+          <a class="back-to-top" href="#top">Back to contents ↑</a>
+        </article>
+
+
+        <article class="document" id="doc-library" data-source="APP-LIBRARY.md">
+          <header class="document-kicker">
+            <span class="document-number">05</span>
+            <span>APP-LIBRARY.md</span>
+          </header>
+          <div class="markdown-body">
+            <h1 id="app-librarymd-process-2-game-library-settings-storage">APP-LIBRARY.md — Process 2: Game Library, Settings &amp; Storage</h1>
+<blockquote>
+<p><strong>Context:</strong> This document covers the Game Library screen, the Settings screen, and all storage management logic. For data schemas and file paths, refer to <code>SPEC.md</code>. For the Viewer that the library opens into, refer to <code>APP-VIEWER.md</code>.</p>
+<p><strong>What this covers:</strong> How the app discovers game bundles on disk, how they are displayed, how the user manages storage, and how the settings screen maps to config values.</p>
+</blockquote>
+<hr>
+<h2 id="1-app-shell">1. App Shell</h2>
+<p>The app is a Tauri v2 window with a React frontend. The root level has <strong>two tabs</strong>:</p>
+<pre><code>[ Games ]  [ Clips ]
+</code></pre>
+<p><strong>Games tab</strong> — all recorded game bundles as cards, most recent first.
+<strong>Clips tab</strong> — all exported clips as cards.</p>
+<p>Both tabs are library views. No video plays at this level. The tab selection persists across app launches (stored in local app state).</p>
+<p>Below the tab bar, a persistent storage indicator is always visible (see Section 3.4).</p>
+<p><strong>Full screen list:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Screen</th>
+<th>Route</th>
+<th>Document</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Games tab</td>
+<td><code>/</code></td>
+<td>This file</td>
+</tr>
+<tr>
+<td>Clips tab</td>
+<td><code>/clips</code></td>
+<td>This file</td>
+</tr>
+<tr>
+<td>Viewer</td>
+<td><code>/viewer/:gameTimestamp</code></td>
+<td><code>APP-VIEWER.md</code></td>
+</tr>
+<tr>
+<td>Settings</td>
+<td><code>/settings</code></td>
+<td>This file</td>
+</tr>
+</tbody>
+</table>
+<p>Navigation is handled by React Router. The Settings screen is accessible from any screen via a persistent icon in the top-right corner of the shell.</p>
+<hr>
+<h2 id="2-app-startup-sequence">2. App Startup Sequence</h2>
+<p>On every launch, before rendering any UI:</p>
+<pre><code>1. Tauri backend scans {output_path}/games/
+   → for each subdirectory, read metadata.json
+   → if metadata.json missing: create a stub GameSummary with incomplete: true
+     (video.mp4 may still be present from a crashed recording — show a card with limited info)
+   → sort by recorded_at descending (incomplete stubs sort to bottom)
+
+2. Run auto-delete job:
+   → for each game where metadata.saved == false:
+       → if recorded_at &lt; (now - auto_delete_days):
+           → delete entire game directory
+   → incomplete bundles (no metadata.json) are NOT auto-deleted
+     — they require manual deletion from the library
+
+3. Return game list to frontend (includes incomplete stubs)
+4. Render Games tab
+
+5. If Riot ID is configured in settings:
+   → in background, for each game where matchv5_fetched == false:
+       → fetch Match V5 data (see SPEC.md §3.3)
+       → on success: write matchv5 field to game_log.json, set matchv5_fetched: true in metadata.json
+       → on failure: leave matchv5_fetched: false, log error, retry next launch
+       → update game card badge in UI when complete (no full reload required)
+</code></pre>
+<p>The scan and auto-delete run in Rust (Tauri command). The Match V5 fetch runs as a background Tauri task after the UI is already visible — it never blocks the initial render.</p>
+<hr>
+<h2 id="3-game-library-screen">3. Game Library Screen</h2>
+<h3 id="31-layout">3.1 Layout</h3>
+<ul>
+<li>Grid of game cards, most recent first</li>
+<li>Responsive: 2 columns minimum, up to 4 columns on wide windows</li>
+<li>Storage indicator in the bottom-left corner (always visible)</li>
+</ul>
+<h3 id="32-game-card">3.2 Game Card</h3>
+<p>Each card is derived from <code>metadata.json</code> + derived values from <code>game_log.json</code>.</p>
+<p><strong>Displayed on card:</strong>
+- Champion name (large, condensed bold)
+- KDA — computed from <code>game_log.json</code> events:
+  - Kills: <code>ChampionKill</code> events where <code>killer == local_player_summoner_name</code>
+  - Deaths: <code>ChampionKill</code> events where <code>victim == local_player_summoner_name</code>
+  - Assists: <code>ChampionKill</code> events where <code>assisters</code> contains <code>local_player_summoner_name</code>
+- Game mode (<code>metadata.game_mode</code>)
+- Game duration (formatted as <code>MM:SS</code> from <code>metadata.duration_ms</code>)
+- Date recorded (formatted as <code>Mar 6, 2026 · 14:32</code>)
+- Win / Loss badge — read directly from <code>metadata.win</code>. If <code>metadata.win</code> is <code>null</code> (win_method: "unknown"), show a neutral "?" badge until resolved by Match V5 enrichment
+- "Saved" badge if <code>metadata.saved == true</code>
+- "Incomplete" badge if bundle has no <code>metadata.json</code> (partial recording — champion and KDA will show as unknown, but the card is still clickable to open the video if video.mp4 is present)</p>
+<p><strong>On hover:</strong>
+- "Delete" button appears on unsaved games and on incomplete bundles — never on saved games
+- Delete requires a confirmation dialog before executing</p>
+<p><strong>On click:</strong>
+- Navigate to <code>/viewer/{gameTimestamp}</code></p>
+<h3 id="33-empty-state">3.3 Empty State</h3>
+<p>If no games have been recorded yet:
+- Large centered message: "No recordings yet"
+- Subtitle: "Start League of Legends — the recorder will capture your next game automatically."
+- No error, no action required</p>
+<h3 id="34-storage-indicator">3.4 Storage Indicator</h3>
+<p>Persistent bottom-left element, visible on all screens.</p>
+<p>Displays:
+- Total disk usage of all game recordings (sum of video.mp4 sizes)
+- Total disk usage of all clips
+- Combined total</p>
+<pre><code>Recordings: 42.3 GB  ·  Clips: 1.2 GB  ·  Total: 43.5 GB
+[Manage storage →]
+</code></pre>
+<p>Clicking "Manage storage" opens Settings directly at the storage section.</p>
+<hr>
+<h2 id="4-clips-tab">4. Clips Tab</h2>
+<p><strong>Layout:</strong> Grid of clip cards, most recent first. Same column count as the Games tab.</p>
+<p><strong>Each card displays:</strong>
+- Thumbnail (first frame of the clip — see thumbnail mechanism below)
+- Duration (formatted as <code>MM:SS</code>)
+- Source game info: champion name + date (derived from filename <code>{game_ts}_{clip_ts}.mp4</code> → look up game_ts in the games directory)
+- File size</p>
+<p><strong>Thumbnail mechanism:</strong> At export time, the Rust backend extracts the first frame of the clip using ffmpeg and saves it as a <code>.jpg</code> sidecar alongside the clip:</p>
+<pre><code>{output_path}/clips/{game_ts}_{clip_ts}.mp4
+{output_path}/clips/{game_ts}_{clip_ts}.jpg   ← thumbnail sidecar
+</code></pre>
+<p>The Clips tab loads thumbnails from these sidecars. If a sidecar is missing (e.g. for a clip created before this feature), the card shows a dark placeholder.</p>
+<p><strong>On click:</strong> plays the clip inline in a simple modal player — just a <code>&lt;video&gt;</code> element with basic controls. No stats tab, no scrubber enhancements. Clips are clean footage only.</p>
+<p><strong>Actions:</strong>
+- "Open in Finder / Explorer" — opens the clips folder
+- "Delete" — deletes both the <code>.mp4</code> and <code>.jpg</code> sidecar (requires confirmation)</p>
+<p>Clips are never auto-deleted (they always have <code>saved: true</code>). The only way to delete a clip is manually from this tab or from Settings.</p>
+<hr>
+<h2 id="5-settings-screen">5. Settings Screen</h2>
+<p>Accessed via the persistent settings icon (top-right corner of any screen).</p>
+<h3 id="51-recording-section">5.1 Recording Section</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Resolution</td>
+<td>Select</td>
+<td><code>source</code></td>
+<td><code>source</code> / <code>1920x1080</code> / <code>2560x1440</code></td>
+</tr>
+<tr>
+<td>Frame rate</td>
+<td>Select</td>
+<td><code>60</code></td>
+<td><code>30</code> / <code>60</code></td>
+</tr>
+<tr>
+<td>Bitrate</td>
+<td>Slider</td>
+<td><code>20000</code></td>
+<td>5000–50000 kbps, step 1000</td>
+</tr>
+<tr>
+<td>Output folder</td>
+<td>Path picker</td>
+<td><code>~/LeagueReplays</code></td>
+<td>Opens native folder picker</td>
+</tr>
+</tbody>
+</table>
+<p>Changes to these settings are written immediately to <code>config.toml</code> and take effect on the next game recording. A note reads: "Changes take effect from the next recording."</p>
+<h3 id="52-storage-section">5.2 Storage Section</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Auto-delete after</td>
+<td>Select</td>
+<td><code>30 days</code></td>
+<td>7 / 14 / 30 / 60 / 90 days / Never</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Storage breakdown:</strong></p>
+<pre><code>Games:  42.3 GB  (12 recordings)
+Clips:   1.2 GB  (4 clips)
+Total:  43.5 GB
+
+[ Clean up now ]
+</code></pre>
+<p>"Clean up now" runs the auto-delete job immediately and refreshes the display. It respects the <code>saved</code> flag — it only deletes eligible games.</p>
+<p><strong>Per-game management:</strong>
+A scrollable list of all recorded games (same data as library cards, compact row format), each with:
+- Champion + date + duration + size
+- Toggle: "Saved" (prevents auto-delete)
+- "Delete" button (requires confirmation)</p>
+<h3 id="53-riot-account-match-v5-enrichment">5.3 Riot Account (Match V5 Enrichment)</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Riot ID</td>
+<td>Text field</td>
+<td>Empty</td>
+<td>Format: <code>gameName#tagLine</code> e.g. <code>PlayerName#EUW</code></td>
+</tr>
+<tr>
+<td>API key</td>
+<td>Password field</td>
+<td>Empty</td>
+<td>Dev key only — expires every 24h. Hidden in production key phase.</td>
+</tr>
+</tbody>
+</table>
+<p>When a Riot ID is configured, the app attempts to fetch Match V5 data for any game where <code>matchv5_fetched = false</code>. This happens automatically on app launch, in the background, after the game list is rendered.</p>
+<p>Status per game is shown as a small badge on the game card: "Enriched" when Match V5 data is present.</p>
+<p>If the fetch fails (rate limit, wrong ID, network error), the game remains <code>matchv5_fetched = false</code> and the app retries on the next launch.</p>
+<h3 id="54-system-section">5.4 System Section</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Start with OS</td>
+<td>Toggle</td>
+<td>On</td>
+<td>Registers/removes OS startup entry</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Read-only info:</strong></p>
+<pre><code>Detected GPU:    NVIDIA GeForce RTX 4070
+Encoder in use:  h264_nvenc
+App version:     1.0.0
+</code></pre>
+<hr>
+<h2 id="6-auto-delete-logic">6. Auto-Delete Logic</h2>
+<p>Runs on every app launch, before rendering.</p>
+<pre><code>for each game in /games/:
+  if metadata.saved == false:
+    age = now - metadata.recorded_at
+    if age &gt; config.auto_delete_days * 86400 * 1000:
+      delete directory recursively
+</code></pre>
+<p><strong>Never deletes:</strong>
+- Any game with <code>metadata.saved == true</code>
+- Any file in <code>/clips/</code> (clips are always saved)
+- Incomplete bundles (no <code>metadata.json</code>) — these are left for the user to manage manually</p>
+<hr>
+<h2 id="7-save-unsave-a-game">7. Save / Unsave a Game</h2>
+<p>The <code>saved</code> flag in <code>metadata.json</code> is the only persistence mechanism.</p>
+<p><strong>To save:</strong> write <code>saved: true</code> to <code>metadata.json</code>.
+<strong>To unsave:</strong> write <code>saved: false</code> to <code>metadata.json</code>.</p>
+<p>This is a Tauri command that the frontend calls. It reads the file, modifies the field, and writes it back atomically.</p>
+<hr>
+<h2 id="8-tauri-commands-required">8. Tauri Commands Required</h2>
+<p>The following Tauri commands (Rust → frontend) are required for this module:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Input</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list_games</code></td>
+<td>—</td>
+<td><code>GameSummary[]</code></td>
+</tr>
+<tr>
+<td><code>list_clips</code></td>
+<td>—</td>
+<td><code>ClipSummary[]</code></td>
+</tr>
+<tr>
+<td><code>delete_game</code></td>
+<td><code>gameTimestamp: string</code></td>
+<td><code>Result&lt;()&gt;</code></td>
+</tr>
+<tr>
+<td><code>delete_clip</code></td>
+<td><code>clipFilename: string</code></td>
+<td><code>Result&lt;()&gt;</code> (deletes .mp4 + .jpg sidecar)</td>
+</tr>
+<tr>
+<td><code>save_game</code></td>
+<td><code>gameTimestamp: string, saved: bool</code></td>
+<td><code>Result&lt;()&gt;</code></td>
+</tr>
+<tr>
+<td><code>get_storage_usage</code></td>
+<td>—</td>
+<td><code>{ games_bytes, clips_bytes }</code></td>
+</tr>
+<tr>
+<td><code>run_auto_delete</code></td>
+<td>—</td>
+<td><code>{ deleted_count: number }</code></td>
+</tr>
+<tr>
+<td><code>open_output_folder</code></td>
+<td>—</td>
+<td>Opens Finder/Explorer</td>
+</tr>
+<tr>
+<td><code>get_settings</code></td>
+<td>—</td>
+<td><code>AppConfig</code></td>
+</tr>
+<tr>
+<td><code>save_settings</code></td>
+<td><code>AppConfig</code></td>
+<td><code>Result&lt;()&gt;</code></td>
+</tr>
+<tr>
+<td><code>fetch_matchv5</code></td>
+<td><code>gameTimestamp: string</code></td>
+<td><code>Result&lt;MatchV5Data&gt;</code></td>
+</tr>
+<tr>
+<td><code>get_matchv5_status</code></td>
+<td><code>gameTimestamp: string</code></td>
+<td><code>{ fetched: bool, error?: string }</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="clipsummary-type-returned-to-frontend"><code>ClipSummary</code> type (returned to frontend)</h3>
+<pre><code class="language-ts">type ClipSummary = {
+  filename:         string;   // e.g. &quot;1741267920_1741268352&quot;
+  game_timestamp:   string;   // game_ts portion — used to look up source game
+  clip_timestamp:   string;   // clip_ts portion — creation time
+  duration_ms:      number;
+  file_size_bytes:  number;
+  thumbnail_path:   string | null;  // absolute path to .jpg sidecar, null if missing
+  source_champion:  string | null;  // from source game metadata, null if game deleted
+  source_date:      string | null;  // from source game metadata
+};
+</code></pre>
+<h3 id="gamesummary-type-returned-to-frontend"><code>GameSummary</code> type (returned to frontend)</h3>
+<pre><code class="language-ts">type GameSummary = {
+  timestamp:        string;
+  champion:         string;
+  game_mode:        string;
+  duration_ms:      number;
+  recorded_at:      string;  // ISO 8601
+  kills:            number;  // derived from events
+  deaths:           number;  // derived from events
+  assists:          number;  // derived from events
+  win:              boolean | null;  // null if win_method == &quot;unknown&quot;
+  win_method:       &quot;matchv5&quot; | &quot;derived&quot; | &quot;unknown&quot;;
+  saved:            boolean;
+  incomplete:       boolean;
+  matchv5_fetched:  boolean;
+  video_size_bytes: number;
+};
+</code></pre>
+<p>KDA and win/loss are derived by the Rust backend when building this list. The frontend never reads <code>game_log.json</code> directly for the library view.</p>
+<p>The <code>matchv5_fetched</code> flag drives the enrichment badge on the game card and the background fetch trigger on app launch.</p>
+          </div>
+          <a class="back-to-top" href="#top">Back to contents ↑</a>
+        </article>
+
+
+        <article class="document" id="doc-phases" data-source="PHASES.md">
+          <header class="document-kicker">
+            <span class="document-number">06</span>
+            <span>PHASES.md</span>
+          </header>
+          <div class="markdown-body">
+            <h1 id="phasesmd-build-order-validation">PHASES.md — Build Order &amp; Validation</h1>
+<blockquote>
+<p><strong>How to use this document:</strong> Work through phases in order. Do not start a phase until the previous phase's validation criteria are met. Each phase lists which documents to open alongside <code>SPEC.md</code> when working with an AI. The AI prompt template is at the end of this document.</p>
+</blockquote>
+<hr>
+<h2 id="phase-overview">Phase Overview</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Name</th>
+<th>Process</th>
+<th>Documents needed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Recorder Core</td>
+<td>Recorder</td>
+<td><code>SPEC.md</code> + <code>RECORDER.md</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Live Client Poller</td>
+<td>Recorder</td>
+<td><code>SPEC.md</code> + <code>RECORDER.md</code> §5</td>
+</tr>
+<tr>
+<td>3</td>
+<td>App Shell + Library</td>
+<td>App</td>
+<td><code>SPEC.md</code> + <code>APP-LIBRARY.md</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Viewer — Windowed Mode</td>
+<td>App</td>
+<td><code>SPEC.md</code> + <code>APP-VIEWER.md</code> §1–3</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Viewer — Fullscreen Overlays</td>
+<td>App</td>
+<td><code>SPEC.md</code> + <code>APP-VIEWER.md</code> §4–12</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Viewer — Stats Tab</td>
+<td>App</td>
+<td><code>SPEC.md</code> + <code>APP-VIEWER.md</code> §15</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Clip Creator + Exporter</td>
+<td>App</td>
+<td><code>SPEC.md</code> + <code>APP-CLIP.md</code> + <code>APP-VIEWER.md</code> §11</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Match V5 Enrichment</td>
+<td>App</td>
+<td><code>SPEC.md</code> §3.3–3.5 + <code>APP-VIEWER.md</code> §15 + <code>APP-LIBRARY.md</code> §5.4</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Polish + Distribution</td>
+<td>Both</td>
+<td><code>SPEC.md</code> + <code>APP-LIBRARY.md</code> §5–6</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="phase-1-recorder-core">Phase 1 — Recorder Core</h2>
+<p><strong>Goal:</strong> Game starts → recording starts → game ends → playable video saved on disk.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>RECORDER.md</code></p>
+<p><strong>Scope:</strong>
+- Process watcher (detects League launch and close)
+- ffmpeg spawn with hardware encoding (NVENC / AMF / QSV / VideoToolbox)
+- Direct fragmented MP4 recording with two-second keyframe fragments
+- Crash-tolerant output: completed fragments remain playable after interruption
+- Video-only output: the game directory contains exactly <code>video.mp4</code>; no post-game remux
+- System tray icon: idle (grey) and recording (red) states</p>
+<p>Phase 1 does not connect to the League Client or Live Client APIs and does not create <code>metadata.json</code>, <code>game_log.json</code>, or any temporary metadata file.</p>
+<p><strong>Entry conditions:</strong>
+- Rust toolchain installed (<code>rustup</code>)
+- ffmpeg binary available at a known path (system-installed is fine at this phase; bundled in Phase 9)
+- A GPU with hardware encoding available</p>
+<p><strong>Validation:</strong>
+1. Launch the recorder binary — tray icon appears (grey)
+2. Launch League of Legends — tray icon turns red
+3. Play through the loading screen and at least 5 minutes of a game
+4. Close League (or surrender) — tray icon returns to grey
+5. Check <code>~/LeagueReplays/games/{timestamp}/</code>:
+   - <code>video.mp4</code> exists and is playable in VLC
+   - <code>video.mp4</code> is the only file in the completed game directory
+   - the tray returns to grey without a full-file conversion or system-wide I/O stall
+6. Repeat with an unexpected League crash — <code>video.mp4</code> remains playable up to its last completed fragment (at most approximately two seconds may be lost)</p>
+<p><strong>Complete when:</strong> a completed game directory consistently contains only a playable <code>video.mp4</code>, game-end finalization is effectively immediate, and interrupted recordings remain playable up to their last completed fragment.</p>
+<hr>
+<h2 id="phase-2-live-client-poller">Phase 2 — Live Client Poller</h2>
+<p><strong>Goal:</strong> <code>game_log.json</code> is fully populated with events, snapshots, and snapshot-derived changes, all time-synced to the video.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>RECORDER.md</code> §5</p>
+<p><strong>Scope:</strong>
+- Pre-game <code>/allgamedata</code> calibration poller (detect valid <code>gameTime</code>, calculate <code>video_offset_ms</code> from five monotonic clock samples)
+- Post-GameStart <strong>two concurrent async tasks</strong>:
+  - Event Loop: continuous polling of <code>/eventdata</code>, captures named events, detects game end via <code>ConnectionError</code>
+  - Snapshot Loop: 10s polling of <code>/allgamedata</code>, appends snapshots, diffs consecutive snapshots to detect item changes and level-ups
+- <code>game_log.json</code> written incrementally (atomic write after every batch)
+- <code>video_time_ms</code> pre-computed on all events and snapshot-derived changes at write time
+- Recorder writes <code>win: null</code> and <code>win_method: "unknown"</code>; post-game enrichment resolves the result through Match V5 or final-gold derivation</p>
+<p><strong>Entry conditions:</strong>
+- Phase 1 complete and validated</p>
+<p><strong>Empirical decision — 2026-07-30:</strong></p>
+<blockquote>
+<p>The Live Client API became unavailable without a reliable <code>GameEnd</code>; the recorder must not use that event for stopping or win/loss. <code>GameStart</code> existed, but was first observed about 2.11 seconds after its own <code>EventTime</code>, so event arrival time must not be the video anchor. Synchronize with the median of five <code>response_received_monotonic - gameTime</code> samples. Excluding the initial bootstrap response, this clock relation stayed within a 1.8ms range during the capture.</p>
+</blockquote>
+<p><strong>Validation:</strong>
+1. Play a full game (minimum 10 minutes, ideally to completion)
+2. Inspect <code>game_log.json</code>:
+   - <code>game_start_video_offset_ms</code> is present and nonzero (typically 120,000–240,000ms)
+   - <code>snapshots</code> has one entry every ~10 seconds
+   - <code>events</code> contains kill events with <code>video_time_ms</code> values
+   - <code>snapshot_derived_changes</code> contains item purchases with approximate timestamps
+3. Cross-check a kill event: seek <code>video.mp4</code> in VLC to <code>video_time_ms / 1000</code> seconds — kill should occur within ~1 second
+4. Kill the recorder mid-game — confirm <code>game_log.json</code> on disk has all events up to the last write
+5. Check <code>metadata.json</code>: <code>win</code> and <code>win_method</code> are present; <code>matchv5_fetched</code> is <code>false</code></p>
+<p><strong>Complete when:</strong> <code>video_time_ms</code> on kill events is accurate to within 2 seconds when checked against the video.</p>
+<hr>
+<h2 id="phase-3-app-shell-library">Phase 3 — App Shell + Library</h2>
+<p><strong>Goal:</strong> App launches, shows the Games and Clips tabs, opens a game, plays video.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-LIBRARY.md</code></p>
+<p><strong>Scope:</strong>
+- Tauri v2 scaffolding (React + TypeScript + Tailwind + Vite)
+- Root-level two-tab navigation: Games tab + Clips tab
+- Rust backend: <code>list_games</code> command (scans <code>/games/</code>, derives KDA from events, returns <code>GameSummary[]</code>)
+- Rust local HTTP server: streams <code>video.mp4</code> with range request support
+- Games tab: grid of cards from <code>GameSummary[]</code>, save/unsave toggle, delete with confirmation
+- Clips tab: grid of clip cards with thumbnail, duration, source game info
+- Basic Viewer screen: just the <code>&lt;video&gt;</code> element and back button — no overlays yet
+- Auto-delete job on launch
+- Settings screen: output path + auto-delete duration (minimum viable — full settings in Phase 9)
+- Data Dragon initialisation: on launch, check patch version and fetch/update item + champion cache</p>
+<p><strong>Entry conditions:</strong>
+- Phase 2 complete and validated
+- At least 3 game bundles on disk for library testing</p>
+<p><strong>Validation:</strong>
+1. <code>npm run tauri dev</code> launches without errors
+2. Games tab shows all recorded games with correct champion, KDA, win/loss badge, duration, date
+3. Clicking a game card navigates to the viewer — video plays and is seekable
+4. Video does not load into memory (RAM usage stable regardless of file size)
+5. Clips tab renders correctly (place a test <code>.mp4</code> and matching <code>.jpg</code> sidecar manually into <code>{output_path}/clips/</code> to verify the tab displays the card with thumbnail — actual clip export with automatic sidecar generation is built in Phase 7)
+6. Auto-delete removes games older than threshold (manually backdate <code>recorded_at</code> to test)
+7. Data Dragon cache is written to disk — item IDs resolve to names in the browser console</p>
+<p><strong>Complete when:</strong> both library tabs work, video plays smoothly, and Data Dragon is initialised.</p>
+<hr>
+<h2 id="phase-4-viewer-windowed-mode">Phase 4 — Viewer: Windowed Mode</h2>
+<p><strong>Goal:</strong> The default viewer layout — windowed, panels always visible, video + data side by side.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-VIEWER.md</code> §1–3</p>
+<p><strong>Scope:</strong>
+- Two-tab header: Replay / Stats (Stats tab is empty placeholder at this phase)
+- Windowed layout: video ~60% width, stats panel alongside, scrubber below
+- Stats panel: champion, KDA, current gold diff, CS, level — driven by <code>timeupdate</code> sync
+- Scrubber: rail, fill, playhead tracking <code>currentTime</code>, event markers positioned by <code>video_time_ms</code>, clicking rail or marker seeks
+- Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
+- Event feed panel: scrollable list of events, active row highlights as playhead passes each event
+- USG aesthetic throughout (Barlow Condensed + DM Mono, <code>#002FA7</code> blue)</p>
+<p><strong>Entry conditions:</strong>
+- Phase 3 complete and validated</p>
+<p><strong>Validation:</strong>
+1. Opening a game shows the windowed layout — video and panels visible simultaneously
+2. Scrubber playhead tracks video in real time
+3. Clicking the rail seeks correctly; clicking an event marker seeks to within 1 second of the event
+4. Stats panel values update as the video plays (gold diff, CS, level change over time)
+5. Event feed highlights the correct row as playhead passes each event
+6. UI matches the USG aesthetic reference (<code>league-replay-usgfx-v3.jsx</code>)</p>
+<p><strong>Complete when:</strong> windowed viewer is fully functional and the aesthetic is consistent.</p>
+<hr>
+<h2 id="phase-5-viewer-fullscreen-overlays">Phase 5 — Viewer: Fullscreen Overlays</h2>
+<p><strong>Goal:</strong> Fullscreen mode is fully functional with all overlay elements.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-VIEWER.md</code> §2.2, §4–12, §14</p>
+<p><strong>Scope:</strong>
+- Fullscreen toggle: double-click video or F key → fills window, panels disappear, overlays appear
+- Escape or F → returns to windowed mode, state preserved
+- Top bar: champion, KDA, gold diff, clock, REC indicator — fades after 3.2s idle, reappears on mouse move
+- Scrubber: ambient (44px) and active (96px) states, minute ticks, event markers
+- Gold graph drawer: slides up from bottom, gold tab always visible
+- Floating event card: animates in/out on event proximity, 3.5s auto-dismiss
+- Right tick strip: always visible, proportional event dots, playhead needle
+- Right event panel: slides in from tick strip click, event rows, gold/CS summary</p>
+<p><strong>Entry conditions:</strong>
+- Phase 4 complete and validated</p>
+<p><strong>Validation:</strong>
+1. Double-clicking video enters fullscreen — video fills window, panels gone, overlays present
+2. Escape returns to windowed mode — playhead position preserved
+3. Top bar fades after 3.2s, reappears instantly on mouse move
+4. Scrubber ambient/active transition works on hover
+5. Gold graph drawer opens and closes; cursor tracks playhead in real time
+6. Event card animates in when playhead is within ~1 second of a kill, auto-dismisses after 3.5s
+7. Tick strip dots are proportionally positioned; playhead needle moves in real time
+8. Event panel slides in on tick strip click; clicking a row seeks to that event</p>
+<p><strong>Complete when:</strong> all overlay elements behave as specified in <code>APP-VIEWER.md</code> §14 state summary table.</p>
+<hr>
+<h2 id="phase-6-viewer-stats-tab">Phase 6 — Viewer: Stats Tab</h2>
+<p><strong>Goal:</strong> The Stats tab shows a complete end-of-game scoreboard for all 10 players.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-VIEWER.md</code> §15</p>
+<p><strong>Scope:</strong>
+- Stats tab renders scoreboard: two teams, 5 players each
+- Collapsed row: champion icon, summoner spells, keystone, KDA, kill participation, CS, gold, level, items (resolved via Data Dragon)
+- Multi-kill badge on row if applicable
+- Expanded row (accordion): item build order with approximate timestamps (from <code>snapshot_derived_changes</code>), skill order (local player only at this phase — all players in Phase 8), full rune page
+- Team aggregates bar: total kills, objectives, gold
+- Local player row highlighted
+- Win/loss header per team
+- Graceful state when <code>win: null</code> — show "Result unknown" rather than Win/Loss</p>
+<p><strong>Entry conditions:</strong>
+- Phase 5 complete and validated
+- Data Dragon cache working (from Phase 3)</p>
+<p><strong>Validation:</strong>
+1. Stats tab renders for every game in the library
+2. All 10 players shown with correct champion icons (resolved via Data Dragon)
+3. Items display correctly — IDs resolved to icons, not raw numbers
+4. Clicking any player row expands it; clicking again collapses it; only one row open at a time
+5. Build order shows items in the correct purchase sequence with approximate timestamps
+6. Skill order shown for the local player; other players show "Skill order unavailable"
+7. Team aggregates are correct</p>
+<p><strong>Complete when:</strong> Stats tab is accurate and all players' data is readable without Match V5.</p>
+<hr>
+<h2 id="phase-7-clip-creator-exporter">Phase 7 — Clip Creator + Exporter</h2>
+<p><strong>Goal:</strong> User can create a clip, add music, export a valid MP4, and find it in the Clips tab.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-CLIP.md</code> + <code>APP-VIEWER.md</code> §11</p>
+<p><strong>Scope:</strong>
+- Clip mode activation: clicking a kill marker or the Clip button on the scrubber (works in both windowed and fullscreen modes)
+- Smart auto-positioning: heuristic mode (solo kill / teamfight / multikill / penta pre/post-roll windows) — see <code>APP-VIEWER.md</code> §11.1
+- Draggable endpoint handles with 5-second minimum and event snapping
+- "Export Clip →" navigates to Clip Exporter screen
+- Music selection: No music / built-in library / import file
+- Music looping: short tracks loop to fill the clip duration (never cut clip short)
+- Audio mix sliders (game audio + music volume)
+- ffmpeg export pipeline (Rust Tauri command, <code>-vcodec copy</code>)
+- Thumbnail sidecar (<code>.jpg</code>) generated immediately after each export
+- Export progress via Tauri events
+- Post-export: "Open in Finder" + "Copy path" actions
+- Exported clip and sidecar appear in Clips tab</p>
+<p><strong>Entry conditions:</strong>
+- Phase 6 complete and validated
+- At least one bundled music track in <code>resources/music/</code></p>
+<p><strong>Validation:</strong>
+1. Clicking a kill marker activates clip mode with correct heuristic window (solo kill: 8s pre / 5s post; test others)
+2. Clip mode works correctly from both windowed and fullscreen viewer modes
+3. Endpoint handles are draggable; 5-second minimum enforced
+4. Export with a music track shorter than the clip — confirm clip is NOT truncated (music loops)
+5. Clip export completes in under 5 seconds for a 30-second clip
+6. Output plays in VLC with game audio + music correctly mixed for the full clip duration
+7. Output plays in Discord (drag-and-drop share test)
+8. <code>.jpg</code> sidecar is created alongside the <code>.mp4</code> in <code>{output_path}/clips/</code>
+9. Exported clip appears in Clips tab with correct thumbnail, duration, and source game info</p>
+<p><strong>Complete when:</strong> a clip can be exported, shared externally, and found in the Clips tab.</p>
+<hr>
+<h2 id="phase-8-match-v5-enrichment">Phase 8 — Match V5 Enrichment</h2>
+<p><strong>Goal:</strong> Match V5 data is fetched post-game, merged into the bundle, and upgrades the Stats tab and clip positioning.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> §3.3–3.5 + <code>APP-VIEWER.md</code> §11.1, §15 + <code>APP-LIBRARY.md</code> §5.4</p>
+<p><strong>Scope:</strong>
+- Settings: Riot ID field + API key field (dev key phase)
+- Background enrichment on app launch: for every game with <code>matchv5_fetched: false</code>, fetch Match V5 match result + timeline and merge into <code>game_log.json</code> under the <code>matchv5</code> key (see <code>SPEC.md</code> §3.7)
+- Set <code>metadata.json</code> <code>matchv5_fetched: true</code> on success; leave <code>false</code> and log error on failure
+- Stats tab upgrades when Match V5 data present: damage dealt/taken, vision score, ward stats, CC score, time dead, exact item timestamps, skill order for all players
+- Win/loss resolved from Match V5 <code>GAME_END</code> event for games where <code>win_method: "unknown"</code>
+- Clip auto-positioning upgrades to precise mode: <code>victimDamageReceived</code> timestamps for exact fight start
+- "Enriched" badge on game card in library when <code>matchv5_fetched: true</code>
+- Degradation banner in Stats tab when <code>matchv5_fetched: false</code></p>
+<p><strong>Entry conditions:</strong>
+- Phase 7 complete and validated
+- A personal Riot developer API key obtained from <code>developer.riotgames.com</code></p>
+<p><strong>Validation:</strong>
+1. Enter Riot ID + API key in settings — app fetches Match V5 for all existing games on restart
+2. "Enriched" badge appears on game cards
+3. Stats tab now shows damage dealt/taken columns, vision score, ward stats
+4. Expanded rows show exact item timestamps (e.g. "3:24" not "~3:30")
+5. Skill order shown for all 10 players (not just local player)
+6. Clip auto-positioning for a kill with Match V5 data uses exact fight start — compare against heuristic to verify improvement
+7. A game with <code>win_method: "unknown"</code> has its win/loss resolved after enrichment</p>
+<p><strong>Complete when:</strong> Match V5 data enriches the Stats tab and clip positioning, and the app degrades gracefully when Riot ID is not configured.</p>
+<hr>
+<h2 id="phase-9-polish-distribution">Phase 9 — Polish + Distribution</h2>
+<p><strong>Goal:</strong> App is ready for public distribution as an installer on a clean machine.</p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-LIBRARY.md</code> §5–6</p>
+<p><strong>Scope:</strong>
+- ffmpeg bundled inside Tauri app (<code>resources/ffmpeg</code>); recorder resolves path at runtime — no system ffmpeg required
+- Settings screen: all fields functional (resolution, FPS, bitrate, output path, auto-delete, autostart, Riot ID, API key)
+- Storage breakdown in settings: per-section totals + per-game list with save toggle and delete
+- Auto-update via Tauri Updater plugin (requires hosted update manifest URL)
+- Code signing:
+  - Windows: <code>.msi</code> + <code>.exe</code>, code signing certificate
+  - macOS: <code>.dmg</code>, Apple Developer notarization ($99/yr account required)
+- Installer testing on clean machines (no dev tools, no system ffmpeg)</p>
+<p><strong>Entry conditions:</strong>
+- Phases 1–8 complete and validated
+- Code signing certificates obtained
+- Update server URL configured in <code>tauri.conf.json</code>
+- At least 10 bundled music tracks in <code>resources/music/</code></p>
+<p><strong>Validation:</strong>
+1. <code>npm run tauri build</code> produces <code>.msi</code> and <code>.dmg</code> without errors
+2. Install <code>.msi</code> on a clean Windows machine — recorder starts automatically with Windows, tray icon appears
+3. Full Phase 1–8 validation passes on the installed build (not dev server)
+4. App works with no system ffmpeg installed — uses bundled binary
+5. Auto-update: push version bump, open old installed version, confirm update is offered and installs correctly</p>
+<p><strong>Complete when:</strong> the app installs and fully validates on a fresh machine with no prerequisites.</p>
+<hr>
+<h2 id="working-with-an-ai-on-a-phase">Working With an AI on a Phase</h2>
+<p>For each phase, give the AI:</p>
+<ol>
+<li>The full contents of <code>SPEC.md</code></li>
+<li>The full contents of every document listed in the phase's "Documents needed" column</li>
+<li>This prompt prefix:</li>
+</ol>
+<blockquote>
+<p>"You are implementing Phase {N} ({Phase Name}) of the League Replay Tool. The full project architecture and data contracts are in SPEC.md. This phase focuses on {one-sentence description}. Build only what is in scope for this phase — do not implement future phases. If anything in the spec is ambiguous or missing, ask before assuming."</p>
+</blockquote>
+<p>Keep conversations to one phase at a time. Start a fresh conversation for each phase. When validation passes, update this document to mark the phase complete before moving on.</p>
+          </div>
+          <a class="back-to-top" href="#top">Back to contents ↑</a>
+        </article>
+
+  </main>
+
+  <script>
+    (() => {
+      const slugify = text => text.toLowerCase()
+        .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+      const articles = [...document.querySelectorAll(".document")];
+      const docLinks = [...document.querySelectorAll(".doc-link")];
+      const outline = document.getElementById("outline");
+
+      articles.forEach(article => {
+        const used = new Set();
+        article.querySelectorAll("h1, h2, h3, h4").forEach((heading, index) => {
+          let id = `${article.id}-${slugify(heading.textContent) || index}`;
+          while (used.has(id)) id += "-";
+          used.add(id);
+          heading.id = id;
+          if (heading.matches("h2, h3")) {
+            const anchor = document.createElement("a");
+            anchor.className = "heading-anchor";
+            anchor.href = `#${id}`;
+            anchor.textContent = "#";
+            anchor.setAttribute("aria-label", `Link to ${heading.textContent}`);
+            heading.prepend(anchor);
+          }
+        });
+      });
+
+      document.querySelectorAll("table").forEach(table => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "table-wrap";
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+      });
+
+      document.querySelectorAll("pre").forEach(pre => {
+        const button = document.createElement("button");
+        button.className = "copy-code";
+        button.type = "button";
+        button.textContent = "Copy";
+        button.addEventListener("click", async () => {
+          await navigator.clipboard.writeText(pre.querySelector("code")?.innerText || pre.innerText);
+          button.textContent = "Copied";
+          setTimeout(() => button.textContent = "Copy", 1200);
+        });
+        pre.appendChild(button);
+      });
+
+      const renderOutline = article => {
+        const headings = [...article.querySelectorAll("h2, h3")];
+        outline.innerHTML = headings.length
+          ? '<div class="outline-title">On this page</div>' + headings.map(h =>
+              `<a href="#${h.id}" data-level="${h.tagName.slice(1)}">${h.textContent.replace(/^#/, "").trim()}</a>`
+            ).join("")
+          : "";
+      };
+
+      const observer = new IntersectionObserver(entries => {
+        const visible = entries.filter(entry => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        docLinks.forEach(link => link.classList.toggle("active", link.hash === `#${visible.target.id}`));
+        renderOutline(visible.target);
+      }, { rootMargin: "-20% 0px -55% 0px", threshold: [0, .1, .3] });
+      articles.forEach(article => observer.observe(article));
+      renderOutline(articles[0]);
+
+      const input = document.getElementById("search");
+      const status = document.getElementById("search-status");
+      let marks = [];
+      const clearMarks = () => {
+        marks.forEach(mark => mark.replaceWith(document.createTextNode(mark.textContent)));
+        marks = [];
+      };
+      input.addEventListener("input", () => {
+        clearMarks();
+        const query = input.value.trim();
+        if (query.length < 2) {
+          status.textContent = query ? "Type at least 2 characters" : "";
+          return;
+        }
+        const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+        const walker = document.createTreeWalker(
+          document.querySelector("main"),
+          NodeFilter.SHOW_TEXT,
+          { acceptNode: node => {
+            if (!node.nodeValue.trim() || node.parentElement.closest("script, style, mark")) return NodeFilter.FILTER_REJECT;
+            return regex.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          }}
+        );
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        let count = 0;
+        nodes.forEach(node => {
+          const fragment = document.createDocumentFragment();
+          let cursor = 0;
+          node.nodeValue.replace(regex, (match, offset) => {
+            fragment.append(node.nodeValue.slice(cursor, offset));
+            const mark = document.createElement("mark");
+            mark.textContent = match;
+            fragment.append(mark);
+            marks.push(mark);
+            count++;
+            cursor = offset + match.length;
+          });
+          fragment.append(node.nodeValue.slice(cursor));
+          node.replaceWith(fragment);
+        });
+        status.textContent = `${count} match${count === 1 ? "" : "es"}`;
+        marks[0]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    })();
+  </script>
+</body>
+</html>
