@@ -1,7 +1,8 @@
 # League Replay Recorder
 
-Phase 1 implements the recorder core described by `../SPEC.md`, `../RECORDER.md`, and
-`../PHASES.md`.
+The recorder currently implements Phases 1 and 2 described by `../SPEC.md`,
+`../RECORDER.md`, and `../PHASES.md`: fragmented MP4 capture plus synchronized Live
+Client event and snapshot logging.
 
 ## Build
 
@@ -11,7 +12,7 @@ cargo build --release
 
 The binary is written to `target/release/recorder.exe` on Windows.
 
-Phase 1 resolves ffmpeg in this order:
+The recorder resolves ffmpeg in this order:
 
 1. `LEAGUE_REPLAY_FFMPEG`
 2. `resources/ffmpeg/ffmpeg.exe` beside the recorder
@@ -50,7 +51,7 @@ automatically after three seconds. It is intended for build validation only.
 development tests. The production defaults remain `League of Legends.exe` on Windows
 and `League of Legends` on macOS.
 
-## Phase 1 live validation
+## Phase 2 live validation
 
 1. Run `cargo run --release`.
 2. Confirm the grey tray icon appears.
@@ -59,11 +60,17 @@ and `League of Legends` on macOS.
 5. End the game or close League and confirm the tray returns to grey.
 6. Inspect `{output_path}/games/{timestamp}/`:
    - `video.mp4` exists and plays;
-   - it is the only file in the completed game directory;
+   - `game_log.json` contains snapshots, events, and a non-null
+     `game_start_video_offset_ms`;
+   - `metadata.json` contains the local player, recording settings, `win: null`, and
+     `matchv5_fetched: false`;
    - the tray returns to grey without a full-file conversion or system-wide I/O stall.
-7. Repeat once after forcibly closing League. The fragmented `video.mp4` should remain
+7. Seek to a kill event's `video_time_ms / 1000` position in VLC and confirm the kill
+   occurs within approximately two seconds.
+8. Repeat once after forcibly closing League. The fragmented `video.mp4` should remain
    playable up to its last completed fragment; at most approximately two seconds may
    be missing.
 
-Phase 1 does not connect to the League Client or Live Client APIs. It creates no
-`metadata.json`, `game_log.json`, or temporary metadata file.
+The recorder connects only to the local Live Client API at `127.0.0.1:2999`. It never
+connects to the League Client API, and API disappearance never stops video capture;
+only the League game process watcher does that.

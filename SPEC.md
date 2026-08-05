@@ -93,8 +93,8 @@ Three data sources are used, with different availability and optionality:
 
 | Source | When available | Required? | What it provides |
 |---|---|---|---|
-| `localhost:2999` Live Client API | During the game only | ✅ Always | Events, snapshots, real-time state |
-| Riot Match V5 Timeline API | Post-game, via Riot servers | ⚙️ Optional | Damage stats, exact item timestamps, vision/CC/ward data, fight boundaries |
+| `localhost:2999` Live Client API | During the game only | ✅ Always | Events, roster, items, levels, CS, and local-player gold/HP |
+| Riot Match V5 Timeline API | Post-game, via Riot servers | ⚙️ Optional | Damage stats, team gold timeline, exact item timestamps, vision/CC/ward data, fight boundaries |
 | Riot Data Dragon CDN | Anytime, static per patch | ✅ Always | Item names, item icons, champion icons |
 
 The app is **fully functional without Match V5**. Features that depend on it degrade gracefully — columns are hidden rather than shown empty, and clip positioning falls back to heuristics. See Section 3.5 for the degradation map.
@@ -107,12 +107,12 @@ The app is **fully functional without Match V5**. Features that depend on it deg
 
 Note: The API uses HTTPS with a self-signed Riot certificate. Requests must either use the official Riot root certificate (`riotgames.pem`) or disable SSL verification. The recorder uses `reqwest` with certificate pinning or verification disabled.
 
-**Two polling loops run concurrently post-GameStart** (see `RECORDER.md` Section 5 for implementation):
+**Two polling loops run concurrently after clock calibration** (see `RECORDER.md` Section 5 for implementation):
 
 | Loop | Endpoint | Interval | Purpose |
 |---|---|---|---|
 | Event loop | `/eventdata` | As fast as response allows (~continuous) | Capture all named events with millisecond precision |
-| Snapshot loop | `/allgamedata` | Every 10s | Capture player state (gold, HP, items, CS, level) |
+| Snapshot loop | `/allgamedata` | Every 10s | Capture roster state (items, CS, level) plus local-player gold/HP |
 
 **Named events from `/eventdata`** — these are the only events the API fires. This list is complete and confirmed from Riot's official static file:
 
@@ -133,20 +133,19 @@ Note: The API uses HTTPS with a self-signed Riot certificate. Requests must eith
 | `Ace` | EventTime, Acer, AcingTeam | |
 | `GameEnd` | EventTime, Result | Not reliable; ignored for stop detection and win/loss |
 
-> **`GameEnd` and win/loss:** Empirical capture showed that the Live Client API can disappear without exposing a `GameEnd` event. The recorder therefore never depends on `GameEnd`: API unavailability after successful polling is the game-stop signal. Win/loss comes from Match V5 `GAME_END`; if Match V5 is unavailable, derive it from the final gold differential when possible, otherwise set `win: null`. Record the derivation method as `win_method: "matchv5" | "derived" | "unknown"`.
+> **`GameEnd` and win/loss:** Empirical capture showed that the Live Client API can disappear without exposing a `GameEnd` event. The recorder therefore never depends on `GameEnd`. API unavailability ends the polling tasks only; the League process watcher remains the sole video-stop trigger. Win/loss comes from Match V5 `GAME_END`; without enrichment it remains `null` with `win_method: "unknown"`.
 
-**Items, level changes, and gold changes are NOT named events.** They are state fields in `/allgamedata` snapshots. They are detected by diffing consecutive snapshots:
+**Item and level changes are NOT named events.** They are state fields in `/allgamedata` snapshots and are detected by diffing consecutive snapshots:
 
 | Change detected | How | Timestamp precision |
 |---|---|---|
 | Item purchased | Item appears in player's items array | Snapshot interval (~10s) |
 | Item sold | Item disappears from player's items array | Snapshot interval (~10s) |
 | Level up | Player's level field increases | Snapshot interval (~10s) |
-| Gold change | Player's gold field changes | Snapshot interval (~10s) |
 
 This means **build order timestamps from the Live Client API are approximate** — accurate to within the snapshot interval. Exact timestamps require Match V5 (see Section 3.3).
 
-**Snapshots from `/allgamedata` (every 10s):** gold (current), HP (current + max), CS, XP, level, items (all slots) per player, plus runes and summoner spells (stable — only needed from first snapshot).
+**Snapshots from `/allgamedata` (every 10s):** champion, team, CS, level, and items for every player. Current gold and current/max HP are exposed only for the active local player, so those fields are `null` for everyone else. XP is not exposed and is not stored. Summoner spells and keystone are stored for all players on the first snapshot; the full rune ID list is available only for the local player.
 
 ### 3.3 Match V5 Timeline API (Optional Enrichment)
 
@@ -175,6 +174,7 @@ Fetched once, post-game, by the app on launch if a Riot ID is configured in sett
 | `totalTimeCCDealt` | Match result | Recap stats tab |
 | `totalTimeSpentDead` | Match result | Recap stats tab |
 | `objectivesStolen` | Match result | Recap stats tab |
+| `participantFrames.totalGold` / `currentGold` / `xp` | Timeline | Team gold graph and complete per-player timeline |
 | `ITEM_PURCHASED` events with exact timestamps | Timeline | Exact build order |
 | `ITEM_UNDO` events | Timeline | Accurate build history |
 | `SKILL_LEVEL_UP` events for all players | Timeline | Skill order for all 10 players |
@@ -228,12 +228,13 @@ When Match V5 data is unavailable (no Riot ID configured, or API call failed), t
 | Vision score | Shown | Hidden |
 | Ward stats | Shown | Hidden |
 | CC score / time dead | Shown | Hidden |
+| Team gold graph and gold differential | Shown from timeline frames | Hidden; Live Client exposes only local-player current gold |
 | Item build order timestamps | Exact (ms precision) | Approximate (±10s from snapshot) |
-| Skill order | All 10 players | Local player only |
+| Skill order | All 10 players | Unavailable |
 | Clip auto-positioning | Exact fight start from `victimDamageReceived` | Heuristic — see `APP-VIEWER.md` §11.1 |
-| Win/loss | Definitive from `GAME_END` | Derived from final gold diff when possible |
+| Win/loss | Definitive from `GAME_END` | Unknown (`null`) |
 
-**UI treatment:** a non-blocking banner at the top of the Stats tab reads: *"Connect your Riot account to unlock damage stats, vision score, and precise build timings. [Connect →]"* Users who ignore it get a complete experience minus those columns.
+**UI treatment:** a non-blocking banner at the top of the Stats tab reads: *"Connect your Riot account to unlock team gold, damage stats, vision score, and precise build timings. [Connect →]"* Features backed by unavailable data are hidden rather than populated with estimates.
 
 ---
 
@@ -286,14 +287,13 @@ The video recording starts when `League of Legends.exe` is detected — this inc
           "hp": 580,
           "hp_max": 580,
           "cs": 0,
-          "xp": 0,
           "level": 1,
           "items": [
             { "item_id": 1055, "slot": 0, "count": 1 }
           ],
-          "summoner_spells": ["SummonerFlash", "SummonerIgnite"],
+          "summoner_spells": ["SummonerFlash", "SummonerDot"],
           "keystone_id": 8128,
-          "rune_ids": [8128, 8126, 8138, 8135, 8304, 8345]
+          "rune_ids": [8128, 8126, 8138, 8135, 8304, 8345, 5005, 5008, 5011]
         }
       ]
     }
@@ -328,11 +328,13 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 }
 ```
 
-`summoner_spells`, `keystone_id`, and `rune_ids` are only present on the **first snapshot** — they are stable for the entire game and do not need re-recording.
+`gold`, `hp`, and `hp_max` contain numbers for the active local player and `null` for every other player. XP is not present because the Live Client API does not expose it.
+
+`summoner_spells` and `keystone_id` are present for all players only on the **first snapshot**. `rune_ids` is also first-snapshot-only and is present only for the local player. These fields are stable and do not need re-recording.
 
 `video_time_ms` is pre-computed on each event and snapshot-derived change at write time.
 
-`matchv5` is `null` until enrichment is fetched post-game. When populated it contains the merged Match V5 match result and timeline data. The app reads this field to populate damage/vision columns and exact item timestamps.
+`matchv5` is `null` until enrichment is fetched post-game. When populated it contains the merged Match V5 match result and timeline data. The app reads this field to populate damage/vision columns, team gold, complete rune pages, and exact item timestamps.
 
 `snapshot_derived_changes` records item purchases, sales, and level-ups detected by diffing consecutive snapshots. Timestamps are approximate (±10s). Valid `change_type` values: `"ItemPurchased"`, `"ItemSold"`, `"LevelUp"`.
 
@@ -357,7 +359,9 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 }
 ```
 
-`win_method` values: `"matchv5"` (Match V5 `GAME_END`), `"derived"` (final gold differential fallback), `"unknown"`.
+`win_method` values: `"matchv5"` (Match V5 `GAME_END`), `"derived"` (reserved for a future verified fallback), `"unknown"`. No result is inferred from unavailable or estimated data.
+
+If the Live Client API never becomes available, `game_mode`, the three `local_player_*` fields, and `video_offset_ms` are `null`; the video bundle is still finalized normally. Phase 2 itself always writes `win: null` with `win_method: "unknown"`.
 
 `matchv5_fetched: false` = app should attempt to fetch on next launch if Riot ID is configured.
 
@@ -465,7 +469,7 @@ The Live Client Data API requires no key. The Riot Match V5 API requires a key i
 |---|---|
 | No spell cast data | Riot API does not expose this at any granularity. Video fills the gap. |
 | No skillshot dodge detection | Riot tracks challenge totals, not per-game events. |
-| Gold/HP snapshots at 10s granularity | Sufficient for graph display. |
+| Live Client gold/HP is local-player-only | Non-local values are stored as `null`; team gold and XP timelines require Match V5. |
 | No minimap heatmaps | Not in Live Client API or Match V5. Possible future addition if Riot exposes it. |
 | Damage stats require Match V5 | Not available from Live Client API. App degrades gracefully without them. |
 | Item timestamps approximate without Match V5 | Live Client API snapshots at 10s — exact timestamps need Match V5 post-game. |

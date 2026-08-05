@@ -7,10 +7,11 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::config::Config;
+use crate::config::{Config, parse_resolution};
 use crate::encoder::{AudioSource, EncoderKind, Ffmpeg, RecordingSession};
 use crate::platform::{capture_target_for_process, fallback_capture_target};
-use crate::storage::{create_game_directory, unix_timestamp_now};
+use crate::poller::{PollerSession, RecordingMetadata};
+use crate::storage::{METADATA_JSON, create_game_directory, unix_timestamp_now, write_json_atomic};
 use crate::watcher::{
     DEFAULT_PROCESS_NAME, LeagueProcess, POLL_INTERVAL, ProcessTransition, ProcessWatcher,
     transition,
@@ -33,6 +34,10 @@ pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 
 struct ActiveRecording {
     session: RecordingSession,
+    poller: PollerSession,
+    encoder_used: String,
+    recording_resolution: String,
+    recording_fps: u32,
 }
 
 pub async fn run(
@@ -228,16 +233,73 @@ async fn start_recording(
         Err(error) => return Err(error),
     };
 
+    let recording_resolution = parse_resolution(&config.recording.resolution)?
+        .or_else(|| target.dimensions())
+        .map(|(width, height)| format!("{width}x{height}"))
+        .unwrap_or_else(|| config.recording.resolution.clone());
+    let poller = match PollerSession::start(&directory, session.video_started_at()).await {
+        Ok(poller) => poller,
+        Err(error) => {
+            let _ = session.stop().await;
+            return Err(error).context("failed to start the Live Client poller");
+        }
+    };
+
     info!(
         pid = process.pid,
         directory = %directory.display(),
         "recording started"
     );
-    Ok(ActiveRecording { session })
+    Ok(ActiveRecording {
+        session,
+        poller,
+        encoder_used: encoder.label().to_owned(),
+        recording_resolution,
+        recording_fps: config.recording.fps,
+    })
 }
 
 async fn stop_recording(recording: ActiveRecording, events: &EventSink) {
-    match recording.session.stop().await {
+    let ActiveRecording {
+        session,
+        poller,
+        encoder_used,
+        recording_resolution,
+        recording_fps,
+    } = recording;
+    let directory = session.directory().to_path_buf();
+    let recorded_at = session.recorded_at();
+    let duration = session.video_started_at().elapsed();
+    let (summary, video_result) = tokio::join!(poller.stop(), session.stop());
+
+    let metadata_result = RecordingMetadata::new(
+        recorded_at,
+        duration,
+        summary,
+        encoder_used,
+        recording_resolution,
+        recording_fps,
+    );
+    match metadata_result {
+        Ok(metadata) => {
+            if let Err(metadata_error) =
+                write_json_atomic(&directory.join(METADATA_JSON), &metadata).await
+            {
+                error!(error = %metadata_error, "could not write recording metadata");
+                events(ServiceEvent::Error {
+                    message: format!("Recording metadata could not be saved: {metadata_error:#}"),
+                });
+            }
+        }
+        Err(metadata_error) => {
+            error!(error = %metadata_error, "could not build recording metadata");
+            events(ServiceEvent::Error {
+                message: format!("Recording metadata could not be created: {metadata_error:#}"),
+            });
+        }
+    }
+
+    match video_result {
         Ok(directory) => {
             info!(directory = %directory.display(), "video closed");
         }

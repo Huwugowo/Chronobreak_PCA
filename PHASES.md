@@ -74,7 +74,7 @@ remain playable up to their last completed fragment.
 - `game_log.json` written incrementally (atomic write after every batch)
 - `metadata.json` written when the League game process closes, using data collected by the poller
 - `video_time_ms` pre-computed on all events and snapshot-derived changes at write time
-- Recorder writes `win: null` and `win_method: "unknown"`; post-game enrichment resolves the result through Match V5 or final-gold derivation
+- Recorder writes `win: null` and `win_method: "unknown"`; post-game Match V5 enrichment resolves the result
 - The process watcher remains the only video stop trigger; neither `GameEnd` nor a Live Client API connection failure stops recording
 
 **Entry conditions:**
@@ -82,6 +82,8 @@ remain playable up to their last completed fragment.
 
 **Empirical decision — 2026-07-30:**
 > The Live Client API became unavailable without a reliable `GameEnd`; the recorder must not use that event for stopping or win/loss. `GameStart` existed, but was first observed about 2.11 seconds after its own `EventTime`, so event arrival time must not be the video anchor. Synchronize with the median of five `response_received_monotonic - gameTime` samples. Excluding the initial bootstrap response, this clock relation stayed within a 1.8ms range during the capture.
+>
+> The same capture confirmed that `allPlayers` does not expose per-player gold, HP, XP, or full rune selections. Gold and HP are populated only for the active local player and are `null` for everyone else; XP is omitted; full rune IDs are local-player-only. Team gold requires Match V5 and is never estimated.
 
 **Validation:**
 1. Play a full game (minimum 10 minutes, ideally to completion)
@@ -90,9 +92,10 @@ remain playable up to their last completed fragment.
    - `snapshots` has one entry every ~10 seconds
    - `events` contains kill events with `video_time_ms` values
    - `snapshot_derived_changes` contains item purchases with approximate timestamps
+   - non-local `gold`, `hp`, and `hp_max` values are `null`, not fabricated
 3. Cross-check a kill event: seek `video.mp4` in VLC to `video_time_ms / 1000` seconds — kill should occur within ~1 second
 4. Kill the recorder mid-game — confirm `game_log.json` on disk has all events up to the last write
-5. Check `metadata.json`: `win` and `win_method` are present; `matchv5_fetched` is `false`
+5. Check the completed directory contains `video.mp4`, `game_log.json`, and `metadata.json`; metadata has `win: null`, `win_method: "unknown"`, and `matchv5_fetched: false`
 
 **Complete when:** `video_time_ms` on kill events is accurate to within 2 seconds when checked against the video.
 
@@ -142,7 +145,7 @@ remain playable up to their last completed fragment.
 **Scope:**
 - Two-tab header: Replay / Stats (Stats tab is empty placeholder at this phase)
 - Windowed layout: video ~60% width, stats panel alongside, scrubber below
-- Stats panel: champion, KDA, current gold diff, CS, level — driven by `timeupdate` sync
+- Stats panel: champion, KDA, CS, level — driven by `timeupdate` sync; gold differential remains hidden until Match V5 data exists
 - Scrubber: rail, fill, playhead tracking `currentTime`, event markers positioned by `video_time_ms`, clicking rail or marker seeks
 - Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
 - Event feed panel: scrollable list of events, active row highlights as playhead passes each event
@@ -155,7 +158,7 @@ remain playable up to their last completed fragment.
 1. Opening a game shows the windowed layout — video and panels visible simultaneously
 2. Scrubber playhead tracks video in real time
 3. Clicking the rail seeks correctly; clicking an event marker seeks to within 1 second of the event
-4. Stats panel values update as the video plays (gold diff, CS, level change over time)
+4. Stats panel values update as the video plays (CS and level changes over time)
 5. Event feed highlights the correct row as playhead passes each event
 6. UI matches the USG aesthetic reference (`league-replay-usgfx-v3.jsx`)
 
@@ -172,9 +175,9 @@ remain playable up to their last completed fragment.
 **Scope:**
 - Fullscreen toggle: double-click video or F key → fills window, panels disappear, overlays appear
 - Escape or F → returns to windowed mode, state preserved
-- Top bar: champion, KDA, gold diff, clock, REC indicator — fades after 3.2s idle, reappears on mouse move
+- Top bar: champion, KDA, clock, REC indicator, plus gold diff when Match V5 timeline data exists — fades after 3.2s idle, reappears on mouse move
 - Scrubber: ambient (44px) and active (96px) states, minute ticks, event markers
-- Gold graph drawer: slides up from bottom, gold tab always visible
+- Gold graph drawer: built against a Match V5 fixture, slides up from bottom, and remains absent for unenriched games
 - Floating event card: animates in/out on event proximity, 3.5s auto-dismiss
 - Right tick strip: always visible, proportional event dots, playhead needle
 - Right event panel: slides in from tick strip click, event rows, gold/CS summary
@@ -187,7 +190,7 @@ remain playable up to their last completed fragment.
 2. Escape returns to windowed mode — playhead position preserved
 3. Top bar fades after 3.2s, reappears instantly on mouse move
 4. Scrubber ambient/active transition works on hover
-5. Gold graph drawer opens and closes; cursor tracks playhead in real time
+5. With a Match V5 fixture, the gold graph opens and closes and its cursor tracks the playhead; without the fixture no gold control is shown
 6. Event card animates in when playhead is within ~1 second of a kill, auto-dismisses after 3.5s
 7. Tick strip dots are proportionally positioned; playhead needle moves in real time
 8. Event panel slides in on tick strip click; clicking a row seeks to that event
@@ -204,10 +207,10 @@ remain playable up to their last completed fragment.
 
 **Scope:**
 - Stats tab renders scoreboard: two teams, 5 players each
-- Collapsed row: champion icon, summoner spells, keystone, KDA, kill participation, CS, gold, level, items (resolved via Data Dragon)
+- Collapsed row: champion icon, summoner spells, keystone, KDA, kill participation, CS, level, items (resolved via Data Dragon); gold is hidden until Match V5 enrichment
 - Multi-kill badge on row if applicable
-- Expanded row (accordion): item build order with approximate timestamps (from `snapshot_derived_changes`), skill order (local player only at this phase — all players in Phase 8), full rune page
-- Team aggregates bar: total kills, objectives, gold
+- Expanded row (accordion): item build order with approximate timestamps (from `snapshot_derived_changes`) and the local player's full rune page; skill order and all players' full rune pages arrive in Phase 8
+- Team aggregates bar: total kills and objectives; total gold appears after Match V5 enrichment
 - Local player row highlighted
 - Win/loss header per team
 - Graceful state when `win: null` — show "Result unknown" rather than Win/Loss
@@ -222,7 +225,7 @@ remain playable up to their last completed fragment.
 3. Items display correctly — IDs resolved to icons, not raw numbers
 4. Clicking any player row expands it; clicking again collapses it; only one row open at a time
 5. Build order shows items in the correct purchase sequence with approximate timestamps
-6. Skill order shown for the local player; other players show "Skill order unavailable"
+6. Skill order is clearly unavailable until Match V5 enrichment
 7. Team aggregates are correct
 
 **Complete when:** Stats tab is accurate and all players' data is readable without Match V5.
@@ -278,7 +281,7 @@ remain playable up to their last completed fragment.
 - Settings: Riot ID field + API key field (dev key phase)
 - Background enrichment on app launch: for every game with `matchv5_fetched: false`, fetch Match V5 match result + timeline and merge into `game_log.json` under the `matchv5` key (see `SPEC.md` §3.7)
 - Set `metadata.json` `matchv5_fetched: true` on success; leave `false` and log error on failure
-- Stats tab upgrades when Match V5 data present: damage dealt/taken, vision score, ward stats, CC score, time dead, exact item timestamps, skill order for all players
+- Stats and Replay tabs upgrade when Match V5 data is present: team gold graph/differential, per-player and team gold, damage dealt/taken, vision score, ward stats, CC score, time dead, exact item timestamps, full rune pages, and skill order for all players
 - Win/loss resolved from Match V5 `GAME_END` event for games where `win_method: "unknown"`
 - Clip auto-positioning upgrades to precise mode: `victimDamageReceived` timestamps for exact fight start
 - "Enriched" badge on game card in library when `matchv5_fetched: true`
@@ -292,10 +295,11 @@ remain playable up to their last completed fragment.
 1. Enter Riot ID + API key in settings — app fetches Match V5 for all existing games on restart
 2. "Enriched" badge appears on game cards
 3. Stats tab now shows damage dealt/taken columns, vision score, ward stats
-4. Expanded rows show exact item timestamps (e.g. "3:24" not "~3:30")
-5. Skill order shown for all 10 players (not just local player)
-6. Clip auto-positioning for a kill with Match V5 data uses exact fight start — compare against heuristic to verify improvement
-7. A game with `win_method: "unknown"` has its win/loss resolved after enrichment
+4. Replay gold graph and differential are visible and use Match V5 participant frames
+5. Expanded rows show exact item timestamps (e.g. "3:24" not "~3:30")
+6. Skill order and complete rune pages are shown for all 10 players
+7. Clip auto-positioning for a kill with Match V5 data uses exact fight start — compare against heuristic to verify improvement
+8. A game with `win_method: "unknown"` has its win/loss resolved after enrichment
 
 **Complete when:** Match V5 data enriches the Stats tab and clip positioning, and the app degrades gracefully when Riot ID is not configured.
 

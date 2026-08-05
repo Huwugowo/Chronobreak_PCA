@@ -461,13 +461,13 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <td><code>localhost:2999</code> Live Client API</td>
 <td>During the game only</td>
 <td>✅ Always</td>
-<td>Events, snapshots, real-time state</td>
+<td>Events, roster, items, levels, CS, and local-player gold/HP</td>
 </tr>
 <tr>
 <td>Riot Match V5 Timeline API</td>
 <td>Post-game, via Riot servers</td>
 <td>⚙️ Optional</td>
-<td>Damage stats, exact item timestamps, vision/CC/ward data, fight boundaries</td>
+<td>Damage stats, team gold timeline, exact item timestamps, vision/CC/ward data, fight boundaries</td>
 </tr>
 <tr>
 <td>Riot Data Dragon CDN</td>
@@ -482,7 +482,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <h3 id="32-live-client-data-api">3.2 Live Client Data API</h3>
 <p><strong>Base URL:</strong> <code>https://127.0.0.1:2999/liveclientdata/</code></p>
 <p>Note: The API uses HTTPS with a self-signed Riot certificate. Requests must either use the official Riot root certificate (<code>riotgames.pem</code>) or disable SSL verification. The recorder uses <code>reqwest</code> with certificate pinning or verification disabled.</p>
-<p><strong>Two polling loops run concurrently post-GameStart</strong> (see <code>RECORDER.md</code> Section 5 for implementation):</p>
+<p><strong>Two polling loops run concurrently after clock calibration</strong> (see <code>RECORDER.md</code> Section 5 for implementation):</p>
 <table>
 <thead>
 <tr>
@@ -503,7 +503,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <td>Snapshot loop</td>
 <td><code>/allgamedata</code></td>
 <td>Every 10s</td>
-<td>Capture player state (gold, HP, items, CS, level)</td>
+<td>Capture roster state (items, CS, level) plus local-player gold/HP</td>
 </tr>
 </tbody>
 </table>
@@ -590,9 +590,9 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 </tbody>
 </table>
 <blockquote>
-<p><strong><code>GameEnd</code> and win/loss:</strong> Empirical capture showed that the Live Client API can disappear without exposing a <code>GameEnd</code> event. The recorder therefore never depends on <code>GameEnd</code>: API unavailability after successful polling is the game-stop signal. Win/loss comes from Match V5 <code>GAME_END</code>; if Match V5 is unavailable, derive it from the final gold differential when possible, otherwise set <code>win: null</code>. Record the derivation method as <code>win_method: "matchv5" | "derived" | "unknown"</code>.</p>
+<p><strong><code>GameEnd</code> and win/loss:</strong> Empirical capture showed that the Live Client API can disappear without exposing a <code>GameEnd</code> event. The recorder therefore never depends on <code>GameEnd</code>. API unavailability ends the polling tasks only; the League process watcher remains the sole video-stop trigger. Win/loss comes from Match V5 <code>GAME_END</code>; without enrichment it remains <code>null</code> with <code>win_method: "unknown"</code>.</p>
 </blockquote>
-<p><strong>Items, level changes, and gold changes are NOT named events.</strong> They are state fields in <code>/allgamedata</code> snapshots. They are detected by diffing consecutive snapshots:</p>
+<p><strong>Item and level changes are NOT named events.</strong> They are state fields in <code>/allgamedata</code> snapshots and are detected by diffing consecutive snapshots:</p>
 <table>
 <thead>
 <tr>
@@ -617,15 +617,10 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <td>Player's level field increases</td>
 <td>Snapshot interval (~10s)</td>
 </tr>
-<tr>
-<td>Gold change</td>
-<td>Player's gold field changes</td>
-<td>Snapshot interval (~10s)</td>
-</tr>
 </tbody>
 </table>
 <p>This means <strong>build order timestamps from the Live Client API are approximate</strong> — accurate to within the snapshot interval. Exact timestamps require Match V5 (see Section 3.3).</p>
-<p><strong>Snapshots from <code>/allgamedata</code> (every 10s):</strong> gold (current), HP (current + max), CS, XP, level, items (all slots) per player, plus runes and summoner spells (stable — only needed from first snapshot).</p>
+<p><strong>Snapshots from <code>/allgamedata</code> (every 10s):</strong> champion, team, CS, level, and items for every player. Current gold and current/max HP are exposed only for the active local player, so those fields are <code>null</code> for everyone else. XP is not exposed and is not stored. Summoner spells and keystone are stored for all players on the first snapshot; the full rune ID list is available only for the local player.</p>
 <h3 id="33-match-v5-timeline-api-optional-enrichment">3.3 Match V5 Timeline API (Optional Enrichment)</h3>
 <p><strong>Base URL:</strong> <code>https://{region}.api.riotgames.com/lol/match/v5/</code></p>
 <p>Fetched once, post-game, by the app on launch if a Riot ID is configured in settings. The result is merged into the game bundle and cached — the API is never called twice for the same game.</p>
@@ -689,6 +684,11 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <td><code>objectivesStolen</code></td>
 <td>Match result</td>
 <td>Recap stats tab</td>
+</tr>
+<tr>
+<td><code>participantFrames.totalGold</code> / <code>currentGold</code> / <code>xp</code></td>
+<td>Timeline</td>
+<td>Team gold graph and complete per-player timeline</td>
 </tr>
 <tr>
 <td><code>ITEM_PURCHASED</code> events with exact timestamps</td>
@@ -807,6 +807,11 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <td>Hidden</td>
 </tr>
 <tr>
+<td>Team gold graph and gold differential</td>
+<td>Shown from timeline frames</td>
+<td>Hidden; Live Client exposes only local-player current gold</td>
+</tr>
+<tr>
 <td>Item build order timestamps</td>
 <td>Exact (ms precision)</td>
 <td>Approximate (±10s from snapshot)</td>
@@ -814,7 +819,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <tr>
 <td>Skill order</td>
 <td>All 10 players</td>
-<td>Local player only</td>
+<td>Unavailable</td>
 </tr>
 <tr>
 <td>Clip auto-positioning</td>
@@ -824,11 +829,11 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <tr>
 <td>Win/loss</td>
 <td>Definitive from <code>GAME_END</code></td>
-<td>Derived from final gold diff when possible</td>
+<td>Unknown (<code>null</code>)</td>
 </tr>
 </tbody>
 </table>
-<p><strong>UI treatment:</strong> a non-blocking banner at the top of the Stats tab reads: <em>"Connect your Riot account to unlock damage stats, vision score, and precise build timings. [Connect →]"</em> Users who ignore it get a complete experience minus those columns.</p>
+<p><strong>UI treatment:</strong> a non-blocking banner at the top of the Stats tab reads: <em>"Connect your Riot account to unlock team gold, damage stats, vision score, and precise build timings. [Connect →]"</em> Features backed by unavailable data are hidden rather than populated with estimates.</p>
 <hr>
 <h3 id="36-timestamp-sync">3.6 Timestamp Sync</h3>
 <p>The video recording starts when <code>League of Legends.exe</code> is detected — this includes the loading screen, typically 2–4 minutes before in-game clock 0:00.</p>
@@ -870,14 +875,13 @@ This file is the shared vocabulary. Open it alongside whichever module document 
           &quot;hp&quot;: 580,
           &quot;hp_max&quot;: 580,
           &quot;cs&quot;: 0,
-          &quot;xp&quot;: 0,
           &quot;level&quot;: 1,
           &quot;items&quot;: [
             { &quot;item_id&quot;: 1055, &quot;slot&quot;: 0, &quot;count&quot;: 1 }
           ],
-          &quot;summoner_spells&quot;: [&quot;SummonerFlash&quot;, &quot;SummonerIgnite&quot;],
+          &quot;summoner_spells&quot;: [&quot;SummonerFlash&quot;, &quot;SummonerDot&quot;],
           &quot;keystone_id&quot;: 8128,
-          &quot;rune_ids&quot;: [8128, 8126, 8138, 8135, 8304, 8345]
+          &quot;rune_ids&quot;: [8128, 8126, 8138, 8135, 8304, 8345, 5005, 5008, 5011]
         }
       ]
     }
@@ -911,9 +915,10 @@ This file is the shared vocabulary. Open it alongside whichever module document 
   &quot;matchv5&quot;: null
 }
 </code></pre>
-<p><code>summoner_spells</code>, <code>keystone_id</code>, and <code>rune_ids</code> are only present on the <strong>first snapshot</strong> — they are stable for the entire game and do not need re-recording.</p>
+<p><code>gold</code>, <code>hp</code>, and <code>hp_max</code> contain numbers for the active local player and <code>null</code> for every other player. XP is not present because the Live Client API does not expose it.</p>
+<p><code>summoner_spells</code> and <code>keystone_id</code> are present for all players only on the <strong>first snapshot</strong>. <code>rune_ids</code> is also first-snapshot-only and is present only for the local player. These fields are stable and do not need re-recording.</p>
 <p><code>video_time_ms</code> is pre-computed on each event and snapshot-derived change at write time.</p>
-<p><code>matchv5</code> is <code>null</code> until enrichment is fetched post-game. When populated it contains the merged Match V5 match result and timeline data. The app reads this field to populate damage/vision columns and exact item timestamps.</p>
+<p><code>matchv5</code> is <code>null</code> until enrichment is fetched post-game. When populated it contains the merged Match V5 match result and timeline data. The app reads this field to populate damage/vision columns, team gold, complete rune pages, and exact item timestamps.</p>
 <p><code>snapshot_derived_changes</code> records item purchases, sales, and level-ups detected by diffing consecutive snapshots. Timestamps are approximate (±10s). Valid <code>change_type</code> values: <code>"ItemPurchased"</code>, <code>"ItemSold"</code>, <code>"LevelUp"</code>.</p>
 <h3 id="38-metadatajson-schema">3.8 <code>metadata.json</code> Schema</h3>
 <pre><code class="language-json">{
@@ -933,7 +938,8 @@ This file is the shared vocabulary. Open it alongside whichever module document 
   &quot;saved&quot;: false
 }
 </code></pre>
-<p><code>win_method</code> values: <code>"matchv5"</code> (Match V5 <code>GAME_END</code>), <code>"derived"</code> (final gold differential fallback), <code>"unknown"</code>.</p>
+<p><code>win_method</code> values: <code>"matchv5"</code> (Match V5 <code>GAME_END</code>), <code>"derived"</code> (reserved for a future verified fallback), <code>"unknown"</code>. No result is inferred from unavailable or estimated data.</p>
+<p>If the Live Client API never becomes available, <code>game_mode</code>, the three <code>local_player_*</code> fields, and <code>video_offset_ms</code> are <code>null</code>; the video bundle is still finalized normally. Phase 2 itself always writes <code>win: null</code> with <code>win_method: "unknown"</code>.</p>
 <p><code>matchv5_fetched: false</code> = app should attempt to fetch on next launch if Riot ID is configured.</p>
 <p><code>saved: false</code> = eligible for auto-deletion. All clips have <code>saved: true</code> by default.</p>
 <hr>
@@ -1155,8 +1161,8 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <td>Riot tracks challenge totals, not per-game events.</td>
 </tr>
 <tr>
-<td>Gold/HP snapshots at 10s granularity</td>
-<td>Sufficient for graph display.</td>
+<td>Live Client gold/HP is local-player-only</td>
+<td>Non-local values are stored as <code>null</code>; team gold and XP timelines require Match V5.</td>
 </tr>
 <tr>
 <td>No minimap heatmaps</td>
@@ -1252,7 +1258,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <p><strong>Context:</strong> This document is self-contained. It covers everything needed to build the recorder binary. For data schemas (<code>game_log.json</code>, <code>metadata.json</code>) and file system layout, refer to <code>SPEC.md</code> sections 3 and 4.</p>
 <p><strong>What this process does:</strong> Watches for League of Legends to launch, records the screen with hardware encoding, polls the Live Client Data API to build a structured event log, then finalises the game bundle on game close.</p>
 <p><strong>What this process does NOT do:</strong> It has no UI beyond a system tray icon. It never reads from disk. It never communicates with the app.</p>
-<p><strong>Phase 1 boundary:</strong> Phase 1 implements process watching, hardware-accelerated fragmented MP4 capture, and the tray states only. It does not connect to either League API and writes no JSON or other metadata. A Phase 1 game directory contains exactly <code>video.mp4</code>; there is no post-game container conversion. Live Client polling and all structured bundle data begin in Phase 2.</p>
+<p><strong>Implemented through Phase 2:</strong> Phase 1 provides process watching, hardware-accelerated fragmented MP4 capture, and tray states. Phase 2 adds Live Client polling plus incrementally durable <code>game_log.json</code> and final <code>metadata.json</code>. Neither phase connects to the League Client API, and neither <code>GameEnd</code> nor Live Client availability controls video recording.</p>
 </blockquote>
 <hr>
 <h2 id="1-overview">1. Overview</h2>
@@ -1264,9 +1270,8 @@ This file is the shared vocabulary. Open it alongside whichever module document 
     main.rs        ← startup, tray, top-level event loop
     watcher.rs     ← process detection
     encoder.rs     ← ffmpeg capture lifecycle
-    storage.rs     ← Phase 1 video directory allocation
-    poller.rs      ← Live Client Data API polling (Phase 2)
-    writer.rs      ← game_log.json / metadata.json writes (Phase 2)
+    storage.rs     ← directory allocation and atomic JSON writes
+    poller.rs      ← Live Client polling, persisted models, snapshot diffs
     config.rs      ← config.toml read/write
 </code></pre>
 <hr>
@@ -1306,7 +1311,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 </code></pre>
 <hr>
 <h2 id="5-live-client-data-poller">5. Live Client Data Poller</h2>
-<p>Two independent async tasks run concurrently after GameStart, sharing access to the in-memory game log via <code>Arc&lt;Mutex&lt;GameLog&gt;&gt;</code>. They have different polling rates because they serve different purposes: events need to be captured as close to real time as possible, while snapshots are inherently coarse state.</p>
+<p>Two independent async tasks run concurrently after the five-sample clock calibration, sharing access to the in-memory game log via <code>Arc&lt;Mutex&lt;GameLog&gt;&gt;</code>. They have different polling rates because they serve different purposes: events need to be captured as close to real time as possible, while snapshots are inherently coarse state.</p>
 <h3 id="51-pre-game-clock-calibration-allgamedata-continuous">5.1 Pre-Game Clock Calibration — <code>/allgamedata</code> (continuous)</h3>
 <p>Before the Live Client API becomes available, only the calibration loop runs. All synchronization timestamps use a monotonic clock such as <code>std::time::Instant</code>.</p>
 <pre><code>loop:
@@ -1332,15 +1337,15 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 </code></pre>
 <p>The first API response may be a bootstrap outlier, so a single sample is not sufficient. The median also makes ordinary request-latency variation harmless. Buffer raw event <code>EventTime</code> values until calibration is ready, or start the Event Loop immediately after calibration; <code>/eventdata</code> is cumulative, so the initial events remain available.</p>
 <p><strong>Never calculate <code>video_offset_ms</code> from the time at which <code>GameStart</code> is observed.</strong> In the empirical capture, <code>GameStart.EventTime</code> was <code>0.0095s</code>, but it first appeared in a response at <code>gameTime = 2.1195s</code>. Arrival-time anchoring would shift every video marker approximately 2.11 seconds late.</p>
-<h3 id="52-post-gamestart-event-loop-continuous">5.2 Post-GameStart — Event Loop (continuous)</h3>
+<h3 id="52-post-calibration-event-loop-continuous">5.2 Post-Calibration — Event Loop (continuous)</h3>
 <p>Polls <code>/eventdata</code> as fast as the API responds. No fixed sleep interval — the next request fires immediately after the previous response is processed. This ensures named events (kills, objectives) are captured with minimum latency.</p>
 <pre><code class="language-rust">tokio::spawn(async move {
     let mut last_event_count = 0;
     loop {
         match client.get(&quot;.../eventdata&quot;).send().await {
             Err(_) =&gt; {
-                // ConnectionError = game ended
-                // signal stop sequence and exit
+                // API is unavailable: stop this polling task only.
+                // The process watcher remains the sole video stop trigger.
                 break;
             }
             Ok(response) =&gt; {
@@ -1365,16 +1370,17 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 });
 </code></pre>
 <p><strong>Why continuous polling:</strong> The API responds in 10–200ms on localhost. Continuous polling gives sub-second event capture. Kill events, multikills, and objective events are captured nearly in real time.</p>
-<p><strong>Game end detection:</strong> A <code>ConnectionError</code> after a period of successful responses means the API has gone offline — the game has ended. This is the only Live Client game-end signal used by the recorder. <code>GameEnd</code> is not reliable and must not control stopping or win/loss.</p>
-<h3 id="53-post-gamestart-snapshot-loop-every-10s">5.3 Post-GameStart — Snapshot Loop (every 10s)</h3>
-<p>Polls <code>/allgamedata</code> every 10 seconds. Detects item changes, level changes, and gold trajectory by diffing consecutive snapshots.</p>
+<p><strong>API loss:</strong> A <code>ConnectionError</code> ends the affected polling task. It never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization; <code>GameEnd</code> is logged if present but never controls stopping or win/loss.</p>
+<h3 id="53-post-calibration-snapshot-loop-every-10s">5.3 Post-Calibration — Snapshot Loop (every 10s)</h3>
+<p>Polls <code>/allgamedata</code> every 10 seconds. Detects item and level changes by diffing consecutive snapshots.</p>
+<p>The endpoint exposes champion, team, items, CS, level, spells, and keystone for all players. Current gold and current/max HP are available only for the active local player and are stored as <code>null</code> for everyone else. XP is not exposed. The full rune ID list is stored only for the local player on the first snapshot.</p>
 <pre><code class="language-rust">tokio::spawn(async move {
     let mut prev_snapshot: Option&lt;Snapshot&gt; = None;
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
 
         match client.get(&quot;.../allgamedata&quot;).send().await {
-            Err(_) =&gt; break, // game ended, event loop will handle stop
+            Err(_) =&gt; break, // stop this polling task only; video remains process-controlled
             Ok(response) =&gt; {
                 let snapshot = parse_snapshot(response).await;
 
@@ -1448,15 +1454,15 @@ let log_for_snapshots = Arc::clone(&amp;game_log);
 4. Update tray icon → idle state (grey circle)
 </code></pre>
 <p>There is no full-file read, copy, or remux at game end. If ffmpeg is interrupted, <code>video.mp4</code> remains playable through its last completed fragment. With a two-second fragment interval, at most approximately two seconds of trailing footage may be lost.</p>
-<p>Phase 2 additionally:</p>
-<pre><code>1. Stop the calibration, Event Loop, and Snapshot Loop tasks
-2. Write metadata.json with:
+<p>Phase 2 starts poller cancellation at the same time as ffmpeg shutdown so metadata work never delays video closure:</p>
+<pre><code>1. Cancel the calibration, Event Loop, and Snapshot Loop tasks while ffmpeg closes
+2. Flush game_log.json one final time after the polling tasks stop
+3. Write metadata.json with:
    - win: null and win_method: &quot;unknown&quot; (resolved post-game)
    - matchv5_fetched: false  ← always false at this point; app fetches post-game
    - All other fields (see SPEC.md §3.8 for full schema)
-3. Finalise game_log.json (write one last flush to ensure all data is on disk)
 </code></pre>
-<p><strong>Note on win/loss:</strong> The recorder does not consume <code>GameEnd</code>. It writes <code>win: null</code> and <code>win_method: "unknown"</code> at stop time. The app resolves the result via Match V5 on next launch; if Match V5 is unavailable, it may derive the result from the final gold differential and set <code>win_method: "derived"</code>.</p>
+<p><strong>Note on win/loss:</strong> The recorder does not consume <code>GameEnd</code>. It writes <code>win: null</code> and <code>win_method: "unknown"</code> at stop time. The app resolves the result via Match V5 on next launch; without enrichment the result remains unknown because the Live Client API does not expose a complete final team-gold state.</p>
 <p><strong>Why fragmented MP4:</strong>
 Ordinary MP4 depends on final index data and may be unreadable after interruption. Fragmented MP4 stores packet metadata alongside short media fragments, so completed fragments remain decodable without a final full-file conversion. This keeps game-end finalization effectively immediate. The trade-off is lower compatibility with some older players and editors; the app playback and stream-copy clip paths must remain part of validation.</p>
 <hr>
@@ -1653,7 +1659,7 @@ cargo build --release
 │  Scrubber  ·  Controls  ·  Timeline                  │
 └──────────────────────────────────────────────────────┘
 </code></pre>
-<p>In windowed mode the scrubber, gold graph, and event feed are always visible — no hover or click required. The USG panel layout (as prototyped in <code>league-replay-usgfx-v3.jsx</code>) is the reference for this mode.</p>
+<p>In windowed mode the scrubber and event feed are always visible — no hover or click required. The gold graph is also visible when Match V5 timeline data is present; its space collapses cleanly when enrichment is unavailable. The USG panel layout (as prototyped in <code>league-replay-usgfx-v3.jsx</code>) is the reference for this mode.</p>
 <h3 id="22-fullscreen-mode">2.2 Fullscreen Mode</h3>
 <p>Activated by: double-clicking the video, pressing <code>F</code>, or clicking the fullscreen button in the windowed controls.</p>
 <p>The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, tick strip, event panel, typography, colours, state summary) apply exclusively to fullscreen mode. Section 3 (video playback architecture), Section 11 (clip mode), and Section 15 (Stats tab) apply to both modes.</p>
@@ -1721,7 +1727,7 @@ cargo build --release
 - App wordmark ("REPLAY") + company line in mono type
 - Divider
 - Champion name + KDA (kills / deaths / assists)
-- <strong>Right side:</strong> current gold differential, match clock, REC indicator (pulsing dot)</p>
+- <strong>Right side:</strong> match clock, REC indicator (pulsing dot), and current gold differential when Match V5 timeline data is available</p>
 <p><strong>Visibility behaviour:</strong>
 - Fades <strong>out</strong> after <strong>3.2 seconds</strong> of mouse inactivity anywhere in the window. Transition: <code>opacity 1→0</code>, 350ms ease.
 - Fades <strong>in</strong> instantly on any mouse movement anywhere in the window (<code>mousemove</code> event on the root container, resets a <code>setTimeout</code>). Transition: <code>opacity 0→1</code>, 150ms ease.
@@ -1771,13 +1777,14 @@ cargo build --release
 <p>Visible in active state. Semi-visible (opacity 0.6) in ambient state.</p>
 <p><strong>Layout (left to right):</strong>
 - <code>▶ Play</code> / <code>⏸ Pause</code> button — blue filled (primary action)
-- <code>▴ Gold</code> toggle button — ghost style, toggles gold graph drawer
+- <code>▴ Gold</code> toggle button — ghost style, toggles gold graph drawer; omitted without Match V5 timeline data
 - Divider
 - Time readout: <code>14:32 / 32:14</code> — mono type
 - Divider
 - <code>✦ Clip</code> button — ghost style, activates clip mode</p>
 <hr>
 <h2 id="7-gold-graph-drawer">7. Gold Graph Drawer</h2>
+<p>This drawer is rendered only when <code>matchv5</code> contains participant timeline frames. The Live Client API exposes current gold only for the active local player, so it cannot produce a truthful team differential and no estimate is shown.</p>
 <h3 id="71-behaviour">7.1 Behaviour</h3>
 <ul>
 <li>Position: absolute, left: 0, right: 250px, bottom: 0.</li>
@@ -1801,14 +1808,14 @@ cargo build --release
 - Area below zero: faint red fill
 - Line: blue when positive, red when negative, 1.8px stroke
 - Vertical cursor: tracks current video time, same colour as line, with diamond marker at intersection
-- Granularity: 10s (matches snapshot interval)
+- Granularity: Match V5 participant-frame interval (typically 60s)
 - Hovering the graph does <strong>not</strong> seek — it is read-only display. Seeking is via the scrubber only.</p>
 <p><strong>X-axis labels:</strong> 0:00, 8:00, 16:00, 24:00, match end — mono type.
 <strong>Y-axis labels:</strong> +4K, +2K, 0, -2K, -4K — mono type.</p>
 <h3 id="73-gold-tab">7.3 Gold Tab</h3>
 <ul>
 <li>Position: absolute, just above the scrubber zone (bottom adjusts with scrubber state), left: 20px.</li>
-<li>Always present — never hidden.</li>
+<li>Present whenever Match V5 participant timeline frames are available; otherwise omitted.</li>
 <li>Opacity: 0.5 at rest, 1.0 when scrubber is active or drawer is open.</li>
 <li>Content: chevron icon (▴/▾) + "GOLD" label + current gold value (coloured blue or red).</li>
 <li>Clicking toggles the drawer open/closed.</li>
@@ -1889,9 +1896,9 @@ Background: <code>rgba(8,8,12,.94)</code>. Left border: 2px, <code>rgba(255,255,
 - Active (playhead within ~1s of event, enemy): red left border, faint red background</p>
 <p><strong>Clicking any row</strong> seeks video to that event's <code>video_time_ms</code>.</p>
 <p><strong>Bottom readout</strong> (below the list, always visible within panel):
-- Gold diff — coloured blue or red
+- Gold diff — coloured blue or red, omitted without Match V5 timeline data
 - CS score
-- Gold advantage percentage bar — 5px tall, blue or red fill</p>
+- Gold advantage percentage bar — 5px tall, blue or red fill, omitted without Match V5 timeline data</p>
 <h3 id="102-panel-does-not-cover-the-scrubber">10.2 Panel does not cover the scrubber</h3>
 <p>The scrubber zone spans <code>left: 0</code> to <code>right: 250px</code>. The right drawer (<code>tick strip + panel</code>) spans from <code>right: 0</code>. They do not overlap. The tick strip is always 28px. When the panel is open, it occupies an additional 230px to the left of the strip, for a total right-side width of 258px. The scrubber <code>right</code> offset can remain fixed at 250px — the panel opening may briefly overlap the scrubber's rightmost ~8px but this is acceptable.</p>
 <hr>
@@ -2072,13 +2079,13 @@ clip_end   = kill_event.video_time_ms + 3000
 <td>Mouse leaves</td>
 </tr>
 <tr>
-<td>Gold tab</td>
+<td>Gold tab (with Match V5 timeline)</td>
 <td>✅ (dim)</td>
 <td>—</td>
 <td>—</td>
 </tr>
 <tr>
-<td>Gold graph drawer</td>
+<td>Gold graph drawer (with Match V5 timeline)</td>
 <td>—</td>
 <td>Click gold tab or Gold button</td>
 <td>Click again</td>
@@ -2165,11 +2172,6 @@ clip_end   = kill_event.video_time_ms + 3000
 <td>Integer + CS/min</td>
 </tr>
 <tr>
-<td>Gold</td>
-<td>Last snapshot <code>gold</code></td>
-<td>Formatted (14.2k)</td>
-</tr>
-<tr>
 <td>Level</td>
 <td>Last snapshot <code>level</code></td>
 <td>Integer</td>
@@ -2211,6 +2213,10 @@ clip_end   = kill_event.video_time_ms + 3000
 <td>Wards placed / killed</td>
 <td><code>wardsPlaced</code> / <code>wardsKilled</code></td>
 </tr>
+<tr>
+<td>Gold</td>
+<td>Match result <code>goldEarned</code></td>
+</tr>
 </tbody>
 </table>
 <p>When Match V5 columns are hidden, a compact notice appears in the column header area rather than empty columns.</p>
@@ -2221,8 +2227,8 @@ clip_end   = kill_event.video_time_ms + 3000
 - Without Match V5: approximate timestamps from snapshot diffs, displayed as "~8:40"</p>
 <p><strong>Skill order</strong> — Q/W/E/R boxes in the order they were levelled:
 - With Match V5: all 10 players
-- Without Match V5: local player only — other players show "Skill order unavailable"</p>
-<p><strong>Full rune page</strong> — keystone + 5 runes + 3 stat shards, icon grid</p>
+- Without Match V5: unavailable</p>
+<p><strong>Full rune page</strong> — keystone + 5 runes + 3 stat shards when Match V5 is available. Without enrichment, the local player's Live Client rune IDs are shown; other players show the keystone only.</p>
 <p><strong>Additional stats</strong> (Match V5 only, shown when available):
 - Healing done (self) and to teammates
 - CC time dealt
@@ -2234,7 +2240,7 @@ clip_end   = kill_event.video_time_ms + 3000
 <ul>
 <li>Total team kills / deaths</li>
 <li>Total objectives (dragons, baron, heralds, turrets, inhibitors)</li>
-<li>Total team gold</li>
+<li>Total team gold when Match V5 data is available; otherwise omitted</li>
 </ul>
 <h3 id="155-typography-and-colour">15.5 Typography and Colour</h3>
 <p>Follows the system-wide USG aesthetic. Numbers in TX-02, labels in TX-76, champion names in TX-76. Local player row has a subtle blue-tinted background. Win team has a faint blue header, losing team a faint red header. Items shown at 28px icon size in the collapsed row, 32px in expanded.</p>
@@ -2961,17 +2967,20 @@ App version:     1.0.0
 <p><strong>Documents:</strong> <code>SPEC.md</code> + <code>RECORDER.md</code> §5</p>
 <p><strong>Scope:</strong>
 - Pre-game <code>/allgamedata</code> calibration poller (detect valid <code>gameTime</code>, calculate <code>video_offset_ms</code> from five monotonic clock samples)
-- Post-GameStart <strong>two concurrent async tasks</strong>:
-  - Event Loop: continuous polling of <code>/eventdata</code>, captures named events, detects game end via <code>ConnectionError</code>
+- Post-calibration <strong>two concurrent async tasks</strong>:
+  - Event Loop: continuous polling of <code>/eventdata</code>, captures named events until the API becomes unavailable
   - Snapshot Loop: 10s polling of <code>/allgamedata</code>, appends snapshots, diffs consecutive snapshots to detect item changes and level-ups
 - <code>game_log.json</code> written incrementally (atomic write after every batch)
+- <code>metadata.json</code> written when the League game process closes, using data collected by the poller
 - <code>video_time_ms</code> pre-computed on all events and snapshot-derived changes at write time
-- Recorder writes <code>win: null</code> and <code>win_method: "unknown"</code>; post-game enrichment resolves the result through Match V5 or final-gold derivation</p>
+- Recorder writes <code>win: null</code> and <code>win_method: "unknown"</code>; post-game Match V5 enrichment resolves the result
+- The process watcher remains the only video stop trigger; neither <code>GameEnd</code> nor a Live Client API connection failure stops recording</p>
 <p><strong>Entry conditions:</strong>
 - Phase 1 complete and validated</p>
 <p><strong>Empirical decision — 2026-07-30:</strong></p>
 <blockquote>
 <p>The Live Client API became unavailable without a reliable <code>GameEnd</code>; the recorder must not use that event for stopping or win/loss. <code>GameStart</code> existed, but was first observed about 2.11 seconds after its own <code>EventTime</code>, so event arrival time must not be the video anchor. Synchronize with the median of five <code>response_received_monotonic - gameTime</code> samples. Excluding the initial bootstrap response, this clock relation stayed within a 1.8ms range during the capture.</p>
+<p>The same capture confirmed that <code>allPlayers</code> does not expose per-player gold, HP, XP, or full rune selections. Gold and HP are populated only for the active local player and are <code>null</code> for everyone else; XP is omitted; full rune IDs are local-player-only. Team gold requires Match V5 and is never estimated.</p>
 </blockquote>
 <p><strong>Validation:</strong>
 1. Play a full game (minimum 10 minutes, ideally to completion)
@@ -2980,9 +2989,10 @@ App version:     1.0.0
    - <code>snapshots</code> has one entry every ~10 seconds
    - <code>events</code> contains kill events with <code>video_time_ms</code> values
    - <code>snapshot_derived_changes</code> contains item purchases with approximate timestamps
+   - non-local <code>gold</code>, <code>hp</code>, and <code>hp_max</code> values are <code>null</code>, not fabricated
 3. Cross-check a kill event: seek <code>video.mp4</code> in VLC to <code>video_time_ms / 1000</code> seconds — kill should occur within ~1 second
 4. Kill the recorder mid-game — confirm <code>game_log.json</code> on disk has all events up to the last write
-5. Check <code>metadata.json</code>: <code>win</code> and <code>win_method</code> are present; <code>matchv5_fetched</code> is <code>false</code></p>
+5. Check the completed directory contains <code>video.mp4</code>, <code>game_log.json</code>, and <code>metadata.json</code>; metadata has <code>win: null</code>, <code>win_method: "unknown"</code>, and <code>matchv5_fetched: false</code></p>
 <p><strong>Complete when:</strong> <code>video_time_ms</code> on kill events is accurate to within 2 seconds when checked against the video.</p>
 <hr>
 <h2 id="phase-3-app-shell-library">Phase 3 — App Shell + Library</h2>
@@ -3018,7 +3028,7 @@ App version:     1.0.0
 <p><strong>Scope:</strong>
 - Two-tab header: Replay / Stats (Stats tab is empty placeholder at this phase)
 - Windowed layout: video ~60% width, stats panel alongside, scrubber below
-- Stats panel: champion, KDA, current gold diff, CS, level — driven by <code>timeupdate</code> sync
+- Stats panel: champion, KDA, CS, level — driven by <code>timeupdate</code> sync; gold differential remains hidden until Match V5 data exists
 - Scrubber: rail, fill, playhead tracking <code>currentTime</code>, event markers positioned by <code>video_time_ms</code>, clicking rail or marker seeks
 - Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
 - Event feed panel: scrollable list of events, active row highlights as playhead passes each event
@@ -3029,7 +3039,7 @@ App version:     1.0.0
 1. Opening a game shows the windowed layout — video and panels visible simultaneously
 2. Scrubber playhead tracks video in real time
 3. Clicking the rail seeks correctly; clicking an event marker seeks to within 1 second of the event
-4. Stats panel values update as the video plays (gold diff, CS, level change over time)
+4. Stats panel values update as the video plays (CS and level changes over time)
 5. Event feed highlights the correct row as playhead passes each event
 6. UI matches the USG aesthetic reference (<code>league-replay-usgfx-v3.jsx</code>)</p>
 <p><strong>Complete when:</strong> windowed viewer is fully functional and the aesthetic is consistent.</p>
@@ -3040,9 +3050,9 @@ App version:     1.0.0
 <p><strong>Scope:</strong>
 - Fullscreen toggle: double-click video or F key → fills window, panels disappear, overlays appear
 - Escape or F → returns to windowed mode, state preserved
-- Top bar: champion, KDA, gold diff, clock, REC indicator — fades after 3.2s idle, reappears on mouse move
+- Top bar: champion, KDA, clock, REC indicator, plus gold diff when Match V5 timeline data exists — fades after 3.2s idle, reappears on mouse move
 - Scrubber: ambient (44px) and active (96px) states, minute ticks, event markers
-- Gold graph drawer: slides up from bottom, gold tab always visible
+- Gold graph drawer: built against a Match V5 fixture, slides up from bottom, and remains absent for unenriched games
 - Floating event card: animates in/out on event proximity, 3.5s auto-dismiss
 - Right tick strip: always visible, proportional event dots, playhead needle
 - Right event panel: slides in from tick strip click, event rows, gold/CS summary</p>
@@ -3053,7 +3063,7 @@ App version:     1.0.0
 2. Escape returns to windowed mode — playhead position preserved
 3. Top bar fades after 3.2s, reappears instantly on mouse move
 4. Scrubber ambient/active transition works on hover
-5. Gold graph drawer opens and closes; cursor tracks playhead in real time
+5. With a Match V5 fixture, the gold graph opens and closes and its cursor tracks the playhead; without the fixture no gold control is shown
 6. Event card animates in when playhead is within ~1 second of a kill, auto-dismisses after 3.5s
 7. Tick strip dots are proportionally positioned; playhead needle moves in real time
 8. Event panel slides in on tick strip click; clicking a row seeks to that event</p>
@@ -3064,10 +3074,10 @@ App version:     1.0.0
 <p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-VIEWER.md</code> §15</p>
 <p><strong>Scope:</strong>
 - Stats tab renders scoreboard: two teams, 5 players each
-- Collapsed row: champion icon, summoner spells, keystone, KDA, kill participation, CS, gold, level, items (resolved via Data Dragon)
+- Collapsed row: champion icon, summoner spells, keystone, KDA, kill participation, CS, level, items (resolved via Data Dragon); gold is hidden until Match V5 enrichment
 - Multi-kill badge on row if applicable
-- Expanded row (accordion): item build order with approximate timestamps (from <code>snapshot_derived_changes</code>), skill order (local player only at this phase — all players in Phase 8), full rune page
-- Team aggregates bar: total kills, objectives, gold
+- Expanded row (accordion): item build order with approximate timestamps (from <code>snapshot_derived_changes</code>) and the local player's full rune page; skill order and all players' full rune pages arrive in Phase 8
+- Team aggregates bar: total kills and objectives; total gold appears after Match V5 enrichment
 - Local player row highlighted
 - Win/loss header per team
 - Graceful state when <code>win: null</code> — show "Result unknown" rather than Win/Loss</p>
@@ -3080,7 +3090,7 @@ App version:     1.0.0
 3. Items display correctly — IDs resolved to icons, not raw numbers
 4. Clicking any player row expands it; clicking again collapses it; only one row open at a time
 5. Build order shows items in the correct purchase sequence with approximate timestamps
-6. Skill order shown for the local player; other players show "Skill order unavailable"
+6. Skill order is clearly unavailable until Match V5 enrichment
 7. Team aggregates are correct</p>
 <p><strong>Complete when:</strong> Stats tab is accurate and all players' data is readable without Match V5.</p>
 <hr>
@@ -3122,7 +3132,7 @@ App version:     1.0.0
 - Settings: Riot ID field + API key field (dev key phase)
 - Background enrichment on app launch: for every game with <code>matchv5_fetched: false</code>, fetch Match V5 match result + timeline and merge into <code>game_log.json</code> under the <code>matchv5</code> key (see <code>SPEC.md</code> §3.7)
 - Set <code>metadata.json</code> <code>matchv5_fetched: true</code> on success; leave <code>false</code> and log error on failure
-- Stats tab upgrades when Match V5 data present: damage dealt/taken, vision score, ward stats, CC score, time dead, exact item timestamps, skill order for all players
+- Stats and Replay tabs upgrade when Match V5 data is present: team gold graph/differential, per-player and team gold, damage dealt/taken, vision score, ward stats, CC score, time dead, exact item timestamps, full rune pages, and skill order for all players
 - Win/loss resolved from Match V5 <code>GAME_END</code> event for games where <code>win_method: "unknown"</code>
 - Clip auto-positioning upgrades to precise mode: <code>victimDamageReceived</code> timestamps for exact fight start
 - "Enriched" badge on game card in library when <code>matchv5_fetched: true</code>
@@ -3134,10 +3144,11 @@ App version:     1.0.0
 1. Enter Riot ID + API key in settings — app fetches Match V5 for all existing games on restart
 2. "Enriched" badge appears on game cards
 3. Stats tab now shows damage dealt/taken columns, vision score, ward stats
-4. Expanded rows show exact item timestamps (e.g. "3:24" not "~3:30")
-5. Skill order shown for all 10 players (not just local player)
-6. Clip auto-positioning for a kill with Match V5 data uses exact fight start — compare against heuristic to verify improvement
-7. A game with <code>win_method: "unknown"</code> has its win/loss resolved after enrichment</p>
+4. Replay gold graph and differential are visible and use Match V5 participant frames
+5. Expanded rows show exact item timestamps (e.g. "3:24" not "~3:30")
+6. Skill order and complete rune pages are shown for all 10 players
+7. Clip auto-positioning for a kill with Match V5 data uses exact fight start — compare against heuristic to verify improvement
+8. A game with <code>win_method: "unknown"</code> has its win/loss resolved after enrichment</p>
 <p><strong>Complete when:</strong> Match V5 data enriches the Stats tab and clip positioning, and the app degrades gracefully when Riot ID is not configured.</p>
 <hr>
 <h2 id="phase-9-polish-distribution">Phase 9 — Polish + Distribution</h2>

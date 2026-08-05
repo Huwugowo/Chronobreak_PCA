@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -252,6 +252,8 @@ impl Ffmpeg {
         let mut child = command
             .spawn()
             .with_context(|| format!("failed to start {}", self.path.display()))?;
+        let video_started_at = Instant::now();
+        let recorded_at = SystemTime::now();
 
         let stderr = child.stderr.take();
         let stderr_task = tokio::spawn(async move {
@@ -276,6 +278,8 @@ impl Ffmpeg {
             directory,
             child,
             stderr_task: Some(stderr_task),
+            video_started_at,
+            recorded_at,
         })
     }
 }
@@ -284,11 +288,21 @@ pub struct RecordingSession {
     directory: PathBuf,
     child: Child,
     stderr_task: Option<JoinHandle<()>>,
+    video_started_at: Instant,
+    recorded_at: SystemTime,
 }
 
 impl RecordingSession {
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    pub fn video_started_at(&self) -> Instant {
+        self.video_started_at
+    }
+
+    pub fn recorded_at(&self) -> SystemTime {
+        self.recorded_at
     }
 
     pub fn has_exited(&mut self) -> Result<bool> {

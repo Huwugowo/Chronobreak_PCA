@@ -50,6 +50,13 @@ impl CaptureTarget {
             }
         )
     }
+
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
+        match self.source {
+            CaptureSource::DesktopRegion { width, height, .. } => Some((width, height)),
+            CaptureSource::AvFoundation { .. } => None,
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

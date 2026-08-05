@@ -6,11 +6,11 @@
 >
 > **What this process does NOT do:** It has no UI beyond a system tray icon. It never reads from disk. It never communicates with the app.
 >
-> **Phase 1 boundary:** Phase 1 implements process watching, hardware-accelerated
-> fragmented MP4 capture, and the tray states only. It does not connect to either
-> League API and writes no JSON or other metadata. A Phase 1 game directory contains
-> exactly `video.mp4`; there is no post-game container conversion.
-> Live Client polling and all structured bundle data begin in Phase 2.
+> **Implemented through Phase 2:** Phase 1 provides process watching,
+> hardware-accelerated fragmented MP4 capture, and tray states. Phase 2 adds Live
+> Client polling plus incrementally durable `game_log.json` and final
+> `metadata.json`. Neither phase connects to the League Client API, and neither
+> `GameEnd` nor Live Client availability controls video recording.
 
 ---
 
@@ -26,9 +26,8 @@ recorder/
     main.rs        ← startup, tray, top-level event loop
     watcher.rs     ← process detection
     encoder.rs     ← ffmpeg capture lifecycle
-    storage.rs     ← Phase 1 video directory allocation
-    poller.rs      ← Live Client Data API polling (Phase 2)
-    writer.rs      ← game_log.json / metadata.json writes (Phase 2)
+    storage.rs     ← directory allocation and atomic JSON writes
+    poller.rs      ← Live Client polling, persisted models, snapshot diffs
     config.rs      ← config.toml read/write
 ```
 
@@ -84,7 +83,7 @@ Phase 2 extends this sequence:
 
 ## 5. Live Client Data Poller
 
-Two independent async tasks run concurrently after GameStart, sharing access to the in-memory game log via `Arc<Mutex<GameLog>>`. They have different polling rates because they serve different purposes: events need to be captured as close to real time as possible, while snapshots are inherently coarse state.
+Two independent async tasks run concurrently after the five-sample clock calibration, sharing access to the in-memory game log via `Arc<Mutex<GameLog>>`. They have different polling rates because they serve different purposes: events need to be captured as close to real time as possible, while snapshots are inherently coarse state.
 
 ### 5.1 Pre-Game Clock Calibration — `/allgamedata` (continuous)
 
@@ -117,7 +116,7 @@ The first API response may be a bootstrap outlier, so a single sample is not suf
 
 **Never calculate `video_offset_ms` from the time at which `GameStart` is observed.** In the empirical capture, `GameStart.EventTime` was `0.0095s`, but it first appeared in a response at `gameTime = 2.1195s`. Arrival-time anchoring would shift every video marker approximately 2.11 seconds late.
 
-### 5.2 Post-GameStart — Event Loop (continuous)
+### 5.2 Post-Calibration — Event Loop (continuous)
 
 Polls `/eventdata` as fast as the API responds. No fixed sleep interval — the next request fires immediately after the previous response is processed. This ensures named events (kills, objectives) are captured with minimum latency.
 
@@ -127,8 +126,8 @@ tokio::spawn(async move {
     loop {
         match client.get(".../eventdata").send().await {
             Err(_) => {
-                // ConnectionError = game ended
-                // signal stop sequence and exit
+                // API is unavailable: stop this polling task only.
+                // The process watcher remains the sole video stop trigger.
                 break;
             }
             Ok(response) => {
@@ -155,11 +154,13 @@ tokio::spawn(async move {
 
 **Why continuous polling:** The API responds in 10–200ms on localhost. Continuous polling gives sub-second event capture. Kill events, multikills, and objective events are captured nearly in real time.
 
-**Game end detection:** A `ConnectionError` after a period of successful responses means the API has gone offline — the game has ended. This is the only Live Client game-end signal used by the recorder. `GameEnd` is not reliable and must not control stopping or win/loss.
+**API loss:** A `ConnectionError` ends the affected polling task. It never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization; `GameEnd` is logged if present but never controls stopping or win/loss.
 
-### 5.3 Post-GameStart — Snapshot Loop (every 10s)
+### 5.3 Post-Calibration — Snapshot Loop (every 10s)
 
-Polls `/allgamedata` every 10 seconds. Detects item changes, level changes, and gold trajectory by diffing consecutive snapshots.
+Polls `/allgamedata` every 10 seconds. Detects item and level changes by diffing consecutive snapshots.
+
+The endpoint exposes champion, team, items, CS, level, spells, and keystone for all players. Current gold and current/max HP are available only for the active local player and are stored as `null` for everyone else. XP is not exposed. The full rune ID list is stored only for the local player on the first snapshot.
 
 ```rust
 tokio::spawn(async move {
@@ -168,7 +169,7 @@ tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
 
         match client.get(".../allgamedata").send().await {
-            Err(_) => break, // game ended, event loop will handle stop
+            Err(_) => break, // stop this polling task only; video remains process-controlled
             Ok(response) => {
                 let snapshot = parse_snapshot(response).await;
 
@@ -266,18 +267,18 @@ There is no full-file read, copy, or remux at game end. If ffmpeg is interrupted
 `video.mp4` remains playable through its last completed fragment. With a two-second
 fragment interval, at most approximately two seconds of trailing footage may be lost.
 
-Phase 2 additionally:
+Phase 2 starts poller cancellation at the same time as ffmpeg shutdown so metadata work never delays video closure:
 
 ```
-1. Stop the calibration, Event Loop, and Snapshot Loop tasks
-2. Write metadata.json with:
+1. Cancel the calibration, Event Loop, and Snapshot Loop tasks while ffmpeg closes
+2. Flush game_log.json one final time after the polling tasks stop
+3. Write metadata.json with:
    - win: null and win_method: "unknown" (resolved post-game)
    - matchv5_fetched: false  ← always false at this point; app fetches post-game
    - All other fields (see SPEC.md §3.8 for full schema)
-3. Finalise game_log.json (write one last flush to ensure all data is on disk)
 ```
 
-**Note on win/loss:** The recorder does not consume `GameEnd`. It writes `win: null` and `win_method: "unknown"` at stop time. The app resolves the result via Match V5 on next launch; if Match V5 is unavailable, it may derive the result from the final gold differential and set `win_method: "derived"`.
+**Note on win/loss:** The recorder does not consume `GameEnd`. It writes `win: null` and `win_method: "unknown"` at stop time. The app resolves the result via Match V5 on next launch; without enrichment the result remains unknown because the Live Client API does not expose a complete final team-gold state.
 
 **Why fragmented MP4:**
 Ordinary MP4 depends on final index data and may be unreadable after interruption.

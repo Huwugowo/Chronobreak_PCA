@@ -43,7 +43,7 @@ The default view when a game is opened. The video occupies roughly 60% of the wi
 └──────────────────────────────────────────────────────┘
 ```
 
-In windowed mode the scrubber, gold graph, and event feed are always visible — no hover or click required. The USG panel layout (as prototyped in `league-replay-usgfx-v3.jsx`) is the reference for this mode.
+In windowed mode the scrubber and event feed are always visible — no hover or click required. The gold graph is also visible when Match V5 timeline data is present; its space collapses cleanly when enrichment is unavailable. The USG panel layout (as prototyped in `league-replay-usgfx-v3.jsx`) is the reference for this mode.
 
 ### 2.2 Fullscreen Mode
 
@@ -107,7 +107,7 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 │  │ Gold Differential          +1800G · ADVANTAGE   │    │    │
 │  │ ▁▂▄▆▅▃▄▇██▅▃▄▆████                             │    │    │
 │  └─────────────────────────────────────────────────┘    │    │
-│  [▴ GOLD +1800]   ← gold tab, always present            │    │
+│  [▴ GOLD +1800]   ← present with Match V5 timeline      │    │
 ├─────────────────────────────────────────────────────────┤    │
 │  0:00 ·····|●|·····|●|·····|●|·····|●|·····|●·· 32:14  │    │
 │  [▶ Play] [▴ Gold] | 14:32 / 32:14 | [✦ Clip]          │    │
@@ -134,7 +134,7 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 - App wordmark ("REPLAY") + company line in mono type
 - Divider
 - Champion name + KDA (kills / deaths / assists)
-- **Right side:** current gold differential, match clock, REC indicator (pulsing dot)
+- **Right side:** match clock, REC indicator (pulsing dot), and current gold differential when Match V5 timeline data is available
 
 **Visibility behaviour:**
 - Fades **out** after **3.2 seconds** of mouse inactivity anywhere in the window. Transition: `opacity 1→0`, 350ms ease.
@@ -198,7 +198,7 @@ Visible in active state. Semi-visible (opacity 0.6) in ambient state.
 
 **Layout (left to right):**
 - `▶ Play` / `⏸ Pause` button — blue filled (primary action)
-- `▴ Gold` toggle button — ghost style, toggles gold graph drawer
+- `▴ Gold` toggle button — ghost style, toggles gold graph drawer; omitted without Match V5 timeline data
 - Divider
 - Time readout: `14:32 / 32:14` — mono type
 - Divider
@@ -207,6 +207,8 @@ Visible in active state. Semi-visible (opacity 0.6) in ambient state.
 ---
 
 ## 7. Gold Graph Drawer
+
+This drawer is rendered only when `matchv5` contains participant timeline frames. The Live Client API exposes current gold only for the active local player, so it cannot produce a truthful team differential and no estimate is shown.
 
 ### 7.1 Behaviour
 
@@ -235,7 +237,7 @@ Visible in active state. Semi-visible (opacity 0.6) in ambient state.
 - Area below zero: faint red fill
 - Line: blue when positive, red when negative, 1.8px stroke
 - Vertical cursor: tracks current video time, same colour as line, with diamond marker at intersection
-- Granularity: 10s (matches snapshot interval)
+- Granularity: Match V5 participant-frame interval (typically 60s)
 - Hovering the graph does **not** seek — it is read-only display. Seeking is via the scrubber only.
 
 **X-axis labels:** 0:00, 8:00, 16:00, 24:00, match end — mono type.
@@ -244,7 +246,7 @@ Visible in active state. Semi-visible (opacity 0.6) in ambient state.
 ### 7.3 Gold Tab
 
 - Position: absolute, just above the scrubber zone (bottom adjusts with scrubber state), left: 20px.
-- Always present — never hidden.
+- Present whenever Match V5 participant timeline frames are available; otherwise omitted.
 - Opacity: 0.5 at rest, 1.0 when scrubber is active or drawer is open.
 - Content: chevron icon (▴/▾) + "GOLD" label + current gold value (coloured blue or red).
 - Clicking toggles the drawer open/closed.
@@ -356,9 +358,9 @@ Each row contains:
 **Clicking any row** seeks video to that event's `video_time_ms`.
 
 **Bottom readout** (below the list, always visible within panel):
-- Gold diff — coloured blue or red
+- Gold diff — coloured blue or red, omitted without Match V5 timeline data
 - CS score
-- Gold advantage percentage bar — 5px tall, blue or red fill
+- Gold advantage percentage bar — 5px tall, blue or red fill, omitted without Match V5 timeline data
 
 ### 10.2 Panel does not cover the scrubber
 
@@ -461,8 +463,8 @@ The following table describes visibility behaviour for overlay elements. These e
 | Top bar | On mouse activity | Any mouse move | 3.2s idle timer |
 | Scrubber (ambient) | ✅ | — | — |
 | Scrubber (active) | — | Mouse enters scrubber zone | Mouse leaves |
-| Gold tab | ✅ (dim) | — | — |
-| Gold graph drawer | — | Click gold tab or Gold button | Click again |
+| Gold tab (with Match V5 timeline) | ✅ (dim) | — | — |
+| Gold graph drawer (with Match V5 timeline) | — | Click gold tab or Gold button | Click again |
 | Event card | — | Playhead within ~1s of event | 3.5s auto-dismiss |
 | Tick strip | ✅ | — | — |
 | Event panel | — | Click tick strip | Click tick strip |
@@ -509,7 +511,6 @@ Always shown (available from Live Client API):
 | Keystone rune | First snapshot | Icon |
 | KDA | Kill events | K / D / A with kill participation % |
 | CS | Last snapshot `scores.creepScore` | Integer + CS/min |
-| Gold | Last snapshot `gold` | Formatted (14.2k) |
 | Level | Last snapshot `level` | Integer |
 | Items | Last snapshot items array | 6 item icons + trinket, resolved via Data Dragon |
 | Multi-kill badge | Multikill events | Double / Triple / Quadra / Penta |
@@ -522,6 +523,7 @@ Shown only when `matchv5_fetched = true`:
 | Damage taken | `totalDamageTaken` |
 | Vision score | `visionScore` |
 | Wards placed / killed | `wardsPlaced` / `wardsKilled` |
+| Gold | Match result `goldEarned` | Formatted (14.2k) |
 
 When Match V5 columns are hidden, a compact notice appears in the column header area rather than empty columns.
 
@@ -535,9 +537,9 @@ Clicking any player row expands it inline (accordion). The row height grows to r
 
 **Skill order** — Q/W/E/R boxes in the order they were levelled:
 - With Match V5: all 10 players
-- Without Match V5: local player only — other players show "Skill order unavailable"
+- Without Match V5: unavailable
 
-**Full rune page** — keystone + 5 runes + 3 stat shards, icon grid
+**Full rune page** — keystone + 5 runes + 3 stat shards when Match V5 is available. Without enrichment, the local player's Live Client rune IDs are shown; other players show the keystone only.
 
 **Additional stats** (Match V5 only, shown when available):
 - Healing done (self) and to teammates
@@ -553,7 +555,7 @@ Below each team's player rows, a summary bar:
 
 - Total team kills / deaths
 - Total objectives (dragons, baron, heralds, turrets, inhibitors)
-- Total team gold
+- Total team gold when Match V5 data is available; otherwise omitted
 
 ### 15.5 Typography and Colour
 
