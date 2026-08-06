@@ -6,6 +6,7 @@ import type {
   ClipSummary,
   DdragonStatus,
   GameSummary,
+  GoldTimelinePoint,
   HevcProbeStatus,
   KdaTimelinePoint,
   PlaybackProbe,
@@ -36,6 +37,7 @@ const mockEvent = (
   turret: null,
   inhibitor: null,
   result: null,
+  relation: "neutral",
   ...details,
 });
 
@@ -47,40 +49,51 @@ const mockEvents = (): ViewerEvent[] => {
         killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Jungler",
         assisters: ["Ally Jungler", "SUPERSTAR"],
         dragon_type: ["Air", "Fire", "Water", "Earth"][index % 4],
+        relation: index % 2 === 0 ? "ally" : "enemy",
       });
     }
     if (index % 13 === 7) {
       return mockEvent("TurretKilled", videoTimeMs, {
         killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Carry",
         turret: "Turret_T2_C_03_A",
+        relation: index % 2 === 0 ? "ally" : "enemy",
       });
     }
     if (index % 17 === 9) {
       return mockEvent("Multikill", videoTimeMs, {
         killer: "SUPERSTAR",
         kill_streak: 2,
+        relation: "ally",
       });
     }
+    const enemyKill = index % 3 === 0 && index % 5 !== 0;
     return mockEvent("ChampionKill", videoTimeMs, {
-      killer: index % 5 === 0 ? "SUPERSTAR" : index % 3 === 0 ? "Enemy Carry" : "Ally Jungler",
-      victim: index % 5 === 0 ? "Enemy Carry" : index % 3 === 0 ? "SUPERSTAR" : "Enemy Jungler",
+      killer: index % 5 === 0 ? "SUPERSTAR" : enemyKill ? "Enemy Carry" : "Ally Jungler",
+      victim: index % 5 === 0 ? "Enemy Carry" : enemyKill ? "SUPERSTAR" : "Enemy Jungler",
       assisters: index % 4 === 0 ? ["SUPERSTAR"] : ["Ally Support"],
+      relation: enemyKill ? "enemy" : "ally",
     });
   });
 
   return [
     mockEvent("GameStart", MOCK_VIDEO_OFFSET_MS),
     mockEvent("MinionsSpawning", 107_000),
-    mockEvent("FirstBlood", 199_402, { killer: "SUPERSTAR", victim: "Enemy Carry" }),
+    mockEvent("FirstBlood", 199_402, {
+      killer: "SUPERSTAR",
+      victim: "Enemy Carry",
+      relation: "ally",
+    }),
     mockEvent("ChampionKill", 199_402, {
       killer: "SUPERSTAR",
       victim: "Enemy Carry",
       assisters: ["Ally Jungler"],
+      relation: "ally",
     }),
     ...generated,
     mockEvent("BaronKill", 1_501_000, {
       killer: "Ally Jungler",
       assisters: ["SUPERSTAR", "Ally Support"],
+      relation: "ally",
     }),
     mockEvent("GameEnd", 1_770_000, { result: "Win" }),
   ].sort((left, right) => left.video_time_ms - right.video_time_ms);
@@ -107,6 +120,23 @@ const mockKdaTimeline = (): KdaTimelinePoint[] => [
   { video_time_ms: 1_409_000, kills: 7, deaths: 4, assists: 10 },
   { video_time_ms: 1_698_000, kills: 8, deaths: 4, assists: 11 },
 ];
+
+const mockGoldTimeline = (durationMs: number): GoldTimelinePoint[] =>
+  Array.from(
+    { length: Math.max(2, Math.floor((durationMs - MOCK_VIDEO_OFFSET_MS) / 60_000) + 1) },
+    (_, index) => {
+      const gameTimeMs = index * 60_000;
+      const goldDiff = Math.round(Math.sin(index / 2.5) * 1_700 + (index - 10) * 55);
+      const baseGold = 2_500 + index * 2_850;
+      return {
+        game_time_ms: gameTimeMs,
+        video_time_ms: MOCK_VIDEO_OFFSET_MS + gameTimeMs,
+        ally_gold: baseGold + Math.max(0, goldDiff),
+        enemy_gold: baseGold + Math.max(0, -goldDiff),
+        gold_diff: goldDiff,
+      };
+    },
+  );
 
 let mockGames: GameSummary[] = [
   {
@@ -269,6 +299,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
       local_player_name: "SUPERSTAR#VOID",
       player_timeline: mockPlayerTimeline(),
       kda_timeline: mockKdaTimeline(),
+      gold_timeline: game.matchv5_fetched ? mockGoldTimeline(game.duration_ms) : [],
       events: mockEvents(),
     };
   }

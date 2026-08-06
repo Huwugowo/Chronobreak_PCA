@@ -17,8 +17,9 @@ import type {
   PlaybackProbe,
   PlayerTimelinePoint,
   ServerMetrics,
-  ViewerEvent,
 } from "../types";
+import { clamp, eventSummary, eventTitle, latestIndexAt, timelineValue } from "../viewerUtils";
+import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
 
 type Props = {
@@ -30,98 +31,6 @@ type ViewerTab = "replay" | "stats";
 
 type ChromiumPerformance = Performance & {
   memory?: { usedJSHeapSize: number };
-};
-
-const clamp = (value: number, minimum: number, maximum: number): number =>
-  Math.min(maximum, Math.max(minimum, value));
-
-const latestIndexAt = (
-  entries: readonly { video_time_ms: number }[],
-  videoTimeMs: number,
-): number => {
-  let low = 0;
-  let high = entries.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (entries[middle].video_time_ms <= videoTimeMs) low = middle + 1;
-    else high = middle;
-  }
-  return low - 1;
-};
-
-const timelineValue = <T extends { video_time_ms: number }>(
-  entries: readonly T[],
-  videoTimeMs: number,
-): T | undefined => {
-  const index = latestIndexAt(entries, videoTimeMs);
-  return index < 0 ? undefined : entries[index];
-};
-
-const eventTitle = (event: ViewerEvent): string => {
-  switch (event.event_type) {
-    case "FirstBlood":
-      return "FIRST BLOOD";
-    case "ChampionKill":
-      return "CHAMPION KILL";
-    case "Multikill":
-      return event.kill_streak ? `${event.kill_streak}X MULTIKILL` : "MULTIKILL";
-    case "DragonKill":
-      return `${event.dragon_type?.toUpperCase() ?? "DRAGON"} TAKEN`;
-    case "BaronKill":
-      return "BARON TAKEN";
-    case "HeraldKill":
-      return "HERALD TAKEN";
-    case "Horde":
-    case "HordeKill":
-      return "VOID GRUBS TAKEN";
-    case "TurretKilled":
-      return "TURRET DESTROYED";
-    case "InhibKilled":
-      return "INHIBITOR DESTROYED";
-    case "Ace":
-      return "ACE";
-    case "FirstBrick":
-      return "FIRST TURRET";
-    case "GameStart":
-      return "GAME CLOCK START";
-    case "GameEnd":
-      return "GAME END CAPTURED";
-    case "Minions":
-    case "MinionsSpawning":
-      return "MINIONS SPAWNED";
-    default:
-      return event.event_type.replace(/([a-z])([A-Z])/g, "$1 $2").toUpperCase();
-  }
-};
-
-const eventSummary = (event: ViewerEvent): string => {
-  if (event.event_type === "ChampionKill" || event.event_type === "FirstBlood") {
-    return [event.killer, event.victim].filter(Boolean).join("  /  ") || "Combat event";
-  }
-  if (event.event_type === "Ace") return event.acer ?? "Team fight resolved";
-  if (event.event_type === "GameEnd") return "Optional Live Client telemetry";
-  if (event.killer) return event.killer;
-  if (event.acing_team) return event.acing_team;
-  return "Live Client event";
-};
-
-const eventTone = (eventType: string): "combat" | "objective" | "system" => {
-  if (["ChampionKill", "FirstBlood", "Multikill", "Ace"].includes(eventType)) return "combat";
-  if (
-    [
-      "DragonKill",
-      "BaronKill",
-      "HeraldKill",
-      "Horde",
-      "HordeKill",
-      "TurretKilled",
-      "InhibKilled",
-      "FirstBrick",
-    ].includes(eventType)
-  ) {
-    return "objective";
-  }
-  return "system";
 };
 
 function ViewerScreen(props: Props) {
@@ -172,16 +81,22 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
   const kdaTimeline = [...props.probe.kda_timeline].sort(
     (left, right) => left.video_time_ms - right.video_time_ms,
   );
+  const goldTimeline = [...props.probe.gold_timeline].sort(
+    (left, right) => left.video_time_ms - right.video_time_ms,
+  );
   const lastEventTimeMs = events[events.length - 1]?.video_time_ms ?? 0;
   const durationMs = Math.max(props.probe.game.duration_ms, lastEventTimeMs, 1);
   const markerPositions = events.map((event, index) => ({
     event,
     index,
     position: clamp((event.video_time_ms / durationMs) * 100, 0, 100),
-    tone: eventTone(event.event_type),
+    tone: event.relation,
   }));
 
   const [activeTab, setActiveTab] = createSignal<ViewerTab>("replay");
+  const [isFullscreen, setIsFullscreen] = createSignal(false);
+  const [goldOpen, setGoldOpen] = createSignal(false);
+  const [fullscreenEventPanelOpen, setFullscreenEventPanelOpen] = createSignal(false);
   const [videoTimeMs, setVideoTimeMs] = createSignal(0);
   const [isPlaying, setIsPlaying] = createSignal(false);
   const [mediaUnavailable, setMediaUnavailable] = createSignal(false);
@@ -323,10 +238,23 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
     }
   };
 
+  const enterFullscreen = () => {
+    if (activeTab() === "replay") setIsFullscreen(true);
+  };
+
+  const exitFullscreen = () => setIsFullscreen(false);
+
   const selectTab = (tab: ViewerTab) => {
-    if (tab === "stats") video.pause();
+    if (tab === "stats") {
+      video.pause();
+      exitFullscreen();
+    }
     setActiveTab(tab);
   };
+
+  createEffect(() => {
+    document.body.classList.toggle("replay-fullscreen", isFullscreen());
+  });
 
   onMount(() => {
     const updateTime = () => setVideoTimeMs(video.currentTime * 1_000);
@@ -355,6 +283,20 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
       }
     };
     const onError = () => setMediaUnavailable(true);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      if (event.key === "Escape" && isFullscreen()) {
+        event.preventDefault();
+        exitFullscreen();
+        return;
+      }
+      if (event.key.toLowerCase() === "f" && activeTab() === "replay") {
+        event.preventDefault();
+        setIsFullscreen((fullscreen) => !fullscreen);
+      }
+    };
 
     video.addEventListener("loadedmetadata", onLoadedMetadata);
     video.addEventListener("pause", onPause);
@@ -363,6 +305,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
     video.addEventListener("seeking", onSeeking);
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("error", onError);
+    window.addEventListener("keydown", onKeyDown);
     if (typeof video.requestVideoFrameCallback === "function") {
       if (props.probe.video_url) frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
     } else {
@@ -381,6 +324,8 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("error", onError);
       video.removeEventListener("timeupdate", updateTime);
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.classList.remove("replay-fullscreen");
       if (frameCallbackId !== undefined && typeof video.cancelVideoFrameCallback === "function") {
         video.cancelVideoFrameCallback(frameCallbackId);
       }
@@ -452,7 +397,14 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         data-testid="replay-panel"
       >
         <div class={styles.windowedGrid}>
-          <div class={styles.videoFrame} data-testid="video-frame">
+          <div
+            classList={{
+              [styles.videoFrame]: true,
+              [styles.videoFrameFullscreen]: isFullscreen(),
+            }}
+            data-testid="video-frame"
+            data-fullscreen={isFullscreen()}
+          >
             <video
               ref={video}
               src={props.probe.video_url || undefined}
@@ -460,6 +412,10 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
               preload="metadata"
               aria-label={`${props.probe.game.champion} replay video`}
               onClick={() => void togglePlayback()}
+              onDblClick={(event) => {
+                event.preventDefault();
+                enterFullscreen();
+              }}
             />
             <Show when={!props.probe.video_url || mediaUnavailable()}>
               <div class={styles.previewPlaceholder}>
@@ -472,10 +428,35 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
                 </span>
               </div>
             </Show>
-            <div class={styles.videoClock}>
-              <span>{beforeGameStart() ? "PRE-GAME" : "GAME TIME"}</span>
-              <strong>{beforeGameStart() ? "--:--" : formatDuration(gameClockSecond() * 1_000)}</strong>
-            </div>
+            <Show when={!isFullscreen()}>
+              <div class={styles.videoClock}>
+                <span>{beforeGameStart() ? "PRE-GAME" : "GAME TIME"}</span>
+                <strong>{beforeGameStart() ? "--:--" : formatDuration(gameClockSecond() * 1_000)}</strong>
+              </div>
+            </Show>
+            <Show when={isFullscreen()}>
+              <FullscreenOverlay
+                champion={props.probe.game.champion}
+                localPlayerName={props.probe.local_player_name}
+                events={events}
+                goldTimeline={goldTimeline}
+                durationMs={durationMs}
+                videoTimeMs={videoTimeMs()}
+                gameClockSeconds={gameClockSecond()}
+                beforeGameStart={beforeGameStart()}
+                currentKda={currentKda()}
+                currentPlayer={currentPlayer()}
+                isPlaying={isPlaying()}
+                mediaAvailable={Boolean(props.probe.video_url) && !mediaUnavailable()}
+                goldOpen={goldOpen()}
+                eventPanelOpen={fullscreenEventPanelOpen()}
+                onGoldOpenChange={setGoldOpen}
+                onEventPanelOpenChange={setFullscreenEventPanelOpen}
+                onTogglePlayback={() => void togglePlayback()}
+                onSeek={seekTo}
+                onExit={exitFullscreen}
+              />
+            </Show>
           </div>
 
           <aside class={styles.sidePanel} aria-label="Synchronized game data">
@@ -538,7 +519,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
                         ref={(element) => {
                           eventRows[index()] = element;
                         }}
-                        class={`${styles.eventRow} ${styles[`eventTone${eventTone(event.event_type)}`]}`}
+                        class={`${styles.eventRow} ${styles[`eventTone${event.relation}`]}`}
                         type="button"
                         data-event-index={index()}
                         onClick={() => seekTo(event.video_time_ms)}
@@ -619,8 +600,8 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
             <button
               class={styles.fullscreenButton}
               type="button"
-              disabled
-              title="Fullscreen viewer is part of Phase 5"
+              onClick={enterFullscreen}
+              title="Open fullscreen replay"
             >
               <span aria-hidden="true">⛶</span> FULLSCREEN
             </button>
@@ -681,7 +662,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         aria-hidden={activeTab() !== "stats"}
         data-testid="stats-placeholder"
       >
-        <span>PHASE 04 / REPLAY COMPLETE</span>
+        <span>STATS / PHASE 06</span>
         <strong>MATCH SCOREBOARD</strong>
         <p>Stats arrives in a later phase. Your replay position is preserved.</p>
       </section>

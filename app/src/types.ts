@@ -43,6 +43,7 @@ export type ViewerEvent = {
   turret: string | null;
   inhibitor: string | null;
   result: string | null;
+  relation: "ally" | "enemy" | "neutral";
 };
 
 export type PlayerTimelinePoint = {
@@ -59,6 +60,14 @@ export type KdaTimelinePoint = {
   assists: number;
 };
 
+export type GoldTimelinePoint = {
+  game_time_ms: number;
+  video_time_ms: number;
+  ally_gold: number;
+  enemy_gold: number;
+  gold_diff: number;
+};
+
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;
@@ -66,6 +75,7 @@ export type PlaybackProbe = {
   local_player_name: string | null;
   player_timeline: PlayerTimelinePoint[];
   kda_timeline: KdaTimelinePoint[];
+  gold_timeline: GoldTimelinePoint[];
   events: ViewerEvent[];
 };
 

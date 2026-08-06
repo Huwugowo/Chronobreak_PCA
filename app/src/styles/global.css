@@ -24,6 +24,10 @@ body {
   background-size: 42px 42px, 42px 42px, auto, auto;
 }
 
+body.replay-fullscreen {
+  overflow: hidden;
+}
+
 ::selection {
   color: #fff;
   background: var(--color-blue);
