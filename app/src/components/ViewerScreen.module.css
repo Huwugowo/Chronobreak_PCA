@@ -1,0 +1,216 @@
+.viewerScreen {
+  width: 100%;
+}
+
+.backButton {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 17px;
+  padding: 0 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  color: var(--color-muted-bright);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 10px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.backButton:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #fff;
+}
+
+.viewerState {
+  display: grid;
+  min-height: 420px;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-panel);
+  color: var(--color-muted-bright);
+  background: var(--color-panel);
+}
+
+.viewerState strong {
+  color: var(--color-text);
+  font-size: 20px;
+}
+
+.playbackSurface {
+  width: min(100%, 1380px);
+  margin: 0 auto;
+}
+
+.gameHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 30px;
+  margin-bottom: 16px;
+}
+
+.gameHeader p {
+  margin: 0 0 5px;
+  color: var(--color-blue-soft);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: 0.17em;
+}
+
+.gameHeader h1 {
+  margin: 0;
+  font-size: clamp(29px, 3.3vw, 46px);
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+
+.gameHeader dl {
+  display: flex;
+  gap: clamp(18px, 3vw, 42px);
+  margin: 0;
+}
+
+.gameHeader dl > div {
+  display: grid;
+  gap: 5px;
+}
+
+.gameHeader dt,
+.diagnostics dt {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 760;
+  letter-spacing: 0.14em;
+}
+
+.gameHeader dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 670;
+}
+
+.videoFrame {
+  overflow: hidden;
+  border: 1px solid var(--color-line-bright);
+  border-radius: var(--radius-panel);
+  background: #000;
+  box-shadow: var(--shadow-panel);
+}
+
+.videoFrame video {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 270px);
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.previewPlaceholder {
+  display: grid;
+  min-height: min(58vw, 680px);
+  place-content: center;
+  justify-items: center;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    radial-gradient(circle, rgba(36, 87, 255, 0.18), transparent 35%),
+    #05070b;
+  background-size: 38px 38px, 38px 38px, auto, auto;
+}
+
+.previewPlaceholder strong {
+  color: var(--color-blue-soft);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+}
+
+.previewPlaceholder span {
+  margin-top: 9px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.diagnostics {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: #0b1018;
+}
+
+.diagnostics summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 730;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.diagnostics summary strong {
+  color: var(--color-green);
+  font-size: 9px;
+}
+
+.diagnostics dl {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border-top: 1px solid var(--color-line);
+  background: var(--color-line);
+}
+
+.diagnostics dl > div {
+  display: grid;
+  min-height: 58px;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 12px;
+  background: #0b1018;
+}
+
+.diagnostics dd {
+  overflow: hidden;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .gameHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .diagnostics dl {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .gameHeader dl {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .diagnostics dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

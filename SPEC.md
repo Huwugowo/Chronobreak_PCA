@@ -214,7 +214,8 @@ Free Riot CDN, no authentication required. Used to resolve item IDs and champion
 - On app launch, check current patch version: `GET /api/versions.json` → first element is current patch
 - If cached version matches current patch: use cache
 - If different: fetch fresh data and update cache
-- Cache location: `{app_data}/ddragon/{patch_version}/`
+- If the CDN is unavailable: use the newest complete cached patch
+- Cache location: the OS app-local data directory under `ddragon/{patch_version}/`
 
 **Data fetched:**
 - `GET /cdn/{version}/data/en_US/item.json` — maps item ID → name, description, icon path
@@ -437,7 +438,7 @@ No database. Everything is derived from these files at app launch. The game libr
 | Playback sync | `requestVideoFrameCallback`; `requestAnimationFrame`/media-event fallback |
 | State | Solid signals and stores; no external state library |
 | Navigation | Small typed in-app navigation state; no router dependency |
-| File system | Tauri fs plugin |
+| File system | Narrow Rust commands; Tauri dialog plugin only for the native folder picker |
 | Build | Vite |
 
 #### Playback hot-path rules

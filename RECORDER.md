@@ -428,6 +428,7 @@ codec = "auto"              # auto | h264 | hevc
 output_path = "~/LeagueReplays"
 auto_delete_days = 30       # recordings older than this deleted on app launch
                             # unless metadata.saved == true
+                            # 0 means Never
 
 [app]
 autostart = true            # register OS startup entry on first launch

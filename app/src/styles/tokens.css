@@ -5,13 +5,16 @@
   --color-line: rgba(255, 255, 255, 0.12);
   --color-text: #f3f5f8;
   --color-muted: #8490a3;
+  --color-muted-bright: #aab3c2;
   --color-blue: #2457ff;
   --color-blue-soft: #7894ff;
   --color-red: #e4314b;
   --color-green: #4effb3;
+  --color-line-bright: rgba(255, 255, 255, 0.18);
   --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.38);
   --radius-small: 4px;
   --radius-panel: 12px;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   color: var(--color-text);
   background: var(--color-ink);

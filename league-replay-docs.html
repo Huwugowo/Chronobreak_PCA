@@ -780,7 +780,8 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 - On app launch, check current patch version: <code>GET /api/versions.json</code> → first element is current patch
 - If cached version matches current patch: use cache
 - If different: fetch fresh data and update cache
-- Cache location: <code>{app_data}/ddragon/{patch_version}/</code></p>
+- If the CDN is unavailable: use the newest complete cached patch
+- Cache location: the OS app-local data directory under <code>ddragon/{patch_version}/</code></p>
 <p><strong>Data fetched:</strong>
 - <code>GET /cdn/{version}/data/en_US/item.json</code> — maps item ID → name, description, icon path
 - <code>GET /cdn/{version}/data/en_US/champion.json</code> — maps champion key → name, icon path
@@ -1079,7 +1080,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 </tr>
 <tr>
 <td>File system</td>
-<td>Tauri fs plugin</td>
+<td>Narrow Rust commands; Tauri dialog plugin only for the native folder picker</td>
 </tr>
 <tr>
 <td>Build</td>
@@ -1574,6 +1575,7 @@ bitrate_kbps = 20000        # default 20 Mbps
 output_path = &quot;~/LeagueReplays&quot;
 auto_delete_days = 30       # recordings older than this deleted on app launch
                             # unless metadata.saved == true
+                            # 0 means Never
 
 [app]
 autostart = true            # register OS startup entry on first launch
@@ -2693,6 +2695,7 @@ clip_end   = kill_event.video_time_ms + 3000
 </tr>
 </tbody>
 </table>
+<p><code>Never</code> is stored as <code>auto_delete_days = 0</code>. Zero disables age-based deletion; it does not mean &quot;delete immediately.&quot;</p>
 <p><strong>Storage breakdown:</strong></p>
 <pre><code>Games:  42.3 GB  (12 recordings)
 Clips:   1.2 GB  (4 clips)
@@ -2762,7 +2765,7 @@ App version:     1.0.0
 <h2 id="6-auto-delete-logic">6. Auto-Delete Logic</h2>
 <p>Runs on every app launch, before rendering.</p>
 <pre><code>for each game in /games/:
-  if metadata.saved == false:
+  if config.auto_delete_days != 0 and metadata.saved == false:
     age = now - metadata.recorded_at
     if age &gt; config.auto_delete_days * 86400 * 1000:
       delete directory recursively
@@ -2830,14 +2833,39 @@ App version:     1.0.0
 <td>Opens Finder/Explorer</td>
 </tr>
 <tr>
+<td><code>open_clips_folder</code></td>
+<td>—</td>
+<td>Opens the clips directory in Finder/Explorer</td>
+</tr>
+<tr>
 <td><code>get_settings</code></td>
 <td>—</td>
-<td><code>AppConfig</code></td>
+<td><code>Settings</code></td>
 </tr>
 <tr>
 <td><code>save_settings</code></td>
-<td><code>AppConfig</code></td>
-<td><code>Result&lt;()&gt;</code></td>
+<td><code>SettingsUpdate</code></td>
+<td><code>Settings</code></td>
+</tr>
+<tr>
+<td><code>get_hevc_probe_status</code></td>
+<td>—</td>
+<td><code>{ tested, supported, probe_url }</code></td>
+</tr>
+<tr>
+<td><code>record_hevc_probe_result</code></td>
+<td><code>supported: boolean</code></td>
+<td>Updated probe status</td>
+</tr>
+<tr>
+<td><code>get_ddragon_status</code></td>
+<td>—</td>
+<td>Patch, cache state, and catalog counts</td>
+</tr>
+<tr>
+<td><code>resolve_item_name</code></td>
+<td><code>itemId: string</code></td>
+<td><code>string | null</code></td>
 </tr>
 <tr>
 <td><code>fetch_matchv5</code></td>
@@ -2859,6 +2887,8 @@ App version:     1.0.0
   duration_ms:      number;
   file_size_bytes:  number;
   thumbnail_path:   string | null;  // absolute path to .jpg sidecar, null if missing
+  thumbnail_url:    string | null;  // range server URL, null if the sidecar is missing
+  video_url:        string;         // range server URL for modal playback
   source_champion:  string | null;  // from source game metadata, null if game deleted
   source_date:      string | null;  // from source game metadata
 };
@@ -2879,6 +2909,7 @@ App version:     1.0.0
   incomplete:       boolean;
   matchv5_fetched:  boolean;
   video_size_bytes: number;
+  video_available:  boolean;
 };
 </code></pre>
 <p>KDA and win/loss are derived by the Rust backend when building this list. The frontend never reads <code>game_log.json</code> directly for the library view.</p>

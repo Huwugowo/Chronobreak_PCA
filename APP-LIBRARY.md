@@ -177,6 +177,9 @@ contract across Windows and macOS.
 |---|---|---|---|
 | Auto-delete after | Select | `30 days` | 7 / 14 / 30 / 60 / 90 days / Never |
 
+`Never` is stored as `auto_delete_days = 0`. Zero disables age-based deletion; it
+does not mean "delete immediately."
+
 **Storage breakdown:**
 ```
 Games:  42.3 GB  (12 recordings)
@@ -228,7 +231,7 @@ Runs on every app launch, before rendering.
 
 ```
 for each game in /games/:
-  if metadata.saved == false:
+  if config.auto_delete_days != 0 and metadata.saved == false:
     age = now - metadata.recorded_at
     if age > config.auto_delete_days * 86400 * 1000:
       delete directory recursively
@@ -266,8 +269,13 @@ The following Tauri commands (Rust → frontend) are required for this module:
 | `get_storage_usage` | — | `{ games_bytes, clips_bytes }` |
 | `run_auto_delete` | — | `{ deleted_count: number }` |
 | `open_output_folder` | — | Opens Finder/Explorer |
-| `get_settings` | — | `AppConfig` |
-| `save_settings` | `AppConfig` | `Result<()>` |
+| `open_clips_folder` | — | Opens the clips directory in Finder/Explorer |
+| `get_settings` | — | `Settings` |
+| `save_settings` | `SettingsUpdate` | `Settings` |
+| `get_hevc_probe_status` | — | `{ tested, supported, probe_url }` |
+| `record_hevc_probe_result` | `supported: boolean` | Updated probe status |
+| `get_ddragon_status` | — | Patch, cache state, and catalog counts |
+| `resolve_item_name` | `itemId: string` | `string | null` |
 | `fetch_matchv5` | `gameTimestamp: string` | `Result<MatchV5Data>` |
 | `get_matchv5_status` | `gameTimestamp: string` | `{ fetched: bool, error?: string }` |
 
@@ -281,6 +289,8 @@ type ClipSummary = {
   duration_ms:      number;
   file_size_bytes:  number;
   thumbnail_path:   string | null;  // absolute path to .jpg sidecar, null if missing
+  thumbnail_url:    string | null;  // range server URL, null if the sidecar is missing
+  video_url:        string;         // range server URL for modal playback
   source_champion:  string | null;  // from source game metadata, null if game deleted
   source_date:      string | null;  // from source game metadata
 };
@@ -304,6 +314,7 @@ type GameSummary = {
   incomplete:       boolean;
   matchv5_fetched:  boolean;
   video_size_bytes: number;
+  video_available:  boolean;
 };
 ```
 

@@ -1,140 +1,461 @@
 .appShell {
   min-height: 100vh;
-  padding: 30px clamp(22px, 4vw, 64px) 48px;
+  padding: 24px clamp(22px, 3.4vw, 58px) 104px;
+}
+
+.mainContent {
+  width: min(100%, 1540px);
+  margin: 0 auto;
 }
 
 .header {
-  display: flex;
+  position: relative;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto minmax(240px, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  max-width: 1640px;
-  margin: 0 auto 26px;
+  width: min(100%, 1540px);
+  min-height: 64px;
+  margin: 0 auto 38px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.header::after {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 74px;
+  height: 2px;
+  background: var(--color-blue);
+  content: "";
 }
 
 .brandLockup {
-  display: flex;
+  display: inline-flex;
+  width: max-content;
   align-items: center;
-  gap: 15px;
+  gap: 13px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .brandMark {
+  position: relative;
   display: grid;
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: var(--radius-small);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
   background: var(--color-blue);
-  font-family: "Arial Narrow", sans-serif;
-  font-size: 18px;
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 900;
-  letter-spacing: -0.08em;
-  box-shadow: 8px 8px 0 rgba(36, 87, 255, 0.14);
+  letter-spacing: -0.09em;
+  box-shadow: 6px 6px 0 rgba(36, 87, 255, 0.13);
 }
 
-.eyebrow,
-.errorLabel {
-  margin: 0 0 5px;
-  color: var(--color-blue-soft);
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+.brandMark::after {
+  position: absolute;
+  right: -12px;
+  bottom: -15px;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 50%;
+  content: "";
 }
 
-.brandLockup h1 {
-  margin: 0;
-  font-family: "Arial Narrow", "Segoe UI", sans-serif;
-  font-size: clamp(22px, 2.2vw, 34px);
-  font-stretch: condensed;
-  font-weight: 760;
-  letter-spacing: -0.035em;
-  text-transform: uppercase;
+.brandLockup > span:last-child {
+  display: grid;
+  gap: 3px;
 }
 
-.runtimeBadge {
+.brandLockup small,
+.assetStatus,
+.runtimeMark {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+}
+
+.brandLockup strong {
+  font-size: 14px;
+  font-weight: 670;
+  letter-spacing: -0.015em;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: rgba(8, 11, 17, 0.88);
+}
+
+.tabs button {
+  min-width: 96px;
+  min-height: 36px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--color-muted-bright);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 680;
+  cursor: pointer;
+  transition: color 130ms ease, background 130ms ease, transform 130ms ease;
+}
+
+.tabs button:hover {
+  color: var(--color-text);
+}
+
+.tabs button:active {
+  transform: translateY(1px);
+}
+
+.tabs .activeTab {
+  color: #fff;
+  background: var(--color-blue);
+  box-shadow: 0 8px 24px rgba(36, 87, 255, 0.22);
+}
+
+.headerActions {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-height: 34px;
-  padding: 0 12px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.assetStatus,
+.runtimeMark {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
   border: 1px solid var(--color-line);
-  border-radius: 999px;
+  border-radius: 7px;
+  background: rgba(13, 17, 25, 0.72);
+}
+
+.assetStatus i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e1a94c;
+  box-shadow: 0 0 9px rgba(225, 169, 76, 0.52);
+}
+
+.assetStatus[data-state="ready"] i {
+  background: var(--color-green);
+  box-shadow: 0 0 9px rgba(78, 255, 179, 0.48);
+}
+
+.assetStatus[data-state="offline"] i {
+  background: var(--color-red);
+  box-shadow: 0 0 9px rgba(228, 49, 75, 0.48);
+}
+
+.runtimeMark {
+  color: var(--color-blue-soft);
+}
+
+.settingsButton {
+  display: inline-grid;
+  width: auto;
+  height: 34px;
+  place-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--color-line-bright);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: var(--color-panel-raised);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: 0.11em;
+  cursor: pointer;
+  transition: border-color 130ms ease, background 130ms ease;
+}
+
+.settingsButton:hover {
+  border-color: rgba(120, 148, 255, 0.66);
+  background: #192134;
+}
+
+.storageIndicator {
+  position: fixed;
+  z-index: 18;
+  right: clamp(22px, 3.4vw, 58px);
+  bottom: 20px;
+  left: clamp(22px, 3.4vw, 58px);
+  display: flex;
+  width: min(calc(100% - clamp(44px, 6.8vw, 116px)), 1540px);
+  min-height: 50px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 auto;
+  padding: 0 17px 0 20px;
+  border: 1px solid var(--color-line-bright);
+  border-radius: 10px;
+  background: #0e131d;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.52);
+}
+
+.storageIndicator > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   color: var(--color-muted);
-  background: rgba(13, 17, 25, 0.78);
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
 }
 
-.runtimeBadge span {
-  width: 7px;
-  height: 7px;
+.storageIndicator i {
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
-  background: #ffb547;
-  box-shadow: 0 0 10px rgba(255, 181, 71, 0.6);
+  background: var(--color-blue-soft);
 }
 
-.runtimeBadge[data-runtime="desktop"] span {
-  background: var(--color-green);
-  box-shadow: 0 0 10px rgba(78, 255, 179, 0.6);
+.storageIndicator strong {
+  color: var(--color-text);
+  font-weight: 760;
+}
+
+.storageIndicator button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 0;
+  color: var(--color-blue-soft);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.storageIndicator button:hover {
+  color: #fff;
 }
 
 .statePanel {
   display: grid;
-  max-width: 780px;
-  min-height: 320px;
-  margin: 80px auto 0;
-  padding: 50px;
+  max-width: 720px;
+  min-height: 330px;
+  margin: 90px auto 0;
+  padding: 52px;
   place-content: center;
   justify-items: center;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-panel);
-  background: rgba(13, 17, 25, 0.9);
+  background: var(--color-panel);
   text-align: center;
   box-shadow: var(--shadow-panel);
 }
 
-.statePanel h2 {
-  margin: 4px 0 8px;
-  font-size: 25px;
+.statePanel h1 {
+  margin: 6px 0 8px;
+  font-size: 26px;
+  letter-spacing: -0.04em;
 }
 
 .statePanel p:not(.errorLabel) {
-  max-width: 540px;
+  max-width: 520px;
   margin: 8px 0;
-  color: var(--color-muted);
+  color: var(--color-muted-bright);
+}
+
+.statePanel button {
+  margin-top: 18px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+  background: var(--color-blue);
+  cursor: pointer;
+}
+
+.errorLabel {
+  margin: 0;
+  color: var(--color-red);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.16em;
 }
 
 .loader {
   width: 28px;
   height: 28px;
-  margin-bottom: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.12);
+  margin-bottom: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
   border-top-color: var(--color-blue-soft);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 800ms linear infinite;
+}
+
+.dialogBackdrop {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(2, 4, 8, 0.78);
+}
+
+.confirmDialog {
+  width: min(100%, 430px);
+  padding: 28px;
+  border: 1px solid var(--color-line-bright);
+  border-top: 2px solid var(--color-red);
+  border-radius: var(--radius-panel);
+  background: #111721;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.7);
+}
+
+.confirmDialog > p {
+  margin: 0 0 11px;
+  color: var(--color-red);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.16em;
+}
+
+.confirmDialog h2 {
+  margin: 0 0 9px;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.confirmDialog > span {
+  display: block;
+  color: var(--color-muted-bright);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.confirmDialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 25px;
+}
+
+.confirmDialog button {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid var(--color-line-bright);
+  border-radius: 7px;
+  color: var(--color-text);
+  background: var(--color-panel-raised);
+  font-size: 12px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.confirmDialog button[data-danger] {
+  border-color: rgba(228, 49, 75, 0.45);
+  background: var(--color-red);
+}
+
+.confirmDialog button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.notice {
+  position: fixed;
+  z-index: 80;
+  top: 22px;
+  left: 50%;
+  min-width: 260px;
+  max-width: min(90vw, 540px);
+  padding: 12px 17px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(120, 148, 255, 0.42);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: #141c2b;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.56);
+  font-size: 12px;
+  text-align: center;
+  animation: notice-in 150ms ease-out;
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
+  to { transform: rotate(360deg); }
+}
+
+@keyframes notice-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+}
+
+@media (max-width: 1080px) {
+  .header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .tabs {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: center;
+    margin-top: 16px;
+  }
+
+  .assetStatus,
+  .runtimeMark {
+    display: none;
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 680px) {
   .appShell {
-    padding: 20px 14px 32px;
+    padding: 16px 14px 92px;
   }
 
   .header {
-    align-items: flex-start;
+    margin-bottom: 26px;
   }
 
-  .runtimeBadge {
-    padding: 0 9px;
-    font-size: 0;
+  .brandLockup > span:last-child strong {
+    display: none;
+  }
+
+  .tabs {
+    width: 100%;
+  }
+
+  .tabs button {
+    flex: 1;
+  }
+
+  .storageIndicator {
+    right: 14px;
+    bottom: 12px;
+    left: 14px;
+    width: calc(100% - 28px);
+  }
+
+  .storageIndicator > div span,
+  .storageIndicator > div i {
+    display: none;
   }
 }
