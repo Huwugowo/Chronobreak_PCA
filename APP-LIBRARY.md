@@ -8,7 +8,7 @@
 
 ## 1. App Shell
 
-The app is a Tauri v2 window with a React frontend. The root level has **two tabs**:
+The app is a Tauri v2 window with a SolidJS frontend. The root level has **two tabs**:
 
 ```
 [ Games ]  [ Clips ]
@@ -23,14 +23,14 @@ Below the tab bar, a persistent storage indicator is always visible (see Section
 
 **Full screen list:**
 
-| Screen | Route | Document |
+| Screen | Navigation state | Document |
 |---|---|---|
-| Games tab | `/` | This file |
-| Clips tab | `/clips` | This file |
-| Viewer | `/viewer/:gameTimestamp` | `APP-VIEWER.md` |
-| Settings | `/settings` | This file |
+| Games tab | `{ screen: "library", tab: "games" }` | This file |
+| Clips tab | `{ screen: "library", tab: "clips" }` | This file |
+| Viewer | `{ screen: "viewer", gameTimestamp }` | `APP-VIEWER.md` |
+| Settings | `{ screen: "settings", returnTo }` | This file |
 
-Navigation is handled by React Router. The Settings screen is accessible from any screen via a persistent icon in the top-right corner of the shell.
+Navigation is a small typed Solid store, not a URL router. It retains only the current screen and the minimal return state required for Back. The Settings screen is accessible from any screen via a persistent icon in the top-right corner of the shell.
 
 ---
 

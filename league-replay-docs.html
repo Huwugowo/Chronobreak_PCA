@@ -393,7 +393,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 <h3 id="core-design-philosophy">Core Design Philosophy</h3>
 <ul>
 <li>The recorder must be completely invisible and have zero performance impact on the game</li>
-<li>The app only runs post-game — performance constraints are relaxed on the app side</li>
+<li>The app only runs post-game, but playback, seeking, navigation, and overlay interaction must remain visibly immediate and frame-smooth</li>
 <li>Core functionality requires no external accounts, API keys, or credentials — the app works fully offline</li>
 <li>Match V5 enrichment (damage stats, vision score, exact item timestamps) is optional and requires a Riot ID — the app degrades gracefully without it</li>
 <li>Output is always a plain H.264 MP4 file — no proprietary formats, no upload links, no accounts</li>
@@ -433,7 +433,7 @@ This file is the shared vocabulary. Open it alongside whichever module document 
                             ↓ reads from disk
 ┌─────────────────────────────────────────────────────────────┐
 │                  PROCESS 2 — APP                             │
-│         (Tauri v2 + React + TypeScript, opened on demand)    │
+│        (Tauri v2 + SolidJS + TypeScript, opened on demand)   │
 │                                                              │
 │  Games Tab     → grid of recorded game bundles               │
 │  Clips Tab     → grid of exported clips                      │
@@ -1038,24 +1038,24 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 </thead>
 <tbody>
 <tr>
-<td>Framework</td>
+<td>Desktop shell</td>
 <td>Tauri v2</td>
 </tr>
 <tr>
-<td>Language</td>
-<td>TypeScript + React 18</td>
+<td>UI</td>
+<td>SolidJS + TypeScript</td>
 </tr>
 <tr>
 <td>Styling</td>
-<td>Tailwind CSS</td>
+<td>Plain CSS: global design tokens + component CSS modules</td>
 </tr>
 <tr>
 <td>Graphs</td>
-<td>Recharts</td>
+<td>Purpose-built SVG; Canvas only if profiling proves it necessary</td>
 </tr>
 <tr>
 <td>Video</td>
-<td>HTML5 <code>&lt;video&gt;</code> via Rust local HTTP server</td>
+<td>One persistent HTML5 <code>&lt;video&gt;</code> element via Rust local HTTP server</td>
 </tr>
 <tr>
 <td>Clip export</td>
@@ -1063,11 +1063,19 @@ This file is the shared vocabulary. Open it alongside whichever module document 
 </tr>
 <tr>
 <td>Video streaming</td>
-<td>Rust <code>hyper</code> or Tauri asset protocol</td>
+<td>Rust HTTP server with byte-range support</td>
+</tr>
+<tr>
+<td>Playback sync</td>
+<td><code>requestVideoFrameCallback</code>; <code>requestAnimationFrame</code>/media-event fallback</td>
 </tr>
 <tr>
 <td>State</td>
-<td>React Context + useReducer</td>
+<td>Solid signals and stores; no external state library</td>
+</tr>
+<tr>
+<td>Navigation</td>
+<td>Small typed in-app navigation state; no router dependency</td>
 </tr>
 <tr>
 <td>File system</td>
@@ -1692,17 +1700,21 @@ cargo build --release
 <p>Video files are large (5–10GB). They must never be loaded into memory.</p>
 <ul>
 <li>The Rust backend runs a local HTTP server with <strong>range request support</strong></li>
-<li>The React frontend uses a standard HTML5 <code>&lt;video&gt;</code> tag pointed at <code>http://127.0.0.1:{port}/games/{timestamp}/video.mp4</code></li>
+<li>The SolidJS frontend uses one persistent HTML5 <code>&lt;video&gt;</code> tag pointed at <code>http://127.0.0.1:{port}/games/{timestamp}/video.mp4</code></li>
 <li>Seeking, buffering, and playback rate are all handled natively by the browser engine</li>
 <li>No custom video decoding is implemented</li>
+<li>The video DOM node is not unmounted when the viewer changes between windowed and fullscreen modes</li>
 </ul>
 <p><strong>Sync between video and data:</strong></p>
-<p>The video element emits <code>timeupdate</code> events. The frontend listens and converts the video's <code>currentTime</code> (seconds) to <code>video_time_ms</code>:</p>
-<pre><code class="language-ts">videoElement.addEventListener('timeupdate', () =&gt; {
-  const videoTimeMs = videoElement.currentTime * 1000;
-  // use videoTimeMs to drive scrubber, gold graph cursor, event highlighting
-});
+<p>The primary clock is <code>requestVideoFrameCallback</code>, which reports the media timestamp of each frame submitted to the compositor. Only the few DOM values that visually track playback subscribe to this hot signal:</p>
+<pre><code class="language-ts">const onVideoFrame: VideoFrameRequestCallback = (_now, frame) =&gt; {
+  setVideoTimeMs(frame.mediaTime * 1000);
+  frameCallbackId = videoElement.requestVideoFrameCallback(onVideoFrame);
+};
+
+frameCallbackId = videoElement.requestVideoFrameCallback(onVideoFrame);
 </code></pre>
+<p>If the platform webview lacks this API, use a <code>requestAnimationFrame</code> loop while playing and media events while stationary. Media <code>timeupdate</code> may assist that fallback but is never the primary animation clock.</p>
 <p>Game clock time is derived as: <code>game_clock_ms = video_time_ms - metadata.video_offset_ms</code></p>
 <hr>
 <h2 id="4-layout-overview-fullscreen-mode">4. Layout — Overview (Fullscreen Mode)</h2>
@@ -1845,10 +1857,8 @@ cargo build --release
 <hr>
 <h2 id="8-floating-event-card">8. Floating Event Card</h2>
 <h3 id="81-trigger">8.1 Trigger</h3>
-<p>The frontend evaluates on every <code>timeupdate</code>:</p>
-<pre><code class="language-ts">const nearEvent = events.find(e =&gt;
-  Math.abs(videoTimeMs - e.video_time_ms) &lt; 1000 // within 1 second
-);
+<p>The frontend evaluates when the presented-frame clock crosses an event proximity boundary:</p>
+<pre><code class="language-ts">const nearEvent = nearestEvent(eventsByVideoTime, videoTimeMs, 1000);
 </code></pre>
 <p>When <code>nearEvent</code> changes to a new event (not the same event as currently shown):
 - Dismiss current card (if any) with exit animation
@@ -1885,7 +1895,7 @@ cargo build --release
 <p><strong>Playhead needle:</strong>
 - Thin horizontal line (1px, <code>rgba(255,255,255,.40)</code>) spanning the full strip width
 - Positioned at the same proportional height as the current video time
-- Moves in real time with <code>timeupdate</code>
+- Moves from the presented-frame clock using a CSS transform
 - <code>pointer-events: none</code></p>
 <p><strong>Expand affordance:</strong>
 - Three short horizontal lines stacked at the top of the strip (10px, 7px, 4px wide), faint blue
@@ -2496,7 +2506,7 @@ clip_end   = kill_event.video_time_ms + 3000
 </blockquote>
 <hr>
 <h2 id="1-app-shell">1. App Shell</h2>
-<p>The app is a Tauri v2 window with a React frontend. The root level has <strong>two tabs</strong>:</p>
+<p>The app is a Tauri v2 window with a SolidJS frontend. The root level has <strong>two tabs</strong>:</p>
 <pre><code>[ Games ]  [ Clips ]
 </code></pre>
 <p><strong>Games tab</strong> — all recorded game bundles as cards, most recent first.
@@ -2508,34 +2518,34 @@ clip_end   = kill_event.video_time_ms + 3000
 <thead>
 <tr>
 <th>Screen</th>
-<th>Route</th>
+<th>Navigation state</th>
 <th>Document</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Games tab</td>
-<td><code>/</code></td>
+<td><code>{ screen: "library", tab: "games" }</code></td>
 <td>This file</td>
 </tr>
 <tr>
 <td>Clips tab</td>
-<td><code>/clips</code></td>
+<td><code>{ screen: "library", tab: "clips" }</code></td>
 <td>This file</td>
 </tr>
 <tr>
 <td>Viewer</td>
-<td><code>/viewer/:gameTimestamp</code></td>
+<td><code>{ screen: "viewer", gameTimestamp }</code></td>
 <td><code>APP-VIEWER.md</code></td>
 </tr>
 <tr>
 <td>Settings</td>
-<td><code>/settings</code></td>
+<td><code>{ screen: "settings", returnTo }</code></td>
 <td>This file</td>
 </tr>
 </tbody>
 </table>
-<p>Navigation is handled by React Router. The Settings screen is accessible from any screen via a persistent icon in the top-right corner of the shell.</p>
+<p>Navigation is a small typed Solid store, not a URL router. It retains only the current screen and the minimal return state required for Back. The Settings screen is accessible from any screen via a persistent icon in the top-right corner of the shell.</p>
 <hr>
 <h2 id="2-app-startup-sequence">2. App Startup Sequence</h2>
 <p>On every launch, before rendering any UI:</p>
@@ -3023,15 +3033,16 @@ App version:     1.0.0
 <hr>
 <h2 id="phase-3-app-shell-library">Phase 3 — App Shell + Library</h2>
 <p><strong>Goal:</strong> App launches, shows the Games and Clips tabs, opens a game, plays video.</p>
-<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-LIBRARY.md</code></p>
+<p><strong>Documents:</strong> <code>SPEC.md</code> + <code>APP-LIBRARY.md</code> + <code>APP-VIEWER.md</code> §3</p>
 <p><strong>Scope:</strong>
-- Tauri v2 scaffolding (React + TypeScript + Tailwind + Vite)
+- Tauri v2 scaffolding (SolidJS + TypeScript + Vite + plain CSS)
 - Root-level two-tab navigation: Games tab + Clips tab
 - Rust backend: <code>list_games</code> command (scans <code>/games/</code>, derives KDA from events, returns <code>GameSummary[]</code>)
 - Rust local HTTP server: streams <code>video.mp4</code> with range request support
 - Games tab: grid of cards from <code>GameSummary[]</code>, save/unsave toggle, delete with confirmation
 - Clips tab: grid of clip cards with thumbnail, duration, source game info
-- Basic Viewer screen: just the <code>&lt;video&gt;</code> element and back button — no overlays yet
+- Basic Viewer screen: one persistent <code>&lt;video&gt;</code> element and back button — no product overlays yet
+- Playback foundation: <code>requestVideoFrameCallback</code> clock with fallback, precomputed marker indexes, and built-in seek/memory/dropped-frame diagnostics
 - Auto-delete job on launch
 - Settings screen: output path + auto-delete duration (minimum viable — full settings in Phase 9)
 - Data Dragon initialisation: on launch, check patch version and fetch/update item + champion cache</p>
@@ -3040,13 +3051,13 @@ App version:     1.0.0
 - At least 3 game bundles on disk for library testing</p>
 <p><strong>Validation:</strong>
 1. <code>npm run tauri dev</code> launches without errors
-2. Games tab shows all recorded games with correct champion, KDA, win/loss badge, duration, date
+2. Games tab shows all recorded games with correct champion, KDA, duration, date, and a win/loss badge only when the result is known
 3. Clicking a game card navigates to the viewer — video plays and is seekable
-4. Video does not load into memory (RAM usage stable regardless of file size)
+4. A multi-gigabyte real recording plays through range requests without memory scaling with file size; rapid seeks remain responsive and playback diagnostics show no UI-induced progressive frame loss
 5. Clips tab renders correctly (place a test <code>.mp4</code> and matching <code>.jpg</code> sidecar manually into <code>{output_path}/clips/</code> to verify the tab displays the card with thumbnail — actual clip export with automatic sidecar generation is built in Phase 7)
 6. Auto-delete removes games older than threshold (manually backdate <code>recorded_at</code> to test)
 7. Data Dragon cache is written to disk — item IDs resolve to names in the browser console</p>
-<p><strong>Complete when:</strong> both library tabs work, video plays smoothly, and Data Dragon is initialised.</p>
+<p><strong>Complete when:</strong> both library tabs work, large-file video playback and seeking remain smooth in the real webview, and Data Dragon is initialised.</p>
 <hr>
 <h2 id="phase-4-viewer-windowed-mode">Phase 4 — Viewer: Windowed Mode</h2>
 <p><strong>Goal:</strong> The default viewer layout — windowed, panels always visible, video + data side by side.</p>
@@ -3054,7 +3065,7 @@ App version:     1.0.0
 <p><strong>Scope:</strong>
 - Two-tab header: Replay / Stats (Stats tab is empty placeholder at this phase)
 - Windowed layout: video ~60% width, stats panel alongside, scrubber below
-- Stats panel: champion, KDA, CS, level — driven by <code>timeupdate</code> sync; gold differential remains hidden until Match V5 data exists
+- Stats panel: champion, KDA, CS, level — driven by the presented-frame clock; gold differential remains hidden until Match V5 data exists
 - Scrubber: rail, fill, playhead tracking <code>currentTime</code>, event markers positioned by <code>video_time_ms</code>, clicking rail or marker seeks
 - Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
 - Event feed panel: scrollable list of events, active row highlights as playhead passes each event

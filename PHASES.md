@@ -111,16 +111,17 @@ remain playable up to their last completed fragment.
 
 **Goal:** App launches, shows the Games and Clips tabs, opens a game, plays video.
 
-**Documents:** `SPEC.md` + `APP-LIBRARY.md`
+**Documents:** `SPEC.md` + `APP-LIBRARY.md` + `APP-VIEWER.md` §3
 
 **Scope:**
-- Tauri v2 scaffolding (React + TypeScript + Tailwind + Vite)
+- Tauri v2 scaffolding (SolidJS + TypeScript + Vite + plain CSS)
 - Root-level two-tab navigation: Games tab + Clips tab
 - Rust backend: `list_games` command (scans `/games/`, derives KDA from events, returns `GameSummary[]`)
 - Rust local HTTP server: streams `video.mp4` with range request support
 - Games tab: grid of cards from `GameSummary[]`, save/unsave toggle, delete with confirmation
 - Clips tab: grid of clip cards with thumbnail, duration, source game info
-- Basic Viewer screen: just the `<video>` element and back button — no overlays yet
+- Basic Viewer screen: one persistent `<video>` element and back button — no product overlays yet
+- Playback foundation: `requestVideoFrameCallback` clock with fallback, precomputed marker indexes, and built-in seek/memory/dropped-frame diagnostics
 - One-time HEVC webview capability check: play and seek a bundled/local test MP4, then write `app.hevc_playback_supported` to shared config; failure records `false` and keeps recorder auto mode on H.264
 - Auto-delete job on launch
 - Settings screen: output path + auto-delete duration (minimum viable — full settings in Phase 9)
@@ -132,15 +133,15 @@ remain playable up to their last completed fragment.
 
 **Validation:**
 1. `npm run tauri dev` launches without errors
-2. Games tab shows all recorded games with correct champion, KDA, win/loss badge, duration, date
+2. Games tab shows all recorded games with correct champion, KDA, duration, date, and a win/loss badge only when the result is known
 3. Clicking a game card navigates to the viewer — video plays and is seekable
-4. Video does not load into memory (RAM usage stable regardless of file size)
+4. A multi-gigabyte real recording plays through range requests without memory scaling with file size; rapid seeks remain responsive and playback diagnostics show no UI-induced progressive frame loss
    - HEVC capability result matches real playback and seeking; a failed test leaves existing H.264 playback unaffected
 5. Clips tab renders correctly (place a test `.mp4` and matching `.jpg` sidecar manually into `{output_path}/clips/` to verify the tab displays the card with thumbnail — actual clip export with automatic sidecar generation is built in Phase 7)
 6. Auto-delete removes games older than threshold (manually backdate `recorded_at` to test)
 7. Data Dragon cache is written to disk — item IDs resolve to names in the browser console
 
-**Complete when:** both library tabs work, video plays smoothly, and Data Dragon is initialised.
+**Complete when:** both library tabs work, large-file video playback and seeking remain smooth in the real webview, and Data Dragon is initialised.
 
 ---
 
@@ -153,7 +154,7 @@ remain playable up to their last completed fragment.
 **Scope:**
 - Two-tab header: Replay / Stats (Stats tab is empty placeholder at this phase)
 - Windowed layout: video ~60% width, stats panel alongside, scrubber below
-- Stats panel: champion, KDA, CS, level — driven by `timeupdate` sync; gold differential remains hidden until Match V5 data exists
+- Stats panel: champion, KDA, CS, level — driven by the presented-frame clock; gold differential remains hidden until Match V5 data exists
 - Scrubber: rail, fill, playhead tracking `currentTime`, event markers positioned by `video_time_ms`, clicking rail or marker seeks
 - Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
 - Event feed panel: scrollable list of events, active row highlights as playhead passes each event
@@ -168,7 +169,7 @@ remain playable up to their last completed fragment.
 3. Clicking the rail seeks correctly; clicking an event marker seeks to within 1 second of the event
 4. Stats panel values update as the video plays (CS and level changes over time)
 5. Event feed highlights the correct row as playhead passes each event
-6. UI matches the USG aesthetic reference (`league-replay-usgfx-v3.jsx`)
+6. UI matches the documented USG aesthetic reference
 
 **Complete when:** windowed viewer is fully functional and the aesthetic is consistent.
 

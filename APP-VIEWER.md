@@ -62,20 +62,27 @@ Exited by: pressing `Escape`, pressing `F` again, or clicking the exit button th
 Video files are large (5–10GB). They must never be loaded into memory.
 
 - The Rust backend runs a local HTTP server with **range request support**
-- The React frontend uses a standard HTML5 `<video>` tag pointed at `http://127.0.0.1:{port}/games/{timestamp}/video.mp4`
+- The SolidJS frontend uses one persistent HTML5 `<video>` tag pointed at `http://127.0.0.1:{port}/games/{timestamp}/video.mp4`
 - Seeking, buffering, and playback rate are all handled natively by the browser engine
 - No custom video decoding is implemented
+- The video DOM node is not unmounted when the viewer changes between windowed and fullscreen modes
 
 **Sync between video and data:**
 
-The video element emits `timeupdate` events. The frontend listens and converts the video's `currentTime` (seconds) to `video_time_ms`:
+The primary clock is `requestVideoFrameCallback`, which reports the media timestamp of each frame submitted to the compositor. Only the few DOM values that visually track playback subscribe to this hot signal:
 
 ```ts
-videoElement.addEventListener('timeupdate', () => {
-  const videoTimeMs = videoElement.currentTime * 1000;
-  // use videoTimeMs to drive scrubber, gold graph cursor, event highlighting
-});
+const onVideoFrame: VideoFrameRequestCallback = (_now, frame) => {
+  setVideoTimeMs(frame.mediaTime * 1000);
+  frameCallbackId = videoElement.requestVideoFrameCallback(onVideoFrame);
+};
+
+frameCallbackId = videoElement.requestVideoFrameCallback(onVideoFrame);
 ```
+
+If the platform webview lacks this API, use a `requestAnimationFrame` loop while playing and media events (`seeked`, `loadedmetadata`, `pause`) while stationary. `timeupdate` may assist that fallback but is never the primary animation clock.
+
+Event arrays remain immutable and sorted by `video_time_ms`. Marker positions are calculated once, and nearest-event lookup uses a moving cursor or binary search instead of scanning the complete list on every frame. The video time hot path must never cause the viewer component tree to rerun.
 
 Game clock time is derived as: `game_clock_ms = video_time_ms - metadata.video_offset_ms`
 
@@ -257,12 +264,10 @@ This drawer is rendered only when `matchv5` contains participant timeline frames
 
 ### 8.1 Trigger
 
-The frontend evaluates on every `timeupdate`:
+The frontend evaluates when the presented-frame clock crosses an event proximity boundary:
 
 ```ts
-const nearEvent = events.find(e =>
-  Math.abs(videoTimeMs - e.video_time_ms) < 1000 // within 1 second
-);
+const nearEvent = nearestEvent(eventsByVideoTime, videoTimeMs, 1000);
 ```
 
 When `nearEvent` changes to a new event (not the same event as currently shown):
@@ -312,7 +317,7 @@ When `nearEvent` changes to a new event (not the same event as currently shown):
 **Playhead needle:**
 - Thin horizontal line (1px, `rgba(255,255,255,.40)`) spanning the full strip width
 - Positioned at the same proportional height as the current video time
-- Moves in real time with `timeupdate`
+- Moves from the presented-frame clock using a CSS transform
 - `pointer-events: none`
 
 **Expand affordance:**

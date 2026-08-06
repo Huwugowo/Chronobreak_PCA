@@ -1,0 +1,140 @@
+.appShell {
+  min-height: 100vh;
+  padding: 30px clamp(22px, 4vw, 64px) 48px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1640px;
+  margin: 0 auto 26px;
+}
+
+.brandLockup {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.brandMark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: var(--radius-small);
+  background: var(--color-blue);
+  font-family: "Arial Narrow", sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -0.08em;
+  box-shadow: 8px 8px 0 rgba(36, 87, 255, 0.14);
+}
+
+.eyebrow,
+.errorLabel {
+  margin: 0 0 5px;
+  color: var(--color-blue-soft);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.brandLockup h1 {
+  margin: 0;
+  font-family: "Arial Narrow", "Segoe UI", sans-serif;
+  font-size: clamp(22px, 2.2vw, 34px);
+  font-stretch: condensed;
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+}
+
+.runtimeBadge {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  color: var(--color-muted);
+  background: rgba(13, 17, 25, 0.78);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.runtimeBadge span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffb547;
+  box-shadow: 0 0 10px rgba(255, 181, 71, 0.6);
+}
+
+.runtimeBadge[data-runtime="desktop"] span {
+  background: var(--color-green);
+  box-shadow: 0 0 10px rgba(78, 255, 179, 0.6);
+}
+
+.statePanel {
+  display: grid;
+  max-width: 780px;
+  min-height: 320px;
+  margin: 80px auto 0;
+  padding: 50px;
+  place-content: center;
+  justify-items: center;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-panel);
+  background: rgba(13, 17, 25, 0.9);
+  text-align: center;
+  box-shadow: var(--shadow-panel);
+}
+
+.statePanel h2 {
+  margin: 4px 0 8px;
+  font-size: 25px;
+}
+
+.statePanel p:not(.errorLabel) {
+  max-width: 540px;
+  margin: 8px 0;
+  color: var(--color-muted);
+}
+
+.loader {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--color-blue-soft);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .appShell {
+    padding: 20px 14px 32px;
+  }
+
+  .header {
+    align-items: flex-start;
+  }
+
+  .runtimeBadge {
+    padding: 0 9px;
+    font-size: 0;
+  }
+}

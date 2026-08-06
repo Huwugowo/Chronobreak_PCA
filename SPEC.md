@@ -28,7 +28,7 @@ A two-process desktop application for League of Legends players that:
 
 ### Core Design Philosophy
 - The recorder must be completely invisible and have zero performance impact on the game
-- The app only runs post-game — performance constraints are relaxed on the app side
+- The app only runs post-game, but playback, seeking, navigation, and overlay interaction must remain visibly immediate and frame-smooth
 - Core functionality requires no external accounts, API keys, or credentials — the app works fully offline
 - Match V5 enrichment (damage stats, vision score, exact item timestamps) is optional and requires a Riot ID — the app degrades gracefully without it
 - Output is always a plain standards-based MP4 file (H.264, or HEVC only after end-to-end capability validation) — no proprietary formats, no upload links, no accounts
@@ -72,7 +72,7 @@ A two-process desktop application for League of Legends players that:
                             ↓ reads from disk
 ┌─────────────────────────────────────────────────────────────┐
 │                  PROCESS 2 — APP                             │
-│         (Tauri v2 + React + TypeScript, opened on demand)    │
+│        (Tauri v2 + SolidJS + TypeScript, opened on demand)   │
 │                                                              │
 │  Games Tab     → grid of recorded game bundles               │
 │  Clips Tab     → grid of exported clips                      │
@@ -427,16 +427,27 @@ No database. Everything is derived from these files at app launch. The game libr
 ### App (Process 2)
 | Concern | Tool |
 |---|---|
-| Framework | Tauri v2 |
-| Language | TypeScript + React 18 |
-| Styling | Tailwind CSS |
-| Graphs | Recharts |
-| Video | HTML5 `<video>` via Rust local HTTP server |
+| Desktop shell | Tauri v2 |
+| UI | SolidJS + TypeScript |
+| Styling | Plain CSS: global design tokens + component CSS modules |
+| Graphs | Purpose-built SVG; Canvas only if profiling proves it necessary |
+| Video | One persistent HTML5 `<video>` element via Rust local HTTP server |
 | Clip export | ffmpeg via Rust backend |
-| Video streaming | Rust `hyper` or Tauri asset protocol |
-| State | React Context + useReducer |
+| Video streaming | Rust HTTP server with byte-range support |
+| Playback sync | `requestVideoFrameCallback`; `requestAnimationFrame`/media-event fallback |
+| State | Solid signals and stores; no external state library |
+| Navigation | Small typed in-app navigation state; no router dependency |
 | File system | Tauri fs plugin |
 | Build | Vite |
+
+#### Playback hot-path rules
+
+- The `<video>` element owns decoding, buffering, seeking, playback rate, and audio. JavaScript never decodes video or copies frames through Canvas.
+- The same `<video>` DOM node remains mounted while the replay changes between windowed and fullscreen layouts.
+- Presented-frame time comes from `requestVideoFrameCallback().mediaTime`. Fallbacks exist for an older platform webview, but `timeupdate` is not the primary animation clock.
+- Per-frame work is restricted to the playhead, visible clock, graph cursor, and nearest-event state. Marker positions and searchable event indexes are precomputed.
+- Motion uses compositor-friendly `transform` and `opacity` wherever possible. Generic component, chart, animation, and state-management libraries are not added without a measured need.
+- Playback validation records seek latency, process memory, and `getVideoPlaybackQuality()` frame counts against a large real recording in the actual Tauri webview.
 
 ### Shared
 | Concern | Tool |
@@ -502,6 +513,7 @@ The Live Client Data API requires no key. The Riot Match V5 API requires a key i
 | Clip pre/post-roll | Kill-type dependent (see `APP-VIEWER.md` §11.1) | Solo kills need less context than teamfights |
 | Default recording profile | Auto-detected | Short hardware encode benchmark selects up to `high`; storage-heavy `very_high` remains an explicit override |
 | Default recording codec | Auto | HEVC only when hardware encoding and app playback/seeking are both known to work; H.264 fallback |
+| App frontend | Tauri 2 + SolidJS + TypeScript + Vite + plain CSS | Fine-grained DOM updates and direct media-element access without a bundled browser or general UI framework stack |
 | Match V5 enrichment | Optional, off by default | Requires Riot ID — zero friction for users who don't want it |
 
 ---
@@ -519,6 +531,12 @@ Rejected: ~150MB bundle, ~300MB RAM at idle. Contradicts performance focus. Taur
 
 ### Dear ImGui
 Rejected: no native video player; building scrubber + graphs + clip UI in ImGui is a significant separate project; performance advantage is irrelevant for a post-game tool.
+
+### React + General-Purpose Frontend Libraries
+Rejected for this app: React can meet the performance target, but its component re-render model requires extra isolation for frame-frequency state. The viewer needs few ecosystem components, so SolidJS fine-grained updates plus direct DOM refs are a smaller and simpler fit. Tailwind, component kits, Recharts, animation libraries, routers, and external state stores are omitted; the UI uses purpose-built HTML, CSS, and SVG instead.
+
+### Framework-Free TypeScript
+Rejected: it removes a small runtime but makes this overlay-heavy application own component lifetime, cleanup, shared reactive state, and conditional DOM composition manually. SolidJS supplies those mechanics while retaining direct access to the native video element.
 
 ### Software Encoding
 Rejected: CPU x264/x265 causes 5–15% FPS drop during gameplay. Hardware H.264/HEVC encoding (NVENC/AMF/QSV/VideoToolbox) achieves the required quality with much lower gameplay overhead.

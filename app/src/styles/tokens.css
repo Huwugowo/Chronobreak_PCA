@@ -1,0 +1,21 @@
+:root {
+  --color-ink: #07090d;
+  --color-panel: #0d1119;
+  --color-panel-raised: #131925;
+  --color-line: rgba(255, 255, 255, 0.12);
+  --color-text: #f3f5f8;
+  --color-muted: #8490a3;
+  --color-blue: #2457ff;
+  --color-blue-soft: #7894ff;
+  --color-red: #e4314b;
+  --color-green: #4effb3;
+  --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.38);
+  --radius-small: 4px;
+  --radius-panel: 12px;
+  font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color: var(--color-text);
+  background: var(--color-ink);
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+}

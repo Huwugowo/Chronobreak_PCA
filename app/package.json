@@ -1,0 +1,25 @@
+{
+  "name": "league-replay-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fast local replay library and video viewer for League Replay",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "check": "tsc --noEmit",
+    "build": "npm run check && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "solid-js": "1.9.14"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "typescript": "7.0.2",
+    "vite": "8.2.0",
+    "vite-plugin-solid": "2.11.14"
+  }
+}
