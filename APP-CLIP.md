@@ -1,226 +1,138 @@
-# APP-CLIP.md — Process 2: Clip Exporter Screen
+# APP-CLIP.md — Process 2: Clip Exporter
 
-> **Context:** This screen is reached from the Viewer after the user sets clip endpoints. For viewer clip mode activation (endpoint handles, smart auto-positioning, scrubber behaviour in clip mode), refer to `APP-VIEWER.md` Section 11. For data schemas and file paths, refer to `SPEC.md`.
->
-> **What this screen does:** Lets the user preview a clip window, optionally mix in music, and export a clean H.264 MP4 file to disk. The exported clip appears in the Clips tab of the library (see `APP-LIBRARY.md` Section 4).
+> **Context:** The Viewer owns clip selection and passes a finished time range to this
+> screen. This screen owns framing, audio, encoding, and the exported files. See
+> `APP-VIEWER.md` §11 for endpoint behaviour and `SPEC.md` §4 for storage paths.
 
----
-
-## 1. Entry Point
-
-The viewer passes the following state when navigating to this screen:
+## 1. Entry Contract
 
 ```ts
 {
-  gameTimestamp: string,   // unix timestamp, identifies the game bundle
-  clipStartMs:  number,    // milliseconds into video.mp4
-  clipEndMs:    number,    // milliseconds into video.mp4
+  gameTimestamp: string,
+  clipStartMs: number,
+  clipEndMs: number,
 }
 ```
 
-Clip duration = `clipEndMs - clipStartMs`. Minimum 5 seconds (enforced in viewer).
+The range is measured against `video.mp4`. It is already clamped to the recording and
+is at least five seconds long. Returning to the Viewer restores the same range.
 
----
+## 2. Product Goal
 
-## 2. Screen Layout
+Every export is a normal MP4 intended to leave the app and be uploaded directly. The
+source recording may be H.264 or HEVC; exported clips are always:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  ← Back to Viewer                                            │
-│                                                              │
-│  ┌────────────────────────────────────┐                      │
-│  │                                    │  Duration: 0:32      │
-│  │       Clip preview / thumbnail     │  Start:   14:17      │
-│  │         (first frame of clip)      │  End:     14:49      │
-│  │                                    │                      │
-│  └────────────────────────────────────┘                      │
-│                                                              │
-│  ──── MUSIC ──────────────────────────────────────────────   │
-│  ○  No music                                                 │
-│  ●  Built-in library     [ Track name          ▼ ]  [ ▶ ]   │
-│  ○  Import file          [ Browse...               ]         │
-│                                                              │
-│  ──── AUDIO MIX ──────────────────────────────────────────   │
-│  Game audio   [────●────────────] 80%                        │
-│  Music        [──────────────●──] 100%                       │
-│                                                              │
-│  ──── EXPORT ─────────────────────────────────────────────   │
-│  Output: ~/LeagueReplays/clips/1741267920_1741268352.mp4     │
-│                                                              │
-│  [ Export MP4 ]                              [ Cancel ]      │
-│                                                              │
-│  ─── after export ─────────────────────────────────────────  │
-│  ✓ Exported (0:04)   [ Open in Finder ]   [ Copy path ]      │
-└──────────────────────────────────────────────────────────────┘
-```
+- H.264 High Profile, 4:2:0 progressive video
+- AAC stereo audio at 48 kHz
+- MP4 with its `moov` atom moved to the front (`+faststart`)
+- clean footage only — no League Replay controls or event markers are burned in
 
----
+Video stream-copy is not used. A source HEVC recording must still produce the same
+publishable H.264 output as a source H.264 recording.
 
-## 3. Clip Preview
+## 3. Export Targets
 
-- Displays the first frame of the clip window as a static thumbnail
-- Achieved by seeking an off-screen `<video>` element to `clipStartMs / 1000` seconds and capturing a canvas frame
-- Not a live preview — no playback in this screen
-- Shows duration, start time, end time (formatted as `MM:SS`) alongside the thumbnail
+The format selector has three deliberately small presets:
 
----
+| Preset | Output | Purpose |
+|---|---|---|
+| Discord | 16:9, adaptive resolution up to 1280×720 | Always less than 10,000,000 bytes |
+| Horizontal | 16:9, source resolution capped at 1920 px wide | Regular YouTube and other landscape posts |
+| Vertical | 1080×1920 (9:16) | TikTok and YouTube Shorts |
 
-## 4. Music Options
+All presets preserve the recording frame rate up to 60 fps when the bitrate budget
+allows it. Discord progressively falls back to 30 fps and then 540p/480p for longer
+clips rather than exceeding its size ceiling.
 
-Three mutually exclusive radio options:
+### 3.1 Vertical Composition
 
-### 4.1 No Music
-Default selection. Export uses game audio only at the configured volume.
+A fixed centre crop loses too much of a League match, while a complete 16:9 frame is
+too small on a phone. The default is therefore a hybrid composition:
 
-### 4.2 Built-in Library
-- Dropdown of bundled royalty-free tracks
-- ~10–15 tracks at launch, various moods
-- All tracks pre-cleared for use in content shared on Twitter/Discord/YouTube
-- `[ ▶ ]` button plays a 10-second preview of the selected track through the system audio output
-- Preview stops when the user picks a different track or changes the music option
+1. A full-frame duplicate fills the 9:16 canvas and is strongly blurred and darkened.
+2. A sharp foreground keeps the original height and uses an adjustable horizontal
+   crop.
+3. **Framing** moves continuously from full 16:9 context to a square action crop.
+4. **Focus** (or dragging the foreground) positions that crop from left to right.
+5. Platform-safe guides appear in the preview only and are never exported.
 
-### 4.3 Import File
-- Opens a native file picker (Tauri dialog) filtered to `.mp3` and `.wav`
-- Selected file path is displayed truncated
-- File is referenced by path only — it is not copied into the app
+The default framing favours the central action without committing to a destructive
+full-height 9:16 crop. No AI tracking, HUD extraction, captions, or multi-layer editor
+is part of this phase.
 
----
+## 4. Preview
 
-## 5. Audio Mix Sliders
+The exporter seeks an off-screen `<video>` to `clipStartMs`, captures one JPEG frame
+through Canvas, and then releases the video element. The preview is static; the app
+does not decode video continuously on this screen.
 
-Two range sliders, 0–100%, shown when a music option is selected (hidden when "No music" is selected):
+- Horizontal and Discord show the frame in their output aspect ratio.
+- Vertical renders the exact hybrid composition using the captured frame.
+- Duration, start, and end remain visible beside the preview.
+- If frame capture fails, export remains available.
 
-- **Game audio** — controls volume of the original recording's audio track. Default: 80%.
-- **Music** — controls volume of the selected music track. Default: 100%.
+## 5. Music and Audio Mix
 
-Both values are passed directly to ffmpeg as volume multipliers (0.0–1.0).
+Three mutually exclusive choices:
 
----
+- **No music** — original game audio at 100%.
+- **Built-in** — one of the bundled, publishing-cleared tracks.
+- **Import file** — an absolute path selected with the native picker; MP3 and WAV are
+  accepted and the file is not copied.
 
-## 6. Export Pipeline
+Built-in tracks have a ten-second preview button. When music is active, Game Audio
+defaults to 80% and Music to 100%. Both sliders map directly to multipliers from 0.0
+to 1.0.
 
-Export is triggered by the "Export MP4" button. The frontend calls a Tauri command which executes ffmpeg on the Rust backend.
+Music is looped with `-stream_loop -1`. Both sources are trimmed to the selected clip
+duration and mixed with `amix=duration=first`, so a short music track never truncates
+the clip.
 
-### 6.1 Output Path
+Bundled tracks live under `app/src-tauri/resources/music/`. `music.json` is the
+manifest and contains filename, display name, mood, duration, and licence provenance.
 
-```
+## 6. Encoding Pipeline
+
+The frontend sends one validated request to a narrow Rust Tauri command. Rust invokes
+ffmpeg directly without a shell and hides child-process windows on Windows.
+
+Encoder order is intentionally small:
+
+1. Reuse the recording hardware family for H.264 (`h264_nvenc`, `h264_amf`,
+   `h264_qsv`, or `h264_videotoolbox`).
+2. If that encoder cannot initialise, retry with `libx264` using a fast preset.
+
+Horizontal and Vertical target 12 Mbps video plus 192 kbps audio. Discord calculates
+its video bitrate from the selected duration after reserving audio and container
+overhead. The completed file is measured; an oversized Discord result is re-encoded
+once with a corrected bitrate and rejected rather than returned if it still reaches
+10,000,000 bytes.
+
+Until Phase 9 bundles ffmpeg, `ffmpeg` must be available on the system path.
+
+## 7. Progress, Errors, and Atomic Output
+
+ffmpeg runs with `-progress pipe:1`. The backend converts `out_time_us` into encoding
+progress and sends compact progress messages to the exporter. Thumbnail generation is
+a separate final stage.
+
+Exports are written as temporary `.part.mp4` and `.part.jpg` files. Only after both
+commands succeed are they renamed to:
+
+```text
 {output_path}/clips/{game_timestamp}_{clip_timestamp}.mp4
+{output_path}/clips/{game_timestamp}_{clip_timestamp}.jpg
 ```
 
-`clip_timestamp` = Unix timestamp at export time.
+Failed temporary files are removed. A completed MP4 is never exposed without its
+thumbnail sidecar.
 
-### 6.2 ffmpeg Command — With Music
+On success the screen shows elapsed time, final size, and actions to open the clips
+folder, copy the absolute MP4 path, or go to the Clips tab. On failure it shows the
+last concise ffmpeg error and allows the same request to be retried.
 
-```bash
-ffmpeg \
-  -ss {clip_start_seconds} \
-  -i {game_bundle_path}/video.mp4 \
-  -t {clip_duration_seconds} \
-  -stream_loop -1 -i {music_file_path} \
-  -filter_complex \
-    "[0:a]volume={game_audio_vol}[a1]; \
-     [1:a]volume={music_vol}[a2]; \
-     [a1][a2]amix=inputs=2:duration=first[aout]" \
-  -map 0:v \
-  -map "[aout]" \
-  -vcodec copy \
-  -acodec aac -b:a 192k \
-  -t {clip_duration_seconds} \
-  {output_path}/clips/{clip_filename}.mp4
-```
+## 8. Library Contract
 
-`-stream_loop -1` loops the music track infinitely. `amix=duration=first` cuts the mixed audio to the length of the first input (the game audio, which is exactly `clip_duration_seconds` long). The final `-t {clip_duration_seconds}` on the output is a safety guard ensuring the clip never exceeds the intended duration regardless of muxer behaviour.
-
-### 6.3 ffmpeg Command — No Music
-
-```bash
-ffmpeg \
-  -ss {clip_start_seconds} \
-  -i {game_bundle_path}/video.mp4 \
-  -t {clip_duration_seconds} \
-  -filter_complex "[0:a]volume={game_audio_vol}[aout]" \
-  -map 0:v \
-  -map "[aout]" \
-  -vcodec copy \
-  -acodec aac -b:a 192k \
-  {output_path}/clips/{clip_filename}.mp4
-```
-
-### 6.4 Thumbnail Sidecar
-
-After the clip MP4 is written, extract the first frame as a JPEG sidecar:
-
-```bash
-ffmpeg \
-  -ss 0 \
-  -i {output_path}/clips/{clip_filename}.mp4 \
-  -frames:v 1 \
-  -q:v 3 \
-  {output_path}/clips/{clip_filename}.jpg
-```
-
-This sidecar is used by the Clips tab in the library (see `APP-LIBRARY.md` §4). It is always generated immediately after export — the Clips tab should never need to generate thumbnails at render time.
-
-### 6.5 Key ffmpeg Flags
-
-| Flag | Reason |
-|---|---|
-| `-ss` before `-i` | Fast seek (input seeking) — much faster than output seeking for large files |
-| `-vcodec copy` | Video is not re-encoded. Export is near-instant regardless of clip length. |
-| `-stream_loop -1` | Loops music infinitely so it always fills the clip duration |
-| `amix=duration=first` | Cuts mixed audio to game audio length — never shorter than the clip |
-| `-t {clip_duration_seconds}` | Explicit output duration cap — safety guard |
-
-### 6.6 No Stats Overlay
-
-Exported clips contain **clean footage + audio only**. No stats, no event markers, no UI elements are burned into the video. The viewer overlay exists only in the app.
-
----
-
-## 7. Export Progress & Completion
-
-During export:
-- "Export MP4" button is replaced with a progress indicator
-- ffmpeg stdout/stderr is piped to the Rust backend and progress percentage is derived from the `time=` output
-- Progress is sent to the frontend via Tauri event
-
-On completion:
-- Success state: green checkmark + "Exported (elapsed time)"
-- Two action buttons appear: "Open in Finder / Explorer" (opens the output folder), "Copy file path" (copies absolute path to clipboard)
-- The clip is **not** auto-opened or auto-shared — the user decides what to do with it
-
-On error:
-- Error state: red indicator + ffmpeg error message (truncated, last line)
-- "Try again" button re-runs the export with the same parameters
-
----
-
-## 8. Clip Storage
-
-- Output written to `{output_path}/clips/` as two files: `{clip_filename}.mp4` and `{clip_filename}.jpg` (thumbnail sidecar)
-- Clips have `saved: true` by default — they are **never auto-deleted**
-- Clips are not linked back to a game bundle in any structured way — the filename convention (`{game_ts}_{clip_ts}`) is the only association
-- Exported clips appear in the **Clips tab** of the app library (see `APP-LIBRARY.md` Section 4), not in the Games tab
-- Clips and their sidecars are included in the storage usage breakdown shown in Settings
-- Deleting a clip must delete both the `.mp4` and the `.jpg` sidecar
-
----
-
-## 9. Built-in Music Library
-
-- Royalty-free tracks bundled inside the Tauri app under `resources/music/`
-- Format: MP3, 192kbps minimum
-- Naming convention: `{mood}_{title}.mp3` (e.g. `hype_overdrive.mp3`, `chill_aftermath.mp3`)
-- Metadata (display name, mood tag, duration) stored in a bundled `music.json` manifest
-- The dropdown in the UI is populated from this manifest
-
-```json
-[
-  {
-    "filename": "hype_overdrive.mp3",
-    "display_name": "Overdrive",
-    "mood": "hype",
-    "duration_s": 142
-  }
-]
-```
+The filename is the only source-game association. The Clips tab discovers the pair by
+scanning `/clips/`, probes MP4 duration, and looks up `game_timestamp` for champion and
+date. Clips are never auto-deleted. Manual deletion removes both the MP4 and JPEG.

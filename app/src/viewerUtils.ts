@@ -1,4 +1,7 @@
-import type { ViewerEvent } from "./types";
+import type { ClipRange, ViewerEvent } from "./types";
+
+export const MINIMUM_CLIP_MS = 5_000;
+export const CLIP_SNAP_MS = 2_000;
 
 export const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value));
@@ -29,6 +32,77 @@ export const nearestIndexAt = (
     entries[after].video_time_ms - videoTimeMs
     ? after - 1
     : after;
+};
+
+const boundedClipRange = (
+  anchorMs: number,
+  preRollMs: number,
+  postRollMs: number,
+  durationMs: number,
+): ClipRange => {
+  let startMs = clamp(anchorMs - preRollMs, 0, durationMs);
+  let endMs = clamp(anchorMs + postRollMs, 0, durationMs);
+  if (endMs - startMs < MINIMUM_CLIP_MS) {
+    if (endMs >= MINIMUM_CLIP_MS) startMs = endMs - MINIMUM_CLIP_MS;
+    else endMs = Math.min(durationMs, startMs + MINIMUM_CLIP_MS);
+  }
+  return { startMs: Math.round(startMs), endMs: Math.round(endMs) };
+};
+
+export const defaultClipRange = (
+  anchorMs: number,
+  durationMs: number,
+  events: readonly ViewerEvent[],
+  anchorEvent?: ViewerEvent,
+): ClipRange => {
+  let preRollMs = 8_000;
+  let postRollMs = 5_000;
+  if (anchorEvent?.event_type === "ChampionKill" || anchorEvent?.event_type === "FirstBlood") {
+    if (anchorEvent.assisters.length > 0) {
+      preRollMs = 15_000;
+      postRollMs = 8_000;
+    }
+    const multikill = events
+      .filter(
+        (event) =>
+          event.event_type === "Multikill" &&
+          event.killer === anchorEvent.killer &&
+          Math.abs(event.video_time_ms - anchorEvent.video_time_ms) <= 5_000,
+      )
+      .reduce((largest, event) => Math.max(largest, event.kill_streak ?? 0), 0);
+    if (multikill >= 5) {
+      preRollMs = 25_000;
+      postRollMs = 15_000;
+    } else if (multikill >= 2) {
+      preRollMs = 20_000;
+      postRollMs = 10_000;
+    }
+  }
+  return boundedClipRange(anchorMs, preRollMs, postRollMs, durationMs);
+};
+
+export const moveClipEndpoint = (
+  range: ClipRange,
+  endpoint: "start" | "end",
+  requestedMs: number,
+  durationMs: number,
+  events: readonly ViewerEvent[],
+): ClipRange => {
+  const nearest = nearestIndexAt(events, requestedMs);
+  const snapped =
+    nearest >= 0 && Math.abs(events[nearest].video_time_ms - requestedMs) <= CLIP_SNAP_MS
+      ? events[nearest].video_time_ms
+      : requestedMs;
+  if (endpoint === "start") {
+    return {
+      startMs: Math.round(clamp(snapped, 0, range.endMs - MINIMUM_CLIP_MS)),
+      endMs: range.endMs,
+    };
+  }
+  return {
+    startMs: range.startMs,
+    endMs: Math.round(clamp(snapped, range.startMs + MINIMUM_CLIP_MS, durationMs)),
+  };
 };
 
 export const timelineValue = <T extends { video_time_ms: number }>(

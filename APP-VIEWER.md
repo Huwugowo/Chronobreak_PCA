@@ -2,29 +2,21 @@
 
 > **Context:** This document covers the Viewer screen only. For data schemas, file paths, and shared architecture, refer to `SPEC.md`. For the clip exporter that follows clip creation, refer to `APP-CLIP.md`. For the game library that precedes the viewer, refer to `APP-LIBRARY.md`.
 >
-> **What this screen does:** Plays back a recorded game bundle. It has two tabs — Replay and Stats. The Replay tab has two render modes: windowed (panel layout) and fullscreen (overlay layout). The Stats tab is a static scoreboard with no video. Clip mode is activated from the Replay tab (Section 11).
+> **What this screen does:** Plays back a recorded game bundle in windowed or fullscreen mode and provides clip selection on the synchronized timeline. The Stats tab described in Section 15 is deferred and is not exposed as an empty tab in the current app.
 
 ---
 
 ## 1. Screen Structure
 
-The viewer screen has two top-level tabs, always visible:
-
-```
-[ ▶  Replay ]   [ ≡  Stats ]
-```
-
-**Replay tab** — video playback with synced data overlays. Has two render modes.
-
-**Stats tab** — static end-of-game scoreboard. No video. Documented in Section 15.
-
-Both tabs share the same header bar (champion, KDA, game duration, date). Switching tabs pauses the video and preserves playhead position — returning to Replay resumes from the same point.
+The current Viewer is one Replay surface with a back action, a `▶ Replay` context label,
+and a shared game header (champion, KDA, video duration, and date). No inactive Stats
+control or placeholder is rendered while Phase 6 is deferred.
 
 ---
 
-## 2. Replay Tab — Two Render Modes
+## 2. Replay — Two Render Modes
 
-The Replay tab has two distinct render modes. They are toggled by the user and share the same underlying state (playhead position, gold graph open/closed, etc.).
+Replay has two distinct render modes. They are toggled by the user and share the same underlying state (playhead position, gold graph open/closed, clip range, etc.).
 
 ### 2.1 Windowed Mode (default)
 
@@ -49,11 +41,11 @@ In windowed mode the scrubber and champion filter are always visible — no hove
 
 Activated by: double-clicking the video, pressing `F`, or clicking the fullscreen button in the windowed controls.
 
-The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, and champion filter rail) define the fullscreen presentation. Section 3 (video playback architecture), Section 9 (shared champion-filter behaviour), Section 11 (clip mode), and Section 15 (Stats tab) apply to both modes.
+The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, and champion filter rail) define the fullscreen presentation. Section 3 (video playback architecture), Section 9 (shared champion-filter behaviour), and Section 11 (clip mode) apply to both modes.
 
 Exited by: pressing `Escape`, pressing `F` again, or clicking the exit button that appears in the top bar. Returns to windowed mode with playhead and state preserved.
 
-**What persists between modes:** playhead position, play/pause state, gold graph open/closed state, and selected champion filters.
+**What persists between modes:** playhead position, play/pause state, gold graph open/closed state, selected champion filters, and clip endpoints.
 
 ---
 
@@ -353,7 +345,7 @@ The top bar, gold drawer, and scrubber end at `right: 68px`; the filter therefor
 Clip mode is triggered from the viewer. It does not navigate to a new screen — it modifies the scrubber in place.
 
 **Triggers:**
-- Clicking any event marker on the scrubber
+- Clicking any event marker on the scrubber (also seeks to that event)
 - Clicking the "✦ Clip" button in the controls row
 
 **On activation:**
@@ -361,6 +353,7 @@ Clip mode is triggered from the viewer. It does not navigate to a new screen —
 - Two draggable endpoint handles appear on the scrubber rail
 - The rail fill between endpoints is highlighted distinctly (lighter blue)
 - A "Export Clip →" button replaces the "✦ Clip" button in controls
+- A Cancel action, or `Escape` in windowed mode, exits clip mode
 
 **Dragging endpoints:**
 - Handles are draggable along the rail
@@ -369,6 +362,11 @@ Clip mode is triggered from the viewer. It does not navigate to a new screen —
 - Both endpoints are clamped to 0 and total duration
 
 **On "Export Clip →":** navigate to the Clip Exporter screen (see `APP-CLIP.md`), passing `{ gameTimestamp, clipStartMs, clipEndMs }`.
+
+When the Clip button is used without a marker, a kill within ten seconds of the
+playhead is used as the anchor. Otherwise the playhead itself receives the standard
+8-second pre-roll and 5-second post-roll. Non-kill markers use that same standard
+window.
 
 ---
 
@@ -452,6 +450,10 @@ The following table describes visibility behaviour for overlay elements. These e
 ---
 
 ## 15. Stats Tab
+
+> **Deferred:** This remains future product context, not part of the current build or a
+> prerequisite for clip creation. Until it is scheduled again, the Viewer exposes no
+> Stats tab or placeholder.
 
 The Stats tab is a static end-of-game scoreboard. No video plays. No animation. Pure data.
 

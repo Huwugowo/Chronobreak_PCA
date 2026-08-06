@@ -22,6 +22,7 @@ use tokio::net::TcpListener;
 use tokio_util::io::ReaderStream;
 
 use crate::library::{valid_clip_asset, valid_timestamp};
+use crate::music;
 
 const HEVC_PROBE: &[u8] = include_bytes!("../resources/hevc-probe.mp4");
 
@@ -117,6 +118,7 @@ pub async fn start(roots: Arc<MediaRoots>, metrics: Arc<PlaybackMetrics>) -> Res
     let router = Router::new()
         .route("/games/{timestamp}/video.mp4", any(game_video))
         .route("/clips/{filename}", any(clip_asset))
+        .route("/music/{filename}", any(built_in_music))
         .route("/probe/hevc.mp4", any(hevc_probe))
         .with_state(state);
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -170,13 +172,33 @@ async fn clip_asset(
 }
 
 async fn hevc_probe(State(state): State<PlaybackState>, request: Request<Body>) -> Response<Body> {
+    serve_embedded(state, request, HEVC_PROBE, "video/mp4").await
+}
+
+async fn built_in_music(
+    State(state): State<PlaybackState>,
+    AxumPath(filename): AxumPath<String>,
+    request: Request<Body>,
+) -> Response<Body> {
+    let Some(bytes) = music::bytes_for(&filename) else {
+        return empty_response(StatusCode::NOT_FOUND, "audio/mpeg");
+    };
+    serve_embedded(state, request, bytes, "audio/mpeg").await
+}
+
+async fn serve_embedded(
+    state: PlaybackState,
+    request: Request<Body>,
+    bytes: &'static [u8],
+    content_type: &'static str,
+) -> Response<Body> {
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
     if !valid_method(request.method()) {
-        return empty_response(StatusCode::METHOD_NOT_ALLOWED, "video/mp4");
+        return empty_response(StatusCode::METHOD_NOT_ALLOWED, content_type);
     }
-    let total_length = HEVC_PROBE.len() as u64;
+    let total_length = bytes.len() as u64;
     let Some((status, start, end)) = response_range(&state, &request, total_length) else {
-        return range_not_satisfiable(total_length, "video/mp4");
+        return range_not_satisfiable(total_length, content_type);
     };
     let response_length = end - start + 1;
     let body = if request.method() == Method::HEAD {
@@ -186,9 +208,9 @@ async fn hevc_probe(State(state): State<PlaybackState>, request: Request<Body>) 
             .metrics
             .response_bytes
             .fetch_add(response_length, Ordering::Relaxed);
-        Body::from(HEVC_PROBE[start as usize..=end as usize].to_vec())
+        Body::from(bytes[start as usize..=end as usize].to_vec())
     };
-    build_response(body, status, start, end, total_length, "video/mp4")
+    build_response(body, status, start, end, total_length, content_type)
 }
 
 async fn serve_file(

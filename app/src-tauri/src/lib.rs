@@ -1,6 +1,8 @@
+mod clip_export;
 mod config;
 mod ddragon;
 mod library;
+mod music;
 mod playback_server;
 
 use std::fs;
@@ -9,11 +11,14 @@ use std::process::Command;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
+use clip_export::{ClipExportProgress, ClipExportRequest, ClipExportResult};
 use config::{Config, Settings, SettingsUpdate};
 use ddragon::DdragonStatus;
 use library::{AutoDeleteResult, ClipSummary, GameSummary, PlaybackProbe, StorageUsage};
+use music::BuiltInMusicTrack;
 use playback_server::{MediaRoots, PlaybackMetrics, ServerMetrics};
 use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tauri::{Manager, State};
 
 const HEVC_PROBE_VERSION: u32 = 1;
@@ -27,6 +32,7 @@ struct AppState {
     hevc_probe_path: PathBuf,
     ddragon_cache: PathBuf,
     ddragon_status: Arc<RwLock<DdragonStatus>>,
+    music_directory: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -84,6 +90,24 @@ fn delete_game(state: State<'_, AppState>, game_timestamp: String) -> Result<(),
 #[tauri::command(async)]
 fn delete_clip(state: State<'_, AppState>, clip_filename: String) -> Result<(), String> {
     library::delete_clip(&state.roots.output_directory(), &clip_filename).map_err(error_string)
+}
+
+#[tauri::command]
+fn list_built_in_music(state: State<'_, AppState>) -> Result<Vec<BuiltInMusicTrack>, String> {
+    music::tracks(&state.playback_origin).map_err(error_string)
+}
+
+#[tauri::command]
+async fn export_clip(
+    state: State<'_, AppState>,
+    request: ClipExportRequest,
+    progress: Channel<ClipExportProgress>,
+) -> Result<ClipExportResult, String> {
+    let output_directory = state.roots.output_directory();
+    let music_directory = state.music_directory.clone();
+    clip_export::export(&output_directory, &music_directory, request, progress)
+        .await
+        .map_err(error_string)
 }
 
 #[tauri::command(async)]
@@ -284,6 +308,11 @@ pub fn run() {
                 eprintln!("League Replay auto-delete skipped: {error}");
             }
 
+            let app_data = app
+                .path()
+                .app_local_data_dir()
+                .context("could not resolve the app data directory")?;
+            let music_directory = music::install(&app_data)?;
             let roots = Arc::new(MediaRoots::new(output_directory.clone()));
             let playback_metrics = Arc::new(PlaybackMetrics::default());
             let playback_origin = tauri::async_runtime::block_on(playback_server::start(
@@ -291,10 +320,6 @@ pub fn run() {
                 Arc::clone(&playback_metrics),
             ))?;
 
-            let app_data = app
-                .path()
-                .app_local_data_dir()
-                .context("could not resolve the app data directory")?;
             let hevc_probe_path = app_data.join("hevc-probe-v1.json");
             let ddragon_cache = app_data.join("ddragon");
             let ddragon_status = Arc::new(RwLock::new(DdragonStatus::loading(&ddragon_cache)));
@@ -319,6 +344,7 @@ pub fn run() {
                 hevc_probe_path,
                 ddragon_cache,
                 ddragon_status,
+                music_directory,
             });
             Ok(())
         })
@@ -329,6 +355,8 @@ pub fn run() {
             save_game,
             delete_game,
             delete_clip,
+            list_built_in_music,
+            export_clip,
             get_storage_usage,
             run_auto_delete,
             get_settings,

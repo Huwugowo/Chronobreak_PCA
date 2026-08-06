@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { formatDuration } from "../format";
 import type {
+  ClipRange,
   GoldTimelinePoint,
   KdaTimelinePoint,
   ReplayParticipant,
@@ -12,6 +13,7 @@ import {
   eventSummary,
   eventTitle,
   formatGoldDifference,
+  moveClipEndpoint,
   nearestIndexAt,
   timelineValue,
 } from "../viewerUtils";
@@ -33,11 +35,16 @@ type Props = {
   goldOpen: boolean;
   participants: readonly ReplayParticipant[];
   selectedPlayers: readonly string[];
+  clipRange: ClipRange | null;
   onGoldOpenChange: (open: boolean) => void;
   onPlayerToggle: (summonerName: string) => void;
   onPlayerClear: () => void;
   onTogglePlayback: () => void;
   onSeek: (videoTimeMs: number) => void;
+  onActivateClip: (event?: ViewerEvent) => void;
+  onClipRangeChange: (range: ClipRange | null) => void;
+  onExportClip: () => void;
+  onCancelClip: () => void;
   onExit: () => void;
 };
 
@@ -50,6 +57,7 @@ const graphY = (goldDiff: number): number =>
   GRAPH_HEIGHT;
 
 function FullscreenOverlay(props: Props) {
+  let fullscreenRail!: HTMLDivElement;
   let idleTimer: number | undefined;
   let dismissTimer: number | undefined;
   let unmountTimer: number | undefined;
@@ -68,6 +76,16 @@ function FullscreenOverlay(props: Props) {
       index,
       position: clamp((event.video_time_ms / props.durationMs) * 100, 0, 100),
     })),
+  );
+  const clipStartPosition = createMemo(() =>
+    props.clipRange
+      ? clamp((props.clipRange.startMs / props.durationMs) * 100, 0, 100)
+      : 0,
+  );
+  const clipEndPosition = createMemo(() =>
+    props.clipRange
+      ? clamp((props.clipRange.endMs / props.durationMs) * 100, 0, 100)
+      : 100,
   );
   const minuteTicks = Array.from(
     { length: Math.floor(props.durationMs / 60_000) + 1 },
@@ -191,6 +209,66 @@ function FullscreenOverlay(props: Props) {
     if (target === undefined) return;
     event.preventDefault();
     props.onSeek(target);
+  };
+
+  const updateClipEndpoint = (endpoint: "start" | "end", requestedMs: number) => {
+    if (!props.clipRange) return;
+    props.onClipRangeChange(
+      moveClipEndpoint(
+        props.clipRange,
+        endpoint,
+        requestedMs,
+        props.durationMs,
+        props.events,
+      ),
+    );
+  };
+
+  const beginClipDrag = (
+    event: PointerEvent & { currentTarget: HTMLButtonElement },
+    endpoint: "start" | "end",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const update = (pointerEvent: PointerEvent) => {
+      const bounds = fullscreenRail.getBoundingClientRect();
+      if (bounds.width <= 0) return;
+      updateClipEndpoint(
+        endpoint,
+        ((pointerEvent.clientX - bounds.left) / bounds.width) * props.durationMs,
+      );
+    };
+    const finish = (pointerEvent: PointerEvent) => {
+      update(pointerEvent);
+      handle.removeEventListener("pointermove", update);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      if (handle.hasPointerCapture(pointerEvent.pointerId)) {
+        handle.releasePointerCapture(pointerEvent.pointerId);
+      }
+    };
+    handle.setPointerCapture(event.pointerId);
+    handle.addEventListener("pointermove", update);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  };
+
+  const handleClipEndpointKey = (event: KeyboardEvent, endpoint: "start" | "end") => {
+    if (!props.clipRange) return;
+    const current = endpoint === "start" ? props.clipRange.startMs : props.clipRange.endMs;
+    const step = event.shiftKey ? 2_000 : 500;
+    let requested = current;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") requested -= step;
+    else if (event.key === "ArrowRight" || event.key === "ArrowUp") requested += step;
+    else if (event.key === "Home") {
+      requested = endpoint === "start" ? 0 : props.clipRange.startMs + 5_000;
+    } else if (event.key === "End") {
+      requested = endpoint === "end" ? props.durationMs : props.clipRange.endMs - 5_000;
+    } else return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateClipEndpoint(endpoint, requested);
   };
 
   return (
@@ -330,6 +408,7 @@ function FullscreenOverlay(props: Props) {
             <For each={timelineLabels}>{(label) => <span style={`left:${label.position}%`}>{formatDuration(label.value)}</span>}</For>
           </div>
           <div
+            ref={fullscreenRail}
             class={styles.fullscreenRail}
             role="slider"
             tabIndex={0}
@@ -344,6 +423,28 @@ function FullscreenOverlay(props: Props) {
           >
             <span class={styles.railTrack} />
             <span class={styles.railFill} style={`width:${progress()}%`} />
+            <Show when={props.clipRange}>
+              <span
+                class={styles.clipSelection}
+                style={`left:${clipStartPosition()}%;width:${clipEndPosition() - clipStartPosition()}%`}
+              />
+              <button
+                class={`${styles.clipHandle} ${styles.clipHandleStart}`}
+                style={`left:${clipStartPosition()}%`}
+                type="button"
+                aria-label={`Clip starts at ${formatDuration(props.clipRange!.startMs)}`}
+                onPointerDown={(event) => beginClipDrag(event, "start")}
+                onKeyDown={(event) => handleClipEndpointKey(event, "start")}
+              />
+              <button
+                class={`${styles.clipHandle} ${styles.clipHandleEnd}`}
+                style={`left:${clipEndPosition()}%`}
+                type="button"
+                aria-label={`Clip ends at ${formatDuration(props.clipRange!.endMs)}`}
+                onPointerDown={(event) => beginClipDrag(event, "end")}
+                onKeyDown={(event) => handleClipEndpointKey(event, "end")}
+              />
+            </Show>
             <span class={styles.railHead} style={`left:${progress()}%`} />
             <For each={markerPositions()}>
               {(marker) => (
@@ -351,9 +452,9 @@ function FullscreenOverlay(props: Props) {
                   class={`${styles.fullscreenMarker} ${styles[`marker${marker.event.relation}`]}`}
                   style={`left:${marker.position}%`}
                   type="button"
-                  aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
+                  aria-label={`Create clip from ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
                   onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => { event.stopPropagation(); props.onSeek(marker.event.video_time_ms); }}
+                  onClick={(event) => { event.stopPropagation(); props.onActivateClip(marker.event); }}
                 />
               )}
             </For>
@@ -363,6 +464,21 @@ function FullscreenOverlay(props: Props) {
           <button class={styles.fullscreenPlay} type="button" disabled={!props.mediaAvailable} onClick={props.onTogglePlayback} aria-label={props.isPlaying ? "Pause fullscreen replay" : "Play fullscreen replay"}>
             <span aria-hidden="true">{props.isPlaying ? "Ⅱ" : "▶"}</span> {props.isPlaying ? "PAUSE" : "PLAY"}
           </button>
+          <Show
+            when={props.clipRange}
+            fallback={
+              <button class={styles.clipControl} type="button" onClick={() => props.onActivateClip()}>
+                <span aria-hidden="true">✦</span> CLIP
+              </button>
+            }
+          >
+            <button class={styles.cancelClipControl} type="button" onClick={props.onCancelClip}>
+              CANCEL
+            </button>
+            <button class={styles.exportClipControl} type="button" onClick={props.onExportClip}>
+              EXPORT CLIP <span aria-hidden="true">→</span>
+            </button>
+          </Show>
           <Show when={props.goldTimeline.length > 0}>
             <button class={styles.goldControl} type="button" onClick={() => props.onGoldOpenChange(!props.goldOpen)} aria-expanded={props.goldOpen}> {props.goldOpen ? "▾" : "▴"} GOLD</button>
           </Show>

@@ -169,7 +169,7 @@ function ClipsLibrary(props: Props) {
           <EmptyState
             label="NO CLIPS"
             title="Your exported moments will live here."
-            detail="Clip creation arrives with the viewer workflow. Existing MP4 clips are discovered automatically."
+            detail="Open a recording, select a moment on its timeline, and export it for Discord or social video."
           />
         }
       >

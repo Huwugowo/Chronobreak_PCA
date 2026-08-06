@@ -29,6 +29,57 @@ export type ClipSummary = {
   source_date: string | null;
 };
 
+export type ClipDraft = {
+  gameTimestamp: string;
+  clipStartMs: number;
+  clipEndMs: number;
+};
+
+export type ClipRange = {
+  startMs: number;
+  endMs: number;
+};
+
+export type ClipExportPreset = "discord" | "horizontal" | "vertical";
+
+export type ClipMusicSource =
+  | { kind: "none" }
+  | { kind: "builtin"; filename: string }
+  | { kind: "file"; path: string };
+
+export type ClipExportRequest = {
+  game_timestamp: string;
+  clip_start_ms: number;
+  clip_end_ms: number;
+  preset: ClipExportPreset;
+  vertical_focus: number;
+  vertical_position: number;
+  music: ClipMusicSource;
+  game_audio_volume: number;
+  music_volume: number;
+};
+
+export type ClipExportProgress = {
+  stage: "encoding" | "thumbnail" | "complete";
+  percent: number;
+};
+
+export type ClipExportResult = {
+  filename: string;
+  output_path: string;
+  thumbnail_path: string;
+  elapsed_ms: number;
+  file_size_bytes: number;
+};
+
+export type BuiltInMusicTrack = {
+  filename: string;
+  display_name: string;
+  mood: string;
+  duration_s: number;
+  preview_url: string;
+};
+
 export type ViewerEvent = {
   event_type: string;
   game_time_ms: number;
@@ -130,7 +181,8 @@ export type LibraryTab = "games" | "clips";
 
 export type ReturnNavigationState =
   | { screen: "library"; tab: LibraryTab }
-  | { screen: "viewer"; gameTimestamp: string };
+  | { screen: "viewer"; gameTimestamp: string; clipDraft?: ClipDraft }
+  | { screen: "clip-export"; draft: ClipDraft };
 
 export type NavigationState =
   | ReturnNavigationState

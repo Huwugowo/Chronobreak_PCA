@@ -13,7 +13,7 @@
 | 3 | App Shell + Library | App | `SPEC.md` + `APP-LIBRARY.md` |
 | 4 | Viewer — Windowed Mode | App | `SPEC.md` + `APP-VIEWER.md` §1–3 |
 | 5 | Viewer — Fullscreen Overlays | App | `SPEC.md` + `APP-VIEWER.md` §4–12 |
-| 6 | Viewer — Stats Tab | App | `SPEC.md` + `APP-VIEWER.md` §15 |
+| 6 | Viewer — Stats Tab (deferred) | App | `SPEC.md` + `APP-VIEWER.md` §15 |
 | 7 | Clip Creator + Exporter | App | `SPEC.md` + `APP-CLIP.md` + `APP-VIEWER.md` §11 |
 | 8 | Match V5 Enrichment | App | `SPEC.md` §3.3–3.5 + `APP-VIEWER.md` §15 + `APP-LIBRARY.md` §5.4 |
 | 9 | Polish + Distribution | Both | `SPEC.md` + `APP-LIBRARY.md` §5–6 |
@@ -152,7 +152,7 @@ remain playable up to their last completed fragment.
 **Documents:** `SPEC.md` + `APP-VIEWER.md` §1–3
 
 **Scope:**
-- Two-tab header: Replay / Stats (Stats tab is empty placeholder at this phase)
+- One Replay surface; no separate Events list and no placeholder for the deferred Stats tab
 - Windowed layout: video ~60% width, stats panel alongside, scrubber below
 - Stats panel: champion, KDA, CS, level — driven by the presented-frame clock; gold differential remains hidden until Match V5 data exists
 - Scrubber: rail, fill, playhead tracking `currentTime`, event markers positioned by `video_time_ms`, clicking rail or marker seeks
@@ -209,6 +209,9 @@ remain playable up to their last completed fragment.
 
 ## Phase 6 — Viewer: Stats Tab
 
+**Status:** Deferred. It is not a prerequisite for Phase 7 and the current app does not
+render an empty Stats tab or placeholder.
+
 **Goal:** The Stats tab shows a complete end-of-game scoreboard for all 10 players.
 
 **Documents:** `SPEC.md` + `APP-VIEWER.md` §15
@@ -251,17 +254,20 @@ remain playable up to their last completed fragment.
 - Smart auto-positioning: heuristic mode (solo kill / teamfight / multikill / penta pre/post-roll windows) — see `APP-VIEWER.md` §11.1
 - Draggable endpoint handles with 5-second minimum and event snapping
 - "Export Clip →" navigates to Clip Exporter screen
+- Publishing presets: Discord (<10 MB), Horizontal (16:9), and Vertical (9:16)
+- Vertical hybrid reframe: blurred full-frame context plus adjustable sharp action crop
 - Music selection: No music / built-in library / import file
 - Music looping: short tracks loop to fill the clip duration (never cut clip short)
 - Audio mix sliders (game audio + music volume)
-- ffmpeg export pipeline (Rust Tauri command, `-vcodec copy`)
+- ffmpeg export pipeline: always re-encode H.264/AAC with hardware preference and `libx264` fallback
+- Discord bitrate budgeting, final-size verification, and one corrective retry
 - Thumbnail sidecar (`.jpg`) generated immediately after each export
 - Export progress via Tauri events
 - Post-export: "Open in Finder" + "Copy path" actions
 - Exported clip and sidecar appear in Clips tab
 
 **Entry conditions:**
-- Phase 6 complete and validated
+- Phase 5 complete and validated; deferred Phase 6 is not required
 - At least one bundled music track in `resources/music/`
 
 **Validation:**
@@ -269,11 +275,12 @@ remain playable up to their last completed fragment.
 2. Clip mode works correctly from both windowed and fullscreen viewer modes
 3. Endpoint handles are draggable; 5-second minimum enforced
 4. Export with a music track shorter than the clip — confirm clip is NOT truncated (music loops)
-5. Clip export completes in under 5 seconds for a 30-second clip
-6. Output plays in VLC with game audio + music correctly mixed for the full clip duration
-7. Output plays in Discord (drag-and-drop share test)
-8. `.jpg` sidecar is created alongside the `.mp4` in `{output_path}/clips/`
-9. Exported clip appears in Clips tab with correct thumbnail, duration, and source game info
+5. Export both an H.264 and HEVC recording — both outputs probe as H.264/AAC MP4
+6. Discord output is strictly below 10,000,000 bytes and plays after drag-and-drop
+7. Horizontal output retains a 16:9 publishable frame; Vertical output is 1080×1920 and its framing/focus controls match the preview
+8. Export with music shorter than the clip — game audio + looped music last for the full clip
+9. `.jpg` sidecar is created alongside the `.mp4` only after a successful export
+10. Exported clip appears in Clips tab with correct thumbnail, duration, and source game info
 
 **Complete when:** a clip can be exported, shared externally, and found in the Clips tab.
 

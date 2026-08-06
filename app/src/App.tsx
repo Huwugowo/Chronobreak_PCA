@@ -27,6 +27,7 @@ import {
   setGameSaved,
 } from "./api";
 import AppHeader from "./components/AppHeader";
+import ClipExporterScreen from "./components/ClipExporterScreen";
 import ClipModal from "./components/ClipModal";
 import ConfirmDialog from "./components/ConfirmDialog";
 import LibraryScreen from "./components/LibraryScreen";
@@ -229,7 +230,11 @@ function App() {
   });
 
   const loading = createMemo(
-    () => games.loading || clips.loading || usage.loading || settings.loading,
+    () =>
+      (games() === undefined && games.loading) ||
+      (clips() === undefined && clips.loading) ||
+      (usage() === undefined && usage.loading) ||
+      (settings() === undefined && settings.loading),
   );
   const loadError = createMemo(() => games.error ?? clips.error ?? usage.error ?? settings.error);
   const returnState = (state: NavigationState): ReturnNavigationState =>
@@ -283,6 +288,31 @@ function App() {
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).gameTimestamp
               }
               onBack={() => openTab("games")}
+              initialClipDraft={
+                (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).clipDraft
+              }
+              onExportClip={(draft) => setNavigation({ screen: "clip-export", draft })}
+            />
+          </Match>
+          <Match when={navigation().screen === "clip-export"}>
+            <ClipExporterScreen
+              draft={
+                (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "clip-export" }>).draft
+              }
+              outputPath={settings()?.output_path ?? "~/LeagueReplays"}
+              onBack={(draft) =>
+                setNavigation({
+                  screen: "viewer",
+                  gameTimestamp: draft.gameTimestamp,
+                  clipDraft: draft,
+                })
+              }
+              onExported={async () => {
+                await Promise.all([refetchClips(), refetchUsage()]);
+                showNotice("Clip exported.");
+              }}
+              onOpenClips={() => openTab("clips")}
+              onOpenFolder={() => void openClipsFolder().catch(showError)}
             />
           </Match>
           <Match when={navigation().screen === "settings" && settings() && usage()}>
@@ -301,7 +331,7 @@ function App() {
         </Switch>
       </main>
 
-      <Show when={navigation().screen !== "viewer"}>
+      <Show when={navigation().screen === "library" || navigation().screen === "settings"}>
         <Show when={usage()}>
           {(loaded) => <StorageIndicator usage={loaded()} onManage={openSettings} />}
         </Show>

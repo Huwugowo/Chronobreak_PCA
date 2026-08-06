@@ -11,7 +11,7 @@
 |---|---|
 | `SPEC.md` ← *this file* | Architecture, data contracts, constraints, limitations |
 | `RECORDER.md` | Process 1 — Rust recorder binary |
-| `APP-VIEWER.md` | Process 2 — Viewer screen (windowed + fullscreen modes, Stats tab, clip mode) |
+| `APP-VIEWER.md` | Process 2 — Viewer screen (windowed + fullscreen modes, clip mode; Stats deferred) |
 | `APP-CLIP.md` | Process 2 — Clip exporter screen |
 | `APP-LIBRARY.md` | Process 2 — Game library screen + settings |
 | `PHASES.md` | Build order, entry conditions, validation criteria |
@@ -31,7 +31,7 @@ A two-process desktop application for League of Legends players that:
 - The app only runs post-game, but playback, seeking, navigation, and overlay interaction must remain visibly immediate and frame-smooth
 - Core functionality requires no external accounts, API keys, or credentials — the app works fully offline
 - Match V5 enrichment (damage stats, vision score, exact item timestamps) is optional and requires a Riot ID — the app degrades gracefully without it
-- Output is always a plain standards-based MP4 file (H.264, or HEVC only after end-to-end capability validation) — no proprietary formats, no upload links, no accounts
+- Recordings are plain standards-based MP4 files (H.264, or HEVC only after end-to-end capability validation); exported clips are always publishable H.264/AAC MP4 files — no proprietary formats, upload links, or accounts
 - Until Phase 9 distribution work, superseded configs, schemas, and implementation paths are deleted rather than migrated; development recordings and fixtures are disposable
 
 ---
@@ -77,7 +77,7 @@ A two-process desktop application for League of Legends players that:
 │  Games Tab     → grid of recorded game bundles               │
 │  Clips Tab     → grid of exported clips                      │
 │  Viewer        → windowed or fullscreen video player         │
-│  Stats Tab     → end-of-game scoreboard, expandable rows     │
+│  Stats Tab     → deferred end-of-game scoreboard             │
 │  Clip Exporter → trim, music, ffmpeg export to MP4           │
 └─────────────────────────────────────────────────────────────┘
 ```

@@ -1,8 +1,12 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AppSettings,
   AutoDeleteResult,
+  BuiltInMusicTrack,
+  ClipExportProgress,
+  ClipExportRequest,
+  ClipExportResult,
   ClipSummary,
   DdragonStatus,
   GameSummary,
@@ -348,6 +352,73 @@ export const removeClip = async (clipFilename: string): Promise<void> => {
     return;
   }
   await invoke("delete_clip", { clipFilename });
+};
+
+export const loadBuiltInMusic = async (): Promise<BuiltInMusicTrack[]> => {
+  if (!isTauri()) {
+    return [
+      {
+        filename: "momentum.mp3",
+        display_name: "Momentum",
+        mood: "electronic",
+        duration_s: 12,
+        preview_url: "",
+      },
+    ];
+  }
+  return invoke<BuiltInMusicTrack[]>("list_built_in_music");
+};
+
+export const chooseMusicFile = async (): Promise<string | null> => {
+  if (!isTauri()) return "C:\\Music\\highlight.mp3";
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Audio", extensions: ["mp3", "wav"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+};
+
+export const exportClip = async (
+  request: ClipExportRequest,
+  onProgress: (progress: ClipExportProgress) => void,
+): Promise<ClipExportResult> => {
+  if (!isTauri()) {
+    for (const percent of [8, 24, 46, 69, 88, 96]) {
+      await pausePreview();
+      onProgress({ stage: percent === 96 ? "thumbnail" : "encoding", percent });
+    }
+    const clipTimestamp = Math.floor(Date.now() / 1_000).toString();
+    const filename = `${request.game_timestamp}_${clipTimestamp}`;
+    const result: ClipExportResult = {
+      filename,
+      output_path: `~/LeagueReplays/clips/${filename}.mp4`,
+      thumbnail_path: `~/LeagueReplays/clips/${filename}.jpg`,
+      elapsed_ms: 912,
+      file_size_bytes: request.preset === "discord" ? 9_200_000 : 43_000_000,
+    };
+    mockClips = [
+      {
+        filename,
+        game_timestamp: request.game_timestamp,
+        clip_timestamp: clipTimestamp,
+        duration_ms: request.clip_end_ms - request.clip_start_ms,
+        file_size_bytes: result.file_size_bytes,
+        thumbnail_path: null,
+        thumbnail_url: null,
+        video_url: "",
+        source_champion:
+          mockGames.find((game) => game.timestamp === request.game_timestamp)?.champion ?? null,
+        source_date:
+          mockGames.find((game) => game.timestamp === request.game_timestamp)?.recorded_at ?? null,
+      },
+      ...mockClips,
+    ];
+    onProgress({ stage: "complete", percent: 100 });
+    return result;
+  }
+  const progress = new Channel<ClipExportProgress>();
+  progress.onmessage = onProgress;
+  return invoke<ClipExportResult>("export_clip", { request, progress });
 };
 
 export const loadStorageUsage = async (): Promise<StorageUsage> => {

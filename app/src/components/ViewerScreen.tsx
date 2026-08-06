@@ -13,12 +13,24 @@ import {
 import { loadPlaybackProbe, loadServerMetrics } from "../api";
 import { formatBytes, formatDate, formatDuration } from "../format";
 import type {
+  ClipDraft,
+  ClipRange,
   KdaTimelinePoint,
   PlaybackProbe,
   PlayerTimelinePoint,
   ServerMetrics,
+  ViewerEvent,
 } from "../types";
-import { clamp, eventInvolvesPlayer, eventTitle, latestIndexAt, timelineValue } from "../viewerUtils";
+import {
+  clamp,
+  defaultClipRange,
+  eventInvolvesPlayer,
+  eventTitle,
+  latestIndexAt,
+  moveClipEndpoint,
+  nearestIndexAt,
+  timelineValue,
+} from "../viewerUtils";
 import ChampionFilter from "./ChampionFilter";
 import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
@@ -26,9 +38,9 @@ import styles from "./ViewerScreen.module.css";
 type Props = {
   gameTimestamp: string;
   onBack: () => void;
+  initialClipDraft?: ClipDraft;
+  onExportClip: (draft: ClipDraft) => void;
 };
-
-type ViewerTab = "replay" | "stats";
 
 type ChromiumPerformance = Performance & {
   memory?: { usedJSHeapSize: number };
@@ -54,14 +66,22 @@ function ViewerScreen(props: Props) {
             </button>
           </section>
         </Match>
-        <Match when={probe()}>{(loaded) => <PlaybackSurface probe={loaded()} onBack={props.onBack} />}</Match>
+        <Match when={probe()}>
+          {(loaded) => (
+            <PlaybackSurface
+              {...props}
+              probe={loaded()}
+            />
+          )}
+        </Match>
       </Switch>
     </div>
   );
 }
 
-function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
+function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   let video!: HTMLVideoElement;
+  let windowedRail!: HTMLDivElement;
   let frameCallbackId: number | undefined;
   let animationFrameId: number | undefined;
   let metricsIntervalId: number | undefined;
@@ -85,7 +105,6 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
   const lastEventTimeMs = events[events.length - 1]?.video_time_ms ?? 0;
   const durationMs = Math.max(props.probe.game.duration_ms, lastEventTimeMs, 1);
 
-  const [activeTab, setActiveTab] = createSignal<ViewerTab>("replay");
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   const [goldOpen, setGoldOpen] = createSignal(false);
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
@@ -105,6 +124,20 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
     range_requests: 0,
     response_bytes: 0,
   });
+  const initialClipRange = (): ClipRange | null => {
+    const draft = props.initialClipDraft;
+    if (
+      !draft ||
+      draft.gameTimestamp !== props.probe.game.timestamp ||
+      draft.clipStartMs < 0 ||
+      draft.clipEndMs > durationMs ||
+      draft.clipEndMs - draft.clipStartMs < 5_000
+    ) {
+      return null;
+    }
+    return { startMs: draft.clipStartMs, endMs: draft.clipEndMs };
+  };
+  const [clipRange, setClipRange] = createSignal<ClipRange | null>(initialClipRange());
 
   const progress = createMemo(() => clamp((videoTimeMs() / durationMs) * 100, 0, 100));
   const videoSecond = createMemo(() => Math.floor(videoTimeMs() / 1_000));
@@ -128,6 +161,12 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
       position: clamp((event.video_time_ms / durationMs) * 100, 0, 100),
       tone: event.relation,
     })),
+  );
+  const clipStartPosition = createMemo(() =>
+    clipRange() ? clamp((clipRange()!.startMs / durationMs) * 100, 0, 100) : 0,
+  );
+  const clipEndPosition = createMemo(() =>
+    clipRange() ? clamp((clipRange()!.endMs / durationMs) * 100, 0, 100) : 100,
   );
   const activeEventIndex = createMemo(() => latestIndexAt(visibleEvents(), videoTimeMs()));
   const activeEvent = createMemo(() => {
@@ -204,6 +243,88 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
     }
   };
 
+  const activateClip = (event?: ViewerEvent) => {
+    let anchorEvent = event;
+    if (!anchorEvent) {
+      const kills = events.filter(
+        (candidate) =>
+          candidate.event_type === "ChampionKill" || candidate.event_type === "FirstBlood",
+      );
+      const nearest = nearestIndexAt(kills, videoTimeMs());
+      if (nearest >= 0 && Math.abs(kills[nearest].video_time_ms - videoTimeMs()) <= 10_000) {
+        anchorEvent = kills[nearest];
+      }
+    }
+    const anchorMs = anchorEvent?.video_time_ms ?? videoTimeMs();
+    setClipRange(defaultClipRange(anchorMs, durationMs, events, anchorEvent));
+    if (event) seekTo(event.video_time_ms);
+  };
+
+  const exportSelectedClip = () => {
+    const range = clipRange();
+    if (!range) return;
+    video.pause();
+    setIsFullscreen(false);
+    props.onExportClip({
+      gameTimestamp: props.probe.game.timestamp,
+      clipStartMs: range.startMs,
+      clipEndMs: range.endMs,
+    });
+  };
+
+  const updateClipEndpoint = (endpoint: "start" | "end", requestedMs: number) => {
+    const range = clipRange();
+    if (!range) return;
+    setClipRange(moveClipEndpoint(range, endpoint, requestedMs, durationMs, visibleEvents()));
+  };
+
+  const beginClipDrag = (
+    event: PointerEvent & { currentTarget: HTMLButtonElement },
+    endpoint: "start" | "end",
+    rail: HTMLDivElement,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const update = (pointerEvent: PointerEvent) => {
+      const bounds = rail.getBoundingClientRect();
+      if (bounds.width <= 0) return;
+      updateClipEndpoint(
+        endpoint,
+        ((pointerEvent.clientX - bounds.left) / bounds.width) * durationMs,
+      );
+    };
+    const finish = (pointerEvent: PointerEvent) => {
+      update(pointerEvent);
+      handle.removeEventListener("pointermove", update);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      if (handle.hasPointerCapture(pointerEvent.pointerId)) {
+        handle.releasePointerCapture(pointerEvent.pointerId);
+      }
+    };
+    handle.setPointerCapture(event.pointerId);
+    handle.addEventListener("pointermove", update);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  };
+
+  const handleClipEndpointKey = (event: KeyboardEvent, endpoint: "start" | "end") => {
+    const range = clipRange();
+    if (!range) return;
+    const current = endpoint === "start" ? range.startMs : range.endMs;
+    const step = event.shiftKey ? 2_000 : 500;
+    let requested = current;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") requested -= step;
+    else if (event.key === "ArrowRight" || event.key === "ArrowUp") requested += step;
+    else if (event.key === "Home") requested = endpoint === "start" ? 0 : range.startMs + 5_000;
+    else if (event.key === "End") requested = endpoint === "end" ? durationMs : range.endMs - 5_000;
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateClipEndpoint(endpoint, requested);
+  };
+
   const seekFromRail = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0) return;
@@ -237,18 +358,10 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
   };
 
   const enterFullscreen = () => {
-    if (activeTab() === "replay") setIsFullscreen(true);
+    setIsFullscreen(true);
   };
 
   const exitFullscreen = () => setIsFullscreen(false);
-
-  const selectTab = (tab: ViewerTab) => {
-    if (tab === "stats") {
-      video.pause();
-      exitFullscreen();
-    }
-    setActiveTab(tab);
-  };
 
   createEffect(() => {
     document.body.classList.toggle("replay-fullscreen", isFullscreen());
@@ -290,7 +403,12 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         exitFullscreen();
         return;
       }
-      if (event.key.toLowerCase() === "f" && activeTab() === "replay") {
+      if (event.key === "Escape" && clipRange()) {
+        event.preventDefault();
+        setClipRange(null);
+        return;
+      }
+      if (event.key.toLowerCase() === "f") {
         event.preventDefault();
         setIsFullscreen((fullscreen) => !fullscreen);
       }
@@ -338,26 +456,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         <button class={styles.backButton} type="button" onClick={props.onBack}>
           <span aria-hidden="true">←</span> GAMES
         </button>
-        <nav class={styles.viewerTabs} aria-label="Viewer sections" role="tablist">
-          <button
-            classList={{ [styles.tabActive]: activeTab() === "replay" }}
-            type="button"
-            role="tab"
-            aria-selected={activeTab() === "replay"}
-            onClick={() => selectTab("replay")}
-          >
-            <span aria-hidden="true">▶</span> REPLAY
-          </button>
-          <button
-            classList={{ [styles.tabActive]: activeTab() === "stats" }}
-            type="button"
-            role="tab"
-            aria-selected={activeTab() === "stats"}
-            onClick={() => selectTab("stats")}
-          >
-            <span aria-hidden="true">≡</span> STATS
-          </button>
-        </nav>
+        <span class={styles.replayLabel}><span aria-hidden="true">▶</span> REPLAY</span>
       </div>
 
       <header class={styles.gameHeader}>
@@ -384,16 +483,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         </dl>
       </header>
 
-      <div
-        classList={{
-          [styles.replayView]: true,
-          [styles.replayViewHidden]: activeTab() !== "replay",
-        }}
-        role="tabpanel"
-        aria-label="Replay"
-        aria-hidden={activeTab() !== "replay"}
-        data-testid="replay-panel"
-      >
+      <div class={styles.replayView} aria-label="Replay" data-testid="replay-panel">
         <div class={styles.windowedGrid}>
           <div
             classList={{
@@ -448,11 +538,16 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
                 goldOpen={goldOpen()}
                 participants={props.probe.participants}
                 selectedPlayers={selectedPlayers()}
+                clipRange={clipRange()}
                 onGoldOpenChange={setGoldOpen}
                 onPlayerToggle={togglePlayerFilter}
                 onPlayerClear={() => setSelectedPlayers([])}
                 onTogglePlayback={() => void togglePlayback()}
                 onSeek={seekTo}
+                onActivateClip={activateClip}
+                onClipRangeChange={setClipRange}
+                onExportClip={exportSelectedClip}
+                onCancelClip={() => setClipRange(null)}
                 onExit={exitFullscreen}
               />
             </Show>
@@ -515,6 +610,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         <Show when={!isFullscreen()}>
         <section class={styles.timelinePanel} aria-label="Replay timeline">
           <div
+            ref={windowedRail}
             class={styles.scrubber}
             role="slider"
             tabIndex={0}
@@ -529,6 +625,28 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
           >
             <span class={styles.scrubberTrack} />
             <span class={styles.scrubberFill} style={`width:${progress()}%`} />
+            <Show when={clipRange()}>
+              <span
+                class={styles.clipSelection}
+                style={`left:${clipStartPosition()}%;width:${clipEndPosition() - clipStartPosition()}%`}
+              />
+              <button
+                class={`${styles.clipHandle} ${styles.clipHandleStart}`}
+                style={`left:${clipStartPosition()}%`}
+                type="button"
+                aria-label={`Clip starts at ${formatDuration(clipRange()!.startMs)}`}
+                onPointerDown={(event) => beginClipDrag(event, "start", windowedRail)}
+                onKeyDown={(event) => handleClipEndpointKey(event, "start")}
+              />
+              <button
+                class={`${styles.clipHandle} ${styles.clipHandleEnd}`}
+                style={`left:${clipEndPosition()}%`}
+                type="button"
+                aria-label={`Clip ends at ${formatDuration(clipRange()!.endMs)}`}
+                onPointerDown={(event) => beginClipDrag(event, "end", windowedRail)}
+                onKeyDown={(event) => handleClipEndpointKey(event, "end")}
+              />
+            </Show>
             <span class={styles.scrubberHead} style={`left:${progress()}%`} />
             <div class={styles.markers}>
               <For each={markerPositions()}>
@@ -537,13 +655,13 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
                     class={`${styles.marker} ${styles[`marker${marker.tone}`]}`}
                     style={`left:${marker.position}%`}
                     type="button"
-                    aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
+                    aria-label={`Create clip from ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
                     title={`${eventTitle(marker.event)} · ${formatDuration(marker.event.game_time_ms)}`}
                     data-event-index={marker.index}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
-                      seekTo(marker.event.video_time_ms);
+                      activateClip(marker.event);
                     }}
                   />
                 )}
@@ -561,6 +679,23 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
               <span aria-hidden="true">{isPlaying() ? "Ⅱ" : "▶"}</span>
               {isPlaying() ? "PAUSE" : "PLAY"}
             </button>
+            <Show
+              when={clipRange()}
+              fallback={
+                <button class={styles.clipButton} type="button" onClick={() => activateClip()}>
+                  <span aria-hidden="true">✦</span> CLIP
+                </button>
+              }
+            >
+              <div class={styles.clipActions}>
+                <button class={styles.cancelClipButton} type="button" onClick={() => setClipRange(null)}>
+                  CANCEL
+                </button>
+                <button class={styles.exportClipButton} type="button" onClick={exportSelectedClip}>
+                  EXPORT CLIP <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </Show>
             <div class={styles.timeReadout} data-testid="time-readout">
               <strong>{formatDuration(videoSecond() * 1_000)}</strong>
               <span>/</span>
@@ -633,20 +768,6 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
         </Show>
       </div>
 
-      <section
-        classList={{
-          [styles.statsPlaceholder]: true,
-          [styles.statsPlaceholderHidden]: activeTab() !== "stats",
-        }}
-        role="tabpanel"
-        aria-label="Stats"
-        aria-hidden={activeTab() !== "stats"}
-        data-testid="stats-placeholder"
-      >
-        <span>STATS / PHASE 06</span>
-        <strong>MATCH SCOREBOARD</strong>
-        <p>Stats arrives in a later phase. Your replay position is preserved.</p>
-      </section>
     </section>
   );
 }
