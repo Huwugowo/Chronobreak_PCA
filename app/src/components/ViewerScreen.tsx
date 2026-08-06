@@ -18,7 +18,8 @@ import type {
   PlayerTimelinePoint,
   ServerMetrics,
 } from "../types";
-import { clamp, eventSummary, eventTitle, latestIndexAt, timelineValue } from "../viewerUtils";
+import { clamp, eventInvolvesPlayer, eventTitle, latestIndexAt, timelineValue } from "../viewerUtils";
+import ChampionFilter from "./ChampionFilter";
 import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
 
@@ -61,15 +62,12 @@ function ViewerScreen(props: Props) {
 
 function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
   let video!: HTMLVideoElement;
-  let eventFeed!: HTMLDivElement;
-  let eventRows: HTMLButtonElement[] = [];
   let frameCallbackId: number | undefined;
   let animationFrameId: number | undefined;
   let metricsIntervalId: number | undefined;
   let pendingSeekStartedAt: number | undefined;
   let frameSampleStartedAt = performance.now();
   let presentedFrames = 0;
-  let previousActiveEvent = -1;
   let disposed = false;
 
   const events = [...props.probe.events].sort(
@@ -86,17 +84,11 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
   );
   const lastEventTimeMs = events[events.length - 1]?.video_time_ms ?? 0;
   const durationMs = Math.max(props.probe.game.duration_ms, lastEventTimeMs, 1);
-  const markerPositions = events.map((event, index) => ({
-    event,
-    index,
-    position: clamp((event.video_time_ms / durationMs) * 100, 0, 100),
-    tone: event.relation,
-  }));
 
   const [activeTab, setActiveTab] = createSignal<ViewerTab>("replay");
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   const [goldOpen, setGoldOpen] = createSignal(false);
-  const [fullscreenEventPanelOpen, setFullscreenEventPanelOpen] = createSignal(false);
+  const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
   const [videoTimeMs, setVideoTimeMs] = createSignal(0);
   const [isPlaying, setIsPlaying] = createSignal(false);
   const [mediaUnavailable, setMediaUnavailable] = createSignal(false);
@@ -122,10 +114,25 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
   const beforeGameStart = createMemo(
     () => videoTimeMs() < props.probe.game_start_video_offset_ms,
   );
-  const activeEventIndex = createMemo(() => latestIndexAt(events, videoTimeMs()));
+  const visibleEvents = createMemo(() => {
+    const selected = selectedPlayers();
+    if (selected.length === 0) return events;
+    return events.filter((event) =>
+      selected.some((player) => eventInvolvesPlayer(event, player)),
+    );
+  });
+  const markerPositions = createMemo(() =>
+    visibleEvents().map((event, index) => ({
+      event,
+      index,
+      position: clamp((event.video_time_ms / durationMs) * 100, 0, 100),
+      tone: event.relation,
+    })),
+  );
+  const activeEventIndex = createMemo(() => latestIndexAt(visibleEvents(), videoTimeMs()));
   const activeEvent = createMemo(() => {
     const index = activeEventIndex();
-    return index < 0 ? undefined : events[index];
+    return index < 0 ? undefined : visibleEvents()[index];
   });
   const currentPlayer = createMemo<PlayerTimelinePoint | undefined>(() =>
     timelineValue(playerTimeline, videoTimeMs()),
@@ -134,22 +141,13 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
     timelineValue(kdaTimeline, videoTimeMs()),
   );
 
-  createEffect(() => {
-    const index = activeEventIndex();
-    if (index === previousActiveEvent) return;
-    if (previousActiveEvent >= 0) {
-      const previous = eventRows[previousActiveEvent];
-      previous?.classList.remove(styles.eventActive);
-      previous?.removeAttribute("aria-current");
-    }
-    if (index >= 0) {
-      const current = eventRows[index];
-      current?.classList.add(styles.eventActive);
-      current?.setAttribute("aria-current", "true");
-      if (eventFeed && current) current.scrollIntoView({ block: "nearest" });
-    }
-    previousActiveEvent = index;
-  });
+  const togglePlayerFilter = (summonerName: string) => {
+    setSelectedPlayers((selected) =>
+      selected.includes(summonerName)
+        ? selected.filter((player) => player !== summonerName)
+        : [...selected, summonerName],
+    );
+  };
 
   const sampleFrame = () => {
     presentedFrames += 1;
@@ -438,20 +436,21 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
               <FullscreenOverlay
                 champion={props.probe.game.champion}
                 localPlayerName={props.probe.local_player_name}
-                events={events}
+                events={visibleEvents()}
                 goldTimeline={goldTimeline}
                 durationMs={durationMs}
                 videoTimeMs={videoTimeMs()}
                 gameClockSeconds={gameClockSecond()}
                 beforeGameStart={beforeGameStart()}
                 currentKda={currentKda()}
-                currentPlayer={currentPlayer()}
                 isPlaying={isPlaying()}
                 mediaAvailable={Boolean(props.probe.video_url) && !mediaUnavailable()}
                 goldOpen={goldOpen()}
-                eventPanelOpen={fullscreenEventPanelOpen()}
+                participants={props.probe.participants}
+                selectedPlayers={selectedPlayers()}
                 onGoldOpenChange={setGoldOpen}
-                onEventPanelOpenChange={setFullscreenEventPanelOpen}
+                onPlayerToggle={togglePlayerFilter}
+                onPlayerClear={() => setSelectedPlayers([])}
                 onTogglePlayback={() => void togglePlayback()}
                 onSeek={seekTo}
                 onExit={exitFullscreen}
@@ -459,6 +458,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
             </Show>
           </div>
 
+          <Show when={!isFullscreen()}>
           <aside class={styles.sidePanel} aria-label="Synchronized game data">
             <section class={styles.liveStats} data-testid="live-stats">
               <div class={styles.panelLabel}>
@@ -500,45 +500,19 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
               </dl>
             </section>
 
-            <section class={styles.eventPanel}>
-              <div class={styles.eventPanelHeader}>
-                <div>
-                  <span>MATCH EVENTS</span>
-                  <strong>{events.length.toString().padStart(2, "0")}</strong>
-                </div>
-                <span>GAME TIME</span>
-              </div>
-              <div class={styles.eventFeed} ref={eventFeed} data-testid="event-feed">
-                <Show
-                  when={events.length > 0}
-                  fallback={<p class={styles.emptyEvents}>NO EVENTS CAPTURED</p>}
-                >
-                  <For each={events}>
-                    {(event, index) => (
-                      <button
-                        ref={(element) => {
-                          eventRows[index()] = element;
-                        }}
-                        class={`${styles.eventRow} ${styles[`eventTone${event.relation}`]}`}
-                        type="button"
-                        data-event-index={index()}
-                        onClick={() => seekTo(event.video_time_ms)}
-                      >
-                        <span class={styles.eventLine} aria-hidden="true" />
-                        <span class={styles.eventCopy}>
-                          <strong>{eventTitle(event)}</strong>
-                          <small>{eventSummary(event)}</small>
-                        </span>
-                        <time>{formatDuration(event.game_time_ms)}</time>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </div>
-            </section>
+            <ChampionFilter
+              participants={props.probe.participants}
+              selectedPlayers={selectedPlayers()}
+              localPlayerName={props.probe.local_player_name}
+              mode="panel"
+              onToggle={togglePlayerFilter}
+              onClear={() => setSelectedPlayers([])}
+            />
           </aside>
+          </Show>
         </div>
 
+        <Show when={!isFullscreen()}>
         <section class={styles.timelinePanel} aria-label="Replay timeline">
           <div
             class={styles.scrubber}
@@ -557,7 +531,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
             <span class={styles.scrubberFill} style={`width:${progress()}%`} />
             <span class={styles.scrubberHead} style={`left:${progress()}%`} />
             <div class={styles.markers}>
-              <For each={markerPositions}>
+              <For each={markerPositions()}>
                 {(marker) => (
                   <button
                     class={`${styles.marker} ${styles[`marker${marker.tone}`]}`}
@@ -595,7 +569,13 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
             <span class={styles.controlDivider} />
             <div class={styles.nowPlaying}>
               <span>NOW</span>
-              <strong>{activeEvent() ? eventTitle(activeEvent()!) : "LOADING SCREEN"}</strong>
+              <strong>
+                {activeEvent()
+                  ? eventTitle(activeEvent()!)
+                  : selectedPlayers().length > 0
+                    ? "NO MATCHING EVENT"
+                    : "LOADING SCREEN"}
+              </strong>
             </div>
             <button
               class={styles.fullscreenButton}
@@ -607,8 +587,9 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
             </button>
           </div>
         </section>
+        </Show>
 
-        <Show when={import.meta.env.DEV}>
+        <Show when={import.meta.env.DEV && !isFullscreen()}>
           <details class={styles.diagnostics}>
             <summary>
               <span>PLAYBACK DIAGNOSTICS</span>
@@ -645,7 +626,7 @@ function PlaybackSurface(props: { probe: PlaybackProbe; onBack: () => void }) {
               </div>
               <div>
                 <dt>INDEXED</dt>
-                <dd>{events.length} EVENTS</dd>
+                <dd>{visibleEvents().length} / {events.length} EVENTS</dd>
               </div>
             </dl>
           </details>

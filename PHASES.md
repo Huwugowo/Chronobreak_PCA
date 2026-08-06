@@ -157,7 +157,7 @@ remain playable up to their last completed fragment.
 - Stats panel: champion, KDA, CS, level — driven by the presented-frame clock; gold differential remains hidden until Match V5 data exists
 - Scrubber: rail, fill, playhead tracking `currentTime`, event markers positioned by `video_time_ms`, clicking rail or marker seeks
 - Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
-- Event feed panel: scrollable list of events, active row highlights as playhead passes each event
+- Champion filter panel: all ten allies/enemies from the Live Client roster; multi-selection filters scrubber markers without changing playback
 - USG aesthetic throughout (Barlow Condensed + DM Mono, `#002FA7` blue)
 
 **Entry conditions:**
@@ -168,7 +168,7 @@ remain playable up to their last completed fragment.
 2. Scrubber playhead tracks video in real time
 3. Clicking the rail seeks correctly; clicking an event marker seeks to within 1 second of the event
 4. Stats panel values update as the video plays (CS and level changes over time)
-5. Event feed highlights the correct row as playhead passes each event
+5. Selecting allied and enemy champions filters the scrubber to events involving those players; `ALL` restores every marker
 6. UI matches the documented USG aesthetic reference
 
 **Complete when:** windowed viewer is fully functional and the aesthetic is consistent.
@@ -188,8 +188,7 @@ remain playable up to their last completed fragment.
 - Scrubber: ambient (44px) and active (96px) states, minute ticks, event markers
 - Gold graph drawer: built against a Match V5 fixture, slides up from bottom, and remains absent for unenriched games
 - Floating event card: animates in/out on event proximity, 3.5s auto-dismiss
-- Right tick strip: always visible, proportional event dots, playhead needle
-- Right event panel: slides in from tick strip click, event rows, gold/CS summary
+- Right champion rail: always visible, all ten allied/enemy champions plus `ALL`; shares filter state with windowed mode
 
 **Entry conditions:**
 - Phase 4 complete and validated
@@ -201,8 +200,8 @@ remain playable up to their last completed fragment.
 4. Scrubber ambient/active transition works on hover
 5. With a Match V5 fixture, the gold graph opens and closes and its cursor tracks the playhead; without the fixture no gold control is shown
 6. Event card animates in when playhead is within ~1 second of a kill, auto-dismisses after 3.5s
-7. Tick strip dots are proportionally positioned; playhead needle moves in real time
-8. Event panel slides in on tick strip click; clicking a row seeks to that event
+7. Selecting one or more allied/enemy champions shows only timeline events involving any selected player
+8. Filter selection survives windowed/fullscreen transitions; `ALL` restores the complete marker set without seeking or pausing
 
 **Complete when:** all overlay elements behave as specified in `APP-VIEWER.md` §14 state summary table.
 

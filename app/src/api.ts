@@ -11,6 +11,7 @@ import type {
   KdaTimelinePoint,
   PlaybackProbe,
   PlayerTimelinePoint,
+  ReplayParticipant,
   ServerMetrics,
   SettingsUpdate,
   StorageUsage,
@@ -119,6 +120,19 @@ const mockKdaTimeline = (): KdaTimelinePoint[] => [
   { video_time_ms: 1_114_000, kills: 6, deaths: 3, assists: 8 },
   { video_time_ms: 1_409_000, kills: 7, deaths: 4, assists: 10 },
   { video_time_ms: 1_698_000, kills: 8, deaths: 4, assists: 11 },
+];
+
+const mockParticipants = (): ReplayParticipant[] => [
+  { summoner_name: "SUPERSTAR#VOID", champion: "Syndra", relation: "ally" },
+  { summoner_name: "Ally Top#EUW", champion: "Ornn", relation: "ally" },
+  { summoner_name: "Ally Jungler#EUW", champion: "Lee Sin", relation: "ally" },
+  { summoner_name: "Ally Carry#EUW", champion: "Ezreal", relation: "ally" },
+  { summoner_name: "Ally Support#EUW", champion: "Nami", relation: "ally" },
+  { summoner_name: "Enemy Top#EUW", champion: "Fiora", relation: "enemy" },
+  { summoner_name: "Enemy Jungler#EUW", champion: "Vi", relation: "enemy" },
+  { summoner_name: "Enemy Mid#EUW", champion: "Viktor", relation: "enemy" },
+  { summoner_name: "Enemy Carry#EUW", champion: "Jinx", relation: "enemy" },
+  { summoner_name: "Enemy Support#EUW", champion: "Thresh", relation: "enemy" },
 ];
 
 const mockGoldTimeline = (durationMs: number): GoldTimelinePoint[] =>
@@ -297,6 +311,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
       video_url: "",
       game_start_video_offset_ms: MOCK_VIDEO_OFFSET_MS,
       local_player_name: "SUPERSTAR#VOID",
+      participants: mockParticipants(),
       player_timeline: mockPlayerTimeline(),
       kda_timeline: mockKdaTimeline(),
       gold_timeline: game.matchv5_fetched ? mockGoldTimeline(game.duration_ms) : [],

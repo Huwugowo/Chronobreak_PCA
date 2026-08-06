@@ -68,11 +68,18 @@ export type GoldTimelinePoint = {
   gold_diff: number;
 };
 
+export type ReplayParticipant = {
+  summoner_name: string;
+  champion: string;
+  relation: "ally" | "enemy" | "neutral";
+};
+
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;
   game_start_video_offset_ms: number;
   local_player_name: string | null;
+  participants: ReplayParticipant[];
   player_timeline: PlayerTimelinePoint[];
   kda_timeline: KdaTimelinePoint[];
   gold_timeline: GoldTimelinePoint[];

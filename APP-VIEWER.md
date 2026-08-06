@@ -36,24 +36,24 @@ The default view when a game is opened. The video occupies roughly 60% of the wi
 │         VIDEO (60%)             │  Gold diff         │
 │                                 │  CS  Level         │
 │                                 ├───────────────────┤
-│                                 │  Events feed       │
-│                                 │  (scrollable)      │
+│                                 │  Champion filter   │
+│                                 │  Allies / Enemies  │
 ├─────────────────────────────────┴───────────────────┤
 │  Scrubber  ·  Controls  ·  Timeline                  │
 └──────────────────────────────────────────────────────┘
 ```
 
-In windowed mode the scrubber and event feed are always visible — no hover or click required. The gold graph is also visible when Match V5 timeline data is present; its space collapses cleanly when enrichment is unavailable. The USG panel layout (as prototyped in `league-replay-usgfx-v3.jsx`) is the reference for this mode.
+In windowed mode the scrubber and champion filter are always visible — no hover or click required. The gold graph is also visible when Match V5 timeline data is present; its space collapses cleanly when enrichment is unavailable. The USG panel layout (as prototyped in `league-replay-usgfx-v3.jsx`) is the reference for this mode.
 
 ### 2.2 Fullscreen Mode
 
 Activated by: double-clicking the video, pressing `F`, or clicking the fullscreen button in the windowed controls.
 
-The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, tick strip, event panel, typography, colours, state summary) apply exclusively to fullscreen mode. Section 3 (video playback architecture), Section 11 (clip mode), and Section 15 (Stats tab) apply to both modes.
+The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, and champion filter rail) define the fullscreen presentation. Section 3 (video playback architecture), Section 9 (shared champion-filter behaviour), Section 11 (clip mode), and Section 15 (Stats tab) apply to both modes.
 
 Exited by: pressing `Escape`, pressing `F` again, or clicking the exit button that appears in the top bar. Returns to windowed mode with playhead and state preserved.
 
-**What persists between modes:** playhead position, play/pause state, gold graph open/closed state, event panel open/closed state.
+**What persists between modes:** playhead position, play/pause state, gold graph open/closed state, and selected champion filters.
 
 ---
 
@@ -82,7 +82,7 @@ frameCallbackId = videoElement.requestVideoFrameCallback(onVideoFrame);
 
 If the platform webview lacks this API, use a `requestAnimationFrame` loop while playing and media events (`seeked`, `loadedmetadata`, `pause`) while stationary. `timeupdate` may assist that fallback but is never the primary animation clock.
 
-Event arrays remain immutable and sorted by `video_time_ms`. Marker positions are calculated once, and nearest-event lookup uses a moving cursor or binary search instead of scanning the complete list on every frame. The video time hot path must never cause the viewer component tree to rerun.
+Event arrays remain immutable and sorted by `video_time_ms`. The champion-filtered view and marker positions are recomputed only when selection changes; nearest-event lookup uses a moving cursor or binary search instead of scanning the complete list on every frame. The video time hot path must never cause the viewer component tree to rerun.
 
 Game clock time is derived as: `game_clock_ms = video_time_ms - metadata.video_offset_ms`
 
@@ -95,30 +95,30 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 **Guiding principle:** nothing requires the user to look away from the video. Every element appears over the footage at the moment it is relevant, and disappears when it is not.
 
 ```
-┌─────────────────────────────────────────────────────────┬────┐
-│  [TOP BAR — fades after 3.2s idle]                      │    │
-│  REPLAY · JINX · 8/2/11 · +1800G        14:32 · REC    │ ·  │
-│                                                         │ ·  │
-│                                                         │ ·  │ ← TICK
-│              VIDEO (fullscreen, 100%)                   │ ·  │   STRIP
-│                                                         │ ·  │   (28px,
-│  [EVENT CARD — animates in on event proximity]          │ ·  │   always
-│  ┌──────────────────┐                                   │ ·  │   visible)
-│  │ MULTI-KILL       │                                   │ ·  │
-│  │ DOUBLE KILL      │                                   │ ·  │
-│  │ JINX × 2 UNITS   │                                   │ ·  │
-│  └──────────────────┘                                   │    │
-│                                                         │    │
-│  [GOLD GRAPH — slides up when triggered]                │    │
-│  ┌─────────────────────────────────────────────────┐    │    │
-│  │ Gold Differential          +1800G · ADVANTAGE   │    │    │
-│  │ ▁▂▄▆▅▃▄▇██▅▃▄▆████                             │    │    │
-│  └─────────────────────────────────────────────────┘    │    │
-│  [▴ GOLD +1800]   ← present with Match V5 timeline      │    │
-├─────────────────────────────────────────────────────────┤    │
-│  0:00 ·····|●|·····|●|·····|●|·····|●|·····|●·· 32:14  │    │
-│  [▶ Play] [▴ Gold] | 14:32 / 32:14 | [✦ Clip]          │    │
-└─────────────────────────────────────────────────────────┴────┘
+┌───────────────────────────────────────────────────────┬──────┐
+│  [TOP BAR — fades after 3.2s idle]                    │ ALL  │
+│  REPLAY · JINX · 8/2/11 · +1800G      14:32 · REC    ├──────┤
+│                                                       │ALLY  │
+│                                                       │ [JI] │
+│              VIDEO (fullscreen, 100%)                 │ [OR] │
+│                                                       │  ·   │
+│  [EVENT CARD — animates in on event proximity]        ├──────┤
+│  ┌──────────────────┐                                 │ENEMY │
+│  │ MULTI-KILL       │                                 │ [VI] │
+│  │ DOUBLE KILL      │                                 │ [TH] │
+│  │ JINX × 2 UNITS   │                                 │  ·   │
+│  └──────────────────┘                                 │      │
+│                                                       │      │
+│  [GOLD GRAPH — slides up when triggered]              │      │
+│  ┌─────────────────────────────────────────────────┐  │      │
+│  │ Gold Differential          +1800G · ADVANTAGE   │  │      │
+│  │ ▁▂▄▆▅▃▄▇██▅▃▄▆████                             │  │      │
+│  └─────────────────────────────────────────────────┘  │      │
+│  [▴ GOLD +1800]   ← present with Match V5 timeline    │      │
+├───────────────────────────────────────────────────────┤      │
+│  0:00 ·····|●|·····|●|·····|●|·····|●|·····|●· 32:14 │      │
+│  [▶ Play] [▴ Gold] | 14:32 / 32:14 | [✦ Clip]        │      │
+└───────────────────────────────────────────────────────┴──────┘
 ```
 
 **Z-index layer order (bottom to top):**
@@ -127,7 +127,7 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 3. Gold graph drawer
 4. Gold tab
 5. Scrubber zone
-6. Tick strip + event panel (right side)
+6. Champion filter rail (right side)
 7. Event card
 8. Grain texture overlay
 
@@ -156,7 +156,7 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 
 ## 6. Scrubber Zone
 
-**Position:** absolute, bottom: 0, left: 0, right: 250px (leaves room for tick strip + panel).
+**Position:** absolute, bottom: 0, left: 0, right: 68px (leaves room for the champion filter rail).
 
 ### 6.1 Two States
 
@@ -219,7 +219,7 @@ This drawer is rendered only when `matchv5` contains participant timeline frames
 
 ### 7.1 Behaviour
 
-- Position: absolute, left: 0, right: 250px, bottom: 0.
+- Position: absolute, left: 0, right: 68px, bottom: 0.
 - **Closed:** `transform: translateY(100%)` — fully hidden below scrubber.
 - **Open:** `transform: translateY(0)` — slides up over 300ms, `cubic-bezier(.4,0,.2,1)`.
 - Background: `linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.76) 100%)`.
@@ -297,79 +297,54 @@ When `nearEvent` changes to a new event (not the same event as currently shown):
 
 ---
 
-## 9. Right Tick Strip
+## 9. Champion Timeline Filter
 
-**Position:** absolute, top: 0, bottom: 0, right: 0.
-**Width:** 28px. Never hides, never fades.
-**Background:** `rgba(0,0,0,.55)`.
+The event list is not rendered as a second navigation surface. The scrubber is the sole event timeline; the side UI controls which champion-related markers it contains.
 
-**Purpose:** gives the user instant awareness of event density and team split across the full match, without opening the event panel.
+### 9.1 Roster Source
 
-### 9.1 Content
+The backend derives one compact replay roster from the first complete Live Client snapshot:
 
-**Event dots:**
-- One dot per event, 6px square
-- Blue (`#002FA7`) for ally events, red (`#C2001C`) for enemy events
-- Vertical position: proportional to `video_time_ms / total_duration_ms`, within the strip's usable height (top 48px reserved for the expand affordance, bottom 56px reserved for scrubber zone)
-- The dot nearest the current playhead enlarges to 8px and glows (`box-shadow: 0 0 6px {color}`)
-- Transition on size/glow: 150ms
+- `summoner_name`
+- `champion`
+- relation to the local player: `ally` or `enemy`
 
-**Playhead needle:**
-- Thin horizontal line (1px, `rgba(255,255,255,.40)`) spanning the full strip width
-- Positioned at the same proportional height as the current video time
-- Moves from the presented-frame clock using a CSS transform
-- `pointer-events: none`
+The roster is available without Match V5 and is computed once when the replay opens. Champion identity is displayed as a lightweight monogram until cached Data Dragon portrait delivery exists; the full champion and summoner names remain available in the windowed panel, tooltip, and accessible label.
 
-**Expand affordance:**
-- Three short horizontal lines stacked at the top of the strip (10px, 7px, 4px wide), faint blue
-- Visual hint that the strip is clickable / the panel can open
+### 9.2 Filter Semantics
 
-### 9.2 Interactions
+- Default: no champion selected; all event markers are shown.
+- Clicking a champion toggles that champion independently. Allies and enemies can be selected together.
+- With one or more champions selected, an event remains visible when any selected summoner appears as its `killer`, `victim`, `assister`, or `acer`.
+- Riot taglines are ignored and names are compared case-insensitively, so `Player` matches `Player#EUW`.
+- System and team-only events with no participant identity are hidden while a champion filter is active.
+- `ALL` clears every selection and restores the complete timeline.
+- Filtering changes only marker/card visibility. It never seeks, pauses, or changes the playhead.
+- Selection persists when switching between windowed and fullscreen modes.
 
-- **Click any dot** → seek video to that event's `video_time_ms` (`e.stopPropagation()`)
-- **Click strip** (anywhere other than a dot) → toggle event panel open/closed
+The filtered array is derived only when selection changes. Playback-frame updates continue to use the pre-sorted result and binary nearest-event lookup.
+
+### 9.3 Windowed Presentation
+
+The lower half of the right panel contains two compact columns, Allies and Enemies, with five champion buttons each. Every button shows champion identity and summoner name. Ally controls use blue accents; enemy controls use red. The local player has a small white corner indicator. Selected buttons receive a team-coloured border and background.
 
 ---
 
-## 10. Event Panel
+## 10. Fullscreen Champion Rail
 
-**Position:** slides in from the right edge, adjacent to the tick strip.
+**Position:** absolute, top: 0, bottom: 0, right: 0.
+**Width:** 68px. Never hides and never expands over the video.
+**Background:** `rgba(4,5,8,.82)` with a subtle left border.
 
-**Closed state:** width 0, `overflow: hidden`. Tick strip remains fully visible.
+The rail contains:
 
-**Open state:** width 230px, slides in over 280ms, `cubic-bezier(.4,0,.2,1)`.
-Background: `rgba(8,8,12,.94)`. Left border: 2px, `rgba(255,255,255,.10)`.
+1. `ALL` reset button
+2. `ALLIES` label and five compact champion buttons
+3. `ENEMIES` label and five compact champion buttons
 
-### 10.1 Panel Structure
+Each champion button is a 38px square using the same ally/enemy and selected states as the windowed panel. Hover and accessible labels expose the champion and summoner name. At short window heights the controls compact to 34px rather than becoming scroll-driven.
 
-**Header:**
-- Left: "Events" — condensed caps, 11px
-- Right: event count + "REC." — mono, 7px, dimmed
-
-**Scrollable event list:**
-
-Each row contains:
-- Category label — mono, 7px, dimmed, top-left
-- Timestamp — mono, 8px, dimmed, top-right
-- Event label — condensed bold, 14px, full width
-- Detail line — mono, 7.5px, dimmed
-
-**Row states:**
-- Default: transparent background
-- Hover: faint blue tint (`rgba(0,47,167,.10)`)
-- Active (playhead within ~1s of event, ally): blue left border (2px), faint blue background (`rgba(0,47,167,.15)`)
-- Active (playhead within ~1s of event, enemy): red left border, faint red background
-
-**Clicking any row** seeks video to that event's `video_time_ms`.
-
-**Bottom readout** (below the list, always visible within panel):
-- Gold diff — coloured blue or red, omitted without Match V5 timeline data
-- CS score
-- Gold advantage percentage bar — 5px tall, blue or red fill, omitted without Match V5 timeline data
-
-### 10.2 Panel does not cover the scrubber
-
-The scrubber zone spans `left: 0` to `right: 250px`. The right drawer (`tick strip + panel`) spans from `right: 0`. They do not overlap. The tick strip is always 28px. When the panel is open, it occupies an additional 230px to the left of the strip, for a total right-side width of 258px. The scrubber `right` offset can remain fixed at 250px — the panel opening may briefly overlap the scrubber's rightmost ~8px but this is acceptable.
+The top bar, gold drawer, and scrubber end at `right: 68px`; the filter therefore never obscures playback controls. The same selection signal drives both the windowed panel and this rail, so entering or exiting fullscreen does not reset the filter.
 
 ---
 
@@ -471,8 +446,8 @@ The following table describes visibility behaviour for overlay elements. These e
 | Gold tab (with Match V5 timeline) | ✅ (dim) | — | — |
 | Gold graph drawer (with Match V5 timeline) | — | Click gold tab or Gold button | Click again |
 | Event card | — | Playhead within ~1s of event | 3.5s auto-dismiss |
-| Tick strip | ✅ | — | — |
-| Event panel | — | Click tick strip | Click tick strip |
+| Champion filter rail | ✅ | — | — |
+| Filtered marker set | No selection = all events | Select one or more champions | Click `ALL` |
 
 ---
 

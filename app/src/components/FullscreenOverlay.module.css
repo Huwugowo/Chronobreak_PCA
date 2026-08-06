@@ -25,7 +25,7 @@
   position: absolute;
   z-index: 2;
   top: 0;
-  right: 28px;
+  right: 68px;
   left: 0;
   display: flex;
   height: 52px;
@@ -35,11 +35,7 @@
   background: linear-gradient(180deg, rgba(4, 5, 8, 0.94), rgba(4, 5, 8, 0.62) 70%, transparent);
   opacity: 1;
   pointer-events: auto;
-  transition: right 280ms cubic-bezier(.4, 0, .2, 1), opacity 150ms ease;
-}
-
-.topBarPanelOpen {
-  right: 258px;
+  transition: opacity 150ms ease;
 }
 
 .topBarHidden {
@@ -81,11 +77,7 @@
 
 .topIdentity small,
 .topStatus span,
-.goldHeader span,
-.rightPanel header span,
-.rightEventRow > span,
-.rightEventRow small,
-.rightPanel footer span {
+.goldHeader span {
   color: rgba(248, 245, 239, 0.47);
   font-family: var(--font-mono);
   font-size: 6px;
@@ -232,7 +224,7 @@
 .goldDrawer {
   position: absolute;
   z-index: 3;
-  right: 250px;
+  right: 68px;
   bottom: 0;
   left: 0;
   height: min(270px, 29vh);
@@ -400,7 +392,7 @@
 .scrubberZone {
   position: absolute;
   z-index: 5;
-  right: 250px;
+  right: 68px;
   bottom: 0;
   left: 0;
   height: 44px;
@@ -500,20 +492,17 @@
   transform: translateX(-50%) scale(1.35);
 }
 
-.markerally,
-.tickally {
+.markerally {
   --marker-color: #002fa7;
   --dot-color: #4a70e0;
 }
 
-.markerenemy,
-.tickenemy {
+.markerenemy {
   --marker-color: #c2001c;
   --dot-color: #c2001c;
 }
 
-.markerneutral,
-.tickneutral {
+.markerneutral {
   --marker-color: #8d96a5;
   --dot-color: #8d96a5;
 }
@@ -640,205 +629,6 @@
   opacity: 0;
 }
 
-.rightPanel {
-  position: absolute;
-  z-index: 6;
-  top: 0;
-  right: 28px;
-  bottom: 0;
-  display: grid;
-  width: 230px;
-  grid-template-rows: 45px minmax(0, 1fr) auto;
-  transform: translateX(calc(100% + 28px));
-  border-left: 2px solid rgba(255, 255, 255, 0.1);
-  background: rgba(8, 8, 12, 0.94);
-  pointer-events: auto;
-  transition: transform 280ms cubic-bezier(.4, 0, .2, 1);
-}
-
-.rightPanelOpen {
-  transform: translateX(0);
-}
-
-.rightPanel > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 13px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.rightPanel > header strong {
-  font-size: 13px;
-  letter-spacing: 0.06em;
-}
-
-.rightEventList {
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
-  scrollbar-width: thin;
-}
-
-.rightEventRow {
-  --event-color: #8d96a5;
-  display: grid;
-  width: 100%;
-  min-height: 55px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 3px 8px;
-  padding: 8px 10px 8px 12px;
-  border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.065);
-  border-left: 2px solid transparent;
-  color: #f8f5ef;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.rightEventRow:hover {
-  background: rgba(0, 47, 167, 0.1);
-}
-
-.rightEventRow time {
-  color: rgba(248, 245, 239, 0.46);
-  font-family: var(--font-mono);
-  font-size: 7px;
-}
-
-.rightEventRow strong,
-.rightEventRow small {
-  grid-column: 1 / -1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rightEventRow strong {
-  color: var(--event-color);
-  font-size: 14px;
-  letter-spacing: 0.02em;
-}
-
-.rightEventActive {
-  border-left-color: var(--event-color);
-  background: color-mix(in srgb, var(--event-color), transparent 85%);
-}
-
-.rightPanel > footer {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1px;
-  padding: 1px 0 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.rightPanel > footer > div {
-  display: grid;
-  min-height: 49px;
-  align-content: center;
-  gap: 3px;
-  padding: 7px 10px;
-  background: #090a0f;
-}
-
-.rightPanel > footer strong {
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.rightPanel > footer .goldShare {
-  grid-column: 1 / -1;
-  min-height: 35px;
-}
-
-.goldShare i {
-  display: block;
-  height: 5px;
-  overflow: hidden;
-  background: rgba(194, 0, 28, 0.55);
-}
-
-.goldShare b {
-  display: block;
-  height: 100%;
-  background: #002fa7;
-}
-
-.tickStrip {
-  position: absolute;
-  z-index: 7;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 28px;
-  background: rgba(0, 0, 0, 0.58);
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.expandAffordance {
-  position: absolute;
-  top: 16px;
-  left: 8px;
-  display: grid;
-  justify-items: end;
-  gap: 3px;
-}
-
-.expandAffordance i {
-  display: block;
-  height: 1px;
-  background: rgba(74, 112, 224, 0.7);
-}
-
-.expandAffordance i:nth-child(1) { width: 10px; }
-.expandAffordance i:nth-child(2) { width: 7px; }
-.expandAffordance i:nth-child(3) { width: 4px; }
-
-.tickTrack {
-  position: absolute;
-  top: 48px;
-  right: 0;
-  bottom: 56px;
-  left: 0;
-}
-
-.tickNeedle {
-  position: absolute;
-  z-index: 2;
-  right: 0;
-  left: 0;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.48);
-  pointer-events: none;
-  transition: top 40ms linear;
-}
-
-.tickDot {
-  --dot-color: #8d96a5;
-  position: absolute;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  padding: 0;
-  transform: translate(-50%, -50%);
-  border: 0;
-  border-radius: 0;
-  background: var(--dot-color);
-  cursor: pointer;
-  transition: width 150ms ease, height 150ms ease, box-shadow 150ms ease;
-}
-
-.tickDotActive {
-  z-index: 3;
-  width: 8px;
-  height: 8px;
-  box-shadow: 0 0 7px var(--dot-color);
-}
-
 @keyframes rec-pulse {
   50% { opacity: 0.42; }
 }
@@ -846,9 +636,5 @@
 @media (max-height: 640px) {
   .goldDrawer {
     height: 230px;
-  }
-
-  .rightEventRow {
-    min-height: 49px;
   }
 }

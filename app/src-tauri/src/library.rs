@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -87,6 +87,13 @@ pub enum EventRelation {
     Neutral,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ReplayParticipant {
+    pub summoner_name: String,
+    pub champion: String,
+    pub relation: EventRelation,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct PlayerTimelinePoint {
     pub game_time_ms: u64,
@@ -118,6 +125,7 @@ pub struct PlaybackProbe {
     pub video_url: String,
     pub game_start_video_offset_ms: u64,
     pub local_player_name: Option<String>,
+    pub participants: Vec<ReplayParticipant>,
     pub player_timeline: Vec<PlayerTimelinePoint>,
     pub kda_timeline: Vec<KdaTimelinePoint>,
     pub gold_timeline: Vec<GoldTimelinePoint>,
@@ -161,6 +169,7 @@ struct GameSnapshot {
 struct SnapshotPlayer {
     summoner_name: String,
     team: String,
+    champion: String,
     cs: u32,
     level: u32,
 }
@@ -290,14 +299,27 @@ pub fn playback_probe(
         .and_then(|document| document.local_player_summoner_name.clone());
     let log = read_game_log(&game_directory.join(GAME_LOG_JSON))?;
     let mut team_by_player = HashMap::new();
+    let mut roster = Vec::new();
+    let mut roster_seen = HashSet::new();
     for player in log
         .snapshots
         .iter()
         .flat_map(|snapshot| snapshot.players.iter())
     {
-        if !player.summoner_name.is_empty() && !player.team.is_empty() {
+        if !player.summoner_name.is_empty() {
+            let normalized_name = normalized_player_name(&player.summoner_name);
+            if roster_seen.insert(normalized_name.clone()) {
+                roster.push((
+                    player.summoner_name.clone(),
+                    player.champion.clone(),
+                    player.team.clone(),
+                ));
+            }
+            if player.team.is_empty() {
+                continue;
+            }
             team_by_player
-                .entry(normalized_player_name(&player.summoner_name))
+                .entry(normalized_name)
                 .or_insert_with(|| player.team.clone());
         }
     }
@@ -309,6 +331,27 @@ pub fn playback_probe(
                 .as_deref()
                 .and_then(|player| team_by_player.get(&normalized_player_name(player)).cloned())
         });
+    let mut participants = roster
+        .into_iter()
+        .map(|(summoner_name, champion, team)| ReplayParticipant {
+            summoner_name,
+            champion: if champion.is_empty() {
+                "Unknown".to_owned()
+            } else {
+                champion
+            },
+            relation: match local_player_team.as_deref() {
+                Some(local_team) if team.eq_ignore_ascii_case(local_team) => EventRelation::Ally,
+                Some(_) if !team.is_empty() => EventRelation::Enemy,
+                _ => EventRelation::Neutral,
+            },
+        })
+        .collect::<Vec<_>>();
+    participants.sort_by_key(|participant| match participant.relation {
+        EventRelation::Ally => 0,
+        EventRelation::Enemy => 1,
+        EventRelation::Neutral => 2,
+    });
     let game_start_video_offset_ms = u64::try_from(log.game_start_video_offset_ms)
         .ok()
         .filter(|offset| *offset > 0)
@@ -368,6 +411,7 @@ pub fn playback_probe(
         game,
         game_start_video_offset_ms,
         local_player_name,
+        participants,
         player_timeline,
         kda_timeline,
         gold_timeline,
@@ -900,15 +944,15 @@ mod tests {
                     {
                         "game_time_ms": 1000,
                         "players": [
-                            {"summoner_name":"Player#EUW","team":"ORDER","cs":1,"level":1},
-                            {"summoner_name":"Ally#EUW","team":"ORDER","cs":1,"level":1},
-                            {"summoner_name":"Enemy#EUW","team":"CHAOS","cs":2,"level":1}
+                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":1,"level":1},
+                            {"summoner_name":"Ally#EUW","team":"ORDER","champion":"LeeSin","cs":1,"level":1},
+                            {"summoner_name":"Enemy#EUW","team":"CHAOS","champion":"Viktor","cs":2,"level":1}
                         ]
                     },
                     {
                         "game_time_ms": 11000,
                         "players": [
-                            {"summoner_name":"Player#EUW","team":"ORDER","cs":8,"level":2}
+                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":8,"level":2}
                         ]
                     }
                 ],
@@ -983,6 +1027,26 @@ mod tests {
 
         assert_eq!(probe.game_start_video_offset_ms, 5_000);
         assert_eq!(probe.local_player_name.as_deref(), Some("Player#EUW"));
+        assert_eq!(
+            probe.participants,
+            vec![
+                ReplayParticipant {
+                    summoner_name: "Player#EUW".to_owned(),
+                    champion: "Syndra".to_owned(),
+                    relation: EventRelation::Ally,
+                },
+                ReplayParticipant {
+                    summoner_name: "Ally#EUW".to_owned(),
+                    champion: "LeeSin".to_owned(),
+                    relation: EventRelation::Ally,
+                },
+                ReplayParticipant {
+                    summoner_name: "Enemy#EUW".to_owned(),
+                    champion: "Viktor".to_owned(),
+                    relation: EventRelation::Enemy,
+                },
+            ]
+        );
         assert_eq!(
             probe.player_timeline,
             vec![

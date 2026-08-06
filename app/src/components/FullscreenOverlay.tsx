@@ -3,7 +3,7 @@ import { formatDuration } from "../format";
 import type {
   GoldTimelinePoint,
   KdaTimelinePoint,
-  PlayerTimelinePoint,
+  ReplayParticipant,
   ViewerEvent,
 } from "../types";
 import {
@@ -15,6 +15,7 @@ import {
   nearestIndexAt,
   timelineValue,
 } from "../viewerUtils";
+import ChampionFilter from "./ChampionFilter";
 import styles from "./FullscreenOverlay.module.css";
 
 type Props = {
@@ -27,13 +28,14 @@ type Props = {
   gameClockSeconds: number;
   beforeGameStart: boolean;
   currentKda: KdaTimelinePoint | undefined;
-  currentPlayer: PlayerTimelinePoint | undefined;
   isPlaying: boolean;
   mediaAvailable: boolean;
   goldOpen: boolean;
-  eventPanelOpen: boolean;
+  participants: readonly ReplayParticipant[];
+  selectedPlayers: readonly string[];
   onGoldOpenChange: (open: boolean) => void;
-  onEventPanelOpenChange: (open: boolean) => void;
+  onPlayerToggle: (summonerName: string) => void;
+  onPlayerClear: () => void;
   onTogglePlayback: () => void;
   onSeek: (videoTimeMs: number) => void;
   onExit: () => void;
@@ -51,7 +53,7 @@ function FullscreenOverlay(props: Props) {
   let idleTimer: number | undefined;
   let dismissTimer: number | undefined;
   let unmountTimer: number | undefined;
-  let lastTriggeredEvent = -1;
+  let lastTriggeredEvent: ViewerEvent | undefined;
 
   const [topBarVisible, setTopBarVisible] = createSignal(true);
   const [scrubberActive, setScrubberActive] = createSignal(false);
@@ -60,11 +62,13 @@ function FullscreenOverlay(props: Props) {
 
   const progress = createMemo(() => clamp((props.videoTimeMs / props.durationMs) * 100, 0, 100));
   const videoSecond = createMemo(() => Math.floor(props.videoTimeMs / 1_000));
-  const markerPositions = props.events.map((event, index) => ({
-    event,
-    index,
-    position: clamp((event.video_time_ms / props.durationMs) * 100, 0, 100),
-  }));
+  const markerPositions = createMemo(() =>
+    props.events.map((event, index) => ({
+      event,
+      index,
+      position: clamp((event.video_time_ms / props.durationMs) * 100, 0, 100),
+    })),
+  );
   const minuteTicks = Array.from(
     { length: Math.floor(props.durationMs / 60_000) + 1 },
     (_, index) => ({
@@ -90,13 +94,6 @@ function FullscreenOverlay(props: Props) {
   const currentGold = createMemo(() =>
     timelineValue(props.goldTimeline, props.videoTimeMs) ?? props.goldTimeline[0],
   );
-  const goldPercent = createMemo(() => {
-    const point = currentGold();
-    if (!point) return 50;
-    const total = point.ally_gold + point.enemy_gold;
-    return total <= 0 ? 50 : (point.ally_gold / total) * 100;
-  });
-
   const graph = (() => {
     if (props.goldTimeline.length === 0) return null;
     const finalGameTime = Math.max(
@@ -157,12 +154,13 @@ function FullscreenOverlay(props: Props) {
   createEffect(() => {
     const index = proximityEventIndex();
     if (index < 0) {
-      lastTriggeredEvent = -1;
+      lastTriggeredEvent = undefined;
       return;
     }
-    if (index === lastTriggeredEvent) return;
-    lastTriggeredEvent = index;
-    showEventCard(props.events[index]);
+    const event = props.events[index];
+    if (event === lastTriggeredEvent) return;
+    lastTriggeredEvent = event;
+    showEventCard(event);
   });
 
   onMount(() => {
@@ -195,15 +193,12 @@ function FullscreenOverlay(props: Props) {
     props.onSeek(target);
   };
 
-  const toggleEventPanel = () => props.onEventPanelOpenChange(!props.eventPanelOpen);
-
   return (
     <div class={styles.overlayRoot} data-testid="fullscreen-overlay">
       <header
         classList={{
           [styles.topBar]: true,
           [styles.topBarHidden]: !topBarVisible(),
-          [styles.topBarPanelOpen]: props.eventPanelOpen,
         }}
         data-testid="fullscreen-topbar"
       >
@@ -350,7 +345,7 @@ function FullscreenOverlay(props: Props) {
             <span class={styles.railTrack} />
             <span class={styles.railFill} style={`width:${progress()}%`} />
             <span class={styles.railHead} style={`left:${progress()}%`} />
-            <For each={markerPositions}>
+            <For each={markerPositions()}>
               {(marker) => (
                 <button
                   class={`${styles.fullscreenMarker} ${styles[`marker${marker.event.relation}`]}`}
@@ -377,72 +372,14 @@ function FullscreenOverlay(props: Props) {
         <span class={styles.ambientTime}>{formatDuration(videoSecond() * 1_000)}</span>
       </section>
 
-      <aside
-        classList={{ [styles.rightPanel]: true, [styles.rightPanelOpen]: props.eventPanelOpen }}
-        aria-hidden={!props.eventPanelOpen}
-        data-testid="fullscreen-event-panel"
-      >
-        <header><strong>EVENTS</strong><span>{props.events.length} REC.</span></header>
-        <div class={styles.rightEventList}>
-          <For each={props.events}>
-            {(event, index) => (
-              <button
-                classList={{
-                  [styles.rightEventRow]: true,
-                  [styles.eventAlly]: event.relation === "ally",
-                  [styles.eventEnemy]: event.relation === "enemy",
-                  [styles.eventNeutral]: event.relation === "neutral",
-                  [styles.rightEventActive]: proximityEventIndex() === index(),
-                }}
-                type="button"
-                onClick={() => props.onSeek(event.video_time_ms)}
-              >
-                <span>{eventCategory(event)}</span><time>{formatDuration(event.game_time_ms)}</time>
-                <strong>{eventTitle(event)}</strong><small>{eventSummary(event)}</small>
-              </button>
-            )}
-          </For>
-        </div>
-        <footer>
-          <Show when={currentGold()}>
-            {(point) => <div classList={{ [styles.goldPositive]: point().gold_diff >= 0, [styles.goldNegative]: point().gold_diff < 0 }}><span>GOLD DIFF</span><strong>{formatGoldDifference(point().gold_diff)}</strong></div>}
-          </Show>
-          <div><span>CS</span><strong>{props.currentPlayer?.cs ?? 0}</strong></div>
-          <Show when={currentGold()}>
-            <div class={styles.goldShare}><span>TEAM GOLD SHARE</span><i><b style={`width:${goldPercent()}%`} /></i></div>
-          </Show>
-        </footer>
-      </aside>
-
-      <aside
-        class={styles.tickStrip}
-        role="button"
-        tabIndex={0}
-        aria-label={props.eventPanelOpen ? "Close event panel" : "Open event panel"}
-        aria-expanded={props.eventPanelOpen}
-        onClick={toggleEventPanel}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleEventPanel(); }
-        }}
-        data-testid="event-tick-strip"
-      >
-        <span class={styles.expandAffordance} aria-hidden="true"><i /><i /><i /></span>
-        <div class={styles.tickTrack}>
-          <span class={styles.tickNeedle} style={`top:${progress()}%`} />
-          <For each={markerPositions}>
-            {(marker) => (
-              <button
-                class={`${styles.tickDot} ${styles[`tick${marker.event.relation}`]}`}
-                classList={{ [styles.tickDotActive]: nearestEventIndex() === marker.index }}
-                style={`top:${marker.position}%`}
-                type="button"
-                aria-label={`Seek to ${eventTitle(marker.event)}`}
-                onClick={(event) => { event.stopPropagation(); props.onSeek(marker.event.video_time_ms); }}
-              />
-            )}
-          </For>
-        </div>
-      </aside>
+      <ChampionFilter
+        participants={props.participants}
+        selectedPlayers={props.selectedPlayers}
+        localPlayerName={props.localPlayerName}
+        mode="rail"
+        onToggle={props.onPlayerToggle}
+        onClear={props.onPlayerClear}
+      />
     </div>
   );
 }

@@ -39,6 +39,17 @@ export const timelineValue = <T extends { video_time_ms: number }>(
   return index < 0 ? undefined : entries[index];
 };
 
+export const normalizedPlayerName = (player: string): string =>
+  player.split("#", 1)[0].trim().toLowerCase();
+
+export const samePlayer = (left: string, right: string): boolean =>
+  normalizedPlayerName(left) === normalizedPlayerName(right);
+
+export const eventInvolvesPlayer = (event: ViewerEvent, player: string): boolean =>
+  [event.killer, event.victim, event.acer]
+    .some((candidate) => candidate !== null && samePlayer(candidate, player)) ||
+  event.assisters.some((assister) => samePlayer(assister, player));
+
 export const eventTitle = (event: ViewerEvent): string => {
   switch (event.event_type) {
     case "FirstBlood":
