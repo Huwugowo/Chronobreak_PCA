@@ -11,14 +11,17 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-use crate::config::{RecordingConfig, parse_resolution};
+use crate::config::{CodecPreference, RecordingConfig, RecordingProfile};
 use crate::platform::{CaptureSource, CaptureTarget};
 use crate::storage::VIDEO_MP4;
 
 const ENCODER_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const PROFILE_BENCHMARK_DURATION: Duration = Duration::from_secs(3);
 const FFMPEG_STARTUP_GRACE: Duration = Duration::from_millis(900);
 const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const FRAGMENTED_MP4_FLAGS: &str = "+frag_keyframe+empty_moov+default_base_moof";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -39,21 +42,174 @@ impl EncoderKind {
         }
     }
 
-    pub fn codec_name(self) -> &'static str {
-        match self {
-            Self::Nvenc => "h264_nvenc",
-            Self::Amf => "h264_amf",
-            Self::Qsv => "h264_qsv",
-            Self::Videotoolbox => "h264_videotoolbox",
+    pub fn codec_name(self, codec: VideoCodec) -> &'static str {
+        match (self, codec) {
+            (Self::Nvenc, VideoCodec::H264) => "h264_nvenc",
+            (Self::Nvenc, VideoCodec::Hevc) => "hevc_nvenc",
+            (Self::Amf, VideoCodec::H264) => "h264_amf",
+            (Self::Amf, VideoCodec::Hevc) => "hevc_amf",
+            (Self::Qsv, VideoCodec::H264) => "h264_qsv",
+            (Self::Qsv, VideoCodec::Hevc) => "hevc_qsv",
+            (Self::Videotoolbox, VideoCodec::H264) => "h264_videotoolbox",
+            (Self::Videotoolbox, VideoCodec::Hevc) => "hevc_videotoolbox",
         }
     }
 
-    fn codec_arguments(self) -> &'static [&'static str] {
+    fn append_codec_arguments(
+        self,
+        codec: VideoCodec,
+        speed: EncoderSpeed,
+        arguments: &mut Vec<OsString>,
+    ) {
+        push_args(arguments, &["-c:v", self.codec_name(codec)]);
         match self {
-            Self::Nvenc => &["-c:v", "h264_nvenc", "-preset", "p4"],
-            Self::Amf => &["-c:v", "h264_amf", "-quality", "quality"],
-            Self::Qsv => &["-c:v", "h264_qsv", "-preset", "medium"],
-            Self::Videotoolbox => &["-c:v", "h264_videotoolbox"],
+            Self::Nvenc => {
+                let preset = match speed {
+                    EncoderSpeed::Speed => "p3",
+                    EncoderSpeed::Balanced => "p4",
+                    EncoderSpeed::Quality => "p5",
+                };
+                push_args(arguments, &["-preset", preset]);
+            }
+            Self::Amf => {
+                let quality = match speed {
+                    EncoderSpeed::Speed => "speed",
+                    EncoderSpeed::Balanced => "balanced",
+                    EncoderSpeed::Quality => "quality",
+                };
+                push_args(arguments, &["-quality", quality]);
+            }
+            Self::Qsv => {
+                let preset = match speed {
+                    EncoderSpeed::Speed => "veryfast",
+                    EncoderSpeed::Balanced => "medium",
+                    EncoderSpeed::Quality => "slow",
+                };
+                push_args(arguments, &["-preset", preset]);
+            }
+            // VideoToolbox selects the hardware real-time path automatically. Avoid optional
+            // ffmpeg switches here so the same arguments work across supported macOS releases.
+            Self::Videotoolbox => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VideoCodec {
+    H264,
+    Hevc,
+}
+
+impl VideoCodec {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::Hevc => "hevc",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EncoderSpeed {
+    Speed,
+    Balanced,
+    Quality,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProfileSpec {
+    max_dimensions: (u32, u32),
+    fps: u32,
+    h264_bitrate_kbps: u32,
+    hevc_bitrate_kbps: u32,
+    speed: EncoderSpeed,
+}
+
+impl RecordingProfile {
+    fn spec(self) -> Option<ProfileSpec> {
+        match self {
+            Self::Auto => None,
+            Self::VeryLow => Some(ProfileSpec {
+                max_dimensions: (1280, 720),
+                fps: 30,
+                h264_bitrate_kbps: 3_000,
+                hevc_bitrate_kbps: 2_000,
+                speed: EncoderSpeed::Speed,
+            }),
+            Self::Low => Some(ProfileSpec {
+                max_dimensions: (1280, 720),
+                fps: 60,
+                h264_bitrate_kbps: 5_000,
+                hevc_bitrate_kbps: 3_500,
+                speed: EncoderSpeed::Speed,
+            }),
+            Self::Medium => Some(ProfileSpec {
+                max_dimensions: (1920, 1080),
+                fps: 30,
+                h264_bitrate_kbps: 7_000,
+                hevc_bitrate_kbps: 5_000,
+                speed: EncoderSpeed::Balanced,
+            }),
+            Self::High => Some(ProfileSpec {
+                max_dimensions: (1920, 1080),
+                fps: 60,
+                h264_bitrate_kbps: 12_000,
+                hevc_bitrate_kbps: 8_000,
+                speed: EncoderSpeed::Balanced,
+            }),
+            Self::VeryHigh => Some(ProfileSpec {
+                max_dimensions: (2560, 1440),
+                fps: 60,
+                h264_bitrate_kbps: 18_000,
+                hevc_bitrate_kbps: 12_000,
+                speed: EncoderSpeed::Quality,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordingPlan {
+    pub encoder: EncoderKind,
+    pub codec: VideoCodec,
+    pub profile: RecordingProfile,
+}
+
+impl RecordingPlan {
+    pub fn fps(self) -> u32 {
+        self.profile
+            .spec()
+            .expect("a selected recording plan has a concrete profile")
+            .fps
+    }
+
+    pub fn output_dimensions(self, source: Option<(u32, u32)>) -> Option<(u32, u32)> {
+        let maximum = self
+            .profile
+            .spec()
+            .expect("a selected recording plan has a concrete profile")
+            .max_dimensions;
+        source.map(|dimensions| fit_within(dimensions, maximum))
+    }
+
+    fn benchmark_dimensions(self, source: Option<(u32, u32)>) -> (u32, u32) {
+        self.output_dimensions(source)
+            .unwrap_or_else(|| self.profile.spec().unwrap().max_dimensions)
+    }
+
+    fn bitrate_kbps(self, dimensions: (u32, u32)) -> u32 {
+        let spec = self.profile.spec().unwrap();
+        let base = match self.codec {
+            VideoCodec::H264 => spec.h264_bitrate_kbps,
+            VideoCodec::Hevc => spec.hevc_bitrate_kbps,
+        };
+        if self.profile == RecordingProfile::VeryHigh
+            && u64::from(dimensions.0) * u64::from(dimensions.1) > 1920 * 1080
+        {
+            base * 4 / 3
+        } else {
+            base
         }
     }
 }
@@ -95,39 +251,135 @@ impl Ffmpeg {
         &self.path
     }
 
-    pub async fn select_hardware_encoder(&self) -> Result<EncoderKind> {
+    pub async fn select_recording_plan(
+        &self,
+        recording: &RecordingConfig,
+        hevc_playback_supported: bool,
+        source_dimensions: Option<(u32, u32)>,
+    ) -> Result<RecordingPlan> {
         let advertised = self.advertised_encoders().await?;
         let order = preferred_encoders();
+        let codecs = codec_candidates(recording.codec, hevc_playback_supported);
+
+        if recording.codec == CodecPreference::Auto && !hevc_playback_supported {
+            debug!(
+                "HEVC playback has not been validated by the app; codec auto is restricted to H.264"
+            );
+        }
 
         for encoder in order.iter().copied() {
-            if !advertised.contains(encoder.codec_name()) {
-                debug!(
-                    encoder = encoder.codec_name(),
-                    "ffmpeg does not advertise encoder"
-                );
-                continue;
+            for codec in codecs.iter().copied() {
+                let codec_name = encoder.codec_name(codec);
+                if !advertised.contains(codec_name) {
+                    debug!(encoder = codec_name, "ffmpeg does not advertise encoder");
+                    continue;
+                }
+
+                let selection = match recording.profile {
+                    RecordingProfile::Auto => {
+                        self.recommend_profile(encoder, codec, source_dimensions)
+                            .await
+                    }
+                    profile => {
+                        let plan = RecordingPlan {
+                            encoder,
+                            codec,
+                            profile,
+                        };
+                        self.probe_plan(plan, source_dimensions)
+                            .await
+                            .map(|()| profile)
+                    }
+                };
+
+                match selection {
+                    Ok(profile) => {
+                        let plan = RecordingPlan {
+                            encoder,
+                            codec,
+                            profile,
+                        };
+                        info!(
+                            encoder = codec_name,
+                            codec = codec.label(),
+                            profile = profile.label(),
+                            "selected working hardware recording plan"
+                        );
+                        return Ok(plan);
+                    }
+                    Err(error) => {
+                        warn!(
+                            encoder = codec_name,
+                            codec = codec.label(),
+                            %error,
+                            "hardware recording plan probe failed"
+                        );
+                    }
+                }
             }
-            match self.probe_encoder(encoder).await {
-                Ok(()) => {
-                    info!(
-                        encoder = encoder.codec_name(),
-                        "selected working hardware encoder"
+        }
+
+        let requested = match recording.codec {
+            CodecPreference::Auto => "a compatible H.264/HEVC",
+            CodecPreference::H264 => "an H.264",
+            CodecPreference::Hevc => "an HEVC",
+        };
+        bail!(
+            "no working hardware {requested} encoder was found; software encoding is intentionally unsupported"
+        )
+    }
+
+    async fn recommend_profile(
+        &self,
+        encoder: EncoderKind,
+        codec: VideoCodec,
+        source_dimensions: Option<(u32, u32)>,
+    ) -> Result<RecordingProfile> {
+        let headroom_limit = PROFILE_BENCHMARK_DURATION.mul_f64(2.0 / 3.0);
+        let mut lowest_working = None;
+
+        for profile in [
+            RecordingProfile::High,
+            RecordingProfile::Medium,
+            RecordingProfile::Low,
+            RecordingProfile::VeryLow,
+        ] {
+            let plan = RecordingPlan {
+                encoder,
+                codec,
+                profile,
+            };
+            match self.benchmark_plan(plan, source_dimensions).await {
+                Ok(elapsed) => {
+                    lowest_working = Some(profile);
+                    debug!(
+                        encoder = encoder.codec_name(codec),
+                        profile = profile.label(),
+                        elapsed_ms = elapsed.as_millis(),
+                        "recording profile benchmark completed"
                     );
-                    return Ok(encoder);
+                    if elapsed <= headroom_limit {
+                        return Ok(profile);
+                    }
                 }
                 Err(error) => {
                     warn!(
-                        encoder = encoder.codec_name(),
+                        encoder = encoder.codec_name(codec),
+                        profile = profile.label(),
                         %error,
-                        "hardware encoder probe failed"
+                        "recording profile benchmark failed"
                     );
                 }
             }
         }
 
-        bail!(
-            "no working hardware H.264 encoder was found; software encoding is intentionally unsupported"
-        )
+        let profile = lowest_working.context("no profile completed the hardware encode probe")?;
+        warn!(
+            encoder = encoder.codec_name(codec),
+            profile = profile.label(),
+            "no profile reached the preferred encode headroom; using the lowest working profile"
+        );
+        Ok(profile)
     }
 
     pub async fn detect_audio_source(&self) -> AudioSource {
@@ -146,7 +398,7 @@ impl Ffmpeg {
                 return AudioSource::DirectShow(explicit);
             }
 
-            let output = Command::new(&self.path)
+            let output = ffmpeg_command(&self.path)
                 .args([
                     "-hide_banner",
                     "-list_devices",
@@ -181,7 +433,7 @@ impl Ffmpeg {
     }
 
     async fn advertised_encoders(&self) -> Result<String> {
-        let output = Command::new(&self.path)
+        let output = ffmpeg_command(&self.path)
             .args(["-hide_banner", "-encoders"])
             .output()
             .await
@@ -194,55 +446,108 @@ impl Ffmpeg {
         Ok(listing)
     }
 
-    async fn probe_encoder(&self, encoder: EncoderKind) -> Result<()> {
-        let mut command = Command::new(&self.path);
-        command.args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=black:s=640x360:r=1",
-            "-frames:v",
-            "1",
-            "-an",
-            "-c:v",
-            encoder.codec_name(),
-            "-f",
-            "null",
-            "-",
-        ]);
+    async fn probe_plan(
+        &self,
+        plan: RecordingPlan,
+        source_dimensions: Option<(u32, u32)>,
+    ) -> Result<()> {
+        let output_dimensions = plan.benchmark_dimensions(source_dimensions);
+        let input_dimensions = source_dimensions.unwrap_or(output_dimensions);
+        let mut arguments = vec![
+            OsString::from("-hide_banner"),
+            OsString::from("-loglevel"),
+            OsString::from("error"),
+            OsString::from("-f"),
+            OsString::from("lavfi"),
+            OsString::from("-i"),
+            OsString::from(format!(
+                "color=c=black:s={}x{}:r={}",
+                input_dimensions.0,
+                input_dimensions.1,
+                plan.fps()
+            )),
+            OsString::from("-frames:v"),
+            OsString::from("1"),
+            OsString::from("-an"),
+        ];
+        append_encoding_arguments(&mut arguments, plan, output_dimensions)?;
+        append_fixed_scale_filter(&mut arguments, input_dimensions, output_dimensions);
+        push_args(&mut arguments, &["-pix_fmt", "yuv420p", "-f", "null", "-"]);
+
+        let mut command = ffmpeg_command(&self.path);
+        command.args(arguments);
         let output = tokio::time::timeout(ENCODER_PROBE_TIMEOUT, command.output())
             .await
-            .context("hardware encoder probe timed out")?
-            .context("failed to launch hardware encoder probe")?;
+            .context("hardware recording plan probe timed out")?
+            .context("failed to launch hardware recording plan probe")?;
         if !output.status.success() {
             bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
         }
         Ok(())
     }
 
+    async fn benchmark_plan(
+        &self,
+        plan: RecordingPlan,
+        source_dimensions: Option<(u32, u32)>,
+    ) -> Result<Duration> {
+        let output_dimensions = plan.benchmark_dimensions(source_dimensions);
+        let input_dimensions = source_dimensions.unwrap_or(output_dimensions);
+        let mut arguments = vec![
+            OsString::from("-hide_banner"),
+            OsString::from("-loglevel"),
+            OsString::from("error"),
+            OsString::from("-f"),
+            OsString::from("lavfi"),
+            OsString::from("-i"),
+            OsString::from(format!(
+                "testsrc2=size={}x{}:rate={}:duration={}",
+                input_dimensions.0,
+                input_dimensions.1,
+                plan.fps(),
+                PROFILE_BENCHMARK_DURATION.as_secs()
+            )),
+            OsString::from("-an"),
+        ];
+        append_encoding_arguments(&mut arguments, plan, output_dimensions)?;
+        append_fixed_scale_filter(&mut arguments, input_dimensions, output_dimensions);
+        push_args(&mut arguments, &["-pix_fmt", "yuv420p", "-f", "null", "-"]);
+
+        let started = Instant::now();
+        let output = tokio::time::timeout(
+            ENCODER_PROBE_TIMEOUT,
+            ffmpeg_command(&self.path).args(arguments).output(),
+        )
+        .await
+        .context("recording profile benchmark timed out")?
+        .context("failed to launch recording profile benchmark")?;
+        if !output.status.success() {
+            bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        }
+        Ok(started.elapsed())
+    }
+
     pub async fn start_recording(
         &self,
         directory: PathBuf,
         target: &CaptureTarget,
-        recording: &RecordingConfig,
-        encoder: EncoderKind,
+        plan: RecordingPlan,
         audio: &AudioSource,
     ) -> Result<RecordingSession> {
         let output = directory.join(VIDEO_MP4);
-        let arguments = build_recording_arguments(target, recording, encoder, audio, &output)?;
+        let arguments = build_recording_arguments(target, plan, audio, &output)?;
         info!(
             ffmpeg = %self.path.display(),
             target = %target.description(),
             audio = %audio.description(),
-            encoder = encoder.codec_name(),
+            encoder = plan.encoder.codec_name(plan.codec),
+            codec = plan.codec.label(),
+            profile = plan.profile.label(),
             "starting recording"
         );
         debug!(arguments = ?arguments, "ffmpeg recording arguments");
 
-        let mut command = Command::new(&self.path);
+        let mut command = ffmpeg_command(&self.path);
         command
             .args(&arguments)
             .stdin(Stdio::piped())
@@ -386,13 +691,20 @@ fn ffmpeg_candidates() -> Result<Vec<PathBuf>> {
 }
 
 async fn command_works(path: &Path) -> bool {
-    Command::new(path)
+    ffmpeg_command(path)
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .await
         .is_ok_and(|status| status.success())
+}
+
+fn ffmpeg_command(path: &Path) -> Command {
+    let mut command = Command::new(path);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 fn preferred_encoders() -> &'static [EncoderKind] {
@@ -403,6 +715,17 @@ fn preferred_encoders() -> &'static [EncoderKind] {
     #[cfg(not(target_os = "macos"))]
     {
         &[EncoderKind::Nvenc, EncoderKind::Amf, EncoderKind::Qsv]
+    }
+}
+
+fn codec_candidates(preference: CodecPreference, hevc_playback_supported: bool) -> Vec<VideoCodec> {
+    match preference {
+        CodecPreference::H264 => vec![VideoCodec::H264],
+        CodecPreference::Hevc => vec![VideoCodec::Hevc],
+        CodecPreference::Auto if hevc_playback_supported => {
+            vec![VideoCodec::Hevc, VideoCodec::H264]
+        }
+        CodecPreference::Auto => vec![VideoCodec::H264],
     }
 }
 
@@ -440,8 +763,7 @@ fn quoted_device_names(listing: &str) -> Vec<String> {
 
 fn build_recording_arguments(
     target: &CaptureTarget,
-    recording: &RecordingConfig,
-    encoder: EncoderKind,
+    plan: RecordingPlan,
     audio: &AudioSource,
     output: &Path,
 ) -> Result<Vec<OsString>> {
@@ -468,7 +790,7 @@ fn build_recording_arguments(
                     "-framerate",
                 ],
             );
-            arguments.push(recording.fps.to_string().into());
+            arguments.push(plan.fps().to_string().into());
             push_args(&mut arguments, &["-offset_x"]);
             arguments.push(x.to_string().into());
             push_args(&mut arguments, &["-offset_y"]);
@@ -512,42 +834,39 @@ fn build_recording_arguments(
                     "-framerate",
                 ],
             );
-            arguments.push(recording.fps.to_string().into());
+            arguments.push(plan.fps().to_string().into());
             push_args(&mut arguments, &["-i"]);
             arguments.push(input.into());
             push_args(&mut arguments, &["-map", "0:v:0", "-map", "0:a:0"]);
         }
     }
 
-    for argument in encoder.codec_arguments() {
-        arguments.push((*argument).into());
-    }
-    push_args(&mut arguments, &["-b:v"]);
-    arguments.push(format!("{}k", recording.bitrate_kbps).into());
-    push_args(&mut arguments, &["-maxrate"]);
-    arguments.push(format!("{}k", recording.bitrate_kbps * 3 / 2).into());
-    push_args(&mut arguments, &["-bufsize"]);
-    arguments.push(format!("{}k", recording.bitrate_kbps * 2).into());
-    push_args(&mut arguments, &["-g"]);
-    arguments.push(
-        recording
-            .fps
-            .checked_mul(2)
-            .context("recording FPS is too large")?
-            .to_string()
-            .into(),
-    );
+    let source_dimensions = target.dimensions();
+    let output_dimensions = plan.benchmark_dimensions(source_dimensions);
+    append_encoding_arguments(&mut arguments, plan, output_dimensions)?;
 
-    if let Some((width, height)) = parse_resolution(&recording.resolution)? {
+    if let Some(source) = source_dimensions {
+        append_fixed_scale_filter(&mut arguments, source, output_dimensions);
+    } else {
+        let maximum = plan.profile.spec().unwrap().max_dimensions;
         push_args(&mut arguments, &["-vf"]);
-        arguments.push(format!("scale={width}:{height}").into());
+        arguments.push(
+            format!(
+                "scale=w='min(iw,{})':h='min(ih,{})':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                maximum.0, maximum.1
+            )
+            .into(),
+        );
     }
 
+    push_args(&mut arguments, &["-pix_fmt", "yuv420p"]);
+    if plan.codec == VideoCodec::Hevc {
+        // `hvc1` is the interoperable MP4 sample entry expected by Apple media stacks.
+        push_args(&mut arguments, &["-tag:v", "hvc1"]);
+    }
     push_args(
         &mut arguments,
         &[
-            "-pix_fmt",
-            "yuv420p",
             "-c:a",
             "aac",
             "-b:a",
@@ -559,6 +878,74 @@ fn build_recording_arguments(
     );
     arguments.push(output.as_os_str().to_owned());
     Ok(arguments)
+}
+
+fn append_fixed_scale_filter(
+    arguments: &mut Vec<OsString>,
+    source: (u32, u32),
+    output: (u32, u32),
+) {
+    if source != output {
+        push_args(arguments, &["-vf"]);
+        arguments.push(format!("scale={}:{}", output.0, output.1).into());
+    }
+}
+
+fn append_encoding_arguments(
+    arguments: &mut Vec<OsString>,
+    plan: RecordingPlan,
+    dimensions: (u32, u32),
+) -> Result<()> {
+    let spec = plan
+        .profile
+        .spec()
+        .context("recording profile is unresolved")?;
+    plan.encoder
+        .append_codec_arguments(plan.codec, spec.speed, arguments);
+
+    let bitrate_kbps = plan.bitrate_kbps(dimensions);
+    push_args(arguments, &["-b:v"]);
+    arguments.push(format!("{bitrate_kbps}k").into());
+    push_args(arguments, &["-maxrate"]);
+    arguments.push(format!("{}k", bitrate_kbps * 3 / 2).into());
+    push_args(arguments, &["-bufsize"]);
+    arguments.push(format!("{}k", bitrate_kbps * 2).into());
+    push_args(arguments, &["-g"]);
+    arguments.push(
+        plan.fps()
+            .checked_mul(2)
+            .context("recording FPS is too large")?
+            .to_string()
+            .into(),
+    );
+    Ok(())
+}
+
+fn fit_within(source: (u32, u32), maximum: (u32, u32)) -> (u32, u32) {
+    let (source_width, source_height) = source;
+    let (max_width, max_height) = maximum;
+    if source_width <= max_width && source_height <= max_height {
+        return (even_dimension(source_width), even_dimension(source_height));
+    }
+
+    let (width, height) = if u64::from(source_width) * u64::from(max_height)
+        > u64::from(max_width) * u64::from(source_height)
+    {
+        (
+            max_width,
+            (u64::from(source_height) * u64::from(max_width) / u64::from(source_width)) as u32,
+        )
+    } else {
+        (
+            (u64::from(source_width) * u64::from(max_height) / u64::from(source_height)) as u32,
+            max_height,
+        )
+    };
+    (even_dimension(width), even_dimension(height))
+}
+
+fn even_dimension(value: u32) -> u32 {
+    value.saturating_sub(value % 2).max(2)
 }
 
 fn push_args(target: &mut Vec<OsString>, values: &[&str]) {
@@ -578,6 +965,14 @@ mod tests {
                 height: 1080,
                 window_title: Some("League".to_owned()),
             },
+        }
+    }
+
+    fn plan(profile: RecordingProfile, codec: VideoCodec) -> RecordingPlan {
+        RecordingPlan {
+            encoder: EncoderKind::Nvenc,
+            codec,
+            profile,
         }
     }
 
@@ -604,11 +999,9 @@ mod tests {
 
     #[test]
     fn builds_nvenc_region_capture_with_silent_audio() {
-        let recording = RecordingConfig::default();
         let args = build_recording_arguments(
             &target(),
-            &recording,
-            EncoderKind::Nvenc,
+            plan(RecordingProfile::High, VideoCodec::H264),
             &AudioSource::Silent,
             Path::new("video.mp4"),
         )
@@ -618,6 +1011,7 @@ mod tests {
             .map(|value| value.to_string_lossy().into_owned())
             .collect();
         assert!(args.windows(2).any(|pair| pair == ["-c:v", "h264_nvenc"]));
+        assert!(args.windows(2).any(|pair| pair == ["-b:v", "12000k"]));
         assert!(args.windows(2).any(|pair| pair == ["-offset_x", "-1920"]));
         assert!(
             args.iter()
@@ -632,15 +1026,10 @@ mod tests {
     }
 
     #[test]
-    fn fixed_resolution_adds_scale_filter() {
-        let recording = RecordingConfig {
-            resolution: "1920x1080".to_owned(),
-            ..RecordingConfig::default()
-        };
+    fn lower_profile_adds_aspect_preserving_scale_filter() {
         let args = build_recording_arguments(
             &target(),
-            &recording,
-            EncoderKind::Nvenc,
+            plan(RecordingProfile::VeryLow, VideoCodec::H264),
             &AudioSource::Silent,
             Path::new("video.mp4"),
         )
@@ -651,7 +1040,45 @@ mod tests {
             .collect();
         assert!(
             args.windows(2)
-                .any(|pair| pair == ["-vf", "scale=1920:1080"])
+                .any(|pair| pair == ["-vf", "scale=1280:720"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["-g", "60"]));
+    }
+
+    #[test]
+    fn hevc_uses_smaller_target_and_interoperable_mp4_tag() {
+        let args = build_recording_arguments(
+            &target(),
+            plan(RecordingProfile::High, VideoCodec::Hevc),
+            &AudioSource::Silent,
+            Path::new("video.mp4"),
+        )
+        .unwrap();
+        let args: Vec<String> = args
+            .into_iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|pair| pair == ["-c:v", "hevc_nvenc"]));
+        assert!(args.windows(2).any(|pair| pair == ["-b:v", "8000k"]));
+        assert!(args.windows(2).any(|pair| pair == ["-tag:v", "hvc1"]));
+    }
+
+    #[test]
+    fn profile_scaling_never_upscales_and_preserves_aspect_ratio() {
+        assert_eq!(fit_within((1024, 768), (1920, 1080)), (1024, 768));
+        assert_eq!(fit_within((2560, 1080), (1920, 1080)), (1920, 810));
+        assert_eq!(fit_within((3840, 2160), (2560, 1440)), (2560, 1440));
+    }
+
+    #[test]
+    fn auto_codec_requires_a_positive_playback_probe_for_hevc() {
+        assert_eq!(
+            codec_candidates(CodecPreference::Auto, false),
+            vec![VideoCodec::H264]
+        );
+        assert_eq!(
+            codec_candidates(CodecPreference::Auto, true),
+            vec![VideoCodec::Hevc, VideoCodec::H264]
         );
     }
 
@@ -685,21 +1112,18 @@ goto wait
         .unwrap();
 
         let ffmpeg = Ffmpeg { path: fake_ffmpeg };
-        assert_eq!(
-            ffmpeg.select_hardware_encoder().await.unwrap(),
-            EncoderKind::Nvenc
-        );
+        let selected = ffmpeg
+            .select_recording_plan(&RecordingConfig::default(), false, Some((1920, 1080)))
+            .await
+            .unwrap();
+        assert_eq!(selected.encoder, EncoderKind::Nvenc);
+        assert_eq!(selected.codec, VideoCodec::H264);
+        assert_eq!(selected.profile, RecordingProfile::High);
 
         let bundle = directory.path().join("bundle");
         std::fs::create_dir(&bundle).unwrap();
         let session = ffmpeg
-            .start_recording(
-                bundle.clone(),
-                &target(),
-                &RecordingConfig::default(),
-                EncoderKind::Nvenc,
-                &AudioSource::Silent,
-            )
+            .start_recording(bundle.clone(), &target(), selected, &AudioSource::Silent)
             .await
             .unwrap();
         assert!(bundle.join(VIDEO_MP4).exists());

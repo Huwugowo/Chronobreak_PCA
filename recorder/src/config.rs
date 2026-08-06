@@ -11,7 +11,6 @@ const APP_ORGANIZATION: &str = "";
 const APP_NAME: &str = "LeagueReplay";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
 pub struct Config {
     pub recording: RecordingConfig,
     pub storage: StorageConfig,
@@ -19,32 +18,65 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct RecordingConfig {
-    pub resolution: String,
-    pub fps: u32,
-    pub bitrate_kbps: u32,
+    pub profile: RecordingProfile,
+    pub codec: CodecPreference,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordingProfile {
+    #[default]
+    Auto,
+    VeryLow,
+    Low,
+    Medium,
+    High,
+    VeryHigh,
+}
+
+impl RecordingProfile {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::VeryLow => "very_low",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::VeryHigh => "very_high",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CodecPreference {
+    #[default]
+    Auto,
+    H264,
+    Hevc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     pub output_path: String,
     pub auto_delete_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub autostart: bool,
+    pub hevc_playback_supported: bool,
 }
 
 impl Default for RecordingConfig {
     fn default() -> Self {
         Self {
-            resolution: "source".to_owned(),
-            fps: 60,
-            bitrate_kbps: 20_000,
+            profile: RecordingProfile::Auto,
+            codec: CodecPreference::Auto,
         }
     }
 }
@@ -60,7 +92,10 @@ impl Default for StorageConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { autostart: true }
+        Self {
+            autostart: true,
+            hevc_playback_supported: false,
+        }
     }
 }
 
@@ -82,17 +117,6 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !matches!(self.recording.fps, 30 | 60) {
-            bail!("recording.fps must be 30 or 60");
-        }
-        if self.recording.bitrate_kbps == 0 {
-            bail!("recording.bitrate_kbps must be greater than zero");
-        }
-        if parse_resolution(&self.recording.resolution)?.is_some_and(|(width, height)| {
-            width < 2 || height < 2 || width % 2 != 0 || height % 2 != 0
-        }) {
-            bail!("recording.resolution dimensions must be positive even numbers");
-        }
         if self.storage.output_path.trim().is_empty() {
             bail!("storage.output_path cannot be empty");
         }
@@ -120,22 +144,6 @@ pub fn log_directory() -> Result<PathBuf> {
     let project = ProjectDirs::from(APP_QUALIFIER, APP_ORGANIZATION, APP_NAME)
         .context("could not determine the platform log directory")?;
     Ok(project.data_local_dir().join("logs"))
-}
-
-pub fn parse_resolution(value: &str) -> Result<Option<(u32, u32)>> {
-    if value.eq_ignore_ascii_case("source") {
-        return Ok(None);
-    }
-    let (width, height) = value.split_once('x').with_context(|| {
-        format!("invalid resolution {value:?}; expected source or WIDTHxHEIGHT")
-    })?;
-    let width = width
-        .parse::<u32>()
-        .with_context(|| format!("invalid resolution width in {value:?}"))?;
-    let height = height
-        .parse::<u32>()
-        .with_context(|| format!("invalid resolution height in {value:?}"))?;
-    Ok(Some((width, height)))
 }
 
 fn expand_user_path(value: &str) -> Result<PathBuf> {
@@ -178,20 +186,25 @@ mod tests {
     #[test]
     fn default_config_matches_spec() {
         let config = Config::default();
-        assert_eq!(config.recording.resolution, "source");
-        assert_eq!(config.recording.fps, 60);
-        assert_eq!(config.recording.bitrate_kbps, 20_000);
+        assert_eq!(config.recording.profile, RecordingProfile::Auto);
+        assert_eq!(config.recording.codec, CodecPreference::Auto);
         assert_eq!(config.storage.output_path, "~/LeagueReplays");
         assert_eq!(config.storage.auto_delete_days, 30);
         assert!(config.app.autostart);
+        assert!(!config.app.hevc_playback_supported);
     }
 
     #[test]
-    fn parses_supported_resolutions() {
-        assert_eq!(parse_resolution("source").unwrap(), None);
-        assert_eq!(parse_resolution("1920x1080").unwrap(), Some((1920, 1080)));
-        assert!(parse_resolution("1920").is_err());
-        assert!(parse_resolution("1920xnope").is_err());
+    fn reads_profile_and_codec_names() {
+        let parsed: RecordingConfig = toml::from_str(
+            r#"
+                profile = "very_high"
+                codec = "hevc"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(parsed.profile, RecordingProfile::VeryHigh);
+        assert_eq!(parsed.codec, CodecPreference::Hevc);
     }
 
     #[test]
@@ -199,9 +212,8 @@ mod tests {
         let parsed: Config = toml::from_str(
             r#"
                 [recording]
-                resolution = "source"
-                fps = 60
-                bitrate_kbps = 20000
+                profile = "auto"
+                codec = "auto"
 
                 [storage]
                 output_path = "~/LeagueReplays"
@@ -209,6 +221,7 @@ mod tests {
 
                 [app]
                 autostart = true
+                hevc_playback_supported = false
 
                 [riot_account]
                 riot_id = "ignored"
@@ -225,5 +238,9 @@ mod tests {
         let loaded = Config::load_or_create(&path).unwrap();
         assert_eq!(loaded, Config::default());
         assert!(path.exists());
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.contains("profile = \"auto\""));
+        assert!(text.contains("codec = \"auto\""));
+        assert!(text.contains("hevc_playback_supported = false"));
     }
 }

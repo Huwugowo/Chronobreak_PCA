@@ -137,12 +137,23 @@ pub struct RecordingMetadata {
     pub local_player_team: Option<String>,
     pub video_offset_ms: Option<i64>,
     pub encoder_used: String,
+    pub recording_codec: String,
+    pub recording_profile: String,
     pub recording_resolution: String,
     pub recording_fps: u32,
     pub win: Option<bool>,
     pub win_method: WinMethod,
     pub matchv5_fetched: bool,
     pub saved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordingDetails {
+    pub encoder_used: String,
+    pub codec: String,
+    pub profile: String,
+    pub resolution: String,
+    pub fps: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,9 +169,7 @@ impl RecordingMetadata {
         recorded_at: SystemTime,
         duration: Duration,
         summary: PollerSummary,
-        encoder_used: String,
-        recording_resolution: String,
-        recording_fps: u32,
+        recording: RecordingDetails,
     ) -> Result<Self> {
         let recorded_at = OffsetDateTime::from(recorded_at)
             .format(&Rfc3339)
@@ -175,9 +184,11 @@ impl RecordingMetadata {
             local_player_champion: summary.local_player_champion,
             local_player_team: summary.local_player_team,
             video_offset_ms: summary.game_start_video_offset_ms,
-            encoder_used,
-            recording_resolution,
-            recording_fps,
+            encoder_used: recording.encoder_used,
+            recording_codec: recording.codec,
+            recording_profile: recording.profile,
+            recording_resolution: recording.resolution,
+            recording_fps: recording.fps,
             win: None,
             win_method: WinMethod::Unknown,
             matchv5_fetched: false,
@@ -1504,9 +1515,13 @@ mod tests {
             SystemTime::UNIX_EPOCH,
             Duration::from_millis(12_345),
             PollerSummary::default(),
-            "nvenc".to_owned(),
-            "1920x1080".to_owned(),
-            60,
+            RecordingDetails {
+                encoder_used: "nvenc".to_owned(),
+                codec: "hevc".to_owned(),
+                profile: "high".to_owned(),
+                resolution: "1920x1080".to_owned(),
+                fps: 60,
+            },
         )
         .unwrap();
         let json = serde_json::to_value(metadata).unwrap();
@@ -1515,6 +1530,8 @@ mod tests {
         assert_eq!(json["duration_ms"], 12_345);
         assert!(json["game_mode"].is_null());
         assert!(json["video_offset_ms"].is_null());
+        assert_eq!(json["recording_codec"], "hevc");
+        assert_eq!(json["recording_profile"], "high");
         assert_eq!(json["win_method"], "unknown");
     }
 

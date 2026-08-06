@@ -7,10 +7,10 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::config::{Config, parse_resolution};
-use crate::encoder::{AudioSource, EncoderKind, Ffmpeg, RecordingSession};
+use crate::config::Config;
+use crate::encoder::{AudioSource, Ffmpeg, RecordingPlan, RecordingSession};
 use crate::platform::{capture_target_for_process, fallback_capture_target};
-use crate::poller::{PollerSession, RecordingMetadata};
+use crate::poller::{PollerSession, RecordingDetails, RecordingMetadata};
 use crate::storage::{METADATA_JSON, create_game_directory, unix_timestamp_now, write_json_atomic};
 use crate::watcher::{
     DEFAULT_PROCESS_NAME, LeagueProcess, POLL_INTERVAL, ProcessTransition, ProcessWatcher,
@@ -35,9 +35,7 @@ pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 struct ActiveRecording {
     session: RecordingSession,
     poller: PollerSession,
-    encoder_used: String,
-    recording_resolution: String,
-    recording_fps: u32,
+    details: RecordingDetails,
 }
 
 pub async fn run(
@@ -54,11 +52,22 @@ pub async fn run(
     })?;
 
     let ffmpeg = Ffmpeg::resolve().await?;
-    let encoder = ffmpeg.select_hardware_encoder().await?;
+    let source_dimensions = fallback_capture_target()
+        .ok()
+        .and_then(|target| target.dimensions());
+    let plan = ffmpeg
+        .select_recording_plan(
+            &config.recording,
+            config.app.hevc_playback_supported,
+            source_dimensions,
+        )
+        .await?;
     let audio = ffmpeg.detect_audio_source().await;
     info!(
         ffmpeg = %ffmpeg.path().display(),
-        encoder = encoder.label(),
+        encoder = plan.encoder.label(),
+        codec = plan.codec.label(),
+        profile = plan.profile.label(),
         audio = %audio.description(),
         output = %output_path.display(),
         "recorder initialized"
@@ -91,9 +100,8 @@ pub async fn run(
                     ProcessTransition::Appeared(process) => {
                         match start_recording(
                             &ffmpeg,
-                            encoder,
+                            plan,
                             &audio,
-                            &config,
                             &output_path,
                             process,
                         ).await {
@@ -118,9 +126,8 @@ pub async fn run(
                         }
                         match start_recording(
                             &ffmpeg,
-                            encoder,
+                            plan,
                             &audio,
-                            &config,
                             &output_path,
                             process,
                         ).await {
@@ -172,13 +179,22 @@ pub async fn run(
 
 pub async fn diagnose(config: &Config) -> Result<DiagnosticReport> {
     let ffmpeg = Ffmpeg::resolve().await?;
-    let encoder = ffmpeg.select_hardware_encoder().await?;
+    let source_dimensions = fallback_capture_target()
+        .ok()
+        .and_then(|target| target.dimensions());
+    let plan = ffmpeg
+        .select_recording_plan(
+            &config.recording,
+            config.app.hevc_playback_supported,
+            source_dimensions,
+        )
+        .await?;
     let audio = ffmpeg.detect_audio_source().await;
     Ok(DiagnosticReport {
         config_path: crate::config::default_config_path()?,
         output_path: config.output_path()?,
         ffmpeg_path: ffmpeg.path().to_path_buf(),
-        encoder,
+        plan,
         audio,
     })
 }
@@ -187,15 +203,14 @@ pub struct DiagnosticReport {
     pub config_path: PathBuf,
     pub output_path: PathBuf,
     pub ffmpeg_path: PathBuf,
-    pub encoder: EncoderKind,
+    pub plan: RecordingPlan,
     pub audio: AudioSource,
 }
 
 async fn start_recording(
     ffmpeg: &Ffmpeg,
-    encoder: EncoderKind,
+    plan: RecordingPlan,
     audio: &AudioSource,
-    config: &Config,
     output_path: &Path,
     process: LeagueProcess,
 ) -> Result<ActiveRecording> {
@@ -203,13 +218,7 @@ async fn start_recording(
     let mut target = capture_target_for_process(process.pid)
         .with_context(|| format!("failed to select capture target for PID {}", process.pid))?;
     let first_attempt = ffmpeg
-        .start_recording(
-            directory.clone(),
-            &target,
-            &config.recording,
-            encoder,
-            audio,
-        )
+        .start_recording(directory.clone(), &target, plan, audio)
         .await;
     let session = match first_attempt {
         Ok(session) => session,
@@ -220,23 +229,17 @@ async fn start_recording(
             );
             target = fallback_capture_target()?;
             ffmpeg
-                .start_recording(
-                    directory.clone(),
-                    &target,
-                    &config.recording,
-                    encoder,
-                    audio,
-                )
+                .start_recording(directory.clone(), &target, plan, audio)
                 .await
                 .context("primary-display capture fallback also failed")?
         }
         Err(error) => return Err(error),
     };
 
-    let recording_resolution = parse_resolution(&config.recording.resolution)?
-        .or_else(|| target.dimensions())
+    let recording_resolution = plan
+        .output_dimensions(target.dimensions())
         .map(|(width, height)| format!("{width}x{height}"))
-        .unwrap_or_else(|| config.recording.resolution.clone());
+        .unwrap_or_else(|| "source".to_owned());
     let poller = match PollerSession::start(&directory, session.video_started_at()).await {
         Ok(poller) => poller,
         Err(error) => {
@@ -253,9 +256,13 @@ async fn start_recording(
     Ok(ActiveRecording {
         session,
         poller,
-        encoder_used: encoder.label().to_owned(),
-        recording_resolution,
-        recording_fps: config.recording.fps,
+        details: RecordingDetails {
+            encoder_used: plan.encoder.label().to_owned(),
+            codec: plan.codec.label().to_owned(),
+            profile: plan.profile.label().to_owned(),
+            resolution: recording_resolution,
+            fps: plan.fps(),
+        },
     })
 }
 
@@ -263,23 +270,14 @@ async fn stop_recording(recording: ActiveRecording, events: &EventSink) {
     let ActiveRecording {
         session,
         poller,
-        encoder_used,
-        recording_resolution,
-        recording_fps,
+        details,
     } = recording;
     let directory = session.directory().to_path_buf();
     let recorded_at = session.recorded_at();
     let duration = session.video_started_at().elapsed();
     let (summary, video_result) = tokio::join!(poller.stop(), session.stop());
 
-    let metadata_result = RecordingMetadata::new(
-        recorded_at,
-        duration,
-        summary,
-        encoder_used,
-        recording_resolution,
-        recording_fps,
-    );
+    let metadata_result = RecordingMetadata::new(recorded_at, duration, summary, details);
     match metadata_result {
         Ok(metadata) => {
             if let Err(metadata_error) =

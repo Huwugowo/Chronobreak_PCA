@@ -55,9 +55,11 @@ fn run_diagnostics(config: &Config) -> Result<()> {
     println!("  ffmpeg:  {}", report.ffmpeg_path.display());
     println!(
         "  encoder: {} ({})",
-        report.encoder.label(),
-        report.encoder.codec_name()
+        report.plan.encoder.label(),
+        report.plan.encoder.codec_name(report.plan.codec)
     );
+    println!("  codec:   {}", report.plan.codec.label());
+    println!("  profile: {}", report.plan.profile.label());
     println!("  audio:   {}", report.audio.description());
     Ok(())
 }

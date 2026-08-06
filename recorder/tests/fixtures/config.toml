@@ -1,7 +1,6 @@
 [recording]
-resolution = "source"
-fps = 60
-bitrate_kbps = 20000
+profile = "auto"
+codec = "auto"
 
 [storage]
 output_path = "target/smoke/output"
@@ -9,3 +8,4 @@ auto_delete_days = 30
 
 [app]
 autostart = false
+hevc_playback_supported = false

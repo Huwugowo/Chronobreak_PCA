@@ -159,12 +159,17 @@ Accessed via the persistent settings icon (top-right corner of any screen).
 
 | Setting | Type | Default | Notes |
 |---|---|---|---|
-| Resolution | Select | `source` | `source` / `1920x1080` / `2560x1440` |
-| Frame rate | Select | `60` | `30` / `60` |
-| Bitrate | Slider | `20000` | 5000–50000 kbps, step 1000 |
+| Recording quality | Select | `auto` | `auto` / `very_low` / `low` / `medium` / `high` / `very_high`; each profile resolves resolution, FPS, bitrate, and encoder speed together |
+| Codec | Select | `auto` | `auto` / `h264` / `hevc`; auto uses HEVC only after this app validates playback and seeking, otherwise H.264 |
 | Output folder | Path picker | `~/LeagueReplays` | Opens native folder picker |
 
 Changes to these settings are written immediately to `config.toml` and take effect on the next game recording. A note reads: "Changes take effect from the next recording."
+
+When quality is `auto`, show the concrete recommendation returned by recorder
+diagnostics (for example, "Detected: High · 1080p60"). A "Detect again" action reruns
+the short encoder benchmark. Do not expose vendor-specific presets or separate raw
+bitrate controls in the normal UI; the five portable profiles are the product
+contract across Windows and macOS.
 
 ### 5.2 Storage Section
 
@@ -210,8 +215,8 @@ If the fetch fails (rate limit, wrong ID, network error), the game remains `matc
 
 **Read-only info:**
 ```
-Detected GPU:    NVIDIA GeForce RTX 4070
-Encoder in use:  h264_nvenc
+Encoder in use:  NVENC
+Selected format: HEVC · High · 1080p60
 App version:     1.0.0
 ```
 

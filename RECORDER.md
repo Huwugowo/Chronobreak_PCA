@@ -38,7 +38,7 @@ recorder/
 ```
 1. Launch → check for existing config.toml in platform config dir
 2. If no config → write defaults (see Section 8)
-3. Query GPU vendor via sysinfo → select encoder (see Section 8)
+3. Probe advertised hardware encoders and resolve codec/profile (see Section 8)
 4. Show system tray icon (idle state)
 5. Spawn async task: Process Watcher
 6. Run tray event loop (blocking main thread)
@@ -322,65 +322,92 @@ Window index resolved by matching window title "League of Legends"
 
 ## 8. Hardware Encoder Selection
 
-Run once on startup. Result is stored in memory and used for all subsequent recordings.
+Selection runs once when the recorder starts. It probes what the installed ffmpeg
+build advertises and then performs a real hardware encode; GPU names are not matched
+against a maintained model database.
 
-```
-Query GPU vendor via sysinfo:
+Adapter preference remains deliberately small:
 
-Windows:
-  "NVIDIA" → h264_nvenc
-  "AMD"    → h264_amf
-  "Intel"  → h264_qsv
-  Multiple GPUs → prefer discrete (NVIDIA > AMD > Intel)
+| Platform | Adapter order | H.264 | HEVC |
+|---|---|---|---|
+| Windows | NVIDIA, AMD, Intel | `h264_nvenc`, `h264_amf`, `h264_qsv` | `hevc_nvenc`, `hevc_amf`, `hevc_qsv` |
+| macOS | VideoToolbox | `h264_videotoolbox` | `hevc_videotoolbox` |
 
-macOS:
-  always → h264_videotoolbox
-  (works on Intel, AMD, and Apple Silicon M-series)
-```
+`codec = "auto"` selects HEVC only when both halves of the pipeline are proven:
 
-Encoder used is recorded in `metadata.json` (`encoder_used` field). The app layer has no awareness of which encoder was used — the output is always H.264 MP4.
+1. The recorder successfully initializes the hardware HEVC encoder.
+2. The actual Tauri webview has played and sought through an HEVC MP4 and stored
+   `app.hevc_playback_supported = true`.
+
+Until Phase 3 performs the second test, auto mode deliberately records H.264. Users
+can opt into HEVC now with `codec = "hevc"`; an unavailable explicit codec is an
+initialization error rather than a silent format change. If auto-mode HEVC encoding
+fails, selection falls back to H.264.
+
+The selected encoder, codec, and concrete profile are written to `metadata.json` as
+`encoder_used`, `recording_codec`, and `recording_profile`.
+
+### 8.1 Unified recording profiles
+
+Profiles describe portable output goals, not particular GPU models. Resolution is a
+maximum and is never upscaled. The bitrate is a target with a 1.5× short-term ceiling;
+file sizes are estimates including the 192 kbps audio track.
+
+| Profile | Maximum output | FPS | Encoder speed | H.264 target | HEVC target | Approx. size / 30 min at target |
+|---|---:|---:|---|---:|---:|---:|
+| `very_low` | 1280×720 | 30 | Speed | 3 Mbps | 2 Mbps | 0.7 / 0.5 GB |
+| `low` | 1280×720 | 60 | Speed | 5 Mbps | 3.5 Mbps | 1.2 / 0.8 GB |
+| `medium` | 1920×1080 | 30 | Balanced | 7 Mbps | 5 Mbps | 1.6 / 1.2 GB |
+| `high` | 1920×1080 | 60 | Balanced | 12 Mbps | 8 Mbps | 2.7 / 1.8 GB |
+| `very_high` | source, capped at 2560×1440 | 60 | Quality | 18 Mbps | 12 Mbps | 4.1 / 2.7 GB at 1080p |
+
+At 1440p, `very_high` uses 24 Mbps H.264 or 16 Mbps HEVC. These values are unified
+product defaults and can be tuned from representative recordings later without
+changing the public profile names.
+
+For `profile = "auto"`, the recorder encodes a three-second generated motion sample,
+including the same downscale path the real capture would use, starting at `high`
+and moving downward. It selects the highest profile that
+finishes in at most two seconds (1.5× real-time headroom). If none reaches that
+margin, it uses the lowest profile that still completed. This is a conservative
+recommendation, not a promise about in-game FPS; manual selection always wins.
+`very_high` is deliberately manual-only because its larger files and quality preset
+are a poor automatic tradeoff while the benchmark runs without League competing for
+GPU time.
 
 ---
 
 ## 9. ffmpeg Recording Commands
 
-### Windows — NVENC
+The capture source remains platform-specific, while the recording portion is shared:
+
 ```bash
 ffmpeg \
-  -f gdigrab -framerate {fps} -i hwnd:{handle} \
-  -f dshow -i audio="Stereo Mix" \
-  -vcodec h264_nvenc \
-  -preset p4 \
-  -b:v {bitrate_kbps}k \
-  -maxrate {bitrate_kbps * 1.5}k \
-  -bufsize {bitrate_kbps * 2}k \
+  {capture_and_audio_inputs} \
+  -c:v {hardware_codec} \
+  {adapter_speed_arguments} \
+  -b:v {profile_target_kbps}k \
+  -maxrate {profile_target_kbps * 1.5}k \
+  -bufsize {profile_target_kbps * 2}k \
   -g {fps * 2} \
-  -vf scale={width}:{height} \
+  {optional_downscale_filter} \
+  -pix_fmt yuv420p \
+  {-tag:v hvc1 when codec is HEVC} \
   -acodec aac -b:a 192k \
   -movflags +frag_keyframe+empty_moov+default_base_moof \
   -y {output_path}/games/{timestamp}/video.mp4
 ```
+
+On Windows, every ffmpeg subprocess—including discovery, probes, benchmarks, and the
+live recording process—is created with `CREATE_NO_WINDOW`. Stdin and stderr remain
+piped for graceful shutdown and file logging; no console window is shown to the user.
 
 > **Audio note:** "Stereo Mix" is a Windows loopback device that captures all system audio. It is disabled by default on many machines (enable via Sound settings → Recording → Show Disabled Devices). If unavailable, fall back to `audio="WASAPI loopback"` or omit audio entirely (record video-only with a silent audio track) rather than failing the recording. Document the fallback in the implementation.
 
-### Windows — AMF (AMD)
-Replace `-vcodec h264_nvenc -preset p4` with `-vcodec h264_amf -quality quality`
-
-### Windows — QuickSync (Intel)
-Replace with `-vcodec h264_qsv -preset medium`
-
-### macOS — VideoToolbox
-```bash
-ffmpeg \
-  -f avfoundation -framerate {fps} -i {window_index}:default \
-  -vcodec h264_videotoolbox \
-  -b:v {bitrate_kbps}k \
-  -g {fps * 2} \
-  -vf scale={width}:{height} \
-  -acodec aac -b:a 192k \
-  -movflags +frag_keyframe+empty_moov+default_base_moof \
-  -y {output_path}/games/{timestamp}/video.mp4
-```
+Speed classes map through the four existing adapters: NVENC uses `p3/p4/p5`, AMF
+uses `speed/balanced/quality`, QSV uses `veryfast/medium/slow`, and VideoToolbox uses
+its portable real-time hardware defaults. No lookahead or multipass feature is
+enabled because compression gains must not compete with League for GPU resources.
 
 ---
 
@@ -394,9 +421,8 @@ Both the recorder and the app read and write this file. The recorder uses `[reco
 
 ```toml
 [recording]
-resolution = "source"       # "source" | "1920x1080" | "2560x1440"
-fps = 60                    # 30 | 60
-bitrate_kbps = 20000        # default 20 Mbps
+profile = "auto"            # auto | very_low | low | medium | high | very_high
+codec = "auto"              # auto | h264 | hevc
 
 [storage]
 output_path = "~/LeagueReplays"
@@ -405,6 +431,8 @@ auto_delete_days = 30       # recordings older than this deleted on app launch
 
 [app]
 autostart = true            # register OS startup entry on first launch
+hevc_playback_supported = false
+# Phase 3 sets true only after real webview playback + seek validation.
 
 [riot_account]
 riot_id = ""                # "gameName#tagLine" — empty means enrichment disabled

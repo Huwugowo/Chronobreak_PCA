@@ -31,7 +31,8 @@ A two-process desktop application for League of Legends players that:
 - The app only runs post-game — performance constraints are relaxed on the app side
 - Core functionality requires no external accounts, API keys, or credentials — the app works fully offline
 - Match V5 enrichment (damage stats, vision score, exact item timestamps) is optional and requires a Riot ID — the app degrades gracefully without it
-- Output is always a plain H.264 MP4 file — no proprietary formats, no upload links, no accounts
+- Output is always a plain standards-based MP4 file (H.264, or HEVC only after end-to-end capability validation) — no proprietary formats, no upload links, no accounts
+- Until Phase 9 distribution work, superseded configs, schemas, and implementation paths are deleted rather than migrated; development recordings and fixtures are disposable
 
 ---
 
@@ -358,6 +359,8 @@ The video recording starts when `League of Legends.exe` is detected — this inc
   "local_player_team": "ORDER",
   "video_offset_ms": 142300,
   "encoder_used": "nvenc",
+  "recording_codec": "hevc",
+  "recording_profile": "high",
   "recording_resolution": "1920x1080",
   "recording_fps": 60,
   "win": null,
@@ -366,6 +369,10 @@ The video recording starts when `League of Legends.exe` is detected — this inc
   "saved": false
 }
 ```
+
+`recording_codec` is `"h264"` or `"hevc"`. `recording_profile` is the concrete
+profile used for this file (`"very_low"`, `"low"`, `"medium"`, `"high"`, or
+`"very_high"`); it is never `"auto"` in metadata.
 
 `win_method` values: `"matchv5"` (Match V5 `GAME_END`), `"derived"` (reserved for a future verified fallback), `"unknown"`. No result is inferred from unavailable or estimated data.
 
@@ -493,8 +500,8 @@ The Live Client Data API requires no key. The Riot Match V5 API requires a key i
 | Multi-monitor capture | Auto-detect League window | Avoids user configuration |
 | Share mechanism | Open file in Finder/Explorer | User drags to Discord/Twitter |
 | Clip pre/post-roll | Kill-type dependent (see `APP-VIEWER.md` §11.1) | Solo kills need less context than teamfights |
-| Default recording resolution | Match game resolution | No upscale/downscale artifacts |
-| Default bitrate | 20 Mbps | ~5GB per 35min game |
+| Default recording profile | Auto-detected | Short hardware encode benchmark selects up to `high`; storage-heavy `very_high` remains an explicit override |
+| Default recording codec | Auto | HEVC only when hardware encoding and app playback/seeking are both known to work; H.264 fallback |
 | Match V5 enrichment | Optional, off by default | Requires Riot ID — zero friction for users who don't want it |
 
 ---
@@ -514,4 +521,4 @@ Rejected: ~150MB bundle, ~300MB RAM at idle. Contradicts performance focus. Taur
 Rejected: no native video player; building scrubber + graphs + clip UI in ImGui is a significant separate project; performance advantage is irrelevant for a post-game tool.
 
 ### Software Encoding
-Rejected: x264/x265 causes 5–15% FPS drop during gameplay. Hardware encoding (NVENC/AMF/QSV/VideoToolbox) achieves same quality at 1–3% overhead.
+Rejected: CPU x264/x265 causes 5–15% FPS drop during gameplay. Hardware H.264/HEVC encoding (NVENC/AMF/QSV/VideoToolbox) achieves the required quality with much lower gameplay overhead.

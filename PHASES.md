@@ -28,7 +28,7 @@
 
 **Scope:**
 - Process watcher (detects League launch and close)
-- ffmpeg spawn with hardware encoding (NVENC / AMF / QSV / VideoToolbox)
+- ffmpeg spawn with hardware encoding (NVENC / AMF / QSV / VideoToolbox), unified recording profiles, and H.264/HEVC capability probing
 - Direct fragmented MP4 recording with two-second keyframe fragments
 - Crash-tolerant output: completed fragments remain playable after interruption
 - Video-only output: the game directory contains exactly `video.mp4`; no post-game remux
@@ -44,7 +44,9 @@ Phase 1 does not connect to the League Client or Live Client APIs and does not c
 
 **Validation:**
 1. Launch the recorder binary — tray icon appears (grey)
+   - `--diagnose` reports the concrete encoder, codec, and profile selected from the configured preferences
 2. Launch League of Legends — tray icon turns red
+   - ffmpeg starts in the background without opening a terminal window
 3. Play through the loading screen and at least 5 minutes of a game
 4. Close League (or surrender) — tray icon returns to grey
 5. Check `~/LeagueReplays/games/{timestamp}/`:
@@ -119,6 +121,7 @@ remain playable up to their last completed fragment.
 - Games tab: grid of cards from `GameSummary[]`, save/unsave toggle, delete with confirmation
 - Clips tab: grid of clip cards with thumbnail, duration, source game info
 - Basic Viewer screen: just the `<video>` element and back button — no overlays yet
+- One-time HEVC webview capability check: play and seek a bundled/local test MP4, then write `app.hevc_playback_supported` to shared config; failure records `false` and keeps recorder auto mode on H.264
 - Auto-delete job on launch
 - Settings screen: output path + auto-delete duration (minimum viable — full settings in Phase 9)
 - Data Dragon initialisation: on launch, check patch version and fetch/update item + champion cache
@@ -132,6 +135,7 @@ remain playable up to their last completed fragment.
 2. Games tab shows all recorded games with correct champion, KDA, win/loss badge, duration, date
 3. Clicking a game card navigates to the viewer — video plays and is seekable
 4. Video does not load into memory (RAM usage stable regardless of file size)
+   - HEVC capability result matches real playback and seeking; a failed test leaves existing H.264 playback unaffected
 5. Clips tab renders correctly (place a test `.mp4` and matching `.jpg` sidecar manually into `{output_path}/clips/` to verify the tab displays the card with thumbnail — actual clip export with automatic sidecar generation is built in Phase 7)
 6. Auto-delete removes games older than threshold (manually backdate `recorded_at` to test)
 7. Data Dragon cache is written to disk — item IDs resolve to names in the browser console
@@ -317,7 +321,7 @@ remain playable up to their last completed fragment.
 
 **Scope:**
 - ffmpeg bundled inside Tauri app (`resources/ffmpeg`); recorder resolves path at runtime — no system ffmpeg required
-- Settings screen: all fields functional (resolution, FPS, bitrate, output path, auto-delete, autostart, Riot ID, API key)
+- Settings screen: all fields functional (recording profile, codec preference, output path, auto-delete, autostart, Riot ID, API key)
 - Storage breakdown in settings: per-section totals + per-game list with save toggle and delete
 - Auto-update via Tauri Updater plugin (requires hosted update manifest URL)
 - Code signing:

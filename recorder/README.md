@@ -26,8 +26,22 @@ Bundling ffmpeg is intentionally deferred to Phase 9.
 cargo run -- --diagnose
 ```
 
-This validates configuration, ffmpeg discovery, and actual hardware encoder
-initialization. It also reports whether a Windows loopback audio device was found.
+This validates configuration, ffmpeg discovery, an actual hardware encode, and the
+selected concrete codec/profile. With `profile = "auto"`, diagnostics runs the short
+encode benchmark documented in `../RECORDER.md` Section 8. It also reports whether a
+Windows loopback audio device was found.
+
+New configurations use:
+
+```toml
+[recording]
+profile = "auto" # auto | very_low | low | medium | high | very_high
+codec = "auto"   # auto | h264 | hevc
+```
+
+Until the Phase 3 app validates HEVC in its real webview, codec auto conservatively
+selects H.264. `codec = "hevc"` explicitly enables hardware HEVC now; validate the
+resulting file in the intended player before keeping that override.
 
 If neither `Stereo Mix` nor a DirectShow WASAPI loopback device is available, the
 recorder keeps the video recording alive with a silent stereo track. To select a
@@ -57,13 +71,14 @@ and `League of Legends` on macOS.
 2. Confirm the grey tray icon appears.
 3. Launch League and play a game lasting at least 25 minutes.
 4. Confirm the tray icon is red while `League of Legends.exe` is running.
+   No terminal window should open when ffmpeg starts.
 5. End the game or close League and confirm the tray returns to grey.
 6. Inspect `{output_path}/games/{timestamp}/`:
    - `video.mp4` exists and plays;
    - `game_log.json` contains snapshots, events, and a non-null
      `game_start_video_offset_ms`;
-   - `metadata.json` contains the local player, recording settings, `win: null`, and
-     `matchv5_fetched: false`;
+   - `metadata.json` contains the local player, concrete recording profile, codec,
+     resolution/FPS, `win: null`, and `matchv5_fetched: false`;
    - the tray returns to grey without a full-file conversion or system-wide I/O stall.
 7. Seek to early-, mid-, and late-game events at `video_time_ms / 1000` in VLC and
    confirm each event occurs within approximately two seconds.
