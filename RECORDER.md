@@ -76,101 +76,107 @@ Phase 2 extends this sequence:
 ```
 5. Record video capture start using a monotonic clock (used later for video_offset_ms calculation)
 6. Start game-clock calibration poller (see Section 5.1)
-   - On first valid gameTime: collect five rapid clock samples, calibrate video_offset_ms, then spawn Event Loop + Snapshot Loop concurrently (see Section 5.2 and 5.3)
+   - When five `/gamestats` samples show a consistently advancing gameTime: calibrate video_offset_ms, fetch the initial full snapshot, then spawn Event Loop + Snapshot Loop concurrently (see Sections 5.2 and 5.3)
 ```
 
 ---
 
 ## 5. Live Client Data Poller
 
-Two independent async tasks run concurrently after the five-sample clock calibration, sharing access to the in-memory game log via `Arc<Mutex<GameLog>>`. They have different polling rates because they serve different purposes: events need to be captured as close to real time as possible, while snapshots are inherently coarse state.
+Two independent async tasks run concurrently after the five-sample clock calibration, sharing the in-memory game log, event-ID set, and diagnostics via `Arc<Mutex<PollerState>>`. Events are cumulative and use their own `EventTime`, so a one-second observation cadence preserves timestamp accuracy without continuously loading the local API. Snapshots remain inherently coarse state.
 
-### 5.1 Pre-Game Clock Calibration — `/allgamedata` (continuous)
+### 5.1 Pre-Game Clock Calibration — `/gamestats` (250ms probes)
 
-Before the Live Client API becomes available, only the calibration loop runs. All synchronization timestamps use a monotonic clock such as `std::time::Instant`.
+Before gameplay starts, only the calibration loop runs. All synchronization timestamps use a monotonic clock such as `std::time::Instant`. The Live Client API can already respond during loading while `gameTime` remains stationary, so API availability and a syntactically valid clock are not sufficient start signals.
 
 ```
 loop:
-  GET https://127.0.0.1:2999/liveclientdata/allgamedata
+  GET https://127.0.0.1:2999/liveclientdata/gamestats
 
   → ConnectionError / 503:
-      API not ready yet (loading screen)
+      · discard the sample window
       sleep 1s, continue
 
-  → 200 with valid gameData.gameTime:
-      · the game is live; do not wait for the GameStart event
-      · collect five successful responses without a fixed sleep
-      · immediately after each response body is received:
-          candidate_game_zero_ms =
-              response_received_monotonic_ms - gameTime_ms
+  → 200:
+      · timestamp immediately after the response body is received
+      · add gameTime to a rolling five-sample window
+      · reject and reset a frozen, backward, failed, or inconsistent window
+      · sleep 250ms before the next probe
+
+  → accept a full five-sample window only if:
+      · gameTime strictly increases between every sample
+      · response timestamps span at least 750ms
+      · gameTime delta and monotonic delta differ by at most 250ms
+      · candidate offsets remain within 250ms
+
+  → after acceptance:
+      · candidate_game_zero_ms =
+          response_received_monotonic_ms - gameTime_ms
       · game_zero_monotonic_ms = median(five candidates)
       · video_offset_ms =
           game_zero_monotonic_ms - video_capture_start_monotonic_ms
-      · write video_offset_ms to in-memory metadata
+      · fetch the initial /allgamedata snapshot
       · spawn Event Loop task (Section 5.2)
       · spawn Snapshot Loop task (Section 5.3)
       · exit this calibration loop
 ```
 
-The first API response may be a bootstrap outlier, so a single sample is not sufficient. The median also makes ordinary request-latency variation harmless. Buffer raw event `EventTime` values until calibration is ready, or start the Event Loop immediately after calibration; `/eventdata` is cumulative, so the initial events remain available.
+Full-game tests exposed `/allgamedata` during the loading screen with `gameTime` frozen near 18ms. Waiting for advancing time keeps that loading period inside `video_offset_ms`. The rolling-window checks reject bootstrap and request-timing outliers; the median makes ordinary response-latency variation harmless. `/gamestats` is used here because it is much smaller than `/allgamedata`.
 
 **Never calculate `video_offset_ms` from the time at which `GameStart` is observed.** In the empirical capture, `GameStart.EventTime` was `0.0095s`, but it first appeared in a response at `gameTime = 2.1195s`. Arrival-time anchoring would shift every video marker approximately 2.11 seconds late.
 
-### 5.2 Post-Calibration — Event Loop (continuous)
+### 5.2 Post-Calibration — Event Loop (every 1s)
 
-Polls `/eventdata` as fast as the API responds. No fixed sleep interval — the next request fires immediately after the previous response is processed. This ensures named events (kills, objectives) are captured with minimum latency.
+Polls cumulative `/eventdata` immediately on startup and then once per second. The interval uses delayed missed-tick behavior: a slow request moves the schedule forward instead of causing catch-up bursts.
 
 ```rust
 tokio::spawn(async move {
-    let mut last_event_count = 0;
+    let mut consecutive_failures = 0;
+    let mut interval = interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
+        interval.tick().await; // first tick is immediate
         match client.get(".../eventdata").send().await {
-            Err(_) => {
-                // API is unavailable: stop this polling task only.
-                // The process watcher remains the sole video stop trigger.
-                break;
+            Err(error) => {
+                consecutive_failures += 1;
+                if consecutive_failures == 3 {
+                    diagnostics.event_failure_reason = Some(error.to_string());
+                    break; // this task only; video remains process-controlled
+                }
             }
             Ok(response) => {
+                consecutive_failures = 0;
                 let events = parse_events(response).await;
-
-                // diff: new events are always appended, never reordered
-                let new_events = &events[last_event_count..];
-                last_event_count = events.len();
-
-                for event in new_events {
-                    let video_time_ms =
-                        video_offset_ms + event.event_time_seconds * 1000.0;
-                    let mut log = game_log.lock().unwrap();
-                    log.push_event(event, video_time_ms);
-                    // flush to disk atomically after each batch
-                }
-
-                // no sleep — fire next request immediately
+                reconcile_by_event_id(events, video_offset_ms);
+                // flush atomically only when at least one event is new
             }
         }
     }
 });
 ```
 
-**Why continuous polling:** The API responds in 10–200ms on localhost. Continuous polling gives sub-second event capture. Kill events, multikills, and objective events are captured nearly in real time.
+The polling delay affects only how soon an event is written, not its marker position: `video_time_ms` is calculated from Riot's `EventTime`. `/allgamedata` carries the same cumulative event records and reconciles them every 10 seconds as a backup. A shared `EventID` set guarantees each event is stored once and the persisted list is sorted chronologically. Empirical games also confirmed `FirstBlood` and one `HordeKill` event per Void Grub.
 
-**API loss:** A `ConnectionError` ends the affected polling task. It never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization; `GameEnd` is logged if present but never controls stopping or win/loss.
+**API loss:** Three consecutive failures one second apart end the affected polling task; any successful response resets the counter. This never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization. `GameEnd` is stored if present but is often absent when the player exits before the Victory/Defeat screen, so it never controls stopping or win/loss.
 
 ### 5.3 Post-Calibration — Snapshot Loop (every 10s)
 
-Polls `/allgamedata` every 10 seconds. Detects item and level changes by diffing consecutive snapshots.
+Polls `/allgamedata` every 10 seconds. It reconciles the endpoint's cumulative event list, then detects item and level changes by diffing consecutive snapshots. Like the event loop, it stops only after three consecutive failures one second apart.
 
 The endpoint exposes champion, team, items, CS, level, spells, and keystone for all players. Current gold and current/max HP are available only for the active local player and are stored as `null` for everyone else. XP is not exposed. The full rune ID list is stored only for the local player on the first snapshot.
 
 ```rust
 tokio::spawn(async move {
     let mut prev_snapshot: Option<Snapshot> = None;
+    let mut consecutive_failures = 0;
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
 
         match client.get(".../allgamedata").send().await {
-            Err(_) => break, // stop this polling task only; video remains process-controlled
+            Err(_) => retry_in_one_second_or_stop_after_third_failure(),
             Ok(response) => {
+                consecutive_failures = 0;
+                reconcile_by_event_id(response.events, video_offset_ms);
                 let snapshot = parse_snapshot(response).await;
 
                 // detect changes vs previous snapshot
@@ -222,14 +228,16 @@ fn diff_snapshots(prev: &Snapshot, curr: &Snapshot) -> Vec<SnapshotChange> {
 
 Timestamps on snapshot-derived changes are approximate — accurate to within the 10s snapshot interval. Exact timestamps are available post-game via Match V5.
 
+Viego possession can temporarily expose the possessed champion's items. Phase 2 records the resulting additions and removals like any other approximate snapshot changes; it deliberately adds no champion-specific heuristic.
+
 ### 5.4 Shared State
 
-Both tasks share `Arc<Mutex<GameLog>>`. The lock is held only during the append + flush operation, never during the HTTP request. Contention is negligible.
+Both tasks share `Arc<Mutex<PollerState>>`, which owns the `GameLog`, the `HashSet<EventID>`, and aggregate diagnostics. The lock is held only while updating state and atomically flushing a changed log, never during an HTTP request.
 
 ```rust
-let game_log = Arc::new(Mutex::new(GameLog::new()));
-let log_for_events   = Arc::clone(&game_log);
-let log_for_snapshots = Arc::clone(&game_log);
+let poller_state = Arc::new(Mutex::new(PollerState::new()));
+let state_for_events = Arc::clone(&poller_state);
+let state_for_snapshots = Arc::clone(&poller_state);
 // each clone is moved into its respective task
 ```
 
@@ -245,6 +253,8 @@ let log_for_snapshots = Arc::clone(&game_log);
 5. Rename .tmp → game_log.json  (atomic on all target platforms)
 6. Release lock
 ```
+
+At stop time, one aggregate diagnostic record reports calibration/event/snapshot request counts, average and maximum response latency, captured event and snapshot counts, final log size, terminal failure reasons, and the slowest JSON write. These are log fields only; the persisted JSON schemas do not change, and there is no per-request log spam.
 
 ---
 
@@ -278,7 +288,7 @@ Phase 2 starts poller cancellation at the same time as ffmpeg shutdown so metada
    - All other fields (see SPEC.md §3.8 for full schema)
 ```
 
-**Note on win/loss:** The recorder does not consume `GameEnd`. It writes `win: null` and `win_method: "unknown"` at stop time. The app resolves the result via Match V5 on next launch; without enrichment the result remains unknown because the Live Client API does not expose a complete final team-gold state.
+**Note on win/loss:** The recorder may store `GameEnd` as an ordinary event but never interprets it as a lifecycle or result signal. It writes `win: null` and `win_method: "unknown"` at stop time. The app resolves the result via Match V5 on next launch; without enrichment the result remains unknown because the Live Client API does not expose a complete final team-gold state.
 
 **Why fragmented MP4:**
 Ordinary MP4 depends on final index data and may be unreadable after interruption.

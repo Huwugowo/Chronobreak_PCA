@@ -55,7 +55,7 @@ and `League of Legends` on macOS.
 
 1. Run `cargo run --release`.
 2. Confirm the grey tray icon appears.
-3. Launch League and play for at least five minutes.
+3. Launch League and play a game lasting at least 25 minutes.
 4. Confirm the tray icon is red while `League of Legends.exe` is running.
 5. End the game or close League and confirm the tray returns to grey.
 6. Inspect `{output_path}/games/{timestamp}/`:
@@ -65,9 +65,11 @@ and `League of Legends` on macOS.
    - `metadata.json` contains the local player, recording settings, `win: null`, and
      `matchv5_fetched: false`;
    - the tray returns to grey without a full-file conversion or system-wide I/O stall.
-7. Seek to a kill event's `video_time_ms / 1000` position in VLC and confirm the kill
-   occurs within approximately two seconds.
-8. Repeat once after forcibly closing League. The fragmented `video.mp4` should remain
+7. Seek to early-, mid-, and late-game events at `video_time_ms / 1000` in VLC and
+   confirm each event occurs within approximately two seconds.
+8. Note in-game FPS near 5, 15, and 25 minutes; it should not progressively degrade
+   because of Live Client polling. Confirm game exit causes no multi-second PC freeze.
+9. Repeat once after forcibly closing League. The fragmented `video.mp4` should remain
    playable up to its last completed fragment; at most approximately two seconds may
    be missing.
 

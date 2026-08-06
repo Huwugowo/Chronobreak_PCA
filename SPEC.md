@@ -47,10 +47,10 @@ A two-process desktop application for League of Legends players that:
 │                                                              │
 │  On game launch:                                             │
 │    → spawns ffmpeg (hardware encoded fragmented MP4 capture) │
-│    → polls /allgamedata until a valid gameTime is available  │
+│    → polls /gamestats until gameTime advances consistently   │
 │      · calibrates game clock zero against video time         │
 │    → spawns two concurrent async tasks once API is live:     │
-│      · Event Loop: /eventdata, continuous polling            │
+│      · Event Loop: /eventdata, every 1s                      │
 │      · Snapshot Loop: /allgamedata, every 10s                │
 │                                                              │
 │  On game close:                                              │
@@ -111,15 +111,18 @@ Note: The API uses HTTPS with a self-signed Riot certificate. Requests must eith
 
 | Loop | Endpoint | Interval | Purpose |
 |---|---|---|---|
-| Event loop | `/eventdata` | As fast as response allows (~continuous) | Capture all named events with millisecond precision |
-| Snapshot loop | `/allgamedata` | Every 10s | Capture roster state (items, CS, level) plus local-player gold/HP |
+| Event loop | `/eventdata` | Every 1s | Capture cumulative named events; `EventTime` retains millisecond timestamps |
+| Snapshot loop | `/allgamedata` | Every 10s | Capture roster state (items, CS, level) plus local-player gold/HP, and reconcile its cumulative event list as a backup |
 
-**Named events from `/eventdata`** — these are the only events the API fires. This list is complete and confirmed from Riot's official static file:
+Both endpoints expose a cumulative event list. A shared `EventID` set deduplicates events found by either loop, and persisted events are kept in chronological order.
+
+**Named events observed from the Live Client API:**
 
 | Event | Key fields | Notes |
 |---|---|---|
 | `GameStart` | EventTime | Logged as a semantic event; its arrival time is not a sync anchor |
 | `MinionsSpawning` | EventTime | ~1:05 in every game |
+| `FirstBlood` | EventTime | Separate marker observed before the first `ChampionKill` |
 | `FirstBrick` | EventTime, KillerName | First turret plate destroyed |
 | `TurretKilled` | EventTime, TurretKilled, KillerName, Assisters | TurretKilled is the turret ID string |
 | `InhibKilled` | EventTime, InhibKilled, KillerName, Assisters | |
@@ -127,13 +130,14 @@ Note: The API uses HTTPS with a self-signed Riot certificate. Requests must eith
 | `InhibRespawned` | EventTime, InhibRespawned | |
 | `DragonKill` | EventTime, DragonType, Stolen, KillerName, Assisters | DragonType: Air/Earth/Fire/Water/Hextech/Chemtech/Elder |
 | `HeraldKill` | EventTime, Stolen, KillerName, Assisters | Rift Herald |
+| `HordeKill` | EventTime, KillerName, Assisters | Void Grub kill; one event per grub |
 | `BaronKill` | EventTime, Stolen, KillerName, Assisters | |
 | `ChampionKill` | EventTime, VictimName, KillerName, Assisters | |
 | `Multikill` | EventTime, KillerName, KillStreak | KillStreak: 2=Double … 5=Penta |
 | `Ace` | EventTime, Acer, AcingTeam | |
 | `GameEnd` | EventTime, Result | Not reliable; ignored for stop detection and win/loss |
 
-> **`GameEnd` and win/loss:** Empirical capture showed that the Live Client API can disappear without exposing a `GameEnd` event. The recorder therefore never depends on `GameEnd`. API unavailability ends the polling tasks only; the League process watcher remains the sole video-stop trigger. Win/loss comes from Match V5 `GAME_END`; without enrichment it remains `null` with `win_method: "unknown"`.
+> **`GameEnd` and win/loss:** `GameEnd` is optional telemetry, not a lifecycle signal. It is commonly absent when the player exits shortly before the Victory/Defeat screen. The recorder stores it if observed but never depends on it. Three consecutive API failures end only the affected polling task; the League process watcher remains the sole video-stop trigger. Win/loss comes from Match V5 `GAME_END`; without enrichment it remains `null` with `win_method: "unknown"`.
 
 **Item and level changes are NOT named events.** They are state fields in `/allgamedata` snapshots and are detected by diffing consecutive snapshots:
 
@@ -144,6 +148,8 @@ Note: The API uses HTTPS with a self-signed Riot certificate. Requests must eith
 | Level up | Player's level field increases | Snapshot interval (~10s) |
 
 This means **build order timestamps from the Live Client API are approximate** — accurate to within the snapshot interval. Exact timestamps require Match V5 (see Section 3.3).
+
+Viego possession can temporarily replace his items with the possessed champion's items. Those transitions remain ordinary approximate snapshot changes in Phase 2; no champion-specific correction heuristic is applied.
 
 **Snapshots from `/allgamedata` (every 10s):** champion, team, CS, level, and items for every player. Current gold and current/max HP are exposed only for the active local player, so those fields are `null` for everyone else. XP is not exposed and is not stored. Summoner spells and keystone are stored for all players on the first snapshot; the full rune ID list is available only for the local player.
 
@@ -244,23 +250,25 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 
 **Sync mechanism:**
 1. Record `video_start_monotonic_ms` when video capture starts. Use a monotonic clock, never UTC wall time, for synchronization.
-2. Poll `/allgamedata` continuously until responses contain a valid `gameData.gameTime`. A valid response means the game is live; do not wait for the `GameStart` event.
-3. For five rapid successful responses, record the monotonic timestamp immediately after receiving each response body and calculate:
+2. Probe the lightweight `/gamestats` endpoint every 250ms while it is available. API responsiveness alone does not mean gameplay has started: during loading, `gameTime` can remain stationary (empirically at approximately 18ms).
+3. Treat the game as live only after a rolling window of five samples has a strictly increasing `gameTime`, spans at least 750ms of monotonic time, and keeps clock deltas and candidate offsets within 250ms. A frozen, backward, failed, or inconsistent window is discarded.
+4. For each accepted sample, record the monotonic timestamp immediately after receiving the response body and calculate:
 
    ```text
    game_zero_monotonic_ms =
        response_received_monotonic_ms - (gameTime_seconds × 1000)
    ```
 
-4. Take the median of the five candidates. This rejects bootstrap or request-timing outliers.
-5. Calculate the position of game clock zero in the video:
+5. Take the median of the five candidates. This rejects bootstrap or request-timing outliers while preserving the entire loading-screen duration in the offset.
+6. Calculate the position of game clock zero in the video:
 
    ```text
    video_offset_ms =
        game_zero_monotonic_ms - video_start_monotonic_ms
    ```
 
-6. Map every named event and snapshot-derived change using the timestamp supplied by the game clock:
+7. Fetch the first `/allgamedata` snapshot, then start the 1s event loop and 10s snapshot loop. Both loops tolerate three consecutive failures one second apart; a success resets the counter.
+8. Map every named event and snapshot-derived change using the timestamp supplied by the game clock:
 
    ```text
    video_time_ms = video_offset_ms + (EventTime_seconds × 1000)
@@ -268,7 +276,7 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 
    For snapshot-derived changes, substitute the snapshot's `gameTime` for `EventTime`.
 
-`GameStart` is still written to the event log, but the time at which it is first observed is never used for synchronization. Event lists are cumulative and may expose `GameStart` after the game clock has already advanced. In the 2026-07-30 capture, `GameStart.EventTime` was `0.0095s` but the event was first observed at `gameTime = 2.1195s`; arrival-time anchoring would have made every marker about 2.11 seconds late. After the first bootstrap response was excluded, `response_received_monotonic - gameTime` stayed within a 1.8ms range over the capture.
+`GameStart` is still written to the event log, but the time at which it is first observed is never used for synchronization. Event lists are cumulative and may expose `GameStart` after the game clock has already advanced. In the 2026-07-30 capture, `GameStart.EventTime` was `0.0095s` but the event was first observed at `gameTime = 2.1195s`; arrival-time anchoring would have made every marker about 2.11 seconds late. Later full-game tests showed why validity alone is also insufficient: `/allgamedata` was already responsive during loading with `gameTime` frozen near 18ms. Advancing-clock calibration distinguishes loading from gameplay and places game clock zero correctly in the video.
 
 ### 3.7 `game_log.json` Schema
 

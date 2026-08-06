@@ -67,37 +67,41 @@ remain playable up to their last completed fragment.
 **Documents:** `SPEC.md` + `RECORDER.md` §5
 
 **Scope:**
-- Pre-game `/allgamedata` calibration poller (detect valid `gameTime`, calculate `video_offset_ms` from five monotonic clock samples)
+- Pre-game `/gamestats` calibration poller (accept five strictly advancing, clock-consistent `gameTime` samples and calculate `video_offset_ms`)
 - Post-calibration **two concurrent async tasks**:
-  - Event Loop: continuous polling of `/eventdata`, captures named events until the API becomes unavailable
-  - Snapshot Loop: 10s polling of `/allgamedata`, appends snapshots, diffs consecutive snapshots to detect item changes and level-ups
+  - Event Loop: 1s polling of cumulative `/eventdata`
+  - Snapshot Loop: 10s polling of `/allgamedata`, appends snapshots, recovers events by shared `EventID`, and diffs consecutive snapshots to detect item changes and level-ups
+- Three consecutive API failures, one second apart, end only the affected polling loop; any success resets its counter
 - `game_log.json` written incrementally (atomic write after every batch)
 - `metadata.json` written when the League game process closes, using data collected by the poller
 - `video_time_ms` pre-computed on all events and snapshot-derived changes at write time
 - Recorder writes `win: null` and `win_method: "unknown"`; post-game Match V5 enrichment resolves the result
 - The process watcher remains the only video stop trigger; neither `GameEnd` nor a Live Client API connection failure stops recording
+- Aggregate request, latency, capture-count, log-size, failure, and slowest-write diagnostics emitted when polling stops
 
 **Entry conditions:**
 - Phase 1 complete and validated
 
 **Empirical decision — 2026-07-30:**
-> The Live Client API became unavailable without a reliable `GameEnd`; the recorder must not use that event for stopping or win/loss. `GameStart` existed, but was first observed about 2.11 seconds after its own `EventTime`, so event arrival time must not be the video anchor. Synchronize with the median of five `response_received_monotonic - gameTime` samples. Excluding the initial bootstrap response, this clock relation stayed within a 1.8ms range during the capture.
+> The Live Client API became unavailable without a reliable `GameEnd`; the recorder must not use that event for stopping or win/loss. `GameStart` existed, but was first observed about 2.11 seconds after its own `EventTime`, so event arrival time must not be the video anchor. Later games showed the API responding during loading with `gameTime` frozen near 18ms, so a merely valid clock is not a start signal either. Synchronize only after five strictly advancing samples agree with monotonic time; the median of their `response_received_monotonic - gameTime` candidates is the video offset.
 >
-> The same capture confirmed that `allPlayers` does not expose per-player gold, HP, XP, or full rune selections. Gold and HP are populated only for the active local player and are `null` for everyone else; XP is omitted; full rune IDs are local-player-only. Team gold requires Match V5 and is never estimated.
+> The same tests confirmed `FirstBlood` and `HordeKill` events, and that `GameEnd` is especially likely to be absent when the player exits before the Victory/Defeat screen. The cumulative event list makes 1s polling sufficient; `/allgamedata` provides a second recovery path. `allPlayers` does not expose per-player gold, HP, XP, or full rune selections. Gold and HP are populated only for the active local player and are `null` for everyone else; XP is omitted; full rune IDs are local-player-only. Team gold requires Match V5 and is never estimated.
 
 **Validation:**
-1. Play a full game (minimum 10 minutes, ideally to completion)
+1. Play a game lasting at least 25 minutes, ideally to completion
 2. Inspect `game_log.json`:
-   - `game_start_video_offset_ms` is present and nonzero (typically 120,000–240,000ms)
+   - `game_start_video_offset_ms` is present, positive, and approximately matches the loading-screen duration visible in the video
    - `snapshots` has one entry every ~10 seconds
    - `events` contains kill events with `video_time_ms` values
    - `snapshot_derived_changes` contains item purchases with approximate timestamps
    - non-local `gold`, `hp`, and `hp_max` values are `null`, not fabricated
-3. Cross-check a kill event: seek `video.mp4` in VLC to `video_time_ms / 1000` seconds — kill should occur within ~1 second
-4. Kill the recorder mid-game — confirm `game_log.json` on disk has all events up to the last write
-5. Check the completed directory contains `video.mp4`, `game_log.json`, and `metadata.json`; metadata has `win: null`, `win_method: "unknown"`, and `matchv5_fetched: false`
+3. Cross-check markers from the early, middle, and late game: seek `video.mp4` to `video_time_ms / 1000` — each event should occur within ~2 seconds
+4. Record game FPS near 5, 15, and 25 minutes and confirm polling does not cause progressive degradation
+5. On game exit, confirm there is no multi-second PC freeze and the tray returns to grey normally
+6. Kill the recorder mid-game — confirm `game_log.json` on disk has all events up to the last write
+7. Check the completed directory contains `video.mp4`, `game_log.json`, and `metadata.json`; metadata has `win: null`, `win_method: "unknown"`, and `matchv5_fetched: false`
 
-**Complete when:** `video_time_ms` on kill events is accurate to within 2 seconds when checked against the video.
+**Complete when:** early-, mid-, and late-game event markers are accurate to within 2 seconds, the event and snapshot logs remain complete, and a 25-minute game shows neither polling-related progressive FPS loss nor a multi-second exit freeze.
 
 ---
 

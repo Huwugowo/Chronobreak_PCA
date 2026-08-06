@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -19,8 +19,14 @@ use crate::storage::{GAME_LOG_JSON, write_json_atomic};
 const LIVE_CLIENT_BASE_URL: &str = "https://127.0.0.1:2999/liveclientdata";
 const API_TIMEOUT: Duration = Duration::from_secs(2);
 const CALIBRATION_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const CALIBRATION_PROBE_INTERVAL: Duration = Duration::from_millis(250);
+const CALIBRATION_MIN_WINDOW_SPAN: Duration = Duration::from_millis(750);
+const CALIBRATION_CLOCK_TOLERANCE: Duration = Duration::from_millis(250);
+const API_FAILURE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(10);
 const CALIBRATION_SAMPLE_COUNT: usize = 5;
+const MAX_CONSECUTIVE_API_FAILURES: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct GameLog {
@@ -217,10 +223,37 @@ impl PollerSession {
             Err(error) => error!(%error, "Live Client poller task panicked"),
         }
 
-        let state = self.state.lock().await;
-        if let Err(error) = write_json_atomic(&self.output, &state.game_log).await {
+        let mut state = self.state.lock().await;
+        if let Err(error) = write_game_log(&mut state, &self.output).await {
             error!(%error, "could not perform final game log flush");
         }
+        let game_log_bytes = tokio::fs::metadata(&self.output)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+        let diagnostics = &state.diagnostics;
+        info!(
+            calibration_requests = diagnostics.calibration_requests,
+            event_requests = diagnostics.event_requests,
+            snapshot_requests = diagnostics.snapshot_requests,
+            successful_responses = diagnostics.successful_responses,
+            average_response_latency_ms = diagnostics.average_response_latency_ms(),
+            maximum_response_latency_ms = duration_ms_f64(diagnostics.maximum_response_latency),
+            captured_events = state.game_log.events.len(),
+            captured_snapshots = state.game_log.snapshots.len(),
+            game_log_bytes,
+            json_writes = diagnostics.json_writes,
+            slowest_json_write_ms = duration_ms_f64(diagnostics.slowest_json_write),
+            event_failure_reason = diagnostics
+                .event_failure_reason
+                .as_deref()
+                .unwrap_or("none"),
+            snapshot_failure_reason = diagnostics
+                .snapshot_failure_reason
+                .as_deref()
+                .unwrap_or("none"),
+            "Live Client poller diagnostics"
+        );
         state.summary.clone()
     }
 }
@@ -229,6 +262,59 @@ impl PollerSession {
 struct PollerState {
     game_log: GameLog,
     summary: PollerSummary,
+    seen_event_ids: HashSet<i64>,
+    diagnostics: PollerDiagnostics,
+}
+
+#[derive(Debug, Default)]
+struct PollerDiagnostics {
+    calibration_requests: u64,
+    event_requests: u64,
+    snapshot_requests: u64,
+    successful_responses: u64,
+    total_response_latency: Duration,
+    maximum_response_latency: Duration,
+    json_writes: u64,
+    slowest_json_write: Duration,
+    event_failure_reason: Option<String>,
+    snapshot_failure_reason: Option<String>,
+}
+
+impl PollerDiagnostics {
+    fn observe_response(&mut self, latency: Duration) {
+        self.successful_responses = self.successful_responses.saturating_add(1);
+        self.total_response_latency = self.total_response_latency.saturating_add(latency);
+        self.maximum_response_latency = self.maximum_response_latency.max(latency);
+    }
+
+    fn observe_json_write(&mut self, elapsed: Duration) {
+        self.json_writes = self.json_writes.saturating_add(1);
+        self.slowest_json_write = self.slowest_json_write.max(elapsed);
+    }
+
+    fn average_response_latency_ms(&self) -> f64 {
+        if self.successful_responses == 0 {
+            return 0.0;
+        }
+        duration_ms_f64(self.total_response_latency) / self.successful_responses as f64
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RequestKind {
+    Calibration,
+    Event,
+    Snapshot,
+}
+
+async fn record_request(state: &Arc<Mutex<PollerState>>, request_kind: RequestKind) {
+    let mut state = state.lock().await;
+    let counter = match request_kind {
+        RequestKind::Calibration => &mut state.diagnostics.calibration_requests,
+        RequestKind::Event => &mut state.diagnostics.event_requests,
+        RequestKind::Snapshot => &mut state.diagnostics.snapshot_requests,
+    };
+    *counter = counter.saturating_add(1);
 }
 
 #[derive(Clone)]
@@ -256,6 +342,10 @@ impl LiveClient {
         self.get("allgamedata").await
     }
 
+    async fn game_stats(&self) -> Result<Received<RawGameData>> {
+        self.get("gamestats").await
+    }
+
     async fn event_data(&self) -> Result<Received<RawEventData>> {
         self.get("eventdata").await
     }
@@ -265,6 +355,7 @@ impl LiveClient {
         T: DeserializeOwned,
     {
         let url = format!("{}/{endpoint}", self.base_url);
+        let request_started_at = Instant::now();
         let response = self
             .http
             .get(&url)
@@ -278,15 +369,21 @@ impl LiveClient {
             .await
             .with_context(|| format!("failed to receive response body from {url}"))?;
         let received_at = Instant::now();
+        let latency = received_at.saturating_duration_since(request_started_at);
         let value = serde_json::from_slice(&body)
             .with_context(|| format!("invalid JSON response from {url}"))?;
-        Ok(Received { value, received_at })
+        Ok(Received {
+            value,
+            received_at,
+            latency,
+        })
     }
 }
 
 struct Received<T> {
     value: T,
     received_at: Instant,
+    latency: Duration,
 }
 
 async fn run_poller(
@@ -297,21 +394,34 @@ async fn run_poller(
     output: PathBuf,
 ) -> Result<()> {
     info!("waiting for the Live Client API");
-    let Some(calibration) = calibrate(&client, video_started_at, &mut cancellation).await? else {
+    let Some(calibration) = calibrate(&client, video_started_at, &mut cancellation, &state).await?
+    else {
         return Ok(());
     };
+    let mut initial_data = fetch_initial_game_data(&client, &mut cancellation, &state).await;
+    if *cancellation.borrow() {
+        return Ok(());
+    }
+    let take_first_snapshot_immediately = initial_data.is_none();
 
     {
         let mut state = state.lock().await;
         state.game_log.game_start_video_offset_ms = Some(calibration.video_offset_ms);
         state.summary.game_start_video_offset_ms = Some(calibration.video_offset_ms);
-        update_summary(&mut state.summary, &calibration.initial_data);
-        append_snapshot(
-            &mut state.game_log,
-            &calibration.initial_data,
-            calibration.video_offset_ms,
-        )?;
-        write_json_atomic(&output, &state.game_log).await?;
+        if let Some(initial_data) = &mut initial_data {
+            update_summary(&mut state.summary, initial_data);
+            reconcile_events(
+                &mut state,
+                std::mem::take(&mut initial_data.events.events),
+                calibration.video_offset_ms,
+            );
+            append_snapshot(
+                &mut state.game_log,
+                initial_data,
+                calibration.video_offset_ms,
+            )?;
+        }
+        write_game_log(&mut state, &output).await?;
     }
     info!(
         video_offset_ms = calibration.video_offset_ms,
@@ -331,6 +441,7 @@ async fn run_poller(
         cancellation,
         state,
         output,
+        take_first_snapshot_immediately,
     );
     tokio::try_join!(event_loop, snapshot_loop)?;
     Ok(())
@@ -338,49 +449,168 @@ async fn run_poller(
 
 struct Calibration {
     video_offset_ms: i64,
-    initial_data: RawAllGameData,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClockSample {
+    received_at: Instant,
+    game_time_seconds: f64,
+}
+
+#[derive(Debug, Default)]
+struct CalibrationWindow {
+    samples: VecDeque<ClockSample>,
+}
+
+impl CalibrationWindow {
+    fn push(&mut self, sample: ClockSample, video_started_at: Instant) -> Option<i64> {
+        if self
+            .samples
+            .back()
+            .is_some_and(|previous| sample.game_time_seconds <= previous.game_time_seconds)
+        {
+            self.samples.clear();
+        }
+        self.samples.push_back(sample);
+        while self.samples.len() > CALIBRATION_SAMPLE_COUNT {
+            self.samples.pop_front();
+        }
+        if self.samples.len() < CALIBRATION_SAMPLE_COUNT {
+            return None;
+        }
+
+        let offset = calibration_offset(&self.samples, video_started_at);
+        if offset.is_none() {
+            self.samples.clear();
+        }
+        offset
+    }
+
+    fn clear(&mut self) {
+        self.samples.clear();
+    }
 }
 
 async fn calibrate(
     client: &LiveClient,
     video_started_at: Instant,
     cancellation: &mut watch::Receiver<bool>,
+    state: &Arc<Mutex<PollerState>>,
 ) -> Result<Option<Calibration>> {
-    let mut candidates = Vec::with_capacity(CALIBRATION_SAMPLE_COUNT);
-    let mut initial_data = None;
+    let mut window = CalibrationWindow::default();
 
-    while candidates.len() < CALIBRATION_SAMPLE_COUNT {
+    loop {
+        record_request(state, RequestKind::Calibration).await;
         let response = tokio::select! {
             _ = cancelled(cancellation) => return Ok(None),
-            response = client.all_game_data() => response,
+            response = client.game_stats() => response,
         };
 
         match response {
             Ok(received) => {
+                state
+                    .lock()
+                    .await
+                    .diagnostics
+                    .observe_response(received.latency);
                 let Some(game_time_seconds) = valid_game_time(&received.value) else {
-                    sleep_or_cancel(CALIBRATION_RETRY_INTERVAL, cancellation).await;
+                    window.clear();
+                    sleep_or_cancel(CALIBRATION_PROBE_INTERVAL, cancellation).await;
                     continue;
                 };
-                let elapsed_ms = received
-                    .received_at
-                    .checked_duration_since(video_started_at)
-                    .context("Live Client response predates video capture")?
-                    .as_secs_f64()
-                    * 1000.0;
-                candidates.push((elapsed_ms - game_time_seconds * 1000.0).round() as i64);
-                initial_data = Some(received.value);
+                if let Some(video_offset_ms) = window.push(
+                    ClockSample {
+                        received_at: received.received_at,
+                        game_time_seconds,
+                    },
+                    video_started_at,
+                ) {
+                    return Ok(Some(Calibration { video_offset_ms }));
+                }
+                sleep_or_cancel(CALIBRATION_PROBE_INTERVAL, cancellation).await;
             }
-            Err(error) => {
-                debug!(%error, "Live Client API is not ready");
+            Err(_) => {
+                window.clear();
                 sleep_or_cancel(CALIBRATION_RETRY_INTERVAL, cancellation).await;
             }
         }
     }
+}
 
-    Ok(Some(Calibration {
-        video_offset_ms: median(&mut candidates)?,
-        initial_data: initial_data.context("calibration completed without game data")?,
-    }))
+fn calibration_offset(samples: &VecDeque<ClockSample>, video_started_at: Instant) -> Option<i64> {
+    if samples.len() != CALIBRATION_SAMPLE_COUNT {
+        return None;
+    }
+    let first = samples.front()?;
+    let last = samples.back()?;
+    let window_span = last.received_at.checked_duration_since(first.received_at)?;
+    if window_span < CALIBRATION_MIN_WINDOW_SPAN {
+        return None;
+    }
+
+    let tolerance_ms = CALIBRATION_CLOCK_TOLERANCE.as_secs_f64() * 1000.0;
+    for (previous, current) in samples.iter().zip(samples.iter().skip(1)) {
+        let monotonic_delta_ms = current
+            .received_at
+            .checked_duration_since(previous.received_at)?
+            .as_secs_f64()
+            * 1000.0;
+        let game_delta_ms = (current.game_time_seconds - previous.game_time_seconds) * 1000.0;
+        if game_delta_ms <= 0.0 || (game_delta_ms - monotonic_delta_ms).abs() > tolerance_ms {
+            return None;
+        }
+    }
+
+    let mut candidates = samples
+        .iter()
+        .map(|sample| {
+            let elapsed_ms = sample
+                .received_at
+                .checked_duration_since(video_started_at)?
+                .as_secs_f64()
+                * 1000.0;
+            Some((elapsed_ms - sample.game_time_seconds * 1000.0).round() as i64)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let minimum = *candidates.iter().min()?;
+    let maximum = *candidates.iter().max()?;
+    if maximum.saturating_sub(minimum) > duration_ms(CALIBRATION_CLOCK_TOLERANCE) as i64 {
+        return None;
+    }
+    median(&mut candidates).ok()
+}
+
+async fn fetch_initial_game_data(
+    client: &LiveClient,
+    cancellation: &mut watch::Receiver<bool>,
+    state: &Arc<Mutex<PollerState>>,
+) -> Option<RawAllGameData> {
+    let mut consecutive_failures = 0;
+    loop {
+        record_request(state, RequestKind::Snapshot).await;
+        let response = tokio::select! {
+            _ = cancelled(cancellation) => return None,
+            response = client.all_game_data() => response,
+        };
+        if let Ok(received) = response {
+            state
+                .lock()
+                .await
+                .diagnostics
+                .observe_response(received.latency);
+            if valid_game_time(&received.value.game_data).is_some() {
+                return Some(received.value);
+            }
+        }
+
+        if record_failure(&mut consecutive_failures) {
+            return None;
+        }
+        sleep_or_cancel(API_FAILURE_RETRY_INTERVAL, cancellation).await;
+        if *cancellation.borrow() {
+            return None;
+        }
+    }
 }
 
 async fn event_loop(
@@ -390,38 +620,41 @@ async fn event_loop(
     state: Arc<Mutex<PollerState>>,
     output: PathBuf,
 ) -> Result<()> {
-    let mut seen_event_ids = HashSet::new();
+    let mut interval = tokio::time::interval(EVENT_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut consecutive_failures = 0;
 
     loop {
+        tokio::select! {
+            _ = cancelled(&mut cancellation) => return Ok(()),
+            _ = interval.tick() => {}
+        }
+        record_request(&state, RequestKind::Event).await;
         let response = tokio::select! {
             _ = cancelled(&mut cancellation) => return Ok(()),
             response = client.event_data() => response,
         };
         let received = match response {
-            Ok(received) => received,
+            Ok(received) => {
+                consecutive_failures = 0;
+                received
+            }
             Err(error) => {
-                info!(%error, "Live Client event polling ended; video remains process-controlled");
-                return Ok(());
+                if record_failure(&mut consecutive_failures) {
+                    state.lock().await.diagnostics.event_failure_reason = Some(error.to_string());
+                    return Ok(());
+                }
+                continue;
             }
         };
 
-        let mut new_events = Vec::new();
-        for event in received.value.events {
-            if seen_event_ids.insert(event.event_id) {
-                match normalize_event(event, video_offset_ms) {
-                    Ok(event) => new_events.push(event),
-                    Err(error) => warn!(%error, "ignoring invalid Live Client event"),
-                }
-            }
-        }
-        if !new_events.is_empty() {
-            let count = new_events.len();
-            let mut state = state.lock().await;
-            state.game_log.events.extend(new_events);
-            write_json_atomic(&output, &state.game_log).await?;
+        let mut state = state.lock().await;
+        state.diagnostics.observe_response(received.latency);
+        let count = reconcile_events(&mut state, received.value.events, video_offset_ms);
+        if count > 0 {
+            write_game_log(&mut state, &output).await?;
             debug!(count, "stored Live Client event batch");
         }
-        tokio::task::yield_now().await;
     }
 }
 
@@ -431,10 +664,16 @@ async fn snapshot_loop(
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
     output: PathBuf,
+    take_first_snapshot_immediately: bool,
 ) -> Result<()> {
-    let start = tokio::time::Instant::now() + SNAPSHOT_INTERVAL;
+    let start = if take_first_snapshot_immediately {
+        tokio::time::Instant::now()
+    } else {
+        tokio::time::Instant::now() + SNAPSHOT_INTERVAL
+    };
     let mut interval = tokio::time::interval_at(start, SNAPSHOT_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut consecutive_failures = 0;
 
     loop {
         tokio::select! {
@@ -442,27 +681,65 @@ async fn snapshot_loop(
             _ = interval.tick() => {}
         }
 
-        let response = tokio::select! {
-            _ = cancelled(&mut cancellation) => return Ok(()),
-            response = client.all_game_data() => response,
-        };
-        let received = match response {
-            Ok(received) => received,
-            Err(error) => {
-                info!(%error, "Live Client snapshot polling ended; video remains process-controlled");
-                return Ok(());
+        loop {
+            record_request(&state, RequestKind::Snapshot).await;
+            let response = tokio::select! {
+                _ = cancelled(&mut cancellation) => return Ok(()),
+                response = client.all_game_data() => response,
+            };
+            let received = match response {
+                Ok(received) => received,
+                Err(error) => {
+                    if record_failure(&mut consecutive_failures) {
+                        state.lock().await.diagnostics.snapshot_failure_reason =
+                            Some(error.to_string());
+                        return Ok(());
+                    }
+                    sleep_or_cancel(API_FAILURE_RETRY_INTERVAL, &mut cancellation).await;
+                    if *cancellation.borrow() {
+                        return Ok(());
+                    }
+                    continue;
+                }
+            };
+            {
+                let mut state = state.lock().await;
+                state.diagnostics.observe_response(received.latency);
             }
-        };
-        if valid_game_time(&received.value).is_none() {
-            warn!("ignoring Live Client snapshot without a valid game time");
-            continue;
-        }
+            let mut data = received.value;
+            if valid_game_time(&data.game_data).is_none() {
+                if record_failure(&mut consecutive_failures) {
+                    state.lock().await.diagnostics.snapshot_failure_reason =
+                        Some("allgamedata returned no valid gameTime".to_owned());
+                    return Ok(());
+                }
+                sleep_or_cancel(API_FAILURE_RETRY_INTERVAL, &mut cancellation).await;
+                if *cancellation.borrow() {
+                    return Ok(());
+                }
+                continue;
+            }
 
-        let mut state = state.lock().await;
-        update_summary(&mut state.summary, &received.value);
-        append_snapshot(&mut state.game_log, &received.value, video_offset_ms)?;
-        write_json_atomic(&output, &state.game_log).await?;
+            consecutive_failures = 0;
+            let mut state = state.lock().await;
+            update_summary(&mut state.summary, &data);
+            reconcile_events(
+                &mut state,
+                std::mem::take(&mut data.events.events),
+                video_offset_ms,
+            );
+            append_snapshot(&mut state.game_log, &data, video_offset_ms)?;
+            write_game_log(&mut state, &output).await?;
+            break;
+        }
     }
+}
+
+async fn write_game_log(state: &mut PollerState, output: &Path) -> Result<()> {
+    let started_at = Instant::now();
+    let result = write_json_atomic(output, &state.game_log).await;
+    state.diagnostics.observe_json_write(started_at.elapsed());
+    result
 }
 
 fn append_snapshot(
@@ -488,7 +765,7 @@ fn append_snapshot(
 
 fn make_snapshot(raw: &RawAllGameData, include_stable_fields: bool) -> Result<Snapshot> {
     let game_time_ms = seconds_to_ms(
-        valid_game_time(raw).context("snapshot does not contain a valid game time")?,
+        valid_game_time(&raw.game_data).context("snapshot does not contain a valid game time")?,
     )?;
     let active_name = raw.active_player.summoner_name.as_deref();
     let active_riot_id = raw.active_player.riot_id.as_deref();
@@ -653,6 +930,32 @@ fn normalize_event(raw: RawEvent, video_offset_ms: i64) -> Result<GameEvent> {
     })
 }
 
+fn reconcile_events(
+    state: &mut PollerState,
+    raw_events: Vec<RawEvent>,
+    video_offset_ms: i64,
+) -> usize {
+    let mut new_events = Vec::new();
+    for raw_event in raw_events {
+        if !state.seen_event_ids.insert(raw_event.event_id) {
+            continue;
+        }
+        match normalize_event(raw_event, video_offset_ms) {
+            Ok(event) => new_events.push(event),
+            Err(error) => warn!(%error, "ignoring invalid Live Client event"),
+        }
+    }
+    let count = new_events.len();
+    if count > 0 {
+        state.game_log.events.extend(new_events);
+        state
+            .game_log
+            .events
+            .sort_by_key(|event| event.game_time_ms);
+    }
+    count
+}
+
 fn update_summary(summary: &mut PollerSummary, data: &RawAllGameData) {
     if summary.game_mode.is_none() {
         summary.game_mode = data.game_data.game_mode.clone();
@@ -725,10 +1028,22 @@ fn u32_field(fields: &Map<String, Value>, name: &str) -> Option<u32> {
         .and_then(|value| u32::try_from(value).ok())
 }
 
-fn valid_game_time(data: &RawAllGameData) -> Option<f64> {
-    data.game_data
-        .game_time
+fn valid_game_time(data: &RawGameData) -> Option<f64> {
+    data.game_time
         .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+fn record_failure(consecutive_failures: &mut u8) -> bool {
+    *consecutive_failures = consecutive_failures.saturating_add(1);
+    *consecutive_failures >= MAX_CONSECUTIVE_API_FAILURES
+}
+
+fn duration_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+fn duration_ms_f64(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 fn seconds_to_ms(seconds: f64) -> Result<i64> {
@@ -772,6 +1087,8 @@ struct RawAllGameData {
     all_players: Vec<RawPlayer>,
     #[serde(rename = "gameData", default)]
     game_data: RawGameData,
+    #[serde(default)]
+    events: RawEventData,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -892,13 +1209,13 @@ struct RawGameData {
     game_mode: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 struct RawEventData {
     #[serde(rename = "Events", default)]
     events: Vec<RawEvent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RawEvent {
     #[serde(rename = "EventID")]
     event_id: i64,
@@ -1050,6 +1367,135 @@ mod tests {
     fn calibration_uses_the_middle_sample() {
         let mut candidates = [142_303, 142_301, 180_000, 142_302, 142_300];
         assert_eq!(median(&mut candidates).unwrap(), 142_302);
+    }
+
+    #[test]
+    fn frozen_loading_clock_is_rejected_then_advancing_clock_is_calibrated() {
+        let video_started_at = Instant::now();
+        let frozen = (0..CALIBRATION_SAMPLE_COUNT)
+            .map(|index| ClockSample {
+                received_at: video_started_at
+                    + Duration::from_millis(u64::try_from(index).unwrap() * 250),
+                game_time_seconds: 0.018,
+            })
+            .collect();
+        assert_eq!(calibration_offset(&frozen, video_started_at), None);
+
+        let moving = (0..CALIBRATION_SAMPLE_COUNT)
+            .map(|index| ClockSample {
+                received_at: video_started_at
+                    + Duration::from_secs(40)
+                    + Duration::from_millis(u64::try_from(index).unwrap() * 250),
+                game_time_seconds: 0.050 + index as f64 * 0.250,
+            })
+            .collect();
+        assert_eq!(calibration_offset(&moving, video_started_at), Some(39_950));
+    }
+
+    #[test]
+    fn calibration_window_resets_on_frozen_backward_and_outlier_samples() {
+        let video_started_at = Instant::now();
+        let mut window = CalibrationWindow::default();
+        let sample = |elapsed_ms, game_time_seconds| ClockSample {
+            received_at: video_started_at + Duration::from_millis(elapsed_ms),
+            game_time_seconds,
+        };
+
+        assert_eq!(window.push(sample(10_000, 0.018), video_started_at), None);
+        assert_eq!(window.push(sample(10_250, 0.018), video_started_at), None);
+        assert_eq!(window.samples.len(), 1);
+        assert_eq!(window.push(sample(10_500, 0.010), video_started_at), None);
+        assert_eq!(window.samples.len(), 1);
+
+        window.clear();
+        for index in 0..4 {
+            assert_eq!(
+                window.push(
+                    sample(20_000 + index * 250, index as f64 * 0.250),
+                    video_started_at,
+                ),
+                None
+            );
+        }
+        assert_eq!(window.push(sample(21_000, 2.0), video_started_at), None);
+        assert!(window.samples.is_empty());
+
+        let mut offset = None;
+        for index in 0..CALIBRATION_SAMPLE_COUNT as u64 {
+            offset = window.push(
+                sample(22_000 + index * 250, 3.0 + index as f64 * 0.250),
+                video_started_at,
+            );
+        }
+        assert_eq!(offset, Some(19_000));
+    }
+
+    #[test]
+    fn api_failure_threshold_requires_three_consecutive_failures() {
+        let mut failures = 0;
+        assert!(!record_failure(&mut failures));
+        assert!(!record_failure(&mut failures));
+        assert!(record_failure(&mut failures));
+
+        failures = 0;
+        assert!(!record_failure(&mut failures));
+    }
+
+    #[test]
+    fn event_reconciliation_deduplicates_and_restores_chronological_order() {
+        let raw_event = |event_id, event_time| RawEvent {
+            event_id,
+            event_name: "ChampionKill".to_owned(),
+            event_time,
+            fields: Map::new(),
+        };
+        let mut state = PollerState::default();
+
+        assert_eq!(
+            reconcile_events(&mut state, vec![raw_event(2, 20.0)], 100),
+            1
+        );
+        assert_eq!(
+            reconcile_events(
+                &mut state,
+                vec![raw_event(1, 10.0), raw_event(2, 20.0)],
+                100,
+            ),
+            1
+        );
+        assert_eq!(state.game_log.events.len(), 2);
+        assert_eq!(state.game_log.events[0].game_time_ms, 10_000);
+        assert_eq!(state.game_log.events[1].game_time_ms, 20_000);
+        assert_eq!(
+            reconcile_events(&mut state, vec![raw_event(1, 10.0)], 100),
+            0
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn event_poll_interval_is_one_second_without_burst_catch_up() {
+        let mut interval = tokio::time::interval(EVENT_POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(
+            tokio::time::timeout(Duration::ZERO, interval.tick())
+                .await
+                .is_err()
+        );
+        tokio::time::advance(Duration::from_millis(1)).await;
+        interval.tick().await;
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        interval.tick().await;
+        assert!(
+            tokio::time::timeout(Duration::ZERO, interval.tick())
+                .await
+                .is_err()
+        );
+        tokio::time::advance(EVENT_POLL_INTERVAL).await;
+        interval.tick().await;
     }
 
     #[test]
