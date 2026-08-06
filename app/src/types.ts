@@ -29,15 +29,44 @@ export type ClipSummary = {
   source_date: string | null;
 };
 
-export type EventMarker = {
-  video_time_ms: number;
+export type ViewerEvent = {
   event_type: string;
+  game_time_ms: number;
+  video_time_ms: number;
+  killer: string | null;
+  victim: string | null;
+  assisters: string[];
+  dragon_type: string | null;
+  kill_streak: number | null;
+  acer: string | null;
+  acing_team: string | null;
+  turret: string | null;
+  inhibitor: string | null;
+  result: string | null;
+};
+
+export type PlayerTimelinePoint = {
+  game_time_ms: number;
+  video_time_ms: number;
+  cs: number;
+  level: number;
+};
+
+export type KdaTimelinePoint = {
+  video_time_ms: number;
+  kills: number;
+  deaths: number;
+  assists: number;
 };
 
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;
-  markers: EventMarker[];
+  game_start_video_offset_ms: number;
+  local_player_name: string | null;
+  player_timeline: PlayerTimelinePoint[];
+  kda_timeline: KdaTimelinePoint[];
+  events: ViewerEvent[];
 };
 
 export type StorageUsage = {

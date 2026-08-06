@@ -301,7 +301,11 @@ function App() {
         </Switch>
       </main>
 
-      <Show when={usage()}>{(loaded) => <StorageIndicator usage={loaded()} onManage={openSettings} />}</Show>
+      <Show when={navigation().screen !== "viewer"}>
+        <Show when={usage()}>
+          {(loaded) => <StorageIndicator usage={loaded()} onManage={openSettings} />}
+        </Show>
+      </Show>
       <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => setActiveClip(null)} />}</Show>
       <Show when={deleteTarget()}>
         {(target) => (

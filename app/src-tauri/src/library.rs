@@ -62,16 +62,47 @@ pub struct AutoDeleteResult {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct EventMarker {
-    pub video_time_ms: u64,
+pub struct ViewerEvent {
     pub event_type: String,
+    pub game_time_ms: u64,
+    pub video_time_ms: u64,
+    pub killer: Option<String>,
+    pub victim: Option<String>,
+    pub assisters: Vec<String>,
+    pub dragon_type: Option<String>,
+    pub kill_streak: Option<u32>,
+    pub acer: Option<String>,
+    pub acing_team: Option<String>,
+    pub turret: Option<String>,
+    pub inhibitor: Option<String>,
+    pub result: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct PlayerTimelinePoint {
+    pub game_time_ms: u64,
+    pub video_time_ms: u64,
+    pub cs: u32,
+    pub level: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct KdaTimelinePoint {
+    pub video_time_ms: u64,
+    pub kills: u32,
+    pub deaths: u32,
+    pub assists: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PlaybackProbe {
     pub game: GameSummary,
     pub video_url: String,
-    pub markers: Vec<EventMarker>,
+    pub game_start_video_offset_ms: u64,
+    pub local_player_name: Option<String>,
+    pub player_timeline: Vec<PlayerTimelinePoint>,
+    pub kda_timeline: Vec<KdaTimelinePoint>,
+    pub events: Vec<ViewerEvent>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -79,6 +110,7 @@ pub struct PlaybackProbe {
 struct MetadataDocument {
     recorded_at: String,
     duration_ms: u64,
+    video_offset_ms: Option<u64>,
     game_mode: Option<String>,
     local_player_summoner_name: Option<String>,
     local_player_champion: Option<String>,
@@ -89,21 +121,45 @@ struct MetadataDocument {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct GameLogDocument {
-    #[serde(default)]
+    game_start_video_offset_ms: i64,
+    snapshots: Vec<GameSnapshot>,
     events: Vec<GameEvent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct GameSnapshot {
+    game_time_ms: i64,
+    players: Vec<SnapshotPlayer>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SnapshotPlayer {
+    summoner_name: String,
+    cs: u32,
+    level: u32,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct GameEvent {
     #[serde(rename = "type")]
     event_type: String,
-    #[serde(default)]
+    game_time_ms: i64,
     video_time_ms: i64,
     killer: Option<String>,
     victim: Option<String>,
-    #[serde(default)]
     assisters: Vec<String>,
+    dragon_type: Option<String>,
+    kill_streak: Option<u32>,
+    acer: Option<String>,
+    acing_team: Option<String>,
+    turret: Option<String>,
+    inhibitor: Option<String>,
+    result: Option<String>,
 }
 
 pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
@@ -151,24 +207,62 @@ pub fn playback_probe(
         bail!("recording video is unavailable");
     }
 
-    let mut markers = read_game_log(&game_directory.join(GAME_LOG_JSON))?
-        .events
-        .into_iter()
-        .filter_map(|event| {
-            u64::try_from(event.video_time_ms)
-                .ok()
-                .map(|video_time_ms| EventMarker {
-                    video_time_ms,
-                    event_type: event.event_type,
-                })
+    let metadata = read_json::<MetadataDocument>(&game_directory.join(METADATA_JSON)).ok();
+    let local_player_name = metadata
+        .as_ref()
+        .and_then(|document| document.local_player_summoner_name.clone());
+    let log = read_game_log(&game_directory.join(GAME_LOG_JSON))?;
+    let game_start_video_offset_ms = u64::try_from(log.game_start_video_offset_ms)
+        .ok()
+        .filter(|offset| *offset > 0)
+        .or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|document| document.video_offset_ms)
+        })
+        .unwrap_or(0);
+
+    let mut player_timeline = log
+        .snapshots
+        .iter()
+        .filter_map(|snapshot| {
+            let game_time_ms = u64::try_from(snapshot.game_time_ms).ok()?;
+            let local_player = local_player_name.as_deref()?;
+            let player = snapshot
+                .players
+                .iter()
+                .find(|player| same_player(&player.summoner_name, local_player))?;
+            Some(PlayerTimelinePoint {
+                game_time_ms,
+                video_time_ms: game_start_video_offset_ms.saturating_add(game_time_ms),
+                cs: player.cs,
+                level: player.level,
+            })
         })
         .collect::<Vec<_>>();
-    markers.sort_by_key(|marker| marker.video_time_ms);
+    player_timeline.sort_by_key(|point| point.video_time_ms);
+    player_timeline
+        .dedup_by(|current, previous| current.cs == previous.cs && current.level == previous.level);
+
+    let mut events = log
+        .events
+        .into_iter()
+        .filter_map(viewer_event)
+        .collect::<Vec<_>>();
+    events.sort_by_key(|event| event.video_time_ms);
+    let kda_timeline = local_player_name
+        .as_deref()
+        .map(|player| build_kda_timeline(player, &events))
+        .unwrap_or_default();
 
     Ok(PlaybackProbe {
         video_url: format!("{origin}/games/{timestamp}/video.mp4"),
         game,
-        markers,
+        game_start_video_offset_ms,
+        local_player_name,
+        player_timeline,
+        kda_timeline,
+        events,
     })
 }
 
@@ -406,7 +500,6 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
 }
 
 fn derive_kda(player: &str, events: &[GameEvent]) -> (u32, u32, u32) {
-    let player = player.split_once('#').map_or(player, |(name, _)| name);
     let mut kills = 0;
     let mut deaths = 0;
     let mut assists = 0;
@@ -414,11 +507,84 @@ fn derive_kda(player: &str, events: &[GameEvent]) -> (u32, u32, u32) {
         .iter()
         .filter(|event| event.event_type == "ChampionKill")
     {
-        kills += u32::from(event.killer.as_deref() == Some(player));
-        deaths += u32::from(event.victim.as_deref() == Some(player));
-        assists += u32::from(event.assisters.iter().any(|assister| assister == player));
+        kills += u32::from(
+            event
+                .killer
+                .as_deref()
+                .is_some_and(|name| same_player(name, player)),
+        );
+        deaths += u32::from(
+            event
+                .victim
+                .as_deref()
+                .is_some_and(|name| same_player(name, player)),
+        );
+        assists += u32::from(
+            event
+                .assisters
+                .iter()
+                .any(|assister| same_player(assister, player)),
+        );
     }
     (kills, deaths, assists)
+}
+
+fn same_player(left: &str, right: &str) -> bool {
+    let left = left.split_once('#').map_or(left, |(name, _)| name);
+    let right = right.split_once('#').map_or(right, |(name, _)| name);
+    left.eq_ignore_ascii_case(right)
+}
+
+fn viewer_event(event: GameEvent) -> Option<ViewerEvent> {
+    Some(ViewerEvent {
+        event_type: event.event_type,
+        game_time_ms: u64::try_from(event.game_time_ms).ok()?,
+        video_time_ms: u64::try_from(event.video_time_ms).ok()?,
+        killer: event.killer,
+        victim: event.victim,
+        assisters: event.assisters,
+        dragon_type: event.dragon_type,
+        kill_streak: event.kill_streak,
+        acer: event.acer,
+        acing_team: event.acing_team,
+        turret: event.turret,
+        inhibitor: event.inhibitor,
+        result: event.result,
+    })
+}
+
+fn build_kda_timeline(player: &str, events: &[ViewerEvent]) -> Vec<KdaTimelinePoint> {
+    let mut points = Vec::new();
+    let mut kills = 0;
+    let mut deaths = 0;
+    let mut assists = 0;
+    for event in events
+        .iter()
+        .filter(|event| event.event_type == "ChampionKill")
+    {
+        let is_kill = event
+            .killer
+            .as_deref()
+            .is_some_and(|name| same_player(name, player));
+        let is_death = event
+            .victim
+            .as_deref()
+            .is_some_and(|name| same_player(name, player));
+        let is_assist = event.assisters.iter().any(|name| same_player(name, player));
+        if !(is_kill || is_death || is_assist) {
+            continue;
+        }
+        kills += u32::from(is_kill);
+        deaths += u32::from(is_death);
+        assists += u32::from(is_assist);
+        points.push(KdaTimelinePoint {
+            video_time_ms: event.video_time_ms,
+            kills,
+            deaths,
+            assists,
+        });
+    }
+    points
 }
 
 fn read_game_log(path: &Path) -> Result<GameLogDocument> {
@@ -513,6 +679,7 @@ mod tests {
             serde_json::to_vec(&json!({
                 "recorded_at": recorded_at,
                 "duration_ms": 120000,
+                "video_offset_ms": 5000,
                 "game_mode": "CLASSIC",
                 "local_player_summoner_name": "Player#EUW",
                 "local_player_champion": "Syndra",
@@ -528,10 +695,27 @@ mod tests {
         fs::write(
             game.join(GAME_LOG_JSON),
             serde_json::to_vec(&json!({
+                "game_start_video_offset_ms": 5000,
+                "snapshots": [
+                    {
+                        "game_time_ms": 1000,
+                        "players": [
+                            {"summoner_name":"Player#EUW","cs":1,"level":1},
+                            {"summoner_name":"Enemy#EUW","cs":2,"level":1}
+                        ]
+                    },
+                    {
+                        "game_time_ms": 11000,
+                        "players": [
+                            {"summoner_name":"Player#EUW","cs":8,"level":2}
+                        ]
+                    }
+                ],
                 "events": [
-                    {"type":"ChampionKill","video_time_ms":1000,"killer":"Player","victim":"Enemy","assisters":[]},
-                    {"type":"ChampionKill","video_time_ms":2000,"killer":"Enemy","victim":"Player","assisters":[]},
-                    {"type":"ChampionKill","video_time_ms":3000,"killer":"Ally","victim":"Enemy","assisters":["Player"]}
+                    {"type":"ChampionKill","game_time_ms":1000,"video_time_ms":6000,"killer":"Player","victim":"Enemy","assisters":[]},
+                    {"type":"ChampionKill","game_time_ms":2000,"video_time_ms":7000,"killer":"Enemy","victim":"Player","assisters":[]},
+                    {"type":"ChampionKill","game_time_ms":3000,"video_time_ms":8000,"killer":"Ally","victim":"Enemy","assisters":["Player"]},
+                    {"type":"DragonKill","game_time_ms":4000,"video_time_ms":9000,"killer":"Player","assisters":["Ally"],"dragon_type":"Air"}
                 ]
             }))
             .unwrap(),
@@ -554,6 +738,64 @@ mod tests {
             (1, 1, 1)
         );
         assert_eq!(games[0].video_size_bytes, 5);
+    }
+
+    #[test]
+    fn builds_sorted_frame_driven_playback_payload() {
+        let root = tempdir().unwrap();
+        write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
+
+        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
+
+        assert_eq!(probe.game_start_video_offset_ms, 5_000);
+        assert_eq!(probe.local_player_name.as_deref(), Some("Player#EUW"));
+        assert_eq!(
+            probe.player_timeline,
+            vec![
+                PlayerTimelinePoint {
+                    game_time_ms: 1_000,
+                    video_time_ms: 6_000,
+                    cs: 1,
+                    level: 1,
+                },
+                PlayerTimelinePoint {
+                    game_time_ms: 11_000,
+                    video_time_ms: 16_000,
+                    cs: 8,
+                    level: 2,
+                },
+            ]
+        );
+        assert_eq!(
+            probe.kda_timeline,
+            vec![
+                KdaTimelinePoint {
+                    video_time_ms: 6_000,
+                    kills: 1,
+                    deaths: 0,
+                    assists: 0,
+                },
+                KdaTimelinePoint {
+                    video_time_ms: 7_000,
+                    kills: 1,
+                    deaths: 1,
+                    assists: 0,
+                },
+                KdaTimelinePoint {
+                    video_time_ms: 8_000,
+                    kills: 1,
+                    deaths: 1,
+                    assists: 1,
+                },
+            ]
+        );
+        assert_eq!(probe.events.len(), 4);
+        assert_eq!(probe.events[3].event_type, "DragonKill");
+        assert_eq!(probe.events[3].dragon_type.as_deref(), Some("Air"));
+        assert_eq!(
+            probe.video_url,
+            "http://127.0.0.1:9000/games/1786000000/video.mp4"
+        );
     }
 
     #[test]

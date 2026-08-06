@@ -5,20 +5,108 @@ import type {
   AutoDeleteResult,
   ClipSummary,
   DdragonStatus,
-  EventMarker,
   GameSummary,
   HevcProbeStatus,
+  KdaTimelinePoint,
   PlaybackProbe,
+  PlayerTimelinePoint,
   ServerMetrics,
   SettingsUpdate,
   StorageUsage,
+  ViewerEvent,
 } from "./types";
 
-const mockMarkers = (): EventMarker[] =>
-  Array.from({ length: 86 }, (_, index) => ({
-    video_time_ms: 42_000 + index * 23_600,
-    event_type: index % 7 === 0 ? "ChampionKill" : index % 5 === 0 ? "DragonKill" : "LevelUp",
-  }));
+const MOCK_VIDEO_OFFSET_MS = 42_369;
+
+const mockEvent = (
+  eventType: string,
+  videoTimeMs: number,
+  details: Partial<ViewerEvent> = {},
+): ViewerEvent => ({
+  event_type: eventType,
+  game_time_ms: Math.max(0, videoTimeMs - MOCK_VIDEO_OFFSET_MS),
+  video_time_ms: videoTimeMs,
+  killer: null,
+  victim: null,
+  assisters: [],
+  dragon_type: null,
+  kill_streak: null,
+  acer: null,
+  acing_team: null,
+  turret: null,
+  inhibitor: null,
+  result: null,
+  ...details,
+});
+
+const mockEvents = (): ViewerEvent[] => {
+  const generated = Array.from({ length: 48 }, (_, index) => {
+    const videoTimeMs = 248_000 + index * 29_500;
+    if (index % 11 === 4) {
+      return mockEvent("DragonKill", videoTimeMs, {
+        killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Jungler",
+        assisters: ["Ally Jungler", "SUPERSTAR"],
+        dragon_type: ["Air", "Fire", "Water", "Earth"][index % 4],
+      });
+    }
+    if (index % 13 === 7) {
+      return mockEvent("TurretKilled", videoTimeMs, {
+        killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Carry",
+        turret: "Turret_T2_C_03_A",
+      });
+    }
+    if (index % 17 === 9) {
+      return mockEvent("Multikill", videoTimeMs, {
+        killer: "SUPERSTAR",
+        kill_streak: 2,
+      });
+    }
+    return mockEvent("ChampionKill", videoTimeMs, {
+      killer: index % 5 === 0 ? "SUPERSTAR" : index % 3 === 0 ? "Enemy Carry" : "Ally Jungler",
+      victim: index % 5 === 0 ? "Enemy Carry" : index % 3 === 0 ? "SUPERSTAR" : "Enemy Jungler",
+      assisters: index % 4 === 0 ? ["SUPERSTAR"] : ["Ally Support"],
+    });
+  });
+
+  return [
+    mockEvent("GameStart", MOCK_VIDEO_OFFSET_MS),
+    mockEvent("MinionsSpawning", 107_000),
+    mockEvent("FirstBlood", 199_402, { killer: "SUPERSTAR", victim: "Enemy Carry" }),
+    mockEvent("ChampionKill", 199_402, {
+      killer: "SUPERSTAR",
+      victim: "Enemy Carry",
+      assisters: ["Ally Jungler"],
+    }),
+    ...generated,
+    mockEvent("BaronKill", 1_501_000, {
+      killer: "Ally Jungler",
+      assisters: ["SUPERSTAR", "Ally Support"],
+    }),
+    mockEvent("GameEnd", 1_770_000, { result: "Win" }),
+  ].sort((left, right) => left.video_time_ms - right.video_time_ms);
+};
+
+const mockPlayerTimeline = (): PlayerTimelinePoint[] =>
+  Array.from({ length: 174 }, (_, index) => {
+    const gameTimeMs = 1_282 + index * 10_000;
+    return {
+      game_time_ms: gameTimeMs,
+      video_time_ms: MOCK_VIDEO_OFFSET_MS + gameTimeMs,
+      cs: Math.min(200, Math.floor(gameTimeMs / 8_450)),
+      level: Math.min(15, 1 + Math.floor(gameTimeMs / 118_000)),
+    };
+  });
+
+const mockKdaTimeline = (): KdaTimelinePoint[] => [
+  { video_time_ms: 199_402, kills: 1, deaths: 0, assists: 0 },
+  { video_time_ms: 396_000, kills: 2, deaths: 0, assists: 1 },
+  { video_time_ms: 534_000, kills: 2, deaths: 1, assists: 2 },
+  { video_time_ms: 711_000, kills: 3, deaths: 1, assists: 4 },
+  { video_time_ms: 890_000, kills: 5, deaths: 2, assists: 5 },
+  { video_time_ms: 1_114_000, kills: 6, deaths: 3, assists: 8 },
+  { video_time_ms: 1_409_000, kills: 7, deaths: 4, assists: 10 },
+  { video_time_ms: 1_698_000, kills: 8, deaths: 4, assists: 11 },
+];
 
 let mockGames: GameSummary[] = [
   {
@@ -174,7 +262,15 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
   if (!isTauri()) {
     const game = mockGames.find((candidate) => candidate.timestamp === gameTimestamp);
     if (!game) throw new Error("Recording not found");
-    return { game: structuredClone(game), video_url: "", markers: mockMarkers() };
+    return {
+      game: structuredClone(game),
+      video_url: "",
+      game_start_video_offset_ms: MOCK_VIDEO_OFFSET_MS,
+      local_player_name: "SUPERSTAR#VOID",
+      player_timeline: mockPlayerTimeline(),
+      kda_timeline: mockKdaTimeline(),
+      events: mockEvents(),
+    };
   }
   return invoke<PlaybackProbe>("get_playback_probe", { gameTimestamp });
 };
