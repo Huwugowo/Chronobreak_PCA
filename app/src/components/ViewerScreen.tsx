@@ -99,14 +99,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const kdaTimeline = [...props.probe.kda_timeline].sort(
     (left, right) => left.video_time_ms - right.video_time_ms,
   );
-  const goldTimeline = [...props.probe.gold_timeline].sort(
-    (left, right) => left.video_time_ms - right.video_time_ms,
-  );
   const lastEventTimeMs = events[events.length - 1]?.video_time_ms ?? 0;
   const durationMs = Math.max(props.probe.game.duration_ms, lastEventTimeMs, 1);
 
   const [isFullscreen, setIsFullscreen] = createSignal(false);
-  const [goldOpen, setGoldOpen] = createSignal(false);
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
   const [videoTimeMs, setVideoTimeMs] = createSignal(0);
   const [isPlaying, setIsPlaying] = createSignal(false);
@@ -527,7 +523,6 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 champion={props.probe.game.champion}
                 localPlayerName={props.probe.local_player_name}
                 events={visibleEvents()}
-                goldTimeline={goldTimeline}
                 durationMs={durationMs}
                 videoTimeMs={videoTimeMs()}
                 gameClockSeconds={gameClockSecond()}
@@ -535,11 +530,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 currentKda={currentKda()}
                 isPlaying={isPlaying()}
                 mediaAvailable={Boolean(props.probe.video_url) && !mediaUnavailable()}
-                goldOpen={goldOpen()}
                 participants={props.probe.participants}
                 selectedPlayers={selectedPlayers()}
                 clipRange={clipRange()}
-                onGoldOpenChange={setGoldOpen}
                 onPlayerToggle={togglePlayerFilter}
                 onPlayerClear={() => setSelectedPlayers([])}
                 onTogglePlayback={() => void togglePlayback()}

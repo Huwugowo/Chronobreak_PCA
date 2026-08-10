@@ -2,7 +2,6 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { formatDuration } from "../format";
 import type {
   ClipRange,
-  GoldTimelinePoint,
   KdaTimelinePoint,
   ReplayParticipant,
   ViewerEvent,
@@ -12,10 +11,8 @@ import {
   eventCategory,
   eventSummary,
   eventTitle,
-  formatGoldDifference,
   moveClipEndpoint,
   nearestIndexAt,
-  timelineValue,
 } from "../viewerUtils";
 import ChampionFilter from "./ChampionFilter";
 import styles from "./FullscreenOverlay.module.css";
@@ -24,7 +21,6 @@ type Props = {
   champion: string;
   localPlayerName: string | null;
   events: readonly ViewerEvent[];
-  goldTimeline: readonly GoldTimelinePoint[];
   durationMs: number;
   videoTimeMs: number;
   gameClockSeconds: number;
@@ -32,11 +28,9 @@ type Props = {
   currentKda: KdaTimelinePoint | undefined;
   isPlaying: boolean;
   mediaAvailable: boolean;
-  goldOpen: boolean;
   participants: readonly ReplayParticipant[];
   selectedPlayers: readonly string[];
   clipRange: ClipRange | null;
-  onGoldOpenChange: (open: boolean) => void;
   onPlayerToggle: (summonerName: string) => void;
   onPlayerClear: () => void;
   onTogglePlayback: () => void;
@@ -47,14 +41,6 @@ type Props = {
   onCancelClip: () => void;
   onExit: () => void;
 };
-
-const GRAPH_WIDTH = 1_000;
-const GRAPH_HEIGHT = 136;
-const GRAPH_LIMIT = 4_500;
-
-const graphY = (goldDiff: number): number =>
-  ((GRAPH_LIMIT - clamp(goldDiff, -GRAPH_LIMIT, GRAPH_LIMIT)) / (GRAPH_LIMIT * 2)) *
-  GRAPH_HEIGHT;
 
 function FullscreenOverlay(props: Props) {
   let fullscreenRail!: HTMLDivElement;
@@ -109,45 +95,6 @@ function FullscreenOverlay(props: Props) {
       ? index
       : -1;
   });
-  const currentGold = createMemo(() =>
-    timelineValue(props.goldTimeline, props.videoTimeMs) ?? props.goldTimeline[0],
-  );
-  const graph = (() => {
-    if (props.goldTimeline.length === 0) return null;
-    const finalGameTime = Math.max(
-      props.goldTimeline[props.goldTimeline.length - 1].game_time_ms,
-      1,
-    );
-    const points = props.goldTimeline.map((point) => ({
-      x: (point.game_time_ms / finalGameTime) * GRAPH_WIDTH,
-      y: graphY(point.gold_diff),
-    }));
-    const line = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
-    const zeroY = graphY(0);
-    const area = `M${points[0].x},${zeroY} ${points
-      .map((point) => `L${point.x},${point.y}`)
-      .join(" ")} L${points[points.length - 1].x},${zeroY} Z`;
-    const labels = [0, 8 * 60_000, 16 * 60_000, 24 * 60_000, finalGameTime]
-      .filter((value, index, values) => value <= finalGameTime && values.indexOf(value) === index)
-      .map((value) => ({
-        text: formatDuration(value),
-        position: (value / finalGameTime) * 100,
-      }));
-    return { finalGameTime, line, area, labels };
-  })();
-  const graphCursor = createMemo(() => {
-    if (!graph || props.goldTimeline.length === 0) return null;
-    const firstPoint = props.goldTimeline[0];
-    const videoOffsetMs = firstPoint.video_time_ms - firstPoint.game_time_ms;
-    const gameTimeMs = Math.max(0, props.videoTimeMs - videoOffsetMs);
-    const point = currentGold() ?? props.goldTimeline[0];
-    return {
-      x: clamp((gameTimeMs / graph.finalGameTime) * GRAPH_WIDTH, 0, GRAPH_WIDTH),
-      y: graphY(point.gold_diff),
-      positive: point.gold_diff >= 0,
-    };
-  });
-
   const noteActivity = () => {
     setTopBarVisible(true);
     if (idleTimer !== undefined) window.clearTimeout(idleTimer);
@@ -290,13 +237,6 @@ function FullscreenOverlay(props: Props) {
           <span class={styles.topKda}>
             {props.currentKda?.kills ?? 0} / {props.currentKda?.deaths ?? 0} / {props.currentKda?.assists ?? 0}
           </span>
-          <Show when={currentGold()}>
-            {(point) => (
-              <span classList={{ [styles.goldPositive]: point().gold_diff >= 0, [styles.goldNegative]: point().gold_diff < 0 }}>
-                {formatGoldDifference(point().gold_diff)}
-              </span>
-            )}
-          </Show>
         </div>
         <div class={styles.topStatus}>
           <strong>{props.beforeGameStart ? "--:--" : formatDuration(props.gameClockSeconds * 1_000)}</strong>
@@ -323,74 +263,6 @@ function FullscreenOverlay(props: Props) {
             <small>{eventSummary(event())}</small>
           </article>
         )}
-      </Show>
-
-      <Show when={graph && props.goldTimeline.length > 0}>
-        <section
-          classList={{
-            [styles.goldDrawer]: true,
-            [styles.goldDrawerOpen]: props.goldOpen,
-            [styles.goldDrawerRaised]: scrubberActive(),
-          }}
-          aria-hidden={!props.goldOpen}
-          data-testid="gold-drawer"
-        >
-          <div class={styles.goldHeader}>
-            <div><span>POST-GAME TIMELINE</span><strong>GOLD DIFFERENTIAL</strong></div>
-            <Show when={currentGold()}>
-              {(point) => (
-                <div classList={{ [styles.goldPositive]: point().gold_diff >= 0, [styles.goldNegative]: point().gold_diff < 0 }}>
-                  <strong>{formatGoldDifference(point().gold_diff)}</strong>
-                  <span>{point().gold_diff >= 0 ? "ADVANTAGE" : "DEFICIT"}</span>
-                </div>
-              )}
-            </Show>
-          </div>
-          <div class={styles.goldChart}>
-            <div class={styles.yLabels}><span>+4K</span><span>+2K</span><span>0</span><span>−2K</span><span>−4K</span></div>
-            <svg viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`} preserveAspectRatio="none" aria-label="Gold differential graph">
-              <defs>
-                <linearGradient id="gold-line-gradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#4A70E0" />
-                  <stop offset="49.8%" stop-color="#4A70E0" />
-                  <stop offset="50.2%" stop-color="#C2001C" />
-                  <stop offset="100%" stop-color="#C2001C" />
-                </linearGradient>
-              </defs>
-              <line class={styles.zeroLine} x1="0" x2={GRAPH_WIDTH} y1={GRAPH_HEIGHT / 2} y2={GRAPH_HEIGHT / 2} />
-              <path class={styles.goldArea} d={graph!.area} />
-              <path class={styles.goldLine} d={graph!.line} />
-              <Show when={graphCursor()}>
-                {(cursor) => (
-                  <g classList={{ [styles.cursorPositive]: cursor().positive, [styles.cursorNegative]: !cursor().positive }}>
-                    <line class={styles.goldCursorLine} x1={cursor().x} x2={cursor().x} y1="0" y2={GRAPH_HEIGHT} />
-                    <rect class={styles.goldCursorPoint} x={cursor().x - 4} y={cursor().y - 4} width="8" height="8" transform={`rotate(45 ${cursor().x} ${cursor().y})`} />
-                  </g>
-                )}
-              </Show>
-            </svg>
-            <div class={styles.graphLabels}>
-              <For each={graph!.labels}>{(label) => <span style={`left:${label.position}%`}>{label.text}</span>}</For>
-            </div>
-          </div>
-        </section>
-
-        <button
-          classList={{
-            [styles.goldTab]: true,
-            [styles.goldTabActive]: scrubberActive() || props.goldOpen,
-            [styles.goldTabRaised]: scrubberActive(),
-          }}
-          type="button"
-          onClick={() => props.onGoldOpenChange(!props.goldOpen)}
-          aria-expanded={props.goldOpen}
-          data-testid="gold-tab"
-        >
-          <span aria-hidden="true">{props.goldOpen ? "▾" : "▴"}</span> GOLD
-          <Show when={currentGold()}>
-            {(point) => <strong classList={{ [styles.goldPositive]: point().gold_diff >= 0, [styles.goldNegative]: point().gold_diff < 0 }}>{formatGoldDifference(point().gold_diff)}</strong>}
-          </Show>
-        </button>
       </Show>
 
       <section
@@ -478,9 +350,6 @@ function FullscreenOverlay(props: Props) {
             <button class={styles.exportClipControl} type="button" onClick={props.onExportClip}>
               EXPORT CLIP <span aria-hidden="true">→</span>
             </button>
-          </Show>
-          <Show when={props.goldTimeline.length > 0}>
-            <button class={styles.goldControl} type="button" onClick={() => props.onGoldOpenChange(!props.goldOpen)} aria-expanded={props.goldOpen}> {props.goldOpen ? "▾" : "▴"} GOLD</button>
           </Show>
           <span class={styles.controlsDivider} />
           <span class={styles.fullscreenTime}><strong>{formatDuration(videoSecond() * 1_000)}</strong> / {formatDuration(props.durationMs)}</span>

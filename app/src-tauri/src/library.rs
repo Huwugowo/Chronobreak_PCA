@@ -25,11 +25,8 @@ pub struct GameSummary {
     pub kills: u32,
     pub deaths: u32,
     pub assists: u32,
-    pub win: Option<bool>,
-    pub win_method: String,
     pub saved: bool,
     pub incomplete: bool,
-    pub matchv5_fetched: bool,
     pub video_size_bytes: u64,
     pub video_available: bool,
 }
@@ -110,15 +107,6 @@ pub struct KdaTimelinePoint {
     pub assists: u32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-pub struct GoldTimelinePoint {
-    pub game_time_ms: u64,
-    pub video_time_ms: u64,
-    pub ally_gold: u64,
-    pub enemy_gold: u64,
-    pub gold_diff: i64,
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PlaybackProbe {
     pub game: GameSummary,
@@ -128,7 +116,6 @@ pub struct PlaybackProbe {
     pub participants: Vec<ReplayParticipant>,
     pub player_timeline: Vec<PlayerTimelinePoint>,
     pub kda_timeline: Vec<KdaTimelinePoint>,
-    pub gold_timeline: Vec<GoldTimelinePoint>,
     pub events: Vec<ViewerEvent>,
 }
 
@@ -142,9 +129,6 @@ struct MetadataDocument {
     local_player_summoner_name: Option<String>,
     local_player_champion: Option<String>,
     local_player_team: Option<String>,
-    win: Option<bool>,
-    win_method: String,
-    matchv5_fetched: bool,
     saved: bool,
 }
 
@@ -154,7 +138,6 @@ struct GameLogDocument {
     game_start_video_offset_ms: i64,
     snapshots: Vec<GameSnapshot>,
     events: Vec<GameEvent>,
-    matchv5: Option<MatchV5Bundle>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -191,61 +174,6 @@ struct GameEvent {
     turret: Option<String>,
     inhibitor: Option<String>,
     result: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct MatchV5Bundle {
-    #[serde(rename = "match")]
-    match_data: MatchV5Match,
-    timeline: MatchV5Timeline,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct MatchV5Match {
-    info: MatchV5MatchInfo,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct MatchV5MatchInfo {
-    participants: Vec<MatchV5Participant>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct MatchV5Participant {
-    participant_id: u32,
-    team_id: u32,
-    riot_id_game_name: Option<String>,
-    summoner_name: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct MatchV5Timeline {
-    info: MatchV5TimelineInfo,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct MatchV5TimelineInfo {
-    frames: Vec<MatchV5Frame>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct MatchV5Frame {
-    timestamp: u64,
-    participant_frames: HashMap<String, MatchV5ParticipantFrame>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct MatchV5ParticipantFrame {
-    participant_id: u32,
-    total_gold: u64,
 }
 
 pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
@@ -397,15 +325,6 @@ pub fn playback_probe(
         .as_deref()
         .map(|player| build_kda_timeline(player, &events))
         .unwrap_or_default();
-    let gold_timeline = local_player_name
-        .as_deref()
-        .and_then(|player| {
-            log.matchv5
-                .as_ref()
-                .map(|matchv5| build_gold_timeline(matchv5, player, game_start_video_offset_ms))
-        })
-        .unwrap_or_default();
-
     Ok(PlaybackProbe {
         video_url: format!("{origin}/games/{timestamp}/video.mp4"),
         game,
@@ -414,7 +333,6 @@ pub fn playback_probe(
         participants,
         player_timeline,
         kda_timeline,
-        gold_timeline,
         events,
     })
 }
@@ -618,15 +536,8 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
         kills,
         deaths,
         assists,
-        win: metadata.win,
-        win_method: if metadata.win_method.is_empty() {
-            "unknown".to_owned()
-        } else {
-            metadata.win_method
-        },
         saved: metadata.saved,
         incomplete: false,
-        matchv5_fetched: metadata.matchv5_fetched,
         video_size_bytes,
         video_available: video_size_bytes > 0,
     }
@@ -642,11 +553,8 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
         kills: 0,
         deaths: 0,
         assists: 0,
-        win: None,
-        win_method: "unknown".to_owned(),
         saved: false,
         incomplete: true,
-        matchv5_fetched: false,
         video_size_bytes,
         video_available: video_size_bytes > 0,
     }
@@ -771,65 +679,6 @@ fn build_kda_timeline(player: &str, events: &[ViewerEvent]) -> Vec<KdaTimelinePo
     points
 }
 
-fn build_gold_timeline(
-    matchv5: &MatchV5Bundle,
-    local_player: &str,
-    video_offset_ms: u64,
-) -> Vec<GoldTimelinePoint> {
-    let Some(local_participant) = matchv5
-        .match_data
-        .info
-        .participants
-        .iter()
-        .find(|participant| {
-            participant
-                .riot_id_game_name
-                .as_deref()
-                .or(participant.summoner_name.as_deref())
-                .is_some_and(|name| same_player(name, local_player))
-        })
-    else {
-        return Vec::new();
-    };
-    let teams = matchv5
-        .match_data
-        .info
-        .participants
-        .iter()
-        .map(|participant| (participant.participant_id, participant.team_id))
-        .collect::<HashMap<_, _>>();
-
-    let mut points = matchv5
-        .timeline
-        .info
-        .frames
-        .iter()
-        .filter_map(|frame| {
-            let mut ally_gold = 0_u64;
-            let mut enemy_gold = 0_u64;
-            for participant in frame.participant_frames.values() {
-                let team_id = teams.get(&participant.participant_id)?;
-                if *team_id == local_participant.team_id {
-                    ally_gold = ally_gold.saturating_add(participant.total_gold);
-                } else {
-                    enemy_gold = enemy_gold.saturating_add(participant.total_gold);
-                }
-            }
-            (ally_gold > 0 && enemy_gold > 0).then_some(GoldTimelinePoint {
-                game_time_ms: frame.timestamp,
-                video_time_ms: video_offset_ms.saturating_add(frame.timestamp),
-                ally_gold,
-                enemy_gold,
-                gold_diff: i64::try_from(ally_gold).unwrap_or(i64::MAX)
-                    - i64::try_from(enemy_gold).unwrap_or(i64::MAX),
-            })
-        })
-        .collect::<Vec<_>>();
-    points.sort_by_key(|point| point.video_time_ms);
-    points.dedup_by_key(|point| point.video_time_ms);
-    points
-}
-
 fn read_game_log(path: &Path) -> Result<GameLogDocument> {
     if !path.exists() {
         return Ok(GameLogDocument::default());
@@ -927,9 +776,6 @@ mod tests {
                 "local_player_summoner_name": "Player#EUW",
                 "local_player_champion": "Syndra",
                 "local_player_team": "ORDER",
-                "win": null,
-                "win_method": "unknown",
-                "matchv5_fetched": false,
                 "saved": saved,
                 "preserved": "yes"
             }))
@@ -961,40 +807,7 @@ mod tests {
                     {"type":"ChampionKill","game_time_ms":2000,"video_time_ms":7000,"killer":"Enemy","victim":"Player","assisters":[]},
                     {"type":"ChampionKill","game_time_ms":3000,"video_time_ms":8000,"killer":"Ally","victim":"Enemy","assisters":["Player"]},
                     {"type":"DragonKill","game_time_ms":4000,"video_time_ms":9000,"killer":"Player","assisters":["Ally"],"dragon_type":"Air"}
-                ],
-                "matchv5": {
-                    "match": {
-                        "info": {
-                            "participants": [
-                                {"participantId":1,"teamId":100,"riotIdGameName":"Player"},
-                                {"participantId":2,"teamId":100,"riotIdGameName":"Ally"},
-                                {"participantId":3,"teamId":200,"riotIdGameName":"Enemy"}
-                            ]
-                        }
-                    },
-                    "timeline": {
-                        "info": {
-                            "frames": [
-                                {
-                                    "timestamp":0,
-                                    "participantFrames": {
-                                        "1":{"participantId":1,"totalGold":500},
-                                        "2":{"participantId":2,"totalGold":500},
-                                        "3":{"participantId":3,"totalGold":900}
-                                    }
-                                },
-                                {
-                                    "timestamp":60000,
-                                    "participantFrames": {
-                                        "1":{"participantId":1,"totalGold":1400},
-                                        "2":{"participantId":2,"totalGold":1200},
-                                        "3":{"participantId":3,"totalGold":2300}
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
+                ]
             }))
             .unwrap(),
         )
@@ -1093,25 +906,6 @@ mod tests {
         assert_eq!(probe.events[2].relation, EventRelation::Ally);
         assert_eq!(probe.events[3].event_type, "DragonKill");
         assert_eq!(probe.events[3].dragon_type.as_deref(), Some("Air"));
-        assert_eq!(
-            probe.gold_timeline,
-            vec![
-                GoldTimelinePoint {
-                    game_time_ms: 0,
-                    video_time_ms: 5_000,
-                    ally_gold: 1_000,
-                    enemy_gold: 900,
-                    gold_diff: 100,
-                },
-                GoldTimelinePoint {
-                    game_time_ms: 60_000,
-                    video_time_ms: 65_000,
-                    ally_gold: 2_600,
-                    enemy_gold: 2_300,
-                    gold_diff: 300,
-                },
-            ]
-        );
         assert_eq!(
             probe.video_url,
             "http://127.0.0.1:9000/games/1786000000/video.mp4"

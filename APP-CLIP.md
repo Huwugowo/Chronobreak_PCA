@@ -108,7 +108,7 @@ overhead. The completed file is measured; an oversized Discord result is re-enco
 once with a corrected bitrate and rejected rather than returned if it still reaches
 10,000,000 bytes.
 
-Until Phase 9 bundles ffmpeg, `ffmpeg` must be available on the system path.
+Until Phase 8 bundles the media tools, `ffmpeg` and `ffprobe` must be available on the system path.
 
 ## 7. Progress, Errors, and Atomic Output
 

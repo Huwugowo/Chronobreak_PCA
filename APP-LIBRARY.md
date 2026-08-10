@@ -54,16 +54,10 @@ On every launch, before rendering any UI:
 
 3. Return game list to frontend (includes incomplete stubs)
 4. Render Games tab
-
-5. If Riot ID is configured in settings:
-   → in background, for each game where matchv5_fetched == false:
-       → fetch Match V5 data (see SPEC.md §3.3)
-       → on success: write matchv5 field to game_log.json, set matchv5_fetched: true in metadata.json
-       → on failure: leave matchv5_fetched: false, log error, retry next launch
-       → update game card badge in UI when complete (no full reload required)
 ```
 
-The scan and auto-delete run in Rust (Tauri command). The Match V5 fetch runs as a background Tauri task after the UI is already visible — it never blocks the initial render.
+The scan and auto-delete run in Rust through narrow Tauri commands. No network
+account lookup or post-game enrichment job runs at startup.
 
 ---
 
@@ -88,7 +82,6 @@ Each card is derived from `metadata.json` + derived values from `game_log.json`.
 - Game mode (`metadata.game_mode`)
 - Game duration (formatted as `MM:SS` from `metadata.duration_ms`)
 - Date recorded (formatted as `Mar 6, 2026 · 14:32`)
-- Win / Loss badge — read directly from `metadata.win`. If `metadata.win` is `null` (win_method: "unknown"), show a neutral "?" badge until resolved by Match V5 enrichment
 - "Saved" badge if `metadata.saved == true`
 - "Incomplete" badge if bundle has no `metadata.json` (partial recording — champion and KDA will show as unknown, but the card is still clickable to open the video if video.mp4 is present)
 
@@ -197,20 +190,7 @@ A scrollable list of all recorded games (same data as library cards, compact row
 - Toggle: "Saved" (prevents auto-delete)
 - "Delete" button (requires confirmation)
 
-### 5.3 Riot Account (Match V5 Enrichment)
-
-| Setting | Type | Default | Notes |
-|---|---|---|---|
-| Riot ID | Text field | Empty | Format: `gameName#tagLine` e.g. `PlayerName#EUW` |
-| API key | Password field | Empty | Dev key only — expires every 24h. Hidden in production key phase. |
-
-When a Riot ID is configured, the app attempts to fetch Match V5 data for any game where `matchv5_fetched = false`. This happens automatically on app launch, in the background, after the game list is rendered.
-
-Status per game is shown as a small badge on the game card: "Enriched" when Match V5 data is present.
-
-If the fetch fails (rate limit, wrong ID, network error), the game remains `matchv5_fetched = false` and the app retries on the next launch.
-
-### 5.4 System Section
+### 5.3 System Section
 
 | Setting | Type | Default | Notes |
 |---|---|---|---|
@@ -276,8 +256,6 @@ The following Tauri commands (Rust → frontend) are required for this module:
 | `record_hevc_probe_result` | `supported: boolean` | Updated probe status |
 | `get_ddragon_status` | — | Patch, cache state, and catalog counts |
 | `resolve_item_name` | `itemId: string` | `string | null` |
-| `fetch_matchv5` | `gameTimestamp: string` | `Result<MatchV5Data>` |
-| `get_matchv5_status` | `gameTimestamp: string` | `{ fetched: bool, error?: string }` |
 
 ### `ClipSummary` type (returned to frontend)
 
@@ -308,16 +286,13 @@ type GameSummary = {
   kills:            number;  // derived from events
   deaths:           number;  // derived from events
   assists:          number;  // derived from events
-  win:              boolean | null;  // null if win_method == "unknown"
-  win_method:       "matchv5" | "derived" | "unknown";
   saved:            boolean;
   incomplete:       boolean;
-  matchv5_fetched:  boolean;
   video_size_bytes: number;
   video_available:  boolean;
 };
 ```
 
-KDA and win/loss are derived by the Rust backend when building this list. The frontend never reads `game_log.json` directly for the library view.
-
-The `matchv5_fetched` flag drives the enrichment badge on the game card and the background fetch trigger on app launch.
+KDA is derived by the Rust backend when building this list. The frontend never
+reads `game_log.json` directly for the library view. No match-result badge is shown
+because the supported local data sources do not provide a reliable final result.

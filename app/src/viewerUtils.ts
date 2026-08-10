@@ -194,9 +194,3 @@ export const eventCategory = (event: ViewerEvent): string => {
   }
   return "MATCH EVENT";
 };
-
-export const formatGoldDifference = (value: number): string => {
-  const rounded = Math.round(value);
-  const prefix = rounded >= 0 ? "+" : "−";
-  return `${prefix}${Math.abs(rounded).toLocaleString("en-US")}G`;
-};

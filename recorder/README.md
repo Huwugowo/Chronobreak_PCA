@@ -18,7 +18,7 @@ The recorder resolves ffmpeg in this order:
 2. `resources/ffmpeg/ffmpeg.exe` beside the recorder
 3. `ffmpeg` from `PATH`
 
-Bundling ffmpeg is intentionally deferred to Phase 9.
+Bundling ffmpeg is intentionally deferred to the Phase 8 self-contained Windows beta.
 
 ## Diagnostics
 
@@ -78,7 +78,7 @@ and `League of Legends` on macOS.
    - `game_log.json` contains snapshots, events, and a non-null
      `game_start_video_offset_ms`;
    - `metadata.json` contains the local player, concrete recording profile, codec,
-     resolution/FPS, `win: null`, and `matchv5_fetched: false`;
+     resolution/FPS, duration, and saved state;
    - the tray returns to grey without a full-file conversion or system-wide I/O stall.
 7. Seek to early-, mid-, and late-game events at `video_time_ms / 1000` in VLC and
    confirm each event occurs within approximately two seconds.

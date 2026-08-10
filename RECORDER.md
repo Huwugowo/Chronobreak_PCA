@@ -157,7 +157,7 @@ tokio::spawn(async move {
 
 The polling delay affects only how soon an event is written, not its marker position: `video_time_ms` is calculated from Riot's `EventTime`. `/allgamedata` carries the same cumulative event records and reconciles them every 10 seconds as a backup. A shared `EventID` set guarantees each event is stored once and the persisted list is sorted chronologically. Empirical games also confirmed `FirstBlood` and one `HordeKill` event per Void Grub.
 
-**API loss:** Three consecutive failures one second apart end the affected polling task; any successful response resets the counter. This never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization. `GameEnd` is stored if present but is often absent when the player exits before the Victory/Defeat screen, so it never controls stopping or win/loss.
+**API loss:** Three consecutive failures one second apart end the affected polling task; any successful response resets the counter. This never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization. `GameEnd` is stored if present but is often absent when the player exits before the Victory/Defeat screen, so it never controls stopping or the match result.
 
 ### 5.3 Post-Calibration — Snapshot Loop (every 10s)
 
@@ -226,7 +226,8 @@ fn diff_snapshots(prev: &Snapshot, curr: &Snapshot) -> Vec<SnapshotChange> {
 }
 ```
 
-Timestamps on snapshot-derived changes are approximate — accurate to within the 10s snapshot interval. Exact timestamps are available post-game via Match V5.
+Timestamps on snapshot-derived changes are approximate and remain accurate to within
+the 10-second snapshot interval. No external post-game enrichment is performed.
 
 Viego possession can temporarily expose the possessed champion's items. Phase 2 records the resulting additions and removals like any other approximate snapshot changes; it deliberately adds no champion-specific heuristic.
 
@@ -282,21 +283,20 @@ Phase 2 starts poller cancellation at the same time as ffmpeg shutdown so metada
 ```
 1. Cancel the calibration, Event Loop, and Snapshot Loop tasks while ffmpeg closes
 2. Flush game_log.json one final time after the polling tasks stop
-3. Write metadata.json with:
-   - win: null and win_method: "unknown" (resolved post-game)
-   - matchv5_fetched: false  ← always false at this point; app fetches post-game
-   - All other fields (see SPEC.md §3.8 for full schema)
+3. Write metadata.json with the local recording and player fields defined in `SPEC.md`
 ```
 
-**Note on win/loss:** The recorder may store `GameEnd` as an ordinary event but never interprets it as a lifecycle or result signal. It writes `win: null` and `win_method: "unknown"` at stop time. The app resolves the result via Match V5 on next launch; without enrichment the result remains unknown because the Live Client API does not expose a complete final team-gold state.
+**Note on match result:** The recorder may store `GameEnd` as ordinary optional telemetry,
+but never interprets it as a lifecycle or result signal. No match-result field is
+written because the supported local sources do not provide it reliably.
 
 **Why fragmented MP4:**
 Ordinary MP4 depends on final index data and may be unreadable after interruption.
 Fragmented MP4 stores packet metadata alongside short media fragments, so completed
 fragments remain decodable without a final full-file conversion. This keeps game-end
 finalization effectively immediate. The trade-off is lower compatibility with some
-older players and editors; the app playback and stream-copy clip paths must remain part
-of validation.
+older players and editors; app playback and re-encoded clip export remain part of
+validation.
 
 ---
 
@@ -417,7 +417,8 @@ Default location:
 - Windows: `%APPDATA%\LeagueReplay\config.toml`
 - macOS: `~/Library/Application Support/LeagueReplay/config.toml`
 
-Both the recorder and the app read and write this file. The recorder uses `[recording]`, `[storage]`, and `[app]` sections. The app additionally reads and writes `[riot_account]`. The recorder ignores `[riot_account]` entirely.
+Both the recorder and the app read and write the same `[recording]`, `[storage]`, and
+`[app]` sections.
 
 ```toml
 [recording]
@@ -434,10 +435,6 @@ auto_delete_days = 30       # recordings older than this deleted on app launch
 autostart = true            # register OS startup entry on first launch
 hevc_playback_supported = false
 # Phase 3 sets true only after real webview playback + seek validation.
-
-[riot_account]
-riot_id = ""                # "gameName#tagLine" — empty means enrichment disabled
-api_key = ""                # personal dev key (expires 24h) or left empty in production phase
 ```
 
 ---
@@ -464,7 +461,7 @@ api_key = ""                # personal dev key (expires 24h) or left empty in pr
 | Recorder crashes mid-game | game_log.json has all data up to last successful atomic write. |
 | OS power loss | Completed MP4 fragments survive. game_log.json survives to last atomic write. |
 | Incomplete bundle on next launch | `video.mp4` is already playable; no video recovery conversion is required. Phase 2 writes incomplete structured metadata as needed. |
-| Live Client API ends without a result | win: null, win_method: "unknown" in metadata. App resolves via Match V5 on next launch if Riot ID configured. |
+| Live Client API ends without a result | The optional `GameEnd` event may be absent; recording closure and metadata finalization are unaffected. |
 
 ---
 
@@ -477,6 +474,6 @@ cargo build --release
 
 Output: `recorder/target/release/recorder.exe` (Windows) or `recorder/target/release/recorder` (macOS).
 
-Single binary, no runtime dependencies, ~2–5MB. ffmpeg is referenced from the bundled path set in config.
-
-**ffmpeg:** bundled with the app under `resources/ffmpeg`. The recorder resolves the path at startup — it does not rely on a system-installed ffmpeg.
+The development build still needs an ffmpeg executable supplied through the discovery
+order documented in `recorder/README.md`. Phase 8 packages the recorder and media tools
+together and removes the clean-machine dependency on a system installation.

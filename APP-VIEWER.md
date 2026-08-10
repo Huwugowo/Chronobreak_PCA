@@ -2,7 +2,7 @@
 
 > **Context:** This document covers the Viewer screen only. For data schemas, file paths, and shared architecture, refer to `SPEC.md`. For the clip exporter that follows clip creation, refer to `APP-CLIP.md`. For the game library that precedes the viewer, refer to `APP-LIBRARY.md`.
 >
-> **What this screen does:** Plays back a recorded game bundle in windowed or fullscreen mode and provides clip selection on the synchronized timeline. The Stats tab described in Section 15 is deferred and is not exposed as an empty tab in the current app.
+> **What this screen does:** Plays back a recorded game bundle in windowed or fullscreen mode and provides clip selection on the synchronized timeline. The Stats tab described in Section 14 is deferred and is not exposed as an empty tab in the current app.
 
 ---
 
@@ -16,7 +16,9 @@ control or placeholder is rendered while Phase 6 is deferred.
 
 ## 2. Replay — Two Render Modes
 
-Replay has two distinct render modes. They are toggled by the user and share the same underlying state (playhead position, gold graph open/closed, clip range, etc.).
+Replay has two distinct render modes. They are toggled by the user and share the same
+underlying state: playhead position, play/pause state, selected champion filters, and
+clip range.
 
 ### 2.1 Windowed Mode (default)
 
@@ -25,8 +27,8 @@ The default view when a game is opened. The video occupies roughly 60% of the wi
 ```
 ┌─────────────────────────────────┬───────────────────┐
 │                                 │  Champion  KDA     │
-│         VIDEO (60%)             │  Gold diff         │
-│                                 │  CS  Level         │
+│         VIDEO (60%)             │  CS  Level         │
+│                                 │                   │
 │                                 ├───────────────────┤
 │                                 │  Champion filter   │
 │                                 │  Allies / Enemies  │
@@ -35,17 +37,22 @@ The default view when a game is opened. The video occupies roughly 60% of the wi
 └──────────────────────────────────────────────────────┘
 ```
 
-In windowed mode the scrubber and champion filter are always visible — no hover or click required. The gold graph is also visible when Match V5 timeline data is present; its space collapses cleanly when enrichment is unavailable. The USG panel layout (as prototyped in `league-replay-usgfx-v3.jsx`) is the reference for this mode.
+In windowed mode the scrubber and champion filter are always visible—no hover or
+click is required. The USG panel layout is the reference for this mode.
 
 ### 2.2 Fullscreen Mode
 
 Activated by: double-clicking the video, pressing `F`, or clicking the fullscreen button in the windowed controls.
 
-The video expands to fill 100% of the window. The panel layout disappears. All UI elements become overlays floating above the footage. Sections 4–10 and 12–14 of this document (top bar, scrubber, gold graph, event card, and champion filter rail) define the fullscreen presentation. Section 3 (video playback architecture), Section 9 (shared champion-filter behaviour), and Section 11 (clip mode) apply to both modes.
+The video expands to fill 100% of the window. The panel layout disappears. All UI
+elements become overlays floating above the footage. Sections 4–9 and 11–13 define
+the fullscreen presentation. Section 3, Section 8 (champion filtering), and Section
+10 (clip mode) apply to both modes.
 
 Exited by: pressing `Escape`, pressing `F` again, or clicking the exit button that appears in the top bar. Returns to windowed mode with playhead and state preserved.
 
-**What persists between modes:** playhead position, play/pause state, gold graph open/closed state, selected champion filters, and clip endpoints.
+**What persists between modes:** playhead position, play/pause state, selected
+champion filters, and clip endpoints.
 
 ---
 
@@ -89,7 +96,7 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 ```
 ┌───────────────────────────────────────────────────────┬──────┐
 │  [TOP BAR — fades after 3.2s idle]                    │ ALL  │
-│  REPLAY · JINX · 8/2/11 · +1800G      14:32 · REC    ├──────┤
+│  REPLAY · JINX · 8/2/11              14:32 · REC    ├──────┤
 │                                                       │ALLY  │
 │                                                       │ [JI] │
 │              VIDEO (fullscreen, 100%)                 │ [OR] │
@@ -101,27 +108,19 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 │  │ JINX × 2 UNITS   │                                 │  ·   │
 │  └──────────────────┘                                 │      │
 │                                                       │      │
-│  [GOLD GRAPH — slides up when triggered]              │      │
-│  ┌─────────────────────────────────────────────────┐  │      │
-│  │ Gold Differential          +1800G · ADVANTAGE   │  │      │
-│  │ ▁▂▄▆▅▃▄▇██▅▃▄▆████                             │  │      │
-│  └─────────────────────────────────────────────────┘  │      │
-│  [▴ GOLD +1800]   ← present with Match V5 timeline    │      │
 ├───────────────────────────────────────────────────────┤      │
 │  0:00 ·····|●|·····|●|·····|●|·····|●|·····|●· 32:14 │      │
-│  [▶ Play] [▴ Gold] | 14:32 / 32:14 | [✦ Clip]        │      │
+│  [▶ Play] | 14:32 / 32:14 | [✦ Clip]                 │      │
 └───────────────────────────────────────────────────────┴──────┘
 ```
 
 **Z-index layer order (bottom to top):**
 1. `<video>` — base layer
 2. Top bar overlay
-3. Gold graph drawer
-4. Gold tab
-5. Scrubber zone
-6. Champion filter rail (right side)
-7. Event card
-8. Grain texture overlay
+3. Scrubber zone
+4. Champion filter rail (right side)
+5. Event card
+6. Grain texture overlay
 
 ---
 
@@ -133,7 +132,7 @@ The viewer is a **fullscreen experience**. The video occupies 100% of the window
 - App wordmark ("REPLAY") + company line in mono type
 - Divider
 - Champion name + KDA (kills / deaths / assists)
-- **Right side:** match clock, REC indicator (pulsing dot), and current gold differential when Match V5 timeline data is available
+- **Right side:** match clock, REC indicator (pulsing dot), and exit action
 
 **Visibility behaviour:**
 - Fades **out** after **3.2 seconds** of mouse inactivity anywhere in the window. Transition: `opacity 1→0`, 350ms ease.
@@ -197,7 +196,6 @@ Visible in active state. Semi-visible (opacity 0.6) in ambient state.
 
 **Layout (left to right):**
 - `▶ Play` / `⏸ Pause` button — blue filled (primary action)
-- `▴ Gold` toggle button — ghost style, toggles gold graph drawer; omitted without Match V5 timeline data
 - Divider
 - Time readout: `14:32 / 32:14` — mono type
 - Divider
@@ -205,56 +203,9 @@ Visible in active state. Semi-visible (opacity 0.6) in ambient state.
 
 ---
 
-## 7. Gold Graph Drawer
+## 7. Floating Event Card
 
-This drawer is rendered only when `matchv5` contains participant timeline frames. The Live Client API exposes current gold only for the active local player, so it cannot produce a truthful team differential and no estimate is shown.
-
-### 7.1 Behaviour
-
-- Position: absolute, left: 0, right: 68px, bottom: 0.
-- **Closed:** `transform: translateY(100%)` — fully hidden below scrubber.
-- **Open:** `transform: translateY(0)` — slides up over 300ms, `cubic-bezier(.4,0,.2,1)`.
-- Background: `linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.76) 100%)`.
-- Border-top: 1px, `rgba(255,255,255,.07)`.
-- Covers the lower ~25% of the video when open.
-
-**Triggers to open:** clicking the gold tab, or clicking the "▴ Gold" button in controls.
-**Triggers to close:** clicking either trigger again.
-
-**Bottom padding:** dynamically adjusts — increases when scrubber is active (96px) vs ambient (44px), so graph content is never occluded by the scrubber expanding.
-
-### 7.2 Gold Graph Content
-
-**Header row:**
-- Left: section label "Gold Differential" in condensed caps
-- Right: current gold value + "ADVANTAGE" / "DEFICIT" label, coloured blue or red
-
-**Graph:**
-- X axis: match duration (0 to end)
-- Y axis: gold differential (your team total − enemy team total), range ±4500
-- Area above zero: faint blue fill
-- Area below zero: faint red fill
-- Line: blue when positive, red when negative, 1.8px stroke
-- Vertical cursor: tracks current video time, same colour as line, with diamond marker at intersection
-- Granularity: Match V5 participant-frame interval (typically 60s)
-- Hovering the graph does **not** seek — it is read-only display. Seeking is via the scrubber only.
-
-**X-axis labels:** 0:00, 8:00, 16:00, 24:00, match end — mono type.
-**Y-axis labels:** +4K, +2K, 0, -2K, -4K — mono type.
-
-### 7.3 Gold Tab
-
-- Position: absolute, just above the scrubber zone (bottom adjusts with scrubber state), left: 20px.
-- Present whenever Match V5 participant timeline frames are available; otherwise omitted.
-- Opacity: 0.5 at rest, 1.0 when scrubber is active or drawer is open.
-- Content: chevron icon (▴/▾) + "GOLD" label + current gold value (coloured blue or red).
-- Clicking toggles the drawer open/closed.
-
----
-
-## 8. Floating Event Card
-
-### 8.1 Trigger
+### 7.1 Trigger
 
 The frontend evaluates when the presented-frame clock crosses an event proximity boundary:
 
@@ -266,7 +217,7 @@ When `nearEvent` changes to a new event (not the same event as currently shown):
 - Dismiss current card (if any) with exit animation
 - Show new card with enter animation
 
-### 8.2 Appearance
+### 7.2 Appearance
 
 - Position: absolute, top (variable — see top bar interaction), left: 20px.
 - Background: `rgba(6,6,10,.93)`, border: `1px solid rgba(255,255,255,.10)`.
@@ -279,7 +230,7 @@ When `nearEvent` changes to a new event (not the same event as currently shown):
 - Event label (e.g. "DOUBLE KILL") — condensed bold, 17px, coloured blue or red
 - Event detail line (e.g. "JINX × 2 UNITS") — mono, 8px, dimmed
 
-### 8.3 Animations
+### 7.3 Animations
 
 **Enter:** `translateX(-12px) → translateX(0)`, opacity 0→1, 250ms, `cubic-bezier(.22,1,.36,1)`.
 
@@ -289,11 +240,11 @@ When `nearEvent` changes to a new event (not the same event as currently shown):
 
 ---
 
-## 9. Champion Timeline Filter
+## 8. Champion Timeline Filter
 
 The event list is not rendered as a second navigation surface. The scrubber is the sole event timeline; the side UI controls which champion-related markers it contains.
 
-### 9.1 Roster Source
+### 8.1 Roster Source
 
 The backend derives one compact replay roster from the first complete Live Client snapshot:
 
@@ -301,9 +252,12 @@ The backend derives one compact replay roster from the first complete Live Clien
 - `champion`
 - relation to the local player: `ally` or `enemy`
 
-The roster is available without Match V5 and is computed once when the replay opens. Champion identity is displayed as a lightweight monogram until cached Data Dragon portrait delivery exists; the full champion and summoner names remain available in the windowed panel, tooltip, and accessible label.
+The roster is computed once when the replay opens. Champion identity is displayed as
+a lightweight monogram until cached Data Dragon portrait delivery exists; the full
+champion and summoner names remain available in the windowed panel, tooltip, and
+accessible label.
 
-### 9.2 Filter Semantics
+### 8.2 Filter Semantics
 
 - Default: no champion selected; all event markers are shown.
 - Clicking a champion toggles that champion independently. Allies and enemies can be selected together.
@@ -316,13 +270,13 @@ The roster is available without Match V5 and is computed once when the replay op
 
 The filtered array is derived only when selection changes. Playback-frame updates continue to use the pre-sorted result and binary nearest-event lookup.
 
-### 9.3 Windowed Presentation
+### 8.3 Windowed Presentation
 
 The lower half of the right panel contains two compact columns, Allies and Enemies, with five champion buttons each. Every button shows champion identity and summoner name. Ally controls use blue accents; enemy controls use red. The local player has a small white corner indicator. Selected buttons receive a team-coloured border and background.
 
 ---
 
-## 10. Fullscreen Champion Rail
+## 9. Fullscreen Champion Rail
 
 **Position:** absolute, top: 0, bottom: 0, right: 0.
 **Width:** 68px. Never hides and never expands over the video.
@@ -336,11 +290,13 @@ The rail contains:
 
 Each champion button is a 38px square using the same ally/enemy and selected states as the windowed panel. Hover and accessible labels expose the champion and summoner name. At short window heights the controls compact to 34px rather than becoming scroll-driven.
 
-The top bar, gold drawer, and scrubber end at `right: 68px`; the filter therefore never obscures playback controls. The same selection signal drives both the windowed panel and this rail, so entering or exiting fullscreen does not reset the filter.
+The top bar and scrubber end at `right: 68px`; the filter therefore never obscures
+playback controls. The same selection signal drives both the windowed panel and this
+rail, so entering or exiting fullscreen does not reset the filter.
 
 ---
 
-## 11. Clip Mode Activation
+## 10. Clip Mode Activation
 
 Clip mode is triggered from the viewer. It does not navigate to a new screen — it modifies the scrubber in place.
 
@@ -370,27 +326,10 @@ window.
 
 ---
 
-### 11.1 Clip Auto-Positioning
+### 10.1 Clip Auto-Positioning
 
-The default clip window is calculated at activation time. Two modes depending on Match V5 data availability.
-
-**With Match V5 data (precise mode):**
-
-The `CHAMPION_KILL` event in the Match V5 timeline includes `victimDamageReceived[]` — an array of every damage instance the victim took, each with a timestamp in game-clock milliseconds. The earliest timestamp is when the fight actually started.
-
-Match V5 timestamps are in game-clock time and must be converted to `video_time_ms` before use:
-
-```
-fight_start_game_ms = min(victimDamageReceived[].timestamp)
-clip_start = (fight_start_game_ms - 1000) + game_log.game_start_video_offset_ms
-clip_end   = kill_event.video_time_ms + 3000
-```
-
-`kill_event.video_time_ms` is already pre-computed in `game_log.json` at write time — use it directly. Only the fight-start timestamp from Match V5 requires the conversion.
-
-**Without Match V5 data (heuristic mode):**
-
-Fall back to kill-type-aware windows based on the event's fields:
+The default clip window is calculated at activation time from the synchronized Live
+Client events. Kill-type-aware windows use the event's fields:
 
 | Kill type | Detection | Pre-roll | Post-roll |
 |---|---|---|---|
@@ -401,11 +340,12 @@ Fall back to kill-type-aware windows based on the event's fields:
 
 Pre-roll is always longer than post-roll — the fight buildup is the interesting part, not the aftermath.
 
-Both modes produce a starting point that the user can then adjust by dragging the endpoint handles.
+The heuristic produces a starting point that the user can adjust by dragging the
+endpoint handles.
 
 ---
 
-## 12. Typography System
+## 11. Typography System
 
 Three type faces used throughout the viewer:
 
@@ -419,19 +359,19 @@ Three type faces used throughout the viewer:
 
 ---
 
-## 13. Colour Reference
+## 12. Colour Reference
 
 | Name | Hex | Use |
 |---|---|---|
-| Blue | `#002FA7` | Ally events, scrubber fill, play button, gold positive |
-| Blue Light | `#4A70E0` | Gold graph line (positive), glow accents |
-| Red | `#C2001C` | Enemy events, gold negative, death states |
+| Blue | `#002FA7` | Ally events, scrubber fill, play button |
+| Blue Light | `#4A70E0` | Selection and glow accents |
+| Red | `#C2001C` | Enemy events and death states |
 | White | `#F8F5EF` | Primary text on dark backgrounds |
 | Ink | `#0C0C0C` | Video background |
 
 ---
 
-## 14. State Summary — Fullscreen Mode Only
+## 13. State Summary — Fullscreen Mode Only
 
 The following table describes visibility behaviour for overlay elements. These elements only exist in fullscreen mode (Section 2.2). In windowed mode, all panels are always visible and no hover/idle logic applies.
 
@@ -441,15 +381,13 @@ The following table describes visibility behaviour for overlay elements. These e
 | Top bar | On mouse activity | Any mouse move | 3.2s idle timer |
 | Scrubber (ambient) | ✅ | — | — |
 | Scrubber (active) | — | Mouse enters scrubber zone | Mouse leaves |
-| Gold tab (with Match V5 timeline) | ✅ (dim) | — | — |
-| Gold graph drawer (with Match V5 timeline) | — | Click gold tab or Gold button | Click again |
 | Event card | — | Playhead within ~1s of event | 3.5s auto-dismiss |
 | Champion filter rail | ✅ | — | — |
 | Filtered marker set | No selection = all events | Select one or more champions | Click `ALL` |
 
 ---
 
-## 15. Stats Tab
+## 14. Stats Tab
 
 > **Deferred:** This remains future product context, not part of the current build or a
 > prerequisite for clip creation. Until it is scheduled again, the Viewer exposes no
@@ -457,32 +395,30 @@ The following table describes visibility behaviour for overlay elements. These e
 
 The Stats tab is a static end-of-game scoreboard. No video plays. No animation. Pure data.
 
-### 15.1 Layout
+### 14.1 Layout
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  ← Back   JINX  8/2/11  +3800G  32:14  Mar 6 2026           │
+│  ← Back   JINX  8/2/11  32:14  Mar 6 2026                  │
 │  [ ▶ Replay ]  [ ≡ Stats ●]                                  │
 ├──────────────────────────────────────────────────────────────┤
-│  [Connect Riot account to unlock damage & vision stats →]    │  ← only if matchv5_fetched = false
-├──────────────────────────────────────────────────────────────┤
-│  BLUE TEAM  ·  VICTORY                                       │
+│  BLUE TEAM                                                   │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │ Champion  Spells  KDA   CS    Gold  Items              │  │
+│  │ Champion  Spells  KDA   CS    Level  Items             │  │
 │  │ ─────────────────────────────────────────────────────  │  │
-│  │ ▸ Jinx ★  F/I    8/2/11  187  14.2k  [items row]      │  │  ← local player, expandable
-│  │   Thresh   F/I   3/4/12  22   9.1k   [items row]      │  │
+│  │ ▸ Jinx ★  F/I    8/2/11  187  15  [items row]         │  │  ← local player, expandable
+│  │   Thresh   F/I   3/4/12  22   13  [items row]         │  │
 │  │   ...                                                  │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                              │
-│  RED TEAM  ·  DEFEAT                                         │
+│  RED TEAM                                                    │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │   ...                                                  │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### 15.2 Scoreboard Columns
+### 14.2 Scoreboard Columns
 
 Always shown (available from Live Client API):
 
@@ -497,48 +433,33 @@ Always shown (available from Live Client API):
 | Items | Last snapshot items array | 6 item icons + trinket, resolved via Data Dragon |
 | Multi-kill badge | Multikill events | Double / Triple / Quadra / Penta |
 
-Shown only when `matchv5_fetched = true`:
+No damage, vision, team-economy, or final-result columns are planned because the
+supported local sources cannot populate them truthfully.
 
-| Column | Match V5 field |
-|---|---|
-| Damage dealt | `totalDamageDealtToChampions` |
-| Damage taken | `totalDamageTaken` |
-| Vision score | `visionScore` |
-| Wards placed / killed | `wardsPlaced` / `wardsKilled` |
-| Gold | Match result `goldEarned` | Formatted (14.2k) |
-
-When Match V5 columns are hidden, a compact notice appears in the column header area rather than empty columns.
-
-### 15.3 Expanded Row
+### 14.3 Expanded Row
 
 Clicking any player row expands it inline (accordion). The row height grows to reveal:
 
-**Build timeline** — item icons in purchase order, each with a timestamp below it:
-- With Match V5: exact timestamps from `ITEM_PURCHASED` events
-- Without Match V5: approximate timestamps from snapshot diffs, displayed as "~8:40"
+**Build timeline** — item icons in purchase order with approximate timestamps from
+snapshot differences, displayed as `~8:40`.
 
-**Skill order** — Q/W/E/R boxes in the order they were levelled:
-- With Match V5: all 10 players
-- Without Match V5: unavailable
+**Skill order** is unavailable from the supported source and is not rendered.
 
-**Full rune page** — keystone + 5 runes + 3 stat shards when Match V5 is available. Without enrichment, the local player's Live Client rune IDs are shown; other players show the keystone only.
-
-**Additional stats** (Match V5 only, shown when available):
-- Healing done (self) and to teammates
-- CC time dealt
-- Time spent dead
-- Objectives stolen badge
+**Rune page** — the local player's available rune IDs are shown; other players show
+their keystone only.
 
 Clicking the row again collapses it. Only one row can be expanded at a time.
 
-### 15.4 Team-Level Aggregates
+### 14.4 Team-Level Aggregates
 
 Below each team's player rows, a summary bar:
 
 - Total team kills / deaths
 - Total objectives (dragons, baron, heralds, turrets, inhibitors)
-- Total team gold when Match V5 data is available; otherwise omitted
 
-### 15.5 Typography and Colour
+### 14.5 Typography and Colour
 
-Follows the system-wide USG aesthetic. Numbers in TX-02, labels in TX-76, champion names in TX-76. Local player row has a subtle blue-tinted background. Win team has a faint blue header, losing team a faint red header. Items shown at 28px icon size in the collapsed row, 32px in expanded.
+Follows the system-wide USG aesthetic. Numbers use TX-02 and labels/champion names use
+TX-76. The local player row has a subtle blue-tinted background. Team headers use
+ally/enemy colour accents without implying a final result. Items are 28px in collapsed
+rows and 32px when expanded.

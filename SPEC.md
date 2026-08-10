@@ -23,16 +23,15 @@
 A two-process desktop application for League of Legends players that:
 - **Records every game automatically** with zero meaningful performance impact using hardware-accelerated encoding
 - **Enriches the recording** with granular game data polled from the League Live Client Data API during the game
-- **Provides a post-game viewer** with a synchronized stats panel, event timeline, and gold diff graph
+- **Provides a post-game viewer** with synchronized player state and an event timeline
 - **Enables frictionless clip creation** with auto-suggested moments, adjustable endpoints, optional music, and export as a universally compatible MP4 file
 
 ### Core Design Philosophy
 - The recorder must be completely invisible and have zero performance impact on the game
 - The app only runs post-game, but playback, seeking, navigation, and overlay interaction must remain visibly immediate and frame-smooth
-- Core functionality requires no external accounts, API keys, or credentials — the app works fully offline
-- Match V5 enrichment (damage stats, vision score, exact item timestamps) is optional and requires a Riot ID — the app degrades gracefully without it
+- Core functionality requires no external accounts or credentials — the app works fully offline
 - Recordings are plain standards-based MP4 files (H.264, or HEVC only after end-to-end capability validation); exported clips are always publishable H.264/AAC MP4 files — no proprietary formats, upload links, or accounts
-- Until Phase 9 distribution work, superseded configs, schemas, and implementation paths are deleted rather than migrated; development recordings and fixtures are disposable
+- Until the public-distribution phase, superseded configs, schemas, and implementation paths are deleted rather than migrated; development recordings and fixtures are disposable
 
 ---
 
@@ -67,7 +66,7 @@ A two-process desktop application for League of Legends players that:
 │  /games/{timestamp}/                                         │
 │    ├── video.mp4         ← crash-tolerant fragmented capture │
 │    ├── game_log.json     ← events, snapshots, derived changes│
-│    └── metadata.json     ← champion, win, matchv5_fetched    │
+│    └── metadata.json     ← champion, mode, duration, offset  │
 └─────────────────────────────────────────────────────────────┘
                             ↓ reads from disk
 ┌─────────────────────────────────────────────────────────────┐
@@ -90,15 +89,12 @@ The two processes share **only the file system**. No IPC, no sockets, no shared 
 
 ### 3.1 Data Sources Overview
 
-Three data sources are used, with different availability and optionality:
+Two data sources are used:
 
 | Source | When available | Required? | What it provides |
 |---|---|---|---|
 | `localhost:2999` Live Client API | During the game only | ✅ Always | Events, roster, items, levels, CS, and local-player gold/HP |
-| Riot Match V5 Timeline API | Post-game, via Riot servers | ⚙️ Optional | Damage stats, team gold timeline, exact item timestamps, vision/CC/ward data, fight boundaries |
 | Riot Data Dragon CDN | Anytime, static per patch | ✅ Always | Item names, item icons, champion icons |
-
-The app is **fully functional without Match V5**. Features that depend on it degrade gracefully — columns are hidden rather than shown empty, and clip positioning falls back to heuristics. See Section 3.5 for the degradation map.
 
 ---
 
@@ -136,9 +132,9 @@ Both endpoints expose a cumulative event list. A shared `EventID` set deduplicat
 | `ChampionKill` | EventTime, VictimName, KillerName, Assisters | |
 | `Multikill` | EventTime, KillerName, KillStreak | KillStreak: 2=Double … 5=Penta |
 | `Ace` | EventTime, Acer, AcingTeam | |
-| `GameEnd` | EventTime, Result | Not reliable; ignored for stop detection and win/loss |
+| `GameEnd` | EventTime, Result | Not reliable; ignored for stop detection and match result |
 
-> **`GameEnd` and win/loss:** `GameEnd` is optional telemetry, not a lifecycle signal. It is commonly absent when the player exits shortly before the Victory/Defeat screen. The recorder stores it if observed but never depends on it. Three consecutive API failures end only the affected polling task; the League process watcher remains the sole video-stop trigger. Win/loss comes from Match V5 `GAME_END`; without enrichment it remains `null` with `win_method: "unknown"`.
+> **`GameEnd`:** `GameEnd` is optional telemetry, not a lifecycle signal. It is commonly absent when the player exits shortly before the Victory/Defeat screen. The recorder stores it if observed but never depends on it. Three consecutive API failures end only the affected polling task; the League process watcher remains the sole video-stop trigger. The app does not infer a match result from this event.
 
 **Item and level changes are NOT named events.** They are state fields in `/allgamedata` snapshots and are detected by diffing consecutive snapshots:
 
@@ -148,63 +144,13 @@ Both endpoints expose a cumulative event list. A shared `EventID` set deduplicat
 | Item sold | Item disappears from player's items array | Snapshot interval (~10s) |
 | Level up | Player's level field increases | Snapshot interval (~10s) |
 
-This means **build order timestamps from the Live Client API are approximate** — accurate to within the snapshot interval. Exact timestamps require Match V5 (see Section 3.3).
+This means **build order timestamps from the Live Client API are approximate** — accurate to within the snapshot interval.
 
 Viego possession can temporarily replace his items with the possessed champion's items. Those transitions remain ordinary approximate snapshot changes in Phase 2; no champion-specific correction heuristic is applied.
 
 **Snapshots from `/allgamedata` (every 10s):** champion, team, CS, level, and items for every player. Current gold and current/max HP are exposed only for the active local player, so those fields are `null` for everyone else. XP is not exposed and is not stored. Summoner spells and keystone are stored for all players on the first snapshot; the full rune ID list is available only for the local player.
 
-### 3.3 Match V5 Timeline API (Optional Enrichment)
-
-**Base URL:** `https://{region}.api.riotgames.com/lol/match/v5/`
-
-Fetched once, post-game, by the app on launch if a Riot ID is configured in settings. The result is merged into the game bundle and cached — the API is never called twice for the same game.
-
-**Fetch sequence:**
-```
-1. GET /riot/account/v1/accounts/by-riot-id/{gameName}/{tagLine}  → PUUID
-2. GET /lol/match/v5/matches/by-puuid/{puuid}/ids?count=1         → latest match ID
-3. GET /lol/match/v5/matches/{matchId}                            → match result + per-player stats
-4. GET /lol/match/v5/matches/{matchId}/timeline                   → full event timeline
-```
-
-**What Match V5 uniquely provides** (not available from Live Client API):
-
-| Data | Source | Used for |
-|---|---|---|
-| `totalDamageDealtToChampions` | Match result | Recap stats tab |
-| `totalDamageTaken` | Match result | Recap stats tab |
-| `totalHealsOnTeammates` | Match result | Recap stats tab |
-| `totalDamageShieldedOnTeammates` | Match result | Recap stats tab |
-| `visionScore` | Match result | Recap stats tab |
-| `wardsPlaced` / `wardsKilled` | Match result | Recap stats tab |
-| `totalTimeCCDealt` | Match result | Recap stats tab |
-| `totalTimeSpentDead` | Match result | Recap stats tab |
-| `objectivesStolen` | Match result | Recap stats tab |
-| `participantFrames.totalGold` / `currentGold` / `xp` | Timeline | Team gold graph and complete per-player timeline |
-| `ITEM_PURCHASED` events with exact timestamps | Timeline | Exact build order |
-| `ITEM_UNDO` events | Timeline | Accurate build history |
-| `SKILL_LEVEL_UP` events for all players | Timeline | Skill order for all 10 players |
-| `victimDamageReceived[]` timestamps per kill | Timeline | Exact fight-start for clip auto-positioning |
-| `GAME_END` event with `winningTeam` | Timeline | Definitive win/loss |
-| `DRAGON_SOUL_GIVEN` event | Timeline | Dragon soul in objective timeline |
-| `TURRET_PLATE_DESTROYED` events | Timeline | Plate gold in objective timeline |
-
-**API key progression:**
-
-| Phase | Key type | User friction | Rate limit |
-|---|---|---|---|
-| Development | Personal dev key (free, instant) | User enters key in settings. Key expires every 24h. | 20 req/s |
-| Early distribution | Production key (your key, server-side) | User enters Riot ID only. App calls your backend. | Higher, permanent |
-| Scaled distribution | RSO (per-user OAuth) | "Connect with Riot" button — no manual input | Per-user |
-
-The app backend (thin server, one endpoint) holds the production key. The distributed binary never contains a key. See Section 7 for compliance notes.
-
-**Graceful degradation:** see Section 3.5.
-
----
-
-### 3.4 Data Dragon (Static Data)
+### 3.3 Data Dragon (Static Data)
 
 **Base URL:** `https://ddragon.leagueoflegends.com/`
 
@@ -222,31 +168,11 @@ Free Riot CDN, no authentication required. Used to resolve item IDs and champion
 - `GET /cdn/{version}/data/en_US/champion.json` — maps champion key → name, icon path
 - Icons: `GET /cdn/{version}/img/item/{itemId}.png` — fetched on demand, cached locally
 
-The app never shows raw item IDs to the user. Every item ID from the Live Client API or Match V5 is resolved through this cache before display.
+The app never shows raw item IDs to the user. Every item ID from the Live Client API is resolved through this cache before display.
 
 ---
 
-### 3.5 Degradation Map (Without Match V5)
-
-When Match V5 data is unavailable (no Riot ID configured, or API call failed), the app degrades as follows:
-
-| Feature | With Match V5 | Without Match V5 |
-|---|---|---|
-| Damage dealt / taken / healing columns | Shown | Hidden (not shown as empty) |
-| Vision score | Shown | Hidden |
-| Ward stats | Shown | Hidden |
-| CC score / time dead | Shown | Hidden |
-| Team gold graph and gold differential | Shown from timeline frames | Hidden; Live Client exposes only local-player current gold |
-| Item build order timestamps | Exact (ms precision) | Approximate (±10s from snapshot) |
-| Skill order | All 10 players | Unavailable |
-| Clip auto-positioning | Exact fight start from `victimDamageReceived` | Heuristic — see `APP-VIEWER.md` §11.1 |
-| Win/loss | Definitive from `GAME_END` | Unknown (`null`) |
-
-**UI treatment:** a non-blocking banner at the top of the Stats tab reads: *"Connect your Riot account to unlock team gold, damage stats, vision score, and precise build timings. [Connect →]"* Features backed by unavailable data are hidden rather than populated with estimates.
-
----
-
-### 3.6 Timestamp Sync
+### 3.4 Timestamp Sync
 
 The video recording starts when `League of Legends.exe` is detected — this includes the loading screen, typically 2–4 minutes before in-game clock 0:00.
 
@@ -280,7 +206,7 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 
 `GameStart` is still written to the event log, but the time at which it is first observed is never used for synchronization. Event lists are cumulative and may expose `GameStart` after the game clock has already advanced. In the 2026-07-30 capture, `GameStart.EventTime` was `0.0095s` but the event was first observed at `gameTime = 2.1195s`; arrival-time anchoring would have made every marker about 2.11 seconds late. Later full-game tests showed why validity alone is also insufficient: `/allgamedata` was already responsive during loading with `gameTime` frozen near 18ms. Advancing-clock calibration distinguishes loading from gameplay and places game clock zero correctly in the video.
 
-### 3.7 `game_log.json` Schema
+### 3.5 `game_log.json` Schema
 
 ```json
 {
@@ -333,8 +259,7 @@ The video recording starts when `League of Legends.exe` is detected — this inc
       "item_id": 3006,
       "video_time_ms": 362000
     }
-  ],
-  "matchv5": null
+  ]
 }
 ```
 
@@ -344,11 +269,9 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 
 `video_time_ms` is pre-computed on each event and snapshot-derived change at write time.
 
-`matchv5` is `null` until enrichment is fetched post-game. When populated it contains the merged Match V5 match result and timeline data. The app reads this field to populate damage/vision columns, team gold, complete rune pages, and exact item timestamps.
-
 `snapshot_derived_changes` records item purchases, sales, and level-ups detected by diffing consecutive snapshots. Timestamps are approximate (±10s). Valid `change_type` values: `"ItemPurchased"`, `"ItemSold"`, `"LevelUp"`.
 
-### 3.8 `metadata.json` Schema
+### 3.6 `metadata.json` Schema
 
 ```json
 {
@@ -364,9 +287,6 @@ The video recording starts when `League of Legends.exe` is detected — this inc
   "recording_profile": "high",
   "recording_resolution": "1920x1080",
   "recording_fps": 60,
-  "win": null,
-  "win_method": "unknown",
-  "matchv5_fetched": false,
   "saved": false
 }
 ```
@@ -375,11 +295,7 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 profile used for this file (`"very_low"`, `"low"`, `"medium"`, `"high"`, or
 `"very_high"`); it is never `"auto"` in metadata.
 
-`win_method` values: `"matchv5"` (Match V5 `GAME_END`), `"derived"` (reserved for a future verified fallback), `"unknown"`. No result is inferred from unavailable or estimated data.
-
-If the Live Client API never becomes available, `game_mode`, the three `local_player_*` fields, and `video_offset_ms` are `null`; the video bundle is still finalized normally. Phase 2 itself always writes `win: null` with `win_method: "unknown"`.
-
-`matchv5_fetched: false` = app should attempt to fetch on next launch if Riot ID is configured.
+If the Live Client API never becomes available, `game_mode`, the three `local_player_*` fields, and `video_offset_ms` are `null`; the video bundle is still finalized normally.
 
 `saved: false` = eligible for auto-deletion. All clips have `saved: true` by default.
 
@@ -393,8 +309,8 @@ If the Live Client API never becomes available, `game_mode`, the three `local_pl
 ├── games/
 │   ├── {unix_timestamp}/               ← one directory per game
 │   │   ├── video.mp4                   ← hardware-encoded recording
-│   │   ├── game_log.json               ← events, snapshots, snapshot-derived changes, matchv5 field
-│   │   └── metadata.json              ← champion, mode, duration, offset, win, matchv5_fetched, saved
+│   │   ├── game_log.json               ← events, snapshots, snapshot-derived changes
+│   │   └── metadata.json              ← champion, mode, duration, offset, recording details, saved
 │   │
 │   └── {unix_timestamp}/
 │       └── ...
@@ -485,21 +401,16 @@ macOS requires notarization (Apple Developer account, $99/yr) for distribution.
 ### Vanguard Anti-Cheat
 Architecturally identical to OBS, Medal, and Nvidia ShadowPlay — all Vanguard-compatible. No injection, no kernel drivers, standard OS APIs only.
 
-### API Keys
-The Live Client Data API requires no key. The Riot Match V5 API requires a key if used — the key is never bundled in the distributed binary. It is held server-side (production key phase) or entered by the user (dev key phase). See Section 3.3 for the key progression plan.
-
----
-
 ## 8. Known Limitations
 
 | Limitation | Notes |
 |---|---|
 | No spell cast data | Riot API does not expose this at any granularity. Video fills the gap. |
 | No skillshot dodge detection | Riot tracks challenge totals, not per-game events. |
-| Live Client gold/HP is local-player-only | Non-local values are stored as `null`; team gold and XP timelines require Match V5. |
-| No minimap heatmaps | Not in Live Client API or Match V5. Possible future addition if Riot exposes it. |
-| Damage stats require Match V5 | Not available from Live Client API. App degrades gracefully without them. |
-| Item timestamps approximate without Match V5 | Live Client API snapshots at 10s — exact timestamps need Match V5 post-game. |
+| Live Client gold/HP is local-player-only | Non-local values are stored as `null`; no team-gold or XP timeline is shown. |
+| No minimap heatmaps | The local data source does not expose them. |
+| No damage or vision totals | The local data source does not expose them. |
+| Item timestamps are approximate | Snapshot-derived changes are accurate to the 10s polling interval. |
 | Live Client API dies with game | Entire polling architecture exists for this reason. |
 
 ---
@@ -511,11 +422,10 @@ The Live Client Data API requires no key. The Riot Match V5 API requires a key i
 | Auto-delete duration | 30 days | Balances storage vs accessibility |
 | Multi-monitor capture | Auto-detect League window | Avoids user configuration |
 | Share mechanism | Open file in Finder/Explorer | User drags to Discord/Twitter |
-| Clip pre/post-roll | Kill-type dependent (see `APP-VIEWER.md` §11.1) | Solo kills need less context than teamfights |
+| Clip pre/post-roll | Kill-type dependent (see `APP-VIEWER.md` §10.1) | Solo kills need less context than teamfights |
 | Default recording profile | Auto-detected | Short hardware encode benchmark selects up to `high`; storage-heavy `very_high` remains an explicit override |
 | Default recording codec | Auto | HEVC only when hardware encoding and app playback/seeking are both known to work; H.264 fallback |
 | App frontend | Tauri 2 + SolidJS + TypeScript + Vite + plain CSS | Fine-grained DOM updates and direct media-element access without a bundled browser or general UI framework stack |
-| Match V5 enrichment | Optional, off by default | Requires Riot ID — zero friction for users who don't want it |
 
 ---
 
@@ -523,9 +433,6 @@ The Live Client Data API requires no key. The Riot Match V5 API requires a key i
 
 ### `.rofl` Replay Files
 Rejected: expire after ~2 patches (~4 weeks); low quality; custom viewer requires client hooking (ToS risk) or format reverse engineering (legal grey area).
-
-### Riot Match V5 as Primary / Live Data Source
-Rejected as a live data source: unavailable during the game; requires credentials; 1-minute granularity too coarse for event timeline. **Accepted as an optional post-game enrichment source** — see Section 3.3.
 
 ### Electron
 Rejected: ~150MB bundle, ~300MB RAM at idle. Contradicts performance focus. Tauri provides identical DX with ~3–10MB bundle.

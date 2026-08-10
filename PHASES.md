@@ -1,366 +1,258 @@
 # PHASES.md — Build Order & Validation
 
-> **How to use this document:** Work through phases in order. Do not start a phase until the previous phase's validation criteria are met. Each phase lists which documents to open alongside `SPEC.md` when working with an AI. The AI prompt template is at the end of this document.
+> This is the standalone project roadmap. `SPEC.md` owns shared architecture and data contracts; the module documents own detailed behavior. A phase is complete only after its validation has passed. Superseded development schemas and code paths are deleted rather than migrated.
 
 ---
 
 ## Phase Overview
 
-| # | Name | Process | Documents needed |
+| # | Milestone | Status | Outcome |
 |---|---|---|---|
-| 1 | Recorder Core | Recorder | `SPEC.md` + `RECORDER.md` |
-| 2 | Live Client Poller | Recorder | `SPEC.md` + `RECORDER.md` §5 |
-| 3 | App Shell + Library | App | `SPEC.md` + `APP-LIBRARY.md` |
-| 4 | Viewer — Windowed Mode | App | `SPEC.md` + `APP-VIEWER.md` §1–3 |
-| 5 | Viewer — Fullscreen Overlays | App | `SPEC.md` + `APP-VIEWER.md` §4–12 |
-| 6 | Viewer — Stats Tab (deferred) | App | `SPEC.md` + `APP-VIEWER.md` §15 |
-| 7 | Clip Creator + Exporter | App | `SPEC.md` + `APP-CLIP.md` + `APP-VIEWER.md` §11 |
-| 8 | Match V5 Enrichment | App | `SPEC.md` §3.3–3.5 + `APP-VIEWER.md` §15 + `APP-LIBRARY.md` §5.4 |
-| 9 | Polish + Distribution | Both | `SPEC.md` + `APP-LIBRARY.md` §5–6 |
+| 1 | Recorder Core | Complete | League launch and close produce a playable, crash-tolerant video |
+| 2 | Live Client Poller | Complete | Events and player snapshots are synchronized to video |
+| 3 | App Shell + Library | Complete | Recorded games can be browsed and played |
+| 4 | Viewer — Windowed Mode | Complete | Replay, timeline, filters, and player state work together |
+| 5 | Viewer — Fullscreen Overlays | Complete | The replay has responsive fullscreen controls and overlays |
+| 6 | Viewer — Stats Tab | Deferred | Reconsider only if a local-data scoreboard proves useful |
+| 7 | Clip Creator + Exporter | Complete | Publishable Discord, horizontal, and vertical clips can be exported |
+| 8 | Windows Self-Contained Beta | Next | A clean Windows PC can install and use the complete local workflow |
+| 9 | Public Distribution | Later | Signed, updateable Windows/macOS releases are ready for general users |
+
+Phase 6 is not a prerequisite for Phases 7–9.
 
 ---
 
 ## Phase 1 — Recorder Core
 
-**Goal:** Game starts → recording starts → game ends → playable video saved on disk.
+**Status:** Complete.
+
+**Goal:** Game starts → recording starts → game closes → playable video is saved.
 
 **Documents:** `SPEC.md` + `RECORDER.md`
 
-**Scope:**
-- Process watcher (detects League launch and close)
-- ffmpeg spawn with hardware encoding (NVENC / AMF / QSV / VideoToolbox), unified recording profiles, and H.264/HEVC capability probing
-- Direct fragmented MP4 recording with two-second keyframe fragments
-- Crash-tolerant output: completed fragments remain playable after interruption
-- Video-only output: the game directory contains exactly `video.mp4`; no post-game remux
-- System tray icon: idle (grey) and recording (red) states
+**Delivered:**
 
-Phase 1 does not connect to the League Client or Live Client APIs and does not create
-`metadata.json`, `game_log.json`, or any temporary metadata file.
+- Two-second League process watcher
+- Background ffmpeg capture with hardware H.264/HEVC capability selection
+- Unified recording quality profiles
+- Direct fragmented MP4 output with no post-game remux
+- Crash-tolerant `video.mp4`
+- Grey idle and red recording tray states
+- No visible ffmpeg console window
 
-**Entry conditions:**
-- Rust toolchain installed (`rustup`)
-- ffmpeg binary available at a known path (system-installed is fine at this phase; bundled in Phase 9)
-- A GPU with hardware encoding available
-
-**Validation:**
-1. Launch the recorder binary — tray icon appears (grey)
-   - `--diagnose` reports the concrete encoder, codec, and profile selected from the configured preferences
-2. Launch League of Legends — tray icon turns red
-   - ffmpeg starts in the background without opening a terminal window
-3. Play through the loading screen and at least 5 minutes of a game
-4. Close League (or surrender) — tray icon returns to grey
-5. Check `~/LeagueReplays/games/{timestamp}/`:
-   - `video.mp4` exists and is playable in VLC
-   - `video.mp4` is the only file in the completed game directory
-   - the tray returns to grey without a full-file conversion or system-wide I/O stall
-6. Repeat with an unexpected League crash — `video.mp4` remains playable up to its last
-   completed fragment (at most approximately two seconds may be lost)
-
-**Complete when:** a completed game directory consistently contains only a playable
-`video.mp4`, game-end finalization is effectively immediate, and interrupted recordings
-remain playable up to their last completed fragment.
+**Passed when:** completed and interrupted games both leave immediately playable video without a long game-end freeze.
 
 ---
 
 ## Phase 2 — Live Client Poller
 
-**Goal:** `game_log.json` is fully populated with events, snapshots, and snapshot-derived changes, all time-synced to the video.
+**Status:** Complete.
+
+**Goal:** Events, snapshots, and snapshot-derived changes are synchronized to the recording.
 
 **Documents:** `SPEC.md` + `RECORDER.md` §5
 
-**Scope:**
-- Pre-game `/gamestats` calibration poller (accept five strictly advancing, clock-consistent `gameTime` samples and calculate `video_offset_ms`)
-- Post-calibration **two concurrent async tasks**:
-  - Event Loop: 1s polling of cumulative `/eventdata`
-  - Snapshot Loop: 10s polling of `/allgamedata`, appends snapshots, recovers events by shared `EventID`, and diffs consecutive snapshots to detect item changes and level-ups
-- Three consecutive API failures, one second apart, end only the affected polling loop; any success resets its counter
-- `game_log.json` written incrementally (atomic write after every batch)
-- `metadata.json` written when the League game process closes, using data collected by the poller
-- `video_time_ms` pre-computed on all events and snapshot-derived changes at write time
-- Recorder writes `win: null` and `win_method: "unknown"`; post-game Match V5 enrichment resolves the result
-- The process watcher remains the only video stop trigger; neither `GameEnd` nor a Live Client API connection failure stops recording
-- Aggregate request, latency, capture-count, log-size, failure, and slowest-write diagnostics emitted when polling stops
+**Delivered:**
 
-**Entry conditions:**
-- Phase 1 complete and validated
+- `/gamestats` calibration accepts five strictly advancing, clock-consistent `gameTime` samples
+- Cumulative `/eventdata` polling every second
+- `/allgamedata` snapshots every ten seconds, including shared event recovery
+- Item and level changes derived from consecutive snapshots
+- Atomic incremental `game_log.json` writes
+- Final `metadata.json` with recording, local-player, and clock-offset details
+- `video_time_ms` precomputed for events and derived changes
+- Independent polling failure handling and aggregate diagnostics
 
-**Empirical decision — 2026-07-30:**
-> The Live Client API became unavailable without a reliable `GameEnd`; the recorder must not use that event for stopping or win/loss. `GameStart` existed, but was first observed about 2.11 seconds after its own `EventTime`, so event arrival time must not be the video anchor. Later games showed the API responding during loading with `gameTime` frozen near 18ms, so a merely valid clock is not a start signal either. Synchronize only after five strictly advancing samples agree with monotonic time; the median of their `response_received_monotonic - gameTime` candidates is the video offset.
->
-> The same tests confirmed `FirstBlood` and `HordeKill` events, and that `GameEnd` is especially likely to be absent when the player exits before the Victory/Defeat screen. The cumulative event list makes 1s polling sufficient; `/allgamedata` provides a second recovery path. `allPlayers` does not expose per-player gold, HP, XP, or full rune selections. Gold and HP are populated only for the active local player and are `null` for everyone else; XP is omitted; full rune IDs are local-player-only. Team gold requires Match V5 and is never estimated.
+**Empirical decisions:**
 
-**Validation:**
-1. Play a game lasting at least 25 minutes, ideally to completion
-2. Inspect `game_log.json`:
-   - `game_start_video_offset_ms` is present, positive, and approximately matches the loading-screen duration visible in the video
-   - `snapshots` has one entry every ~10 seconds
-   - `events` contains kill events with `video_time_ms` values
-   - `snapshot_derived_changes` contains item purchases with approximate timestamps
-   - non-local `gold`, `hp`, and `hp_max` values are `null`, not fabricated
-3. Cross-check markers from the early, middle, and late game: seek `video.mp4` to `video_time_ms / 1000` — each event should occur within ~2 seconds
-4. Record game FPS near 5, 15, and 25 minutes and confirm polling does not cause progressive degradation
-5. On game exit, confirm there is no multi-second PC freeze and the tray returns to grey normally
-6. Kill the recorder mid-game — confirm `game_log.json` on disk has all events up to the last write
-7. Check the completed directory contains `video.mp4`, `game_log.json`, and `metadata.json`; metadata has `win: null`, `win_method: "unknown"`, and `matchv5_fetched: false`
+- `GameStart` arrival time is not a synchronization anchor.
+- API responsiveness is not a start signal because `gameTime` can remain frozen during loading.
+- `GameEnd` is optional telemetry and is never used to stop video or infer a result.
+- The League game process remains the sole video lifecycle signal.
+- Cumulative events make one-second polling sufficient; faster polling adds load without preventing missed events.
+- Non-local gold and HP are unavailable and remain `null`; XP is omitted. No team-gold timeline is fabricated.
 
-**Complete when:** early-, mid-, and late-game event markers are accurate to within 2 seconds, the event and snapshot logs remain complete, and a 25-minute game shows neither polling-related progressive FPS loss nor a multi-second exit freeze.
+**Passed when:** early-, middle-, and late-game markers land within roughly two seconds, logs remain complete, and a long game shows no polling-related progressive slowdown or exit freeze.
 
 ---
 
 ## Phase 3 — App Shell + Library
 
-**Goal:** App launches, shows the Games and Clips tabs, opens a game, plays video.
+**Status:** Complete.
+
+**Goal:** The app opens recorded games and exported clips through a lightweight desktop library.
 
 **Documents:** `SPEC.md` + `APP-LIBRARY.md` + `APP-VIEWER.md` §3
 
-**Scope:**
-- Tauri v2 scaffolding (SolidJS + TypeScript + Vite + plain CSS)
-- Root-level two-tab navigation: Games tab + Clips tab
-- Rust backend: `list_games` command (scans `/games/`, derives KDA from events, returns `GameSummary[]`)
-- Rust local HTTP server: streams `video.mp4` with range request support
-- Games tab: grid of cards from `GameSummary[]`, save/unsave toggle, delete with confirmation
-- Clips tab: grid of clip cards with thumbnail, duration, source game info
-- Basic Viewer screen: one persistent `<video>` element and back button — no product overlays yet
-- Playback foundation: `requestVideoFrameCallback` clock with fallback, precomputed marker indexes, and built-in seek/memory/dropped-frame diagnostics
-- One-time HEVC webview capability check: play and seek a bundled/local test MP4, then write `app.hevc_playback_supported` to shared config; failure records `false` and keeps recorder auto mode on H.264
-- Auto-delete job on launch
-- Settings screen: output path + auto-delete duration (minimum viable — full settings in Phase 9)
-- Data Dragon initialisation: on launch, check patch version and fetch/update item + champion cache
+**Delivered:**
 
-**Entry conditions:**
-- Phase 2 complete and validated
-- At least 3 game bundles on disk for library testing
+- Tauri 2 + SolidJS + TypeScript + Vite + plain CSS shell
+- Games and Clips tabs
+- Filesystem-derived library; no database
+- Save, delete, and retention controls
+- One persistent HTML video element served by a local byte-range server
+- Responsive seeking for multi-gigabyte recordings
+- Presented-frame playback clock and diagnostics
+- One-time HEVC playback/seek capability check with H.264 fallback
+- Data Dragon cache for champion and item presentation
 
-**Validation:**
-1. `npm run tauri dev` launches without errors
-2. Games tab shows all recorded games with correct champion, KDA, duration, date, and a win/loss badge only when the result is known
-3. Clicking a game card navigates to the viewer — video plays and is seekable
-4. A multi-gigabyte real recording plays through range requests without memory scaling with file size; rapid seeks remain responsive and playback diagnostics show no UI-induced progressive frame loss
-   - HEVC capability result matches real playback and seeking; a failed test leaves existing H.264 playback unaffected
-5. Clips tab renders correctly (place a test `.mp4` and matching `.jpg` sidecar manually into `{output_path}/clips/` to verify the tab displays the card with thumbnail — actual clip export with automatic sidecar generation is built in Phase 7)
-6. Auto-delete removes games older than threshold (manually backdate `recorded_at` to test)
-7. Data Dragon cache is written to disk — item IDs resolve to names in the browser console
-
-**Complete when:** both library tabs work, large-file video playback and seeking remain smooth in the real webview, and Data Dragon is initialised.
+**Passed when:** real recordings can be browsed, played, and rapidly sought without memory scaling with file size or UI-induced progressive frame loss.
 
 ---
 
 ## Phase 4 — Viewer: Windowed Mode
 
-**Goal:** The default viewer layout — windowed, panels always visible, video + data side by side.
+**Status:** Complete.
+
+**Goal:** Video, synchronized state, and navigation remain visible and responsive in the default viewer.
 
 **Documents:** `SPEC.md` + `APP-VIEWER.md` §1–3
 
-**Scope:**
-- One Replay surface; no separate Events list and no placeholder for the deferred Stats tab
-- Windowed layout: video ~60% width, stats panel alongside, scrubber below
-- Stats panel: champion, KDA, CS, level — driven by the presented-frame clock; gold differential remains hidden until Match V5 data exists
-- Scrubber: rail, fill, playhead tracking `currentTime`, event markers positioned by `video_time_ms`, clicking rail or marker seeks
-- Controls row: play/pause button, time readout, fullscreen toggle button (fullscreen mode built in Phase 5)
-- Champion filter panel: all ten allies/enemies from the Live Client roster; multi-selection filters scrubber markers without changing playback
-- USG aesthetic throughout (Barlow Condensed + DM Mono, `#002FA7` blue)
+**Delivered:**
 
-**Entry conditions:**
-- Phase 3 complete and validated
+- Windowed replay surface with video, player state, timeline, and controls
+- Timeline markers positioned by `video_time_ms`
+- Click-to-seek rail and markers
+- Presented-frame champion, KDA, CS, and level state
+- Multi-select allied and enemy champion filtering
+- Purpose-built modern visual system without a UI component framework
 
-**Validation:**
-1. Opening a game shows the windowed layout — video and panels visible simultaneously
-2. Scrubber playhead tracks video in real time
-3. Clicking the rail seeks correctly; clicking an event marker seeks to within 1 second of the event
-4. Stats panel values update as the video plays (CS and level changes over time)
-5. Selecting allied and enemy champions filters the scrubber to events involving those players; `ALL` restores every marker
-6. UI matches the documented USG aesthetic reference
-
-**Complete when:** windowed viewer is fully functional and the aesthetic is consistent.
+**Passed when:** playback, seeking, state updates, and filters behave correctly across real recordings.
 
 ---
 
 ## Phase 5 — Viewer: Fullscreen Overlays
 
-**Goal:** Fullscreen mode is fully functional with all overlay elements.
+**Status:** Complete.
 
-**Documents:** `SPEC.md` + `APP-VIEWER.md` §2.2, §4–12, §14
+**Goal:** Fullscreen replay navigation feels immediate while preserving the same playback state.
 
-**Scope:**
-- Fullscreen toggle: double-click video or F key → fills window, panels disappear, overlays appear
-- Escape or F → returns to windowed mode, state preserved
-- Top bar: champion, KDA, clock, REC indicator, plus gold diff when Match V5 timeline data exists — fades after 3.2s idle, reappears on mouse move
-- Scrubber: ambient (44px) and active (96px) states, minute ticks, event markers
-- Gold graph drawer: built against a Match V5 fixture, slides up from bottom, and remains absent for unenriched games
-- Floating event card: animates in/out on event proximity, 3.5s auto-dismiss
-- Right champion rail: always visible, all ten allied/enemy champions plus `ALL`; shares filter state with windowed mode
+**Documents:** `SPEC.md` + `APP-VIEWER.md` §2.2 and §4–13
 
-**Entry conditions:**
-- Phase 4 complete and validated
+**Delivered:**
 
-**Validation:**
-1. Double-clicking video enters fullscreen — video fills window, panels gone, overlays present
-2. Escape returns to windowed mode — playhead position preserved
-3. Top bar fades after 3.2s, reappears instantly on mouse move
-4. Scrubber ambient/active transition works on hover
-5. With a Match V5 fixture, the gold graph opens and closes and its cursor tracks the playhead; without the fixture no gold control is shown
-6. Event card animates in when playhead is within ~1 second of a kill, auto-dismisses after 3.5s
-7. Selecting one or more allied/enemy champions shows only timeline events involving any selected player
-8. Filter selection survives windowed/fullscreen transitions; `ALL` restores the complete marker set without seeking or pausing
+- Fullscreen toggle without remounting the video element
+- Idle-fading top bar and responsive controls
+- Ambient and active timeline states
+- Floating event card
+- Ten-player champion filter rail shared with windowed mode
+- Preserved playhead and filter state between layouts
 
-**Complete when:** all overlay elements behave as specified in `APP-VIEWER.md` §14 state summary table.
+**Passed when:** fullscreen transitions, overlays, markers, and filters work without seeking, pausing, or losing state unexpectedly.
 
 ---
 
 ## Phase 6 — Viewer: Stats Tab
 
-**Status:** Deferred. It is not a prerequisite for Phase 7 and the current app does not
-render an empty Stats tab or placeholder.
+**Status:** Deferred indefinitely. It is not required by any current milestone, and the app renders no empty Stats tab or placeholder.
 
-**Goal:** The Stats tab shows a complete end-of-game scoreboard for all 10 players.
+**Reason:** The local game source can support a modest scoreboard, but it cannot truthfully provide a final result, team gold, damage totals, vision totals, complete skill order, or complete rune pages for every player. That limited view is not currently valuable enough to justify another product surface.
 
-**Documents:** `SPEC.md` + `APP-VIEWER.md` §15
-
-**Scope:**
-- Stats tab renders scoreboard: two teams, 5 players each
-- Collapsed row: champion icon, summoner spells, keystone, KDA, kill participation, CS, level, items (resolved via Data Dragon); gold is hidden until Match V5 enrichment
-- Multi-kill badge on row if applicable
-- Expanded row (accordion): item build order with approximate timestamps (from `snapshot_derived_changes`) and the local player's full rune page; skill order and all players' full rune pages arrive in Phase 8
-- Team aggregates bar: total kills and objectives; total gold appears after Match V5 enrichment
-- Local player row highlighted
-- Win/loss header per team
-- Graceful state when `win: null` — show "Result unknown" rather than Win/Loss
-
-**Entry conditions:**
-- Phase 5 complete and validated
-- Data Dragon cache working (from Phase 3)
-
-**Validation:**
-1. Stats tab renders for every game in the library
-2. All 10 players shown with correct champion icons (resolved via Data Dragon)
-3. Items display correctly — IDs resolved to icons, not raw numbers
-4. Clicking any player row expands it; clicking again collapses it; only one row open at a time
-5. Build order shows items in the correct purchase sequence with approximate timestamps
-6. Skill order is clearly unavailable until Match V5 enrichment
-7. Team aggregates are correct
-
-**Complete when:** Stats tab is accurate and all players' data is readable without Match V5.
+**If reconsidered:** define the user problem first. Keep the implementation local-only and restrict it to data already stored in game bundles, such as champion, KDA, CS, level, items, objectives, and approximate build order.
 
 ---
 
 ## Phase 7 — Clip Creator + Exporter
 
-**Goal:** User can create a clip, add music, export a valid MP4, and find it in the Clips tab.
+**Status:** Complete and passed at annotated tag `phase-7` (`0fc8f7e`).
 
-**Documents:** `SPEC.md` + `APP-CLIP.md` + `APP-VIEWER.md` §11
+**Goal:** A replay moment can become a small, publishable clip and appear in the Clips library.
 
-**Scope:**
-- Clip mode activation: clicking a kill marker or the Clip button on the scrubber (works in both windowed and fullscreen modes)
-- Smart auto-positioning: heuristic mode (solo kill / teamfight / multikill / penta pre/post-roll windows) — see `APP-VIEWER.md` §11.1
-- Draggable endpoint handles with 5-second minimum and event snapping
-- "Export Clip →" navigates to Clip Exporter screen
-- Publishing presets: Discord (<10 MB), Horizontal (16:9), and Vertical (9:16)
-- Vertical hybrid reframe: blurred full-frame context plus adjustable sharp action crop
-- Music selection: No music / built-in library / import file
-- Music looping: short tracks loop to fill the clip duration (never cut clip short)
-- Audio mix sliders (game audio + music volume)
-- ffmpeg export pipeline: always re-encode H.264/AAC with hardware preference and `libx264` fallback
-- Discord bitrate budgeting, final-size verification, and one corrective retry
-- Thumbnail sidecar (`.jpg`) generated immediately after each export
-- Export progress via Tauri events
-- Post-export: "Open in Finder" + "Copy path" actions
-- Exported clip and sidecar appear in Clips tab
+**Documents:** `SPEC.md` + `APP-CLIP.md` + `APP-VIEWER.md` §10
 
-**Entry conditions:**
-- Phase 5 complete and validated; deferred Phase 6 is not required
-- At least one bundled music track in `resources/music/`
+**Delivered:**
 
-**Validation:**
-1. Clicking a kill marker activates clip mode with correct heuristic window (solo kill: 8s pre / 5s post; test others)
-2. Clip mode works correctly from both windowed and fullscreen viewer modes
-3. Endpoint handles are draggable; 5-second minimum enforced
-4. Export with a music track shorter than the clip — confirm clip is NOT truncated (music loops)
-5. Export both an H.264 and HEVC recording — both outputs probe as H.264/AAC MP4
-6. Discord output is strictly below 10,000,000 bytes and plays after drag-and-drop
-7. Horizontal output retains a 16:9 publishable frame; Vertical output is 1080×1920 and its framing/focus controls match the preview
-8. Export with music shorter than the clip — game audio + looped music last for the full clip
-9. `.jpg` sidecar is created alongside the `.mp4` only after a successful export
-10. Exported clip appears in Clips tab with correct thumbnail, duration, and source game info
+- Clip selection from kill markers or the timeline clip action
+- Heuristic kill-type pre/post-roll windows
+- Draggable endpoints, five-second minimum, and event snapping
+- Discord preset with strict sub-10,000,000-byte verification and corrective retry
+- Horizontal 16:9 and vertical 9:16 publishing presets
+- Vertical blurred-context layout with adjustable sharp action crop
+- No music, bundled music, and imported music workflows
+- Looping music plus separate game/music volume controls
+- H.264/AAC MP4 re-encode with hardware preference and software fallback
+- Thumbnail sidecar and Clips-library integration
+- Export progress and post-export file actions
 
-**Complete when:** a clip can be exported, shared externally, and found in the Clips tab.
+**Passed when:** H.264 and HEVC source recordings export playable Discord, horizontal, and vertical H.264/AAC clips with correct duration, framing, audio, size, thumbnail, and library metadata.
 
 ---
 
-## Phase 8 — Match V5 Enrichment
+## Phase 8 — Windows Self-Contained Beta
 
-**Goal:** Match V5 data is fetched post-game, merged into the bundle, and upgrades the Stats tab and clip positioning.
+**Status:** Next.
 
-**Documents:** `SPEC.md` §3.3–3.5 + `APP-VIEWER.md` §11.1, §15 + `APP-LIBRARY.md` §5.4
+**Goal:** A user on a clean Windows machine can install the product, leave the recorder running, play a game, review it, and export a clip without installing ffmpeg, Rust, Node, or any developer tool.
+
+**Documents:** `SPEC.md` + `RECORDER.md` + `APP-LIBRARY.md` §5–6 + `APP-CLIP.md`
 
 **Scope:**
-- Settings: Riot ID field + API key field (dev key phase)
-- Background enrichment on app launch: for every game with `matchv5_fetched: false`, fetch Match V5 match result + timeline and merge into `game_log.json` under the `matchv5` key (see `SPEC.md` §3.7)
-- Set `metadata.json` `matchv5_fetched: true` on success; leave `false` and log error on failure
-- Stats and Replay tabs upgrade when Match V5 data is present: team gold graph/differential, per-player and team gold, damage dealt/taken, vision score, ward stats, CC score, time dead, exact item timestamps, full rune pages, and skill order for all players
-- Win/loss resolved from Match V5 `GAME_END` event for games where `win_method: "unknown"`
-- Clip auto-positioning upgrades to precise mode: `victimDamageReceived` timestamps for exact fight start
-- "Enriched" badge on game card in library when `matchv5_fetched: true`
-- Degradation banner in Stats tab when `matchv5_fetched: false`
+
+- Bundle `recorder.exe`, `ffmpeg.exe`, and `ffprobe.exe` as Windows application resources
+- Give the app and recorder one explicit packaged-tool path contract; remove dependence on system `PATH`
+- Start exactly one background recorder instance from the installed app, with no console window
+- Add a working Windows-login autostart toggle for the recorder
+- Finish the settings needed for real use: recording profile, codec preference, output path, retention, and autostart
+- Build a Windows installer containing everything required by recording, playback, probing, and export
+- Show concise actionable errors when capture or packaged media tools cannot start
+- Include required third-party notices for bundled binaries and assets
+- Validate installation, upgrade-over-beta, and uninstall behavior without adding compatibility code for development recordings
+
+**Explicitly out of scope:**
+
+- Stats tab
+- macOS packaging
+- Public code signing and notarization
+- Automatic updater or hosted update service
+- Hosted game-data services or user accounts
+- Expanding the bundled music library beyond what is needed to validate the workflow
 
 **Entry conditions:**
-- Phase 7 complete and validated
-- A personal Riot developer API key obtained from `developer.riotgames.com`
+
+- Phases 1–5 and 7 complete
+- Phase 6 remains optional
 
 **Validation:**
-1. Enter Riot ID + API key in settings — app fetches Match V5 for all existing games on restart
-2. "Enriched" badge appears on game cards
-3. Stats tab now shows damage dealt/taken columns, vision score, ward stats
-4. Replay gold graph and differential are visible and use Match V5 participant frames
-5. Expanded rows show exact item timestamps (e.g. "3:24" not "~3:30")
-6. Skill order and complete rune pages are shown for all 10 players
-7. Clip auto-positioning for a kill with Match V5 data uses exact fight start — compare against heuristic to verify improvement
-8. A game with `win_method: "unknown"` has its win/loss resolved after enrichment
 
-**Complete when:** Match V5 data enriches the Stats tab and clip positioning, and the app degrades gracefully when Riot ID is not configured.
+1. Build the Windows installer from a clean checkout.
+2. Install it on a Windows machine with no system ffmpeg, Rust, or Node.
+3. Launch the app; exactly one recorder tray process runs and no terminal appears.
+4. Enable login startup, reboot or sign out/in, and confirm the recorder starts once without opening the app window.
+5. Record a real game from loading screen through process exit; verify video, synchronized timeline, and metadata.
+6. Open the installed app, rapidly seek the recording, filter markers, and enter/leave fullscreen.
+7. Export and play one Discord clip and one vertical or horizontal clip using only bundled tools.
+8. Change each shipped setting and confirm the next recording or retention run uses it.
+9. Uninstall and confirm application binaries and startup registration are removed; user recordings remain intact.
+
+**Complete when:** the entire local workflow passes on a clean Windows machine with no prerequisites and no developer commands.
 
 ---
 
-## Phase 9 — Polish + Distribution
+## Phase 9 — Public Distribution
 
-**Goal:** App is ready for public distribution as an installer on a clean machine.
+**Status:** Later, after Windows beta feedback.
 
-**Documents:** `SPEC.md` + `APP-LIBRARY.md` §5–6
+**Goal:** Turn the proven beta into maintainable public Windows and macOS releases.
 
-**Scope:**
-- ffmpeg bundled inside Tauri app (`resources/ffmpeg`); recorder resolves path at runtime — no system ffmpeg required
-- Settings screen: all fields functional (recording profile, codec preference, output path, auto-delete, autostart, Riot ID, API key)
-- Storage breakdown in settings: per-section totals + per-game list with save toggle and delete
-- Auto-update via Tauri Updater plugin (requires hosted update manifest URL)
-- Code signing:
-  - Windows: `.msi` + `.exe`, code signing certificate
-  - macOS: `.dmg`, Apple Developer notarization ($99/yr account required)
-- Installer testing on clean machines (no dev tools, no system ffmpeg)
+**Expected scope:**
 
-**Entry conditions:**
-- Phases 1–8 complete and validated
-- Code signing certificates obtained
-- Update server URL configured in `tauri.conf.json`
-- At least 10 bundled music tracks in `resources/music/`
+- Resolve beta reliability, onboarding, and installer issues before broadening platforms
+- Sign the Windows release
+- Add macOS capture/tool packaging, signing, and notarization
+- Add an updater only when a real release channel and hosting model exist
+- Finalize product naming, icons, licensing, privacy text, diagnostics, and release documentation
+- Validate fresh install, upgrade, rollback/recovery, and uninstall on supported OS versions
 
-**Validation:**
-1. `npm run tauri build` produces `.msi` and `.dmg` without errors
-2. Install `.msi` on a clean Windows machine — recorder starts automatically with Windows, tray icon appears
-3. Full Phase 1–8 validation passes on the installed build (not dev server)
-4. App works with no system ffmpeg installed — uses bundled binary
-5. Auto-update: push version bump, open old installed version, confirm update is offered and installs correctly
+**Not assumed:** a backend, user account system, external match-data service, or Stats tab. Each requires a separate product decision based on demonstrated user value.
 
-**Complete when:** the app installs and fully validates on a fresh machine with no prerequisites.
+**Complete when:** signed builds install, update, run the full workflow, and uninstall cleanly on every supported platform.
 
 ---
 
 ## Working With an AI on a Phase
 
-For each phase, give the AI:
+For each phase, provide `SPEC.md`, every module document listed for that phase, and this prompt:
 
-1. The full contents of `SPEC.md`
-2. The full contents of every document listed in the phase's "Documents needed" column
-3. This prompt prefix:
+> You are implementing Phase {N}, {Phase Name}, of the League Replay Tool. The full project architecture and data contracts are in SPEC.md. Build only what is in scope for this phase. Do not preserve superseded development schemas or implementation paths. If the current documents leave a material product decision unresolved, ask before assuming.
 
-> "You are implementing Phase {N} ({Phase Name}) of the League Replay Tool. The full project architecture and data contracts are in SPEC.md. This phase focuses on {one-sentence description}. Build only what is in scope for this phase — do not implement future phases. If anything in the spec is ambiguous or missing, ask before assuming."
-
-Keep conversations to one phase at a time. Start a fresh conversation for each phase. When validation passes, update this document to mark the phase complete before moving on.
+Keep implementation and validation focused on one active milestone. When validation passes, update this roadmap and create an annotated phase tag before starting the next milestone.

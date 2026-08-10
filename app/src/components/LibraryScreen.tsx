@@ -79,17 +79,11 @@ function GamesLibrary(props: Props) {
                   </span>
                   <span class={styles.cardContent}>
                     <span class={styles.cardBadges}>
-                      <Show when={game.win !== null}>
-                        <em data-result={game.win ? "win" : "loss"}>{game.win ? "WIN" : "LOSS"}</em>
-                      </Show>
                       <Show when={game.saved}>
                         <em data-saved>SAVED</em>
                       </Show>
                       <Show when={game.incomplete}>
                         <em data-incomplete>INCOMPLETE</em>
-                      </Show>
-                      <Show when={game.matchv5_fetched}>
-                        <em data-enriched>ENRICHED</em>
                       </Show>
                     </span>
                     <span class={styles.championRow}>

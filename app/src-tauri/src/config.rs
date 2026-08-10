@@ -229,8 +229,8 @@ auto_delete_days = 30
 autostart = true
 hevc_playback_supported = false
 
-[riot_account]
-riot_id = "Player#EUW"
+[future_feature]
+enabled = true
 "#,
         )
         .unwrap();
@@ -241,7 +241,8 @@ riot_id = "Player#EUW"
 
         let saved = fs::read_to_string(path).unwrap();
         assert!(saved.contains("auto_delete_days = 14"));
-        assert!(saved.contains("riot_id = \"Player#EUW\""));
+        assert!(saved.contains("[future_feature]"));
+        assert!(saved.contains("enabled = true"));
     }
 
     #[test]

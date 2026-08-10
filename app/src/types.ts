@@ -7,11 +7,8 @@ export type GameSummary = {
   kills: number;
   deaths: number;
   assists: number;
-  win: boolean | null;
-  win_method: "matchv5" | "derived" | "unknown";
   saved: boolean;
   incomplete: boolean;
-  matchv5_fetched: boolean;
   video_size_bytes: number;
   video_available: boolean;
 };
@@ -111,14 +108,6 @@ export type KdaTimelinePoint = {
   assists: number;
 };
 
-export type GoldTimelinePoint = {
-  game_time_ms: number;
-  video_time_ms: number;
-  ally_gold: number;
-  enemy_gold: number;
-  gold_diff: number;
-};
-
 export type ReplayParticipant = {
   summoner_name: string;
   champion: string;
@@ -133,7 +122,6 @@ export type PlaybackProbe = {
   participants: ReplayParticipant[];
   player_timeline: PlayerTimelinePoint[];
   kda_timeline: KdaTimelinePoint[];
-  gold_timeline: GoldTimelinePoint[];
   events: ViewerEvent[];
 };
 

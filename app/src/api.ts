@@ -10,7 +10,6 @@ import type {
   ClipSummary,
   DdragonStatus,
   GameSummary,
-  GoldTimelinePoint,
   HevcProbeStatus,
   KdaTimelinePoint,
   PlaybackProbe,
@@ -139,23 +138,6 @@ const mockParticipants = (): ReplayParticipant[] => [
   { summoner_name: "Enemy Support#EUW", champion: "Thresh", relation: "enemy" },
 ];
 
-const mockGoldTimeline = (durationMs: number): GoldTimelinePoint[] =>
-  Array.from(
-    { length: Math.max(2, Math.floor((durationMs - MOCK_VIDEO_OFFSET_MS) / 60_000) + 1) },
-    (_, index) => {
-      const gameTimeMs = index * 60_000;
-      const goldDiff = Math.round(Math.sin(index / 2.5) * 1_700 + (index - 10) * 55);
-      const baseGold = 2_500 + index * 2_850;
-      return {
-        game_time_ms: gameTimeMs,
-        video_time_ms: MOCK_VIDEO_OFFSET_MS + gameTimeMs,
-        ally_gold: baseGold + Math.max(0, goldDiff),
-        enemy_gold: baseGold + Math.max(0, -goldDiff),
-        gold_diff: goldDiff,
-      };
-    },
-  );
-
 let mockGames: GameSummary[] = [
   {
     timestamp: "1786005616",
@@ -166,11 +148,8 @@ let mockGames: GameSummary[] = [
     kills: 8,
     deaths: 4,
     assists: 11,
-    win: true,
-    win_method: "matchv5",
     saved: true,
     incomplete: false,
-    matchv5_fetched: true,
     video_size_bytes: 4_446_112_713,
     video_available: true,
   },
@@ -183,11 +162,8 @@ let mockGames: GameSummary[] = [
     kills: 5,
     deaths: 7,
     assists: 14,
-    win: null,
-    win_method: "unknown",
     saved: false,
     incomplete: false,
-    matchv5_fetched: false,
     video_size_bytes: 2_866_000_000,
     video_available: true,
   },
@@ -200,11 +176,8 @@ let mockGames: GameSummary[] = [
     kills: 13,
     deaths: 9,
     assists: 22,
-    win: false,
-    win_method: "matchv5",
     saved: false,
     incomplete: false,
-    matchv5_fetched: true,
     video_size_bytes: 1_790_000_000,
     video_available: true,
   },
@@ -217,11 +190,8 @@ let mockGames: GameSummary[] = [
     kills: 4,
     deaths: 3,
     assists: 16,
-    win: null,
-    win_method: "unknown",
     saved: false,
     incomplete: false,
-    matchv5_fetched: false,
     video_size_bytes: 2_440_000_000,
     video_available: true,
   },
@@ -234,11 +204,8 @@ let mockGames: GameSummary[] = [
     kills: 10,
     deaths: 6,
     assists: 8,
-    win: true,
-    win_method: "matchv5",
     saved: false,
     incomplete: false,
-    matchv5_fetched: true,
     video_size_bytes: 3_120_000_000,
     video_available: true,
   },
@@ -251,11 +218,8 @@ let mockGames: GameSummary[] = [
     kills: 0,
     deaths: 0,
     assists: 0,
-    win: null,
-    win_method: "unknown",
     saved: false,
     incomplete: true,
-    matchv5_fetched: false,
     video_size_bytes: 612_000_000,
     video_available: true,
   },
@@ -318,7 +282,6 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
       participants: mockParticipants(),
       player_timeline: mockPlayerTimeline(),
       kda_timeline: mockKdaTimeline(),
-      gold_timeline: game.matchv5_fetched ? mockGoldTimeline(game.duration_ms) : [],
       events: mockEvents(),
     };
   }

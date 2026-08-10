@@ -34,7 +34,6 @@ pub struct GameLog {
     pub snapshots: Vec<Snapshot>,
     pub events: Vec<GameEvent>,
     pub snapshot_derived_changes: Vec<SnapshotChange>,
-    pub matchv5: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -141,9 +140,6 @@ pub struct RecordingMetadata {
     pub recording_profile: String,
     pub recording_resolution: String,
     pub recording_fps: u32,
-    pub win: Option<bool>,
-    pub win_method: WinMethod,
-    pub matchv5_fetched: bool,
     pub saved: bool,
 }
 
@@ -154,14 +150,6 @@ pub struct RecordingDetails {
     pub profile: String,
     pub resolution: String,
     pub fps: u32,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum WinMethod {
-    Matchv5,
-    Derived,
-    Unknown,
 }
 
 impl RecordingMetadata {
@@ -189,9 +177,6 @@ impl RecordingMetadata {
             recording_profile: recording.profile,
             recording_resolution: recording.resolution,
             recording_fps: recording.fps,
-            win: None,
-            win_method: WinMethod::Unknown,
-            matchv5_fetched: false,
             saved: false,
         })
     }
@@ -1532,7 +1517,6 @@ mod tests {
         assert!(json["video_offset_ms"].is_null());
         assert_eq!(json["recording_codec"], "hevc");
         assert_eq!(json["recording_profile"], "high");
-        assert_eq!(json["win_method"], "unknown");
     }
 
     #[test]

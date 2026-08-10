@@ -223,8 +223,8 @@ mod tests {
                 autostart = true
                 hevc_playback_supported = false
 
-                [riot_account]
-                riot_id = "ignored"
+                [future_feature]
+                enabled = true
             "#,
         )
         .unwrap();

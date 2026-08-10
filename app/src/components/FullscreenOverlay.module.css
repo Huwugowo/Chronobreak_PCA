@@ -76,8 +76,7 @@
 }
 
 .topIdentity small,
-.topStatus span,
-.goldHeader span {
+.topStatus span {
   color: rgba(248, 245, 239, 0.47);
   font-family: var(--font-mono);
   font-size: 6px;
@@ -150,14 +149,6 @@
   font-size: 11px;
 }
 
-.goldPositive {
-  color: #4a70e0 !important;
-}
-
-.goldNegative {
-  color: #e13a51 !important;
-}
-
 .eventCard {
   --event-color: #7f8999;
   position: absolute;
@@ -219,174 +210,6 @@
 
 .eventNeutral {
   --event-color: #8d96a5;
-}
-
-.goldDrawer {
-  position: absolute;
-  z-index: 3;
-  right: 68px;
-  bottom: 0;
-  left: 0;
-  height: min(270px, 29vh);
-  padding: 16px 25px 56px;
-  transform: translateY(100%);
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.94), rgba(0, 0, 0, 0.76));
-  opacity: 0;
-  pointer-events: none;
-  transition: transform 300ms cubic-bezier(.4, 0, .2, 1), opacity 240ms ease, padding-bottom 250ms cubic-bezier(.4, 0, .2, 1);
-}
-
-.goldDrawerOpen {
-  transform: translateY(0);
-  opacity: 1;
-}
-
-.goldDrawerRaised {
-  padding-bottom: 104px;
-}
-
-.goldHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.goldHeader > div {
-  display: grid;
-  gap: 2px;
-}
-
-.goldHeader > div:last-child {
-  justify-items: end;
-}
-
-.goldHeader > div > strong {
-  font-size: 15px;
-  letter-spacing: 0.04em;
-}
-
-.goldHeader > div:last-child > strong {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.goldChart {
-  position: relative;
-  height: calc(100% - 40px);
-  margin: 7px 28px 0 44px;
-}
-
-.goldChart svg {
-  display: block;
-  width: 100%;
-  height: calc(100% - 15px);
-  overflow: visible;
-}
-
-.zeroLine {
-  stroke: rgba(255, 255, 255, 0.18);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.goldArea {
-  fill: url(#gold-line-gradient);
-  opacity: 0.15;
-}
-
-.goldLine {
-  fill: none;
-  stroke: url(#gold-line-gradient);
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-  vector-effect: non-scaling-stroke;
-}
-
-.goldCursorLine {
-  stroke: var(--cursor-color);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.goldCursorPoint {
-  fill: var(--cursor-color);
-  stroke: #fff;
-  stroke-width: 0.8;
-  vector-effect: non-scaling-stroke;
-}
-
-.cursorPositive {
-  --cursor-color: #4a70e0;
-}
-
-.cursorNegative {
-  --cursor-color: #c2001c;
-}
-
-.yLabels {
-  position: absolute;
-  top: -2px;
-  bottom: 15px;
-  left: -41px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  color: rgba(248, 245, 239, 0.3);
-  font-family: var(--font-mono);
-  font-size: 6px;
-  text-align: right;
-}
-
-.graphLabels {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 11px;
-}
-
-.graphLabels span {
-  position: absolute;
-  transform: translateX(-50%);
-  color: rgba(248, 245, 239, 0.3);
-  font-family: var(--font-mono);
-  font-size: 6px;
-  white-space: nowrap;
-}
-
-.goldTab {
-  position: absolute;
-  z-index: 4;
-  bottom: 52px;
-  left: 20px;
-  display: inline-flex;
-  min-height: 25px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: rgba(248, 245, 239, 0.64);
-  background: rgba(4, 5, 8, 0.72);
-  font-family: var(--font-mono);
-  font-size: 7px;
-  letter-spacing: 0.1em;
-  opacity: 0.5;
-  cursor: pointer;
-  pointer-events: auto;
-  transition: bottom 250ms cubic-bezier(.4, 0, .2, 1), opacity 120ms ease;
-}
-
-.goldTab strong {
-  font-size: 7px;
-}
-
-.goldTabActive {
-  opacity: 1;
-}
-
-.goldTabRaised {
-  bottom: 104px;
 }
 
 .scrubberZone {
@@ -619,7 +442,6 @@
 }
 
 .fullscreenPlay,
-.goldControl,
 .clipControl,
 .cancelClipControl,
 .exportClipControl {
@@ -695,10 +517,4 @@
 
 @keyframes rec-pulse {
   50% { opacity: 0.42; }
-}
-
-@media (max-height: 640px) {
-  .goldDrawer {
-    height: 230px;
-  }
 }

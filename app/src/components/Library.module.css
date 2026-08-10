@@ -198,26 +198,12 @@
   letter-spacing: 0.12em;
 }
 
-.cardBadges em[data-result="win"] {
-  border-color: rgba(78, 255, 179, 0.28);
-  color: var(--color-green);
-}
-
-.cardBadges em[data-result="loss"] {
-  border-color: rgba(228, 49, 75, 0.32);
-  color: #ff7186;
-}
-
 .cardBadges em[data-saved] {
   color: #ffce73;
 }
 
 .cardBadges em[data-incomplete] {
   color: #f4a8b3;
-}
-
-.cardBadges em[data-enriched] {
-  color: var(--color-blue-soft);
 }
 
 .championRow {
