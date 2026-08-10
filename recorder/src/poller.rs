@@ -334,16 +334,52 @@ impl LiveClient {
         })
     }
 
-    async fn all_game_data(&self) -> Result<Received<RawAllGameData>> {
-        self.get("allgamedata").await
-    }
-
     async fn game_stats(&self) -> Result<Received<RawGameData>> {
         self.get("gamestats").await
     }
 
+    async fn active_player(&self) -> Result<Received<RawActivePlayer>> {
+        self.get("activeplayer").await
+    }
+
+    async fn player_list(&self) -> Result<Received<Vec<RawPlayer>>> {
+        self.get("playerlist").await
+    }
+
     async fn event_data(&self) -> Result<Received<RawEventData>> {
         self.get("eventdata").await
+    }
+
+    async fn snapshot_data(&self) -> Result<Received<RawSnapshotData>> {
+        let (game_data, active_player, all_players, events) = tokio::join!(
+            self.game_stats(),
+            self.active_player(),
+            self.player_list(),
+            self.event_data(),
+        );
+        let game_data = game_data.context("snapshot game stats unavailable")?;
+        let active_player = active_player.context("snapshot active player unavailable")?;
+        let all_players = all_players.context("snapshot player list unavailable")?;
+        let (events, event_latency) = match events {
+            Ok(received) => (received.value, Some(received.latency)),
+            Err(_) => (RawEventData::default(), None),
+        };
+        let latency = game_data
+            .latency
+            .max(active_player.latency)
+            .max(all_players.latency)
+            .max(event_latency.unwrap_or_default());
+
+        Ok(Received {
+            value: RawSnapshotData {
+                active_player: active_player.value,
+                all_players: all_players.value,
+                game_data: game_data.value,
+                events,
+            },
+            received_at: game_data.received_at,
+            latency,
+        })
     }
 
     async fn get<T>(&self, endpoint: &str) -> Result<Received<T>>
@@ -394,7 +430,7 @@ async fn run_poller(
     else {
         return Ok(());
     };
-    let mut initial_data = fetch_initial_game_data(&client, &mut cancellation, &state).await;
+    let mut initial_data = fetch_initial_snapshot(&client, &mut cancellation, &state).await;
     if *cancellation.borrow() {
         return Ok(());
     }
@@ -576,17 +612,17 @@ fn calibration_offset(samples: &VecDeque<ClockSample>, video_started_at: Instant
     median(&mut candidates).ok()
 }
 
-async fn fetch_initial_game_data(
+async fn fetch_initial_snapshot(
     client: &LiveClient,
     cancellation: &mut watch::Receiver<bool>,
     state: &Arc<Mutex<PollerState>>,
-) -> Option<RawAllGameData> {
+) -> Option<RawSnapshotData> {
     let mut consecutive_failures = 0;
     loop {
         record_request(state, RequestKind::Snapshot).await;
         let response = tokio::select! {
             _ = cancelled(cancellation) => return None,
-            response = client.all_game_data() => response,
+            response = client.snapshot_data() => response,
         };
         if let Ok(received) = response {
             state
@@ -681,7 +717,7 @@ async fn snapshot_loop(
             record_request(&state, RequestKind::Snapshot).await;
             let response = tokio::select! {
                 _ = cancelled(&mut cancellation) => return Ok(()),
-                response = client.all_game_data() => response,
+                response = client.snapshot_data() => response,
             };
             let received = match response {
                 Ok(received) => received,
@@ -706,7 +742,7 @@ async fn snapshot_loop(
             if valid_game_time(&data.game_data).is_none() {
                 if record_failure(&mut consecutive_failures) {
                     state.lock().await.diagnostics.snapshot_failure_reason =
-                        Some("allgamedata returned no valid gameTime".to_owned());
+                        Some("snapshot game stats returned no valid gameTime".to_owned());
                     return Ok(());
                 }
                 sleep_or_cancel(API_FAILURE_RETRY_INTERVAL, &mut cancellation).await;
@@ -740,7 +776,7 @@ async fn write_game_log(state: &mut PollerState, output: &Path) -> Result<()> {
 
 fn append_snapshot(
     game_log: &mut GameLog,
-    raw: &RawAllGameData,
+    raw: &RawSnapshotData,
     video_offset_ms: i64,
 ) -> Result<()> {
     if raw.all_players.is_empty() {
@@ -759,7 +795,7 @@ fn append_snapshot(
     Ok(())
 }
 
-fn make_snapshot(raw: &RawAllGameData, include_stable_fields: bool) -> Result<Snapshot> {
+fn make_snapshot(raw: &RawSnapshotData, include_stable_fields: bool) -> Result<Snapshot> {
     let game_time_ms = seconds_to_ms(
         valid_game_time(&raw.game_data).context("snapshot does not contain a valid game time")?,
     )?;
@@ -952,7 +988,7 @@ fn reconcile_events(
     count
 }
 
-fn update_summary(summary: &mut PollerSummary, data: &RawAllGameData) {
+fn update_summary(summary: &mut PollerSummary, data: &RawSnapshotData) {
     if summary.game_mode.is_none() {
         summary.game_mode = data.game_data.game_mode.clone();
     }
@@ -1075,15 +1111,11 @@ async fn sleep_or_cancel(duration: Duration, receiver: &mut watch::Receiver<bool
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-struct RawAllGameData {
-    #[serde(rename = "activePlayer", default)]
+#[derive(Debug, Clone, Default)]
+struct RawSnapshotData {
     active_player: RawActivePlayer,
-    #[serde(rename = "allPlayers", default)]
     all_players: Vec<RawPlayer>,
-    #[serde(rename = "gameData", default)]
     game_data: RawGameData,
-    #[serde(default)]
     events: RawEventData,
 }
 
@@ -1276,9 +1308,29 @@ mod tests {
     }
     "#;
 
+    fn snapshot_data_from_aggregate_sample(data: &Value) -> RawSnapshotData {
+        RawSnapshotData {
+            active_player: serde_json::from_value(data["activePlayer"].clone()).unwrap(),
+            all_players: serde_json::from_value(data["allPlayers"].clone()).unwrap(),
+            game_data: serde_json::from_value(data["gameData"].clone()).unwrap(),
+            events: data
+                .get("events")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .unwrap()
+                .unwrap_or_default(),
+        }
+    }
+
+    fn sample_snapshot_data() -> RawSnapshotData {
+        let data: Value = serde_json::from_str(SAMPLE).unwrap();
+        snapshot_data_from_aggregate_sample(&data)
+    }
+
     #[test]
     fn snapshot_uses_private_stats_only_for_the_active_player() {
-        let raw: RawAllGameData = serde_json::from_str(SAMPLE).unwrap();
+        let raw = sample_snapshot_data();
         let snapshot = make_snapshot(&raw, true).unwrap();
 
         assert_eq!(snapshot.game_time_ms, 220_125);
@@ -1302,7 +1354,7 @@ mod tests {
 
     #[test]
     fn stable_fields_are_omitted_after_the_first_snapshot() {
-        let raw: RawAllGameData = serde_json::from_str(SAMPLE).unwrap();
+        let raw = sample_snapshot_data();
         let snapshot = make_snapshot(&raw, false).unwrap();
         assert!(snapshot.players.iter().all(|player| {
             player.summoner_spells.is_none()
@@ -1313,7 +1365,7 @@ mod tests {
 
     #[test]
     fn snapshot_diff_detects_item_and_level_changes() {
-        let raw: RawAllGameData = serde_json::from_str(SAMPLE).unwrap();
+        let raw = sample_snapshot_data();
         let previous = make_snapshot(&raw, true).unwrap();
         let mut current = previous.clone();
         current.game_time_ms = 230_000;
@@ -1520,7 +1572,7 @@ mod tests {
     }
 
     #[test]
-    fn empirical_capture_remains_parseable() {
+    fn focused_snapshot_parts_remain_parseable_from_empirical_capture() {
         #[derive(Deserialize)]
         struct Capture {
             samples: Vec<CaptureSample>,
@@ -1538,12 +1590,10 @@ mod tests {
         assert_eq!(capture.samples.len(), 25);
         let mut event_count = 0;
         for sample in capture.samples {
-            let all_game: RawAllGameData = serde_json::from_value(sample.data.clone()).unwrap();
-            make_snapshot(&all_game, true).unwrap();
+            let snapshot_data = snapshot_data_from_aggregate_sample(&sample.data);
+            make_snapshot(&snapshot_data, true).unwrap();
 
-            let events: RawEventData =
-                serde_json::from_value(sample.data["events"].clone()).unwrap();
-            for event in events.events {
+            for event in snapshot_data.events.events {
                 normalize_event(event, 0).unwrap();
                 event_count += 1;
             }

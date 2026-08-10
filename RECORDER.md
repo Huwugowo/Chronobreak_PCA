@@ -115,13 +115,13 @@ loop:
       · game_zero_monotonic_ms = median(five candidates)
       · video_offset_ms =
           game_zero_monotonic_ms - video_capture_start_monotonic_ms
-      · fetch the initial /allgamedata snapshot
+      · fetch the initial focused snapshot bundle
       · spawn Event Loop task (Section 5.2)
       · spawn Snapshot Loop task (Section 5.3)
       · exit this calibration loop
 ```
 
-Full-game tests exposed `/allgamedata` during the loading screen with `gameTime` frozen near 18ms. Waiting for advancing time keeps that loading period inside `video_offset_ms`. The rolling-window checks reject bootstrap and request-timing outliers; the median makes ordinary response-latency variation harmless. `/gamestats` is used here because it is much smaller than `/allgamedata`.
+Full-game tests exposed the Live Client API during the loading screen with `/gamestats.gameTime` frozen near 18ms. Waiting for advancing time keeps that loading period inside `video_offset_ms`. The rolling-window checks reject bootstrap and request-timing outliers; the median makes ordinary response-latency variation harmless.
 
 **Never calculate `video_offset_ms` from the time at which `GameStart` is observed.** In the empirical capture, `GameStart.EventTime` was `0.0095s`, but it first appeared in a response at `gameTime = 2.1195s`. Arrival-time anchoring would shift every video marker approximately 2.11 seconds late.
 
@@ -155,15 +155,15 @@ tokio::spawn(async move {
 });
 ```
 
-The polling delay affects only how soon an event is written, not its marker position: `video_time_ms` is calculated from Riot's `EventTime`. `/allgamedata` carries the same cumulative event records and reconciles them every 10 seconds as a backup. A shared `EventID` set guarantees each event is stored once and the persisted list is sorted chronologically. Empirical games also confirmed `FirstBlood` and one `HordeKill` event per Void Grub.
+The polling delay affects only how soon an event is written, not its marker position: `video_time_ms` is calculated from Riot's `EventTime`. The snapshot cycle makes an additional optional `/eventdata` request every 10 seconds for recovery. A shared `EventID` set guarantees each event is stored once and the persisted list is sorted chronologically. Empirical games also confirmed `FirstBlood` and one `HordeKill` event per Void Grub.
 
 **API loss:** Three consecutive failures one second apart end the affected polling task; any successful response resets the counter. This never stops ffmpeg or finalizes the bundle. The process watcher remains authoritative for video lifetime and finalization. `GameEnd` is stored if present but is often absent when the player exits before the Victory/Defeat screen, so it never controls stopping or the match result.
 
 ### 5.3 Post-Calibration — Snapshot Loop (every 10s)
 
-Polls `/allgamedata` every 10 seconds. It reconciles the endpoint's cumulative event list, then detects item and level changes by diffing consecutive snapshots. Like the event loop, it stops only after three consecutive failures one second apart.
+Polls `/gamestats`, `/activeplayer`, and `/playerlist` concurrently every 10 seconds. All three state requests must succeed; an optional concurrent `/eventdata` request provides event recovery without invalidating the snapshot if it fails. Item and level changes are detected by diffing consecutive snapshots. Like the event loop, it stops only after three consecutive failures one second apart.
 
-The endpoint exposes champion, team, items, CS, level, spells, and keystone for all players. Current gold and current/max HP are available only for the active local player and are stored as `null` for everyone else. XP is not exposed. The full rune ID list is stored only for the local player on the first snapshot.
+`/playerlist` exposes champion, team, items, CS, level, spells, and keystone for all players. `/activeplayer` supplies the local identity, current gold, current/max HP, and full rune list; private stats are stored as `null` for everyone else. `/gamestats` supplies the snapshot clock and mode. XP is not exposed. Stable spell and rune fields are stored only on the first snapshot.
 
 ```rust
 tokio::spawn(async move {
@@ -172,12 +172,11 @@ tokio::spawn(async move {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
 
-        match client.get(".../allgamedata").send().await {
-            Err(_) => retry_in_one_second_or_stop_after_third_failure(),
-            Ok(response) => {
+        let state = join!(get(".../gamestats"), get(".../activeplayer"), get(".../playerlist"));
+        match state {
+            (Ok(game_stats), Ok(active_player), Ok(players)) => {
                 consecutive_failures = 0;
-                reconcile_by_event_id(response.events, video_offset_ms);
-                let snapshot = parse_snapshot(response).await;
+                let snapshot = combine_snapshot(game_stats, active_player, players);
 
                 // detect changes vs previous snapshot
                 if let Some(prev) = &prev_snapshot {
@@ -195,6 +194,7 @@ tokio::spawn(async move {
                 prev_snapshot = Some(snapshot);
                 // flush to disk atomically
             }
+            _ => retry_in_one_second_or_stop_after_third_failure(),
         }
     }
 });

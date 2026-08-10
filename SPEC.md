@@ -51,7 +51,7 @@ A two-process desktop application for League of Legends players that:
 │      · calibrates game clock zero against video time         │
 │    → spawns two concurrent async tasks once API is live:     │
 │      · Event Loop: /eventdata, every 1s                      │
-│      · Snapshot Loop: /allgamedata, every 10s                │
+│      · Snapshot Loop: focused state endpoints, every 10s     │
 │                                                              │
 │  On game close:                                              │
 │    → stops ffmpeg gracefully and closes video.mp4            │
@@ -109,9 +109,9 @@ Note: The API uses HTTPS with a self-signed Riot certificate. Requests must eith
 | Loop | Endpoint | Interval | Purpose |
 |---|---|---|---|
 | Event loop | `/eventdata` | Every 1s | Capture cumulative named events; `EventTime` retains millisecond timestamps |
-| Snapshot loop | `/allgamedata` | Every 10s | Capture roster state (items, CS, level) plus local-player gold/HP, and reconcile its cumulative event list as a backup |
+| Snapshot loop | `/gamestats` + `/activeplayer` + `/playerlist` | Every 10s | Capture the game clock, roster state (items, CS, level), and local-player gold/HP; requests run concurrently |
 
-Both endpoints expose a cumulative event list. A shared `EventID` set deduplicates events found by either loop, and persisted events are kept in chronological order.
+The event endpoint exposes a cumulative event list. Each snapshot cycle also makes an optional `/eventdata` request for recovery; its failure never invalidates the roster snapshot. A shared `EventID` set deduplicates events found by either loop, and persisted events are kept in chronological order.
 
 **Named events observed from the Live Client API:**
 
@@ -136,7 +136,7 @@ Both endpoints expose a cumulative event list. A shared `EventID` set deduplicat
 
 > **`GameEnd`:** `GameEnd` is optional telemetry, not a lifecycle signal. It is commonly absent when the player exits shortly before the Victory/Defeat screen. The recorder stores it if observed but never depends on it. Three consecutive API failures end only the affected polling task; the League process watcher remains the sole video-stop trigger. The app does not infer a match result from this event.
 
-**Item and level changes are NOT named events.** They are state fields in `/allgamedata` snapshots and are detected by diffing consecutive snapshots:
+**Item and level changes are NOT named events.** They are state fields in the focused snapshot bundle and are detected by diffing consecutive snapshots:
 
 | Change detected | How | Timestamp precision |
 |---|---|---|
@@ -148,7 +148,7 @@ This means **build order timestamps from the Live Client API are approximate** �
 
 Viego possession can temporarily replace his items with the possessed champion's items. Those transitions remain ordinary approximate snapshot changes in Phase 2; no champion-specific correction heuristic is applied.
 
-**Snapshots from `/allgamedata` (every 10s):** champion, team, CS, level, and items for every player. Current gold and current/max HP are exposed only for the active local player, so those fields are `null` for everyone else. XP is not exposed and is not stored. Summoner spells and keystone are stored for all players on the first snapshot; the full rune ID list is available only for the local player.
+**Focused snapshot bundle (every 10s):** `/gamestats` supplies `gameTime` and game mode, `/playerlist` supplies champion, team, CS, level, items, summoner spells, and keystone for every player, and `/activeplayer` supplies the local identity, current gold, current/max HP, and full rune IDs. The three requests run concurrently and must all succeed for the snapshot to be stored. Gold and HP remain `null` for everyone except the active local player; XP is not exposed and is not stored. Stable spell and rune fields are stored only on the first snapshot.
 
 ### 3.3 Data Dragon (Static Data)
 
@@ -196,7 +196,7 @@ The video recording starts when `League of Legends.exe` is detected — this inc
        game_zero_monotonic_ms - video_start_monotonic_ms
    ```
 
-7. Fetch the first `/allgamedata` snapshot, then start the 1s event loop and 10s snapshot loop. Both loops tolerate three consecutive failures one second apart; a success resets the counter.
+7. Fetch the first focused snapshot bundle, then start the 1s event loop and 10s snapshot loop. Both loops tolerate three consecutive failures one second apart; a success resets the counter.
 8. Map every named event and snapshot-derived change using the timestamp supplied by the game clock:
 
    ```text
@@ -205,7 +205,7 @@ The video recording starts when `League of Legends.exe` is detected — this inc
 
    For snapshot-derived changes, substitute the snapshot's `gameTime` for `EventTime`.
 
-`GameStart` is still written to the event log, but the time at which it is first observed is never used for synchronization. Event lists are cumulative and may expose `GameStart` after the game clock has already advanced. In the 2026-07-30 capture, `GameStart.EventTime` was `0.0095s` but the event was first observed at `gameTime = 2.1195s`; arrival-time anchoring would have made every marker about 2.11 seconds late. Later full-game tests showed why validity alone is also insufficient: `/allgamedata` was already responsive during loading with `gameTime` frozen near 18ms. Advancing-clock calibration distinguishes loading from gameplay and places game clock zero correctly in the video.
+`GameStart` is still written to the event log, but the time at which it is first observed is never used for synchronization. Event lists are cumulative and may expose `GameStart` after the game clock has already advanced. In the 2026-07-30 capture, `GameStart.EventTime` was `0.0095s` but the event was first observed at `gameTime = 2.1195s`; arrival-time anchoring would have made every marker about 2.11 seconds late. Later full-game tests showed why validity alone is also insufficient: the Live Client API was already responsive during loading while `/gamestats` reported `gameTime` frozen near 18ms. Advancing-clock calibration distinguishes loading from gameplay and places game clock zero correctly in the video.
 
 ### 3.5 `game_log.json` Schema
 

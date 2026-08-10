@@ -56,7 +56,7 @@ Phase 6 is not a prerequisite for Phases 7–9.
 
 - `/gamestats` calibration accepts five strictly advancing, clock-consistent `gameTime` samples
 - Cumulative `/eventdata` polling every second
-- `/allgamedata` snapshots every ten seconds, including shared event recovery
+- Concurrent `/gamestats`, `/activeplayer`, and `/playerlist` snapshots every ten seconds, with optional shared event recovery
 - Item and level changes derived from consecutive snapshots
 - Atomic incremental `game_log.json` writes
 - Final `metadata.json` with recording, local-player, and clock-offset details
