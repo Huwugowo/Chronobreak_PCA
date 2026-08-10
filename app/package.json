@@ -8,6 +8,7 @@
     "dev": "vite",
     "check": "tsc --noEmit",
     "build": "npm run check && vite build",
+    "desktop:build": "tauri build --no-bundle",
     "preview": "vite preview",
     "tauri": "tauri"
   },
