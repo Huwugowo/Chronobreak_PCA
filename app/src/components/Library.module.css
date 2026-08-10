@@ -48,7 +48,8 @@
 }
 
 .libraryIntro dt,
-.cardStats small,
+.matchKda small,
+.matchMetric small,
 .storageBreakdown dt,
 .capabilityList dt {
   color: var(--color-muted);
@@ -66,50 +67,53 @@
   letter-spacing: -0.08em;
 }
 
-.gameGrid {
+.matchList {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 8px;
 }
 
-.gameCard {
+.matchRow {
   position: relative;
+  display: grid;
+  min-height: 104px;
+  grid-template-columns: minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--color-line);
-  border-radius: var(--radius-panel);
-  background: var(--color-panel);
-  transition: border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+  border-radius: 10px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--match-accent), transparent 94%), transparent 24%), var(--color-panel);
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
 }
 
-.gameCard::before {
+.matchRow::before {
   position: absolute;
-  z-index: 1;
+  z-index: 2;
   top: 0;
-  right: 0;
+  bottom: 0;
   left: 0;
-  height: 2px;
-  background: var(--card-accent);
+  width: 3px;
+  background: var(--match-accent);
   content: "";
-  opacity: 0.8;
+  opacity: 0.86;
 }
 
-.gameCard:hover {
-  transform: translateY(-2px);
+.matchRow:hover {
+  transform: translateX(2px);
   border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--match-accent), transparent 91%), transparent 27%), var(--color-panel-raised);
 }
 
-.gameCard[data-incomplete="true"] {
+.matchRow[data-incomplete="true"] {
   border-style: dashed;
-  opacity: 0.75;
+  opacity: 0.72;
 }
 
-.cardOpen {
+.matchOpen {
   display: grid;
-  width: 100%;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 16px;
-  padding: 17px;
+  min-width: 0;
+  grid-template-columns: 66px minmax(180px, 1.3fr) minmax(132px, 0.72fr) 96px 108px 14px;
+  align-items: center;
+  gap: 18px;
+  padding: 15px 14px 15px 19px;
   border: 0;
   color: inherit;
   background: transparent;
@@ -117,157 +121,216 @@
   cursor: pointer;
 }
 
-.cardOpen:disabled {
+.matchOpen:focus-visible {
+  outline: 2px solid var(--color-blue-soft);
+  outline-offset: -3px;
+}
+
+.matchOpen:disabled {
   cursor: default;
 }
 
-.cardArtwork {
+.matchChampion {
   position: relative;
   display: grid;
-  height: 124px;
+  width: 64px;
+  height: 64px;
   place-items: center;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 9px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--card-accent), #0b0e15 76%), #0a0d13 70%);
+  border: 2px solid color-mix(in srgb, var(--match-accent), rgba(255, 255, 255, 0.12) 50%);
+  border-radius: 50%;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--match-accent), #0b0e15 76%), #090c12 72%);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.035);
 }
 
-.cardArtwork::before,
-.cardArtwork::after,
+.matchChampion::before,
+.matchChampion::after,
 .clipPlaceholder::before,
 .clipPlaceholder::after {
   position: absolute;
   width: 84px;
   height: 84px;
-  border: 1px solid color-mix(in srgb, var(--card-accent), transparent 50%);
   border-radius: 50%;
   content: "";
 }
 
-.cardArtwork::before {
-  top: -44px;
-  left: -44px;
+.matchChampion::before,
+.matchChampion::after {
+  border: 1px solid color-mix(in srgb, var(--match-accent), transparent 50%);
 }
 
-.cardArtwork::after {
-  right: -48px;
-  bottom: -44px;
+.clipPlaceholder::before,
+.clipPlaceholder::after {
+  border: 1px solid color-mix(in srgb, var(--clip-accent), transparent 44%);
 }
 
-.cardArtwork i {
+.matchChampion::before {
+  top: -52px;
+  left: -48px;
+}
+
+.matchChampion::after {
+  right: -51px;
+  bottom: -48px;
+}
+
+.matchChampion i {
   position: absolute;
-  width: 36px;
+  width: 32px;
   height: 1px;
-  background: var(--card-accent);
+  background: var(--match-accent);
   transform: rotate(-45deg);
-  box-shadow: 0 0 18px var(--card-accent);
+  box-shadow: 0 0 16px var(--match-accent);
 }
 
-.cardArtwork strong {
+.matchChampion strong {
   z-index: 1;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.92);
   font-family: var(--font-mono);
-  font-size: 22px;
+  font-size: 18px;
   letter-spacing: -0.08em;
   text-transform: uppercase;
 }
 
-.cardContent {
-  display: flex;
+.matchIdentity {
+  display: grid;
   min-width: 0;
-  flex-direction: column;
+  align-content: center;
+  gap: 5px;
 }
 
-.cardBadges {
+.matchTitle {
   display: flex;
-  min-height: 19px;
+  min-width: 0;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.matchTitle strong {
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 690;
+  letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matchTitle small {
+  flex: 0 0 auto;
+  color: var(--color-blue-soft);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 720;
+  letter-spacing: 0.1em;
+}
+
+.matchDate {
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matchBadges {
+  display: flex;
+  min-height: 15px;
   flex-wrap: wrap;
   gap: 5px;
 }
 
-.cardBadges em {
-  padding: 3px 6px;
+.matchBadges em {
+  padding: 2px 5px;
   border: 1px solid var(--color-line);
-  border-radius: 4px;
+  border-radius: 3px;
   color: var(--color-muted-bright);
   background: rgba(255, 255, 255, 0.025);
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 6px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: 0.12em;
 }
 
-.cardBadges em[data-saved] {
+.matchBadges em[data-saved] {
   color: #ffce73;
 }
 
-.cardBadges em[data-incomplete] {
+.matchBadges em[data-incomplete] {
   color: #f4a8b3;
 }
 
-.championRow {
-  display: flex;
+.matchKda,
+.matchMetric {
+  display: grid;
   min-width: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin: 10px 0 14px;
+  align-content: center;
+  gap: 5px;
 }
 
-.championRow strong {
+.matchKda strong,
+.matchMetric strong {
   overflow: hidden;
-  font-size: 21px;
-  font-weight: 690;
-  letter-spacing: -0.04em;
+  font-family: var(--font-mono);
+  font-weight: 670;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.championRow small {
+.matchKda strong {
+  font-size: 15px;
+  letter-spacing: -0.045em;
+}
+
+.matchKda strong i {
   color: var(--color-muted);
+  font-style: normal;
+  font-weight: 480;
+}
+
+.matchKda em {
+  color: var(--color-muted-bright);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 700;
   letter-spacing: 0.08em;
 }
 
-.cardStats {
-  display: grid;
-  grid-template-columns: 1.25fr 1fr 1fr;
-  gap: 8px;
+.matchMetric {
+  min-height: 46px;
+  padding-left: 17px;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
 }
 
-.cardStats > span {
-  display: grid;
-  gap: 4px;
-}
-
-.cardStats strong {
-  overflow: hidden;
-  font-family: var(--font-mono);
+.matchMetric strong {
   font-size: 11px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.cardDate {
-  margin-top: auto;
-  padding-top: 15px;
+.matchChevron {
   color: var(--color-muted);
-  font-size: 10px;
+  font-family: Arial, sans-serif;
+  font-size: 24px;
+  font-weight: 300;
+  transition: color 120ms ease, transform 120ms ease;
 }
 
-.cardActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
-  margin: 0 15px;
-  padding: 10px 0 13px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+.matchRow:hover .matchChevron {
+  transform: translateX(2px);
+  color: #fff;
 }
 
-.cardActions button,
+.matchActions {
+  display: grid;
+  min-width: 128px;
+  align-content: center;
+  gap: 6px;
+  padding: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(5, 8, 13, 0.18);
+}
+
+.matchActions button,
 .clipDelete,
 .settingActions button,
 .backButton,
@@ -284,7 +347,7 @@
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
-.cardActions button:hover,
+.matchActions button:hover,
 .clipDelete:hover,
 .settingActions button:hover,
 .backButton:hover,
@@ -294,12 +357,22 @@
   background: rgba(255, 255, 255, 0.055);
 }
 
-.cardActions button[data-danger],
+.matchActions button[data-danger],
 .clipDelete[data-danger] {
   color: #f27b8c;
 }
 
-.cardActions button:disabled,
+.matchActions button[data-active="true"] {
+  border-color: rgba(255, 206, 115, 0.3);
+  color: #ffce73;
+}
+
+.matchActions button span {
+  margin-right: 5px;
+  font-size: 12px;
+}
+
+.matchActions button:disabled,
 .clipDelete:disabled,
 .settingActions button:disabled {
   opacity: 0.45;
@@ -400,13 +473,11 @@
 .clipPlaceholder::before {
   top: -28px;
   left: -22px;
-  border-color: color-mix(in srgb, var(--clip-accent), transparent 44%);
 }
 
 .clipPlaceholder::after {
   right: -25px;
   bottom: -38px;
-  border-color: color-mix(in srgb, var(--clip-accent), transparent 44%);
 }
 
 .clipPlaceholder i {
@@ -781,9 +852,22 @@
 }
 
 @media (max-width: 1240px) {
-  .gameGrid,
   .clipGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .matchOpen {
+    grid-template-columns: 62px minmax(160px, 1fr) minmax(126px, 0.7fr) 92px 14px;
+    gap: 15px;
+  }
+
+  .matchChampion {
+    width: 60px;
+    height: 60px;
+  }
+
+  .matchFile {
+    display: none;
   }
 }
 
@@ -794,10 +878,29 @@
     flex-direction: column;
   }
 
-  .gameGrid,
   .clipGrid,
   .settingsGrid {
     grid-template-columns: 1fr;
+  }
+
+  .matchOpen {
+    grid-template-columns: 56px minmax(0, 1fr) minmax(116px, 0.65fr) 12px;
+    gap: 13px;
+    padding: 13px 11px 13px 16px;
+  }
+
+  .matchChampion {
+    width: 54px;
+    height: 54px;
+  }
+
+  .matchMetric {
+    display: none;
+  }
+
+  .matchActions {
+    min-width: 106px;
+    padding: 10px;
   }
 
   .settingsPanel {
@@ -806,14 +909,49 @@
 }
 
 @media (max-width: 520px) {
-  .cardOpen {
-    grid-template-columns: 78px minmax(0, 1fr);
+  .matchRow {
+    grid-template-columns: 1fr;
+  }
+
+  .matchOpen {
+    grid-template-columns: 52px minmax(0, 1fr);
     gap: 12px;
     padding: 13px;
   }
 
-  .cardArtwork {
-    height: 112px;
+  .matchChampion {
+    grid-row: 1 / span 2;
+    width: 50px;
+    height: 50px;
+  }
+
+  .matchKda {
+    grid-column: 2;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .matchKda small,
+  .matchChevron {
+    display: none;
+  }
+
+  .matchKda strong {
+    font-size: 13px;
+  }
+
+  .matchActions {
+    grid-column: 1;
+    display: flex;
+    min-width: 0;
+    padding: 7px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-left: 0;
+  }
+
+  .matchActions button {
+    flex: 1;
   }
 
   .storageBreakdown {

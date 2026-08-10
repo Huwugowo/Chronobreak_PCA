@@ -65,16 +65,18 @@ account lookup or post-game enrichment job runs at startup.
 
 ### 3.1 Layout
 
-- Grid of game cards, most recent first
-- Responsive: 2 columns minimum, up to 4 columns on wide windows
+- Full-width vertical match-history list, most recent first
+- One compact row per recording; the list never changes into a card grid
+- Wide rows use fixed columns for KDA, duration, and file size; narrower windows progressively collapse secondary columns while preserving champion, date, and KDA
 - Storage indicator in the bottom-left corner (always visible)
 
-### 3.2 Game Card
+### 3.2 Game Row
 
-Each card is derived from `metadata.json` + derived values from `game_log.json`.
+Each row is derived from `metadata.json` + derived values from `game_log.json`.
 
-**Displayed on card:**
+**Displayed on row:**
 - Champion name (large, condensed bold)
+- Champion monogram portrait
 - KDA — computed from `game_log.json` events:
   - Kills: `ChampionKill` events where `killer == local_player_summoner_name`
   - Deaths: `ChampionKill` events where `victim == local_player_summoner_name`
@@ -83,11 +85,12 @@ Each card is derived from `metadata.json` + derived values from `game_log.json`.
 - Game duration (formatted as `MM:SS` from `metadata.duration_ms`)
 - Date recorded (formatted as `Mar 6, 2026 · 14:32`)
 - "Saved" badge if `metadata.saved == true`
-- "Incomplete" badge if bundle has no `metadata.json` (partial recording — champion and KDA will show as unknown, but the card is still clickable to open the video if video.mp4 is present)
+- "Incomplete" badge if bundle has no `metadata.json` (partial recording — champion and KDA show as unknown, but the row still opens when `video.mp4` is present)
+- Compact save/unsave and delete actions at the right edge; delete remains unavailable while a game is saved
 
 **On hover:**
-- "Delete" button appears on unsaved games and on incomplete bundles — never on saved games
-- Delete requires a confirmation dialog before executing
+- The row receives a subtle highlight and directional cue without changing its height
+- Delete still requires a confirmation dialog before executing
 
 **On click:**
 - Navigate to `/viewer/{gameTimestamp}`
@@ -119,7 +122,7 @@ Clicking "Manage storage" opens Settings directly at the storage section.
 
 ## 4. Clips Tab
 
-**Layout:** Grid of clip cards, most recent first. Same column count as the Games tab.
+**Layout:** Responsive grid of clip cards, most recent first. The Clips tab keeps its visual-card layout because thumbnails are the primary selection cue.
 
 **Each card displays:**
 - Thumbnail (first frame of the clip — see thumbnail mechanism below)

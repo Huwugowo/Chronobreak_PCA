@@ -18,6 +18,12 @@ type Props = {
 
 const accentColors = ["#2457ff", "#8b5cff", "#00a889", "#d24b68", "#d68c2f"];
 
+const formatKdaRatio = (game: GameSummary): string => {
+  if (game.incomplete) return "—";
+  if (game.deaths === 0) return "PERFECT KDA";
+  return `${((game.kills + game.assists) / game.deaths).toFixed(2)}:1 KDA`;
+};
+
 function LibraryScreen(props: Props) {
   return (
     <div class={styles.library}>
@@ -58,27 +64,34 @@ function GamesLibrary(props: Props) {
           />
         }
       >
-        <section class={styles.gameGrid} aria-label="Recorded games">
+        <section class={styles.matchList} aria-label="Recorded games">
           <For each={props.games}>
             {(game, index) => (
               <article
-                class={styles.gameCard}
-                style={{ "--card-accent": accentColors[index() % accentColors.length] }}
+                class={styles.matchRow}
+                style={{ "--match-accent": accentColors[index() % accentColors.length] }}
                 data-incomplete={game.incomplete}
               >
                 <button
-                  class={styles.cardOpen}
+                  class={styles.matchOpen}
                   type="button"
                   onClick={() => props.onOpenGame(game.timestamp)}
                   disabled={!game.video_available}
                   aria-label={`Open ${game.champion} recording from ${formatDate(game.recorded_at)}`}
                 >
-                  <span class={styles.cardArtwork} aria-hidden="true">
+                  <span class={styles.matchChampion} aria-hidden="true">
                     <i />
                     <strong>{game.champion === "Unknown" ? "?" : game.champion.slice(0, 2)}</strong>
                   </span>
-                  <span class={styles.cardContent}>
-                    <span class={styles.cardBadges}>
+                  <span class={styles.matchIdentity}>
+                    <span class={styles.matchTitle}>
+                      <strong>{game.champion}</strong>
+                      <small>{game.game_mode}</small>
+                    </span>
+                    <span class={styles.matchDate}>
+                      {game.incomplete ? `Recovered bundle · ${game.timestamp}` : formatDate(game.recorded_at)}
+                    </span>
+                    <span class={styles.matchBadges}>
                       <Show when={game.saved}>
                         <em data-saved>SAVED</em>
                       </Show>
@@ -86,39 +99,35 @@ function GamesLibrary(props: Props) {
                         <em data-incomplete>INCOMPLETE</em>
                       </Show>
                     </span>
-                    <span class={styles.championRow}>
-                      <strong>{game.champion}</strong>
-                      <small>{game.game_mode}</small>
-                    </span>
-                    <span class={styles.cardStats}>
-                      <span>
-                        <small>K / D / A</small>
-                        <strong>
-                          {game.kills} / {game.deaths} / {game.assists}
-                        </strong>
-                      </span>
-                      <span>
-                        <small>DURATION</small>
-                        <strong>{game.duration_ms ? formatDuration(game.duration_ms) : "—"}</strong>
-                      </span>
-                      <span>
-                        <small>FILE</small>
-                        <strong>{formatBytes(game.video_size_bytes)}</strong>
-                      </span>
-                    </span>
-                    <span class={styles.cardDate}>
-                      {game.incomplete ? `Recovered bundle · ${game.timestamp}` : formatDate(game.recorded_at)}
-                    </span>
                   </span>
+                  <span class={styles.matchKda}>
+                    <small>K / D / A</small>
+                    <strong>
+                      {game.kills} <i>/</i> {game.deaths} <i>/</i> {game.assists}
+                    </strong>
+                    <em>{formatKdaRatio(game)}</em>
+                  </span>
+                  <span class={styles.matchMetric}>
+                    <small>DURATION</small>
+                    <strong>{game.duration_ms ? formatDuration(game.duration_ms) : "—"}</strong>
+                  </span>
+                  <span class={`${styles.matchMetric} ${styles.matchFile}`}>
+                    <small>RECORDING</small>
+                    <strong>{formatBytes(game.video_size_bytes)}</strong>
+                  </span>
+                  <span class={styles.matchChevron} aria-hidden="true">›</span>
                 </button>
-                <div class={styles.cardActions}>
+                <div class={styles.matchActions}>
                   <Show when={!game.incomplete}>
                     <button
                       type="button"
                       onClick={() => props.onToggleSaved(game)}
                       disabled={props.busyId === game.timestamp}
+                      aria-label={game.saved ? `Unsave ${game.champion} recording` : `Save ${game.champion} recording`}
+                      data-active={game.saved}
                     >
-                      {game.saved ? "Unsave" : "Save"}
+                      <span aria-hidden="true">{game.saved ? "★" : "☆"}</span>
+                      {game.saved ? "SAVED" : "SAVE"}
                     </button>
                   </Show>
                   <Show when={!game.saved}>
@@ -127,8 +136,9 @@ function GamesLibrary(props: Props) {
                       data-danger
                       onClick={() => props.onDeleteGame(game)}
                       disabled={props.busyId === game.timestamp}
+                      aria-label={`Delete ${game.champion} recording`}
                     >
-                      Delete
+                      DELETE
                     </button>
                   </Show>
                 </div>
