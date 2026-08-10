@@ -94,7 +94,7 @@ Two data sources are used:
 | Source | When available | Required? | What it provides |
 |---|---|---|---|
 | `localhost:2999` Live Client API | During the game only | ✅ Always | Events, roster, items, levels, CS, and local-player gold/HP |
-| Riot Data Dragon CDN | Anytime, static per patch | ✅ Always | Item names, item icons, champion icons |
+| Riot Data Dragon CDN | Anytime, static per patch | ✅ Always | Item names and champion, spell, rune, and item icons |
 
 ---
 
@@ -154,7 +154,7 @@ Viego possession can temporarily replace his items with the possessed champion's
 
 **Base URL:** `https://ddragon.leagueoflegends.com/`
 
-Free Riot CDN, no authentication required. Used to resolve item IDs and champion IDs to display names and icon URLs.
+Free Riot CDN, no authentication required. Used to resolve recorded champion, summoner-spell, rune, and item identifiers to presentation assets.
 
 **Fetch strategy:**
 - On app launch, check current patch version: `GET /api/versions.json` → first element is current patch
@@ -166,9 +166,10 @@ Free Riot CDN, no authentication required. Used to resolve item IDs and champion
 **Data fetched:**
 - `GET /cdn/{version}/data/en_US/item.json` — maps item ID → name, description, icon path
 - `GET /cdn/{version}/data/en_US/champion.json` — maps champion key → name, icon path
-- Icons: `GET /cdn/{version}/img/item/{itemId}.png` — fetched on demand, cached locally
+- `GET /cdn/{version}/data/en_US/runesReforged.json` — maps rune IDs → icon paths
+- Champion, summoner-spell, rune, and item PNGs are fetched only when the UI requests them. The local byte-range server exposes those cached files to the webview; downloaded icons live under `ddragon/{patch_version}/icons/{kind}/` and receive immutable browser-cache headers.
 
-The app never shows raw item IDs to the user. Every item ID from the Live Client API is resolved through this cache before display.
+If Data Dragon is unavailable, already-cached manifests and icons remain usable; missing images degrade to compact visual placeholders. The app never shows raw item IDs to the user.
 
 ---
 

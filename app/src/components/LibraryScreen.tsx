@@ -1,12 +1,13 @@
 import { For, Show } from "solid-js";
 import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
-import type { ClipSummary, GameSummary, LibraryTab } from "../types";
+import type { ClipSummary, DdragonStatus, GameItemSummary, GameSummary, LibraryTab } from "../types";
 import styles from "./Library.module.css";
 
 type Props = {
   tab: LibraryTab;
   games: GameSummary[];
   clips: ClipSummary[];
+  ddragon: DdragonStatus;
   busyId: string | null;
   onOpenGame: (timestamp: string) => void;
   onToggleSaved: (game: GameSummary) => void;
@@ -17,6 +18,23 @@ type Props = {
 };
 
 const accentColors = ["#2457ff", "#8b5cff", "#00a889", "#d24b68", "#d68c2f"];
+const itemSlots = Array.from({ length: 7 }, (_, slot) => slot);
+
+const ddragonAsset = (
+  status: DdragonStatus,
+  kind: "champion" | "spell" | "rune" | "item",
+  asset: string | number | null | undefined,
+): string | null => {
+  if (!status.asset_base_url || asset === null || asset === undefined || asset === "") return null;
+  return `${status.asset_base_url}/${kind}/${encodeURIComponent(String(asset))}`;
+};
+
+const finalBuild = (items: GameItemSummary[]): Array<GameItemSummary | null> =>
+  itemSlots.map((slot) => items.find((item) => item.slot === slot) ?? null);
+
+const hideFailedImage = (event: Event) => {
+  if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true;
+};
 
 const formatKdaRatio = (game: GameSummary): string => {
   if (game.incomplete) return "—";
@@ -79,9 +97,60 @@ function GamesLibrary(props: Props) {
                   disabled={!game.video_available}
                   aria-label={`Open ${game.champion} recording from ${formatDate(game.recorded_at)}`}
                 >
-                  <span class={styles.matchChampion} aria-hidden="true">
-                    <i />
-                    <strong>{game.champion === "Unknown" ? "?" : game.champion.slice(0, 2)}</strong>
+                  <span class={styles.matchLoadout} aria-hidden="true">
+                    <span class={styles.matchChampion}>
+                      <i />
+                      <strong>{game.champion === "Unknown" ? "?" : game.champion.slice(0, 2)}</strong>
+                      <Show
+                        when={ddragonAsset(
+                          props.ddragon,
+                          "champion",
+                          game.champion === "Unknown" ? null : game.champion,
+                        )}
+                      >
+                        <img
+                          src={ddragonAsset(
+                            props.ddragon,
+                            "champion",
+                            game.champion === "Unknown" ? null : game.champion,
+                          )!}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          onError={hideFailedImage}
+                        />
+                      </Show>
+                    </span>
+                    <span class={styles.matchSpells}>
+                      <For each={game.summoner_spells.slice(0, 2)}>
+                        {(spell) => (
+                          <span class={styles.matchAssetIcon} title={spell.replace(/^Summoner/, "")}>
+                            <Show when={ddragonAsset(props.ddragon, "spell", spell)}>
+                              <img
+                                src={ddragonAsset(props.ddragon, "spell", spell)!}
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                                onError={hideFailedImage}
+                              />
+                            </Show>
+                          </span>
+                        )}
+                      </For>
+                    </span>
+                    <span class={styles.matchRunes}>
+                      <span class={styles.matchAssetIcon} title="Keystone rune">
+                        <Show when={ddragonAsset(props.ddragon, "rune", game.keystone_id)}>
+                          <img
+                            src={ddragonAsset(props.ddragon, "rune", game.keystone_id)!}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            onError={hideFailedImage}
+                          />
+                        </Show>
+                      </span>
+                    </span>
                   </span>
                   <span class={styles.matchIdentity}>
                     <span class={styles.matchTitle}>
@@ -106,6 +175,26 @@ function GamesLibrary(props: Props) {
                       {game.kills} <i>/</i> {game.deaths} <i>/</i> {game.assists}
                     </strong>
                     <em>{formatKdaRatio(game)}</em>
+                  </span>
+                  <span class={styles.matchItems} aria-hidden="true">
+                    <small>FINAL BUILD</small>
+                    <span>
+                      <For each={finalBuild(game.items)}>
+                        {(item) => (
+                          <span class={styles.matchItem} title={item ? "Final item" : undefined}>
+                            <Show when={ddragonAsset(props.ddragon, "item", item?.item_id)}>
+                              <img
+                                src={ddragonAsset(props.ddragon, "item", item?.item_id)!}
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                                onError={hideFailedImage}
+                              />
+                            </Show>
+                          </span>
+                        )}
+                      </For>
+                    </span>
                   </span>
                   <span class={styles.matchMetric}>
                     <small>DURATION</small>

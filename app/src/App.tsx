@@ -51,6 +51,7 @@ type DeleteTarget =
 const emptyDdragon: DdragonStatus = {
   state: "loading",
   version: null,
+  asset_base_url: null,
   item_count: 0,
   champion_count: 0,
   cache_directory: "",
@@ -273,6 +274,7 @@ function App() {
               tab={(navigation() as Extract<NavigationState, { screen: "library" }>).tab}
               games={games() ?? []}
               clips={clips() ?? []}
+              ddragon={ddragon() ?? emptyDdragon}
               busyId={busyId()}
               onOpenGame={(gameTimestamp) => setNavigation({ screen: "viewer", gameTimestamp })}
               onToggleSaved={(game) => void toggleSaved(game)}

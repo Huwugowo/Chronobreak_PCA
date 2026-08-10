@@ -14,7 +14,7 @@ The app is a Tauri v2 window with a SolidJS frontend. The root level has **two t
 [ Games ]  [ Clips ]
 ```
 
-**Games tab** — all recorded game bundles as cards, most recent first.
+**Games tab** — all recorded game bundles as compact match-history rows, most recent first.
 **Clips tab** — all exported clips as cards.
 
 Both tabs are library views. No video plays at this level. The tab selection persists across app launches (stored in local app state).
@@ -76,7 +76,9 @@ Each row is derived from `metadata.json` + derived values from `game_log.json`.
 
 **Displayed on row:**
 - Champion name (large, condensed bold)
-- Champion monogram portrait
+- Champion portrait from the versioned Data Dragon cache, with a monogram fallback while unavailable
+- Both summoner-spell icons and the keystone icon captured in the first snapshot
+- Final item build from the last local-player snapshot, including the trinket slot
 - KDA — computed from `game_log.json` events:
   - Kills: `ChampionKill` events where `killer == local_player_summoner_name`
   - Deaths: `ChampionKill` events where `victim == local_player_summoner_name`
@@ -94,6 +96,8 @@ Each row is derived from `metadata.json` + derived values from `game_log.json`.
 
 **On click:**
 - Navigate to `/viewer/{gameTimestamp}`
+
+The row requests image assets through the local app server. Icons are downloaded lazily from Data Dragon, cached by patch and kind, and then browser-cached as immutable files. Manifest or network failure never blocks the library: the row keeps its fixed layout and falls back to its monogram or empty icon slots.
 
 ### 3.3 Empty State
 

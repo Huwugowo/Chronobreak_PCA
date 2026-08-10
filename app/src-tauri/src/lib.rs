@@ -212,11 +212,15 @@ fn record_hevc_probe_result(
 
 #[tauri::command]
 fn get_ddragon_status(state: State<'_, AppState>) -> DdragonStatus {
-    state
+    let mut status = state
         .ddragon_status
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
+        .clone();
+    if let Some(version) = &status.version {
+        status.asset_base_url = Some(format!("{}/ddragon/{version}", state.playback_origin));
+    }
+    status
 }
 
 #[tauri::command(async)]
@@ -313,15 +317,16 @@ pub fn run() {
                 .app_local_data_dir()
                 .context("could not resolve the app data directory")?;
             let music_directory = music::install(&app_data)?;
+            let ddragon_cache = app_data.join("ddragon");
             let roots = Arc::new(MediaRoots::new(output_directory.clone()));
             let playback_metrics = Arc::new(PlaybackMetrics::default());
             let playback_origin = tauri::async_runtime::block_on(playback_server::start(
                 Arc::clone(&roots),
                 Arc::clone(&playback_metrics),
+                ddragon_cache.clone(),
             ))?;
 
             let hevc_probe_path = app_data.join("hevc-probe-v1.json");
-            let ddragon_cache = app_data.join("ddragon");
             let ddragon_status = Arc::new(RwLock::new(DdragonStatus::loading(&ddragon_cache)));
             tauri::async_runtime::spawn(ddragon::initialize(
                 ddragon_cache.clone(),

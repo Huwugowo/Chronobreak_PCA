@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -21,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf, SeekFrom};
 use tokio::net::TcpListener;
 use tokio_util::io::ReaderStream;
 
+use crate::ddragon;
 use crate::library::{valid_clip_asset, valid_timestamp};
 use crate::music;
 
@@ -81,6 +83,8 @@ impl MediaRoots {
 struct PlaybackState {
     roots: Arc<MediaRoots>,
     metrics: Arc<PlaybackMetrics>,
+    ddragon_cache: PathBuf,
+    ddragon_client: reqwest::Client,
 }
 
 struct CountingReader<R> {
@@ -113,13 +117,27 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
     }
 }
 
-pub async fn start(roots: Arc<MediaRoots>, metrics: Arc<PlaybackMetrics>) -> Result<String> {
-    let state = PlaybackState { roots, metrics };
+pub async fn start(
+    roots: Arc<MediaRoots>,
+    metrics: Arc<PlaybackMetrics>,
+    ddragon_cache: PathBuf,
+) -> Result<String> {
+    let ddragon_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .context("failed to build the Data Dragon asset client")?;
+    let state = PlaybackState {
+        roots,
+        metrics,
+        ddragon_cache,
+        ddragon_client,
+    };
     let router = Router::new()
         .route("/games/{timestamp}/video.mp4", any(game_video))
         .route("/clips/{filename}", any(clip_asset))
         .route("/music/{filename}", any(built_in_music))
         .route("/probe/hevc.mp4", any(hevc_probe))
+        .route("/ddragon/{version}/{kind}/{asset}", any(ddragon_asset))
         .with_state(state);
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .await
@@ -184,6 +202,37 @@ async fn built_in_music(
         return empty_response(StatusCode::NOT_FOUND, "audio/mpeg");
     };
     serve_embedded(state, request, bytes, "audio/mpeg").await
+}
+
+async fn ddragon_asset(
+    State(state): State<PlaybackState>,
+    AxumPath((version, kind, asset)): AxumPath<(String, String, String)>,
+    request: Request<Body>,
+) -> Response<Body> {
+    if !valid_method(request.method()) {
+        return empty_response(StatusCode::METHOD_NOT_ALLOWED, "image/png");
+    }
+    let path = match ddragon::ensure_asset(
+        &state.ddragon_client,
+        &state.ddragon_cache,
+        &version,
+        &kind,
+        &asset,
+    )
+    .await
+    {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("Data Dragon asset unavailable: {error}");
+            return empty_response(StatusCode::NOT_FOUND, "image/png");
+        }
+    };
+    let mut response = serve_file(state, request, &path, "image/png").await;
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    response
 }
 
 async fn serve_embedded(

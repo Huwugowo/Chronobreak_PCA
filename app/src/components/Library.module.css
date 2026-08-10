@@ -49,6 +49,7 @@
 
 .libraryIntro dt,
 .matchKda small,
+.matchItems small,
 .matchMetric small,
 .storageBreakdown dt,
 .capabilityList dt {
@@ -110,7 +111,7 @@
 .matchOpen {
   display: grid;
   min-width: 0;
-  grid-template-columns: 66px minmax(180px, 1.3fr) minmax(132px, 0.72fr) 96px 108px 14px;
+  grid-template-columns: 124px minmax(180px, 1.3fr) minmax(132px, 0.72fr) 204px 96px 108px 14px;
   align-items: center;
   gap: 18px;
   padding: 15px 14px 15px 19px;
@@ -119,6 +120,13 @@
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.matchLoadout {
+  display: grid;
+  grid-template-columns: 64px 24px 24px;
+  align-items: center;
+  gap: 5px;
 }
 
 .matchOpen:focus-visible {
@@ -190,6 +198,47 @@
   font-size: 18px;
   letter-spacing: -0.08em;
   text-transform: uppercase;
+}
+
+.matchChampion > img {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.matchSpells,
+.matchRunes {
+  display: grid;
+  gap: 4px;
+}
+
+.matchAssetIcon,
+.matchItem {
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(4, 7, 12, 0.76);
+}
+
+.matchAssetIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+}
+
+.matchRunes .matchAssetIcon {
+  border-radius: 50%;
+}
+
+.matchAssetIcon img,
+.matchItem img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .matchIdentity {
@@ -295,6 +344,25 @@
   font-style: normal;
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+
+.matchItems {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 7px;
+}
+
+.matchItems > span {
+  display: grid;
+  grid-template-columns: repeat(7, 26px);
+  gap: 3px;
+}
+
+.matchItem {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
 }
 
 .matchMetric {
@@ -857,13 +925,32 @@
   }
 
   .matchOpen {
-    grid-template-columns: 62px minmax(160px, 1fr) minmax(126px, 0.7fr) 92px 14px;
+    grid-template-columns: 112px minmax(150px, 1fr) minmax(118px, 0.62fr) 190px 92px 14px;
     gap: 15px;
+  }
+
+  .matchLoadout {
+    grid-template-columns: 60px 22px 22px;
+    gap: 4px;
   }
 
   .matchChampion {
     width: 60px;
     height: 60px;
+  }
+
+  .matchAssetIcon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .matchItems > span {
+    grid-template-columns: repeat(7, 24px);
+  }
+
+  .matchItem {
+    width: 24px;
+    height: 24px;
   }
 
   .matchFile {
@@ -884,7 +971,7 @@
   }
 
   .matchOpen {
-    grid-template-columns: 56px minmax(0, 1fr) minmax(116px, 0.65fr) 12px;
+    grid-template-columns: 102px minmax(0, 1fr) minmax(116px, 0.65fr) 162px 12px;
     gap: 13px;
     padding: 13px 11px 13px 16px;
   }
@@ -892,6 +979,24 @@
   .matchChampion {
     width: 54px;
     height: 54px;
+  }
+
+  .matchLoadout {
+    grid-template-columns: 54px 20px 20px;
+  }
+
+  .matchAssetIcon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .matchItems > span {
+    grid-template-columns: repeat(7, 21px);
+  }
+
+  .matchItem {
+    width: 21px;
+    height: 21px;
   }
 
   .matchMetric {
@@ -923,6 +1028,16 @@
     grid-row: 1 / span 2;
     width: 50px;
     height: 50px;
+  }
+
+  .matchLoadout {
+    grid-template-columns: 52px;
+  }
+
+  .matchSpells,
+  .matchRunes,
+  .matchItems {
+    display: none;
   }
 
   .matchKda {

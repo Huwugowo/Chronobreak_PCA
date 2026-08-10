@@ -7,10 +7,18 @@ export type GameSummary = {
   kills: number;
   deaths: number;
   assists: number;
+  summoner_spells: string[];
+  keystone_id: number | null;
+  items: GameItemSummary[];
   saved: boolean;
   incomplete: boolean;
   video_size_bytes: number;
   video_available: boolean;
+};
+
+export type GameItemSummary = {
+  item_id: number;
+  slot: number;
 };
 
 export type ClipSummary = {
@@ -153,6 +161,7 @@ export type HevcProbeStatus = {
 export type DdragonStatus = {
   state: "loading" | "ready" | "offline";
   version: string | null;
+  asset_base_url: string | null;
   item_count: number;
   champion_count: number;
   cache_directory: string;

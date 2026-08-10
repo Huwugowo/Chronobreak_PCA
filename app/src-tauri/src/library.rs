@@ -25,10 +25,19 @@ pub struct GameSummary {
     pub kills: u32,
     pub deaths: u32,
     pub assists: u32,
+    pub summoner_spells: Vec<String>,
+    pub keystone_id: Option<u32>,
+    pub items: Vec<GameItemSummary>,
     pub saved: bool,
     pub incomplete: bool,
     pub video_size_bytes: u64,
     pub video_available: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct GameItemSummary {
+    pub item_id: u32,
+    pub slot: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -155,6 +164,16 @@ struct SnapshotPlayer {
     champion: String,
     cs: u32,
     level: u32,
+    items: Vec<SnapshotItem>,
+    summoner_spells: Option<Vec<String>>,
+    keystone_id: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SnapshotItem {
+    item_id: u32,
+    slot: u32,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -519,10 +538,12 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     };
 
     let game_log = read_game_log(&directory.join(GAME_LOG_JSON)).unwrap_or_default();
-    let (kills, deaths, assists) = metadata
-        .local_player_summoner_name
-        .as_deref()
+    let local_player_name = metadata.local_player_summoner_name.as_deref();
+    let (kills, deaths, assists) = local_player_name
         .map(|player| derive_kda(player, &game_log.events))
+        .unwrap_or_default();
+    let (summoner_spells, keystone_id, items) = local_player_name
+        .map(|player| derive_loadout(player, &game_log.snapshots))
         .unwrap_or_default();
 
     GameSummary {
@@ -536,6 +557,9 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
         kills,
         deaths,
         assists,
+        summoner_spells,
+        keystone_id,
+        items,
         saved: metadata.saved,
         incomplete: false,
         video_size_bytes,
@@ -553,11 +577,59 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
         kills: 0,
         deaths: 0,
         assists: 0,
+        summoner_spells: Vec::new(),
+        keystone_id: None,
+        items: Vec::new(),
         saved: false,
         incomplete: true,
         video_size_bytes,
         video_available: video_size_bytes > 0,
     }
+}
+
+fn derive_loadout(
+    player: &str,
+    snapshots: &[GameSnapshot],
+) -> (Vec<String>, Option<u32>, Vec<GameItemSummary>) {
+    let stable = snapshots
+        .iter()
+        .filter_map(|snapshot| {
+            snapshot
+                .players
+                .iter()
+                .find(|candidate| same_player(&candidate.summoner_name, player))
+        })
+        .find(|candidate| candidate.summoner_spells.is_some() || candidate.keystone_id.is_some());
+    let summoner_spells = stable
+        .and_then(|candidate| candidate.summoner_spells.clone())
+        .unwrap_or_default();
+    let keystone_id = stable.and_then(|candidate| candidate.keystone_id);
+
+    let mut items = snapshots
+        .iter()
+        .rev()
+        .find_map(|snapshot| {
+            snapshot
+                .players
+                .iter()
+                .find(|candidate| same_player(&candidate.summoner_name, player))
+                .map(|candidate| {
+                    candidate
+                        .items
+                        .iter()
+                        .filter(|item| item.item_id > 0)
+                        .map(|item| GameItemSummary {
+                            item_id: item.item_id,
+                            slot: item.slot,
+                        })
+                        .collect::<Vec<_>>()
+                })
+        })
+        .unwrap_or_default();
+    items.sort_by_key(|item| item.slot);
+    items.dedup_by_key(|item| item.slot);
+
+    (summoner_spells, keystone_id, items)
 }
 
 fn derive_kda(player: &str, events: &[GameEvent]) -> (u32, u32, u32) {
@@ -790,7 +862,7 @@ mod tests {
                     {
                         "game_time_ms": 1000,
                         "players": [
-                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":1,"level":1},
+                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":1,"level":1,"items":[{"item_id":1056,"slot":0}],"summoner_spells":["SummonerFlash","SummonerTeleport"],"keystone_id":8214},
                             {"summoner_name":"Ally#EUW","team":"ORDER","champion":"LeeSin","cs":1,"level":1},
                             {"summoner_name":"Enemy#EUW","team":"CHAOS","champion":"Viktor","cs":2,"level":1}
                         ]
@@ -798,7 +870,7 @@ mod tests {
                     {
                         "game_time_ms": 11000,
                         "players": [
-                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":8,"level":2}
+                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":8,"level":2,"items":[{"item_id":3020,"slot":1},{"item_id":6657,"slot":0},{"item_id":3340,"slot":6}]}
                         ]
                     }
                 ],
@@ -829,6 +901,28 @@ mod tests {
             (1, 1, 1)
         );
         assert_eq!(games[0].video_size_bytes, 5);
+        assert_eq!(
+            games[0].summoner_spells,
+            ["SummonerFlash", "SummonerTeleport"]
+        );
+        assert_eq!(games[0].keystone_id, Some(8214));
+        assert_eq!(
+            games[0].items,
+            vec![
+                GameItemSummary {
+                    item_id: 6657,
+                    slot: 0,
+                },
+                GameItemSummary {
+                    item_id: 3020,
+                    slot: 1,
+                },
+                GameItemSummary {
+                    item_id: 3340,
+                    slot: 6,
+                },
+            ]
+        );
     }
 
     #[test]
