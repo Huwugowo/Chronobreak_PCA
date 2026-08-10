@@ -11,7 +11,6 @@ import {
   eventCategory,
   eventSummary,
   eventTitle,
-  moveClipEndpoint,
   nearestIndexAt,
 } from "../viewerUtils";
 import ChampionFilter from "./ChampionFilter";
@@ -35,8 +34,14 @@ type Props = {
   onPlayerClear: () => void;
   onTogglePlayback: () => void;
   onSeek: (videoTimeMs: number) => void;
-  onActivateClip: (event?: ViewerEvent) => void;
-  onClipRangeChange: (range: ClipRange | null) => void;
+  onActivateClip: () => void;
+  onEventSelect: (event: ViewerEvent) => void;
+  onClipEndpointEditStart: (endpoint: "start" | "end") => void;
+  onClipEndpointPreview: (endpoint: "start" | "end", requestedMs: number) => void;
+  onClipEndpointEditFinish: () => void;
+  onClipEndpointKeyDown: (event: KeyboardEvent, endpoint: "start" | "end") => void;
+  onClipEndpointKeyUp: (event: KeyboardEvent, endpoint: "start" | "end") => void;
+  onClipEndpointBlur: (endpoint: "start" | "end") => void;
   onExportClip: () => void;
   onCancelClip: () => void;
   onExit: () => void;
@@ -147,8 +152,6 @@ function FullscreenOverlay(props: Props) {
 
   const handleRailKey = (event: KeyboardEvent) => {
     let target: number | undefined;
-    if (event.key === "ArrowLeft" || event.key === "ArrowDown") target = props.videoTimeMs - 5_000;
-    if (event.key === "ArrowRight" || event.key === "ArrowUp") target = props.videoTimeMs + 5_000;
     if (event.key === "PageDown") target = props.videoTimeMs - 30_000;
     if (event.key === "PageUp") target = props.videoTimeMs + 30_000;
     if (event.key === "Home") target = 0;
@@ -158,19 +161,6 @@ function FullscreenOverlay(props: Props) {
     props.onSeek(target);
   };
 
-  const updateClipEndpoint = (endpoint: "start" | "end", requestedMs: number) => {
-    if (!props.clipRange) return;
-    props.onClipRangeChange(
-      moveClipEndpoint(
-        props.clipRange,
-        endpoint,
-        requestedMs,
-        props.durationMs,
-        props.events,
-      ),
-    );
-  };
-
   const beginClipDrag = (
     event: PointerEvent & { currentTarget: HTMLButtonElement },
     endpoint: "start" | "end",
@@ -178,44 +168,37 @@ function FullscreenOverlay(props: Props) {
     event.preventDefault();
     event.stopPropagation();
     const handle = event.currentTarget;
+    handle.focus({ preventScroll: true });
+    props.onClipEndpointEditStart(endpoint);
     const update = (pointerEvent: PointerEvent) => {
       const bounds = fullscreenRail.getBoundingClientRect();
       if (bounds.width <= 0) return;
-      updateClipEndpoint(
+      props.onClipEndpointPreview(
         endpoint,
         ((pointerEvent.clientX - bounds.left) / bounds.width) * props.durationMs,
       );
     };
-    const finish = (pointerEvent: PointerEvent) => {
-      update(pointerEvent);
+    const cleanup = (pointerEvent: PointerEvent) => {
       handle.removeEventListener("pointermove", update);
       handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
+      handle.removeEventListener("pointercancel", cancel);
       if (handle.hasPointerCapture(pointerEvent.pointerId)) {
         handle.releasePointerCapture(pointerEvent.pointerId);
       }
     };
+    const finish = (pointerEvent: PointerEvent) => {
+      update(pointerEvent);
+      cleanup(pointerEvent);
+      props.onClipEndpointEditFinish();
+    };
+    const cancel = (pointerEvent: PointerEvent) => {
+      cleanup(pointerEvent);
+      props.onClipEndpointEditFinish();
+    };
     handle.setPointerCapture(event.pointerId);
     handle.addEventListener("pointermove", update);
     handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
-  };
-
-  const handleClipEndpointKey = (event: KeyboardEvent, endpoint: "start" | "end") => {
-    if (!props.clipRange) return;
-    const current = endpoint === "start" ? props.clipRange.startMs : props.clipRange.endMs;
-    const step = event.shiftKey ? 2_000 : 500;
-    let requested = current;
-    if (event.key === "ArrowLeft" || event.key === "ArrowDown") requested -= step;
-    else if (event.key === "ArrowRight" || event.key === "ArrowUp") requested += step;
-    else if (event.key === "Home") {
-      requested = endpoint === "start" ? 0 : props.clipRange.startMs + 5_000;
-    } else if (event.key === "End") {
-      requested = endpoint === "end" ? props.durationMs : props.clipRange.endMs - 5_000;
-    } else return;
-    event.preventDefault();
-    event.stopPropagation();
-    updateClipEndpoint(endpoint, requested);
+    handle.addEventListener("pointercancel", cancel);
   };
 
   return (
@@ -306,7 +289,9 @@ function FullscreenOverlay(props: Props) {
                 type="button"
                 aria-label={`Clip starts at ${formatDuration(props.clipRange!.startMs)}`}
                 onPointerDown={(event) => beginClipDrag(event, "start")}
-                onKeyDown={(event) => handleClipEndpointKey(event, "start")}
+                onKeyDown={(event) => props.onClipEndpointKeyDown(event, "start")}
+                onKeyUp={(event) => props.onClipEndpointKeyUp(event, "start")}
+                onBlur={() => props.onClipEndpointBlur("start")}
               />
               <button
                 class={`${styles.clipHandle} ${styles.clipHandleEnd}`}
@@ -314,7 +299,9 @@ function FullscreenOverlay(props: Props) {
                 type="button"
                 aria-label={`Clip ends at ${formatDuration(props.clipRange!.endMs)}`}
                 onPointerDown={(event) => beginClipDrag(event, "end")}
-                onKeyDown={(event) => handleClipEndpointKey(event, "end")}
+                onKeyDown={(event) => props.onClipEndpointKeyDown(event, "end")}
+                onKeyUp={(event) => props.onClipEndpointKeyUp(event, "end")}
+                onBlur={() => props.onClipEndpointBlur("end")}
               />
             </Show>
             <span class={styles.railHead} style={`left:${progress()}%`} />
@@ -324,9 +311,9 @@ function FullscreenOverlay(props: Props) {
                   class={`${styles.fullscreenMarker} ${styles[`marker${marker.event.relation}`]}`}
                   style={`left:${marker.position}%`}
                   type="button"
-                  aria-label={`Create clip from ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
+                  aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
                   onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => { event.stopPropagation(); props.onActivateClip(marker.event); }}
+                  onClick={(event) => { event.stopPropagation(); props.onEventSelect(marker.event); }}
                 />
               )}
             </For>

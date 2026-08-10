@@ -1,7 +1,6 @@
 import type { ClipRange, ViewerEvent } from "./types";
 
 export const MINIMUM_CLIP_MS = 5_000;
-export const CLIP_SNAP_MS = 2_000;
 
 export const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value));
@@ -39,6 +38,7 @@ const boundedClipRange = (
   preRollMs: number,
   postRollMs: number,
   durationMs: number,
+  recordingFps: number,
 ): ClipRange => {
   let startMs = clamp(anchorMs - preRollMs, 0, durationMs);
   let endMs = clamp(anchorMs + postRollMs, 0, durationMs);
@@ -46,13 +46,39 @@ const boundedClipRange = (
     if (endMs >= MINIMUM_CLIP_MS) startMs = endMs - MINIMUM_CLIP_MS;
     else endMs = Math.min(durationMs, startMs + MINIMUM_CLIP_MS);
   }
-  return { startMs: Math.round(startMs), endMs: Math.round(endMs) };
+  return alignClipRangeToFrames({ startMs, endMs }, durationMs, recordingFps);
+};
+
+export const frameIndexAt = (timeMs: number, recordingFps: number): number =>
+  Math.round((timeMs * recordingFps) / 1_000);
+
+export const frameTimeMs = (frameIndex: number, recordingFps: number): number =>
+  Math.round((frameIndex * 1_000) / recordingFps);
+
+export const alignClipRangeToFrames = (
+  range: ClipRange,
+  durationMs: number,
+  recordingFps: number,
+): ClipRange => {
+  const durationFrame = Math.floor((durationMs * recordingFps) / 1_000);
+  const minimumFrames = Math.ceil((MINIMUM_CLIP_MS * recordingFps) / 1_000);
+  let startFrame = clamp(frameIndexAt(range.startMs, recordingFps), 0, durationFrame);
+  let endFrame = clamp(frameIndexAt(range.endMs, recordingFps), 0, durationFrame);
+  if (endFrame - startFrame < minimumFrames) {
+    if (endFrame >= minimumFrames) startFrame = endFrame - minimumFrames;
+    else endFrame = Math.min(durationFrame, startFrame + minimumFrames);
+  }
+  return {
+    startMs: frameTimeMs(startFrame, recordingFps),
+    endMs: frameTimeMs(endFrame, recordingFps),
+  };
 };
 
 export const defaultClipRange = (
   anchorMs: number,
   durationMs: number,
   events: readonly ViewerEvent[],
+  recordingFps: number,
   anchorEvent?: ViewerEvent,
 ): ClipRange => {
   let preRollMs = 8_000;
@@ -78,7 +104,7 @@ export const defaultClipRange = (
       postRollMs = 10_000;
     }
   }
-  return boundedClipRange(anchorMs, preRollMs, postRollMs, durationMs);
+  return boundedClipRange(anchorMs, preRollMs, postRollMs, durationMs, recordingFps);
 };
 
 export const moveClipEndpoint = (
@@ -86,23 +112,38 @@ export const moveClipEndpoint = (
   endpoint: "start" | "end",
   requestedMs: number,
   durationMs: number,
-  events: readonly ViewerEvent[],
+  recordingFps: number,
 ): ClipRange => {
-  const nearest = nearestIndexAt(events, requestedMs);
-  const snapped =
-    nearest >= 0 && Math.abs(events[nearest].video_time_ms - requestedMs) <= CLIP_SNAP_MS
-      ? events[nearest].video_time_ms
-      : requestedMs;
+  const durationFrame = Math.floor((durationMs * recordingFps) / 1_000);
+  const minimumFrames = Math.ceil((MINIMUM_CLIP_MS * recordingFps) / 1_000);
+  const startFrame = frameIndexAt(range.startMs, recordingFps);
+  const endFrame = frameIndexAt(range.endMs, recordingFps);
+  const requestedFrame = frameIndexAt(requestedMs, recordingFps);
   if (endpoint === "start") {
     return {
-      startMs: Math.round(clamp(snapped, 0, range.endMs - MINIMUM_CLIP_MS)),
+      startMs: frameTimeMs(clamp(requestedFrame, 0, endFrame - minimumFrames), recordingFps),
       endMs: range.endMs,
     };
   }
   return {
     startMs: range.startMs,
-    endMs: Math.round(clamp(snapped, range.startMs + MINIMUM_CLIP_MS, durationMs)),
+    endMs: frameTimeMs(
+      clamp(requestedFrame, startFrame + minimumFrames, durationFrame),
+      recordingFps,
+    ),
   };
+};
+
+export const clipEndpointPreviewMs = (
+  range: ClipRange,
+  endpoint: "start" | "end",
+  recordingFps: number,
+): number => {
+  if (endpoint === "start") return range.startMs;
+  return frameTimeMs(
+    Math.max(frameIndexAt(range.startMs, recordingFps), frameIndexAt(range.endMs, recordingFps) - 1),
+    recordingFps,
+  );
 };
 
 export const timelineValue = <T extends { video_time_ms: number }>(

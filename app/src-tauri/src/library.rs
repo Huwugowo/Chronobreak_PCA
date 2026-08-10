@@ -120,6 +120,7 @@ pub struct KdaTimelinePoint {
 pub struct PlaybackProbe {
     pub game: GameSummary,
     pub video_url: String,
+    pub recording_fps: u32,
     pub game_start_video_offset_ms: u64,
     pub local_player_name: Option<String>,
     pub participants: Vec<ReplayParticipant>,
@@ -133,6 +134,7 @@ pub struct PlaybackProbe {
 struct MetadataDocument {
     recorded_at: String,
     duration_ms: u64,
+    recording_fps: u32,
     video_offset_ms: Option<u64>,
     game_mode: Option<String>,
     local_player_summoner_name: Option<String>,
@@ -240,10 +242,12 @@ pub fn playback_probe(
         bail!("recording video is unavailable");
     }
 
-    let metadata = read_json::<MetadataDocument>(&game_directory.join(METADATA_JSON)).ok();
-    let local_player_name = metadata
-        .as_ref()
-        .and_then(|document| document.local_player_summoner_name.clone());
+    let metadata = read_json::<MetadataDocument>(&game_directory.join(METADATA_JSON))?;
+    if metadata.recording_fps == 0 {
+        bail!("recording metadata contains an invalid frame rate");
+    }
+    let recording_fps = metadata.recording_fps;
+    let local_player_name = metadata.local_player_summoner_name.clone();
     let log = read_game_log(&game_directory.join(GAME_LOG_JSON))?;
     let mut team_by_player = HashMap::new();
     let mut roster = Vec::new();
@@ -270,14 +274,11 @@ pub fn playback_probe(
                 .or_insert_with(|| player.team.clone());
         }
     }
-    let local_player_team = metadata
-        .as_ref()
-        .and_then(|document| document.local_player_team.clone())
-        .or_else(|| {
-            local_player_name
-                .as_deref()
-                .and_then(|player| team_by_player.get(&normalized_player_name(player)).cloned())
-        });
+    let local_player_team = metadata.local_player_team.clone().or_else(|| {
+        local_player_name
+            .as_deref()
+            .and_then(|player| team_by_player.get(&normalized_player_name(player)).cloned())
+    });
     let mut participants = roster
         .into_iter()
         .map(|(summoner_name, champion, team)| ReplayParticipant {
@@ -302,11 +303,7 @@ pub fn playback_probe(
     let game_start_video_offset_ms = u64::try_from(log.game_start_video_offset_ms)
         .ok()
         .filter(|offset| *offset > 0)
-        .or_else(|| {
-            metadata
-                .as_ref()
-                .and_then(|document| document.video_offset_ms)
-        })
+        .or(metadata.video_offset_ms)
         .unwrap_or(0);
 
     let mut player_timeline = log
@@ -347,6 +344,7 @@ pub fn playback_probe(
     Ok(PlaybackProbe {
         video_url: format!("{origin}/games/{timestamp}/video.mp4"),
         game,
+        recording_fps,
         game_start_video_offset_ms,
         local_player_name,
         participants,
@@ -843,6 +841,7 @@ mod tests {
             serde_json::to_vec(&json!({
                 "recorded_at": recorded_at,
                 "duration_ms": 120000,
+                "recording_fps": 60,
                 "video_offset_ms": 5000,
                 "game_mode": "CLASSIC",
                 "local_player_summoner_name": "Player#EUW",
@@ -933,6 +932,7 @@ mod tests {
         let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
 
         assert_eq!(probe.game_start_video_offset_ms, 5_000);
+        assert_eq!(probe.recording_fps, 60);
         assert_eq!(probe.local_player_name.as_deref(), Some("Player#EUW"));
         assert_eq!(
             probe.participants,
@@ -1004,6 +1004,21 @@ mod tests {
             probe.video_url,
             "http://127.0.0.1:9000/games/1786000000/video.mp4"
         );
+    }
+
+    #[test]
+    fn playback_requires_a_recording_frame_rate() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
+        let metadata_path = game.join(METADATA_JSON);
+        let mut metadata: serde_json::Value = read_json(&metadata_path).unwrap();
+        metadata["recording_fps"] = json!(0);
+        fs::write(metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+        let error = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("invalid frame rate"));
     }
 
     #[test]

@@ -65,6 +65,7 @@ Video files are large (5–10GB). They must never be loaded into memory.
 - Seeking, buffering, and playback rate are all handled natively by the browser engine
 - No custom video decoding is implemented
 - The video DOM node is not unmounted when the viewer changes between windowed and fullscreen modes
+- The playback probe exposes mandatory `recording_fps` metadata for frame-aligned clip endpoints
 
 **Sync between video and data:**
 
@@ -301,8 +302,11 @@ rail, so entering or exiting fullscreen does not reset the filter.
 Clip mode is triggered from the viewer. It does not navigate to a new screen — it modifies the scrubber in place.
 
 **Triggers:**
-- Clicking any event marker on the scrubber (also seeks to that event)
-- Clicking the "✦ Clip" button in the controls row
+- Clicking the "✦ Clip" button in the controls row. This is the only action that enters clip mode.
+
+Outside clip mode, clicking an event marker only seeks to that event. Inside clip mode,
+clicking an event marker replaces the proposed range with a smart window anchored to
+that event, then seeks to the event.
 
 **On activation:**
 - Smart default clip window is calculated (see below)
@@ -310,12 +314,26 @@ Clip mode is triggered from the viewer. It does not navigate to a new screen —
 - The rail fill between endpoints is highlighted distinctly (lighter blue)
 - A "Export Clip →" button replaces the "✦ Clip" button in controls
 - A Cancel action, or `Escape` in windowed mode, exits clip mode
+- The current play/pause state is preserved
+- Every seek is constrained to the proposed range and playback loops from its end to its beginning
 
 **Dragging endpoints:**
-- Handles are draggable along the rail
+- Handles are draggable along the rail and remain aligned to source-video frames
 - Minimum clip duration: 5 seconds
-- Endpoints snap to event marker positions when within 2 seconds
 - Both endpoints are clamped to 0 and total duration
+- The video pauses and continuously displays the first frame while the start handle moves,
+  or the last included frame while the end handle moves
+- Releasing or cancelling either edit always seeks to the updated clip beginning and starts playback
+
+**Keyboard controls:**
+- `Space` toggles playback in windowed and fullscreen modes
+- Outside clip mode, `ArrowLeft` / `ArrowRight` seek 15 seconds backward / forward
+- In clip mode, those arrows seek 5 seconds while neither endpoint handle has focus
+- With an endpoint handle focused, a quick arrow press moves that endpoint exactly one
+  frame earlier/later. Holding the key longer than 200ms advances at elapsed real time,
+  quantized to frames; OS key-repeat events are ignored.
+- Releasing a focused-handle arrow edit always restarts playback at the clip beginning
+- Up/down arrows are unused
 
 **On "Export Clip →":** navigate to the Clip Exporter screen (see `APP-CLIP.md`), passing `{ gameTimestamp, clipStartMs, clipEndMs }`.
 

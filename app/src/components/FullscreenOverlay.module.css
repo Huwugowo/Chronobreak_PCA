@@ -299,6 +299,12 @@
   content: "";
 }
 
+.clipHandle:focus {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 18px rgba(190, 205, 255, 0.96);
+}
+
 .clipHandleStart {
   border-radius: 4px 1px 1px 4px;
 }

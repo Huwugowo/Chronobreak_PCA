@@ -164,7 +164,7 @@ Phase 6 is not a prerequisite for Phases 7–9.
 
 - Clip selection from kill markers or the timeline clip action
 - Heuristic kill-type pre/post-roll windows
-- Draggable endpoints, five-second minimum, and event snapping
+- Frame-aligned draggable endpoints with a five-second minimum
 - Discord preset with strict sub-10,000,000-byte verification and corrective retry
 - Horizontal 16:9 and vertical 9:16 publishing presets
 - Vertical blurred-context layout with adjustable sharp action crop

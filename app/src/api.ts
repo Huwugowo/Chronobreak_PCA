@@ -335,6 +335,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
     return {
       game: structuredClone(game),
       video_url: "",
+      recording_fps: 60,
       game_start_video_offset_ms: MOCK_VIDEO_OFFSET_MS,
       local_player_name: "SUPERSTAR#VOID",
       participants: mockParticipants(),

@@ -125,6 +125,7 @@ export type ReplayParticipant = {
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;
+  recording_fps: number;
   game_start_video_offset_ms: number;
   local_player_name: string | null;
   participants: ReplayParticipant[];

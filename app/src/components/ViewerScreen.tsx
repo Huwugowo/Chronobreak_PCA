@@ -22,10 +22,14 @@ import type {
   ViewerEvent,
 } from "../types";
 import {
+  alignClipRangeToFrames,
   clamp,
+  clipEndpointPreviewMs,
   defaultClipRange,
   eventInvolvesPlayer,
   eventTitle,
+  frameIndexAt,
+  frameTimeMs,
   latestIndexAt,
   moveClipEndpoint,
   nearestIndexAt,
@@ -45,6 +49,19 @@ type Props = {
 type ChromiumPerformance = Performance & {
   memory?: { usedJSHeapSize: number };
 };
+
+type ClipEndpoint = "start" | "end";
+
+type EndpointHoldState = {
+  endpoint: ClipEndpoint;
+  key: "ArrowLeft" | "ArrowRight";
+  direction: -1 | 1;
+  startedAt: number;
+  startingFrame: number;
+  animationFrameId: number;
+};
+
+const ENDPOINT_HOLD_THRESHOLD_MS = 200;
 
 function ViewerScreen(props: Props) {
   const [probe] = createResource(() => props.gameTimestamp, loadPlaybackProbe);
@@ -89,6 +106,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   let frameSampleStartedAt = performance.now();
   let presentedFrames = 0;
   let disposed = false;
+  let clipLoopSeekPending = false;
+  let endpointEdit: ClipEndpoint | undefined;
+  let endpointHold: EndpointHoldState | undefined;
 
   const events = [...props.probe.events].sort(
     (left, right) => left.video_time_ms - right.video_time_ms,
@@ -131,7 +151,11 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     ) {
       return null;
     }
-    return { startMs: draft.clipStartMs, endMs: draft.clipEndMs };
+    return alignClipRangeToFrames(
+      { startMs: draft.clipStartMs, endMs: draft.clipEndMs },
+      durationMs,
+      props.probe.recording_fps,
+    );
   };
   const [clipRange, setClipRange] = createSignal<ClipRange | null>(initialClipRange());
 
@@ -195,16 +219,32 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     }
   };
 
+  const syncPresentedTime = (presentedTimeMs: number) => {
+    const range = clipRange();
+    if (range && !video.paused && presentedTimeMs >= range.endMs) {
+      if (!clipLoopSeekPending) {
+        clipLoopSeekPending = true;
+        seekTo(range.startMs);
+      }
+      return;
+    }
+    setVideoTimeMs(
+      range
+        ? clamp(presentedTimeMs, range.startMs, range.endMs)
+        : clamp(presentedTimeMs, 0, durationMs),
+    );
+  };
+
   const onVideoFrame: VideoFrameRequestCallback = (_now, frame) => {
     if (disposed) return;
-    setVideoTimeMs(frame.mediaTime * 1_000);
+    syncPresentedTime(frame.mediaTime * 1_000);
     sampleFrame();
     frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
   };
 
   const onAnimationFrame = () => {
     animationFrameId = undefined;
-    setVideoTimeMs(video.currentTime * 1_000);
+    syncPresentedTime(video.currentTime * 1_000);
     sampleFrame();
     if (!video.paused) animationFrameId = requestAnimationFrame(onAnimationFrame);
   };
@@ -224,12 +264,16 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   };
 
   const seekTo = (requestedTimeMs: number) => {
-    const targetTimeMs = clamp(requestedTimeMs, 0, durationMs);
+    const range = clipRange();
+    const targetTimeMs = range
+      ? clamp(requestedTimeMs, range.startMs, range.endMs)
+      : clamp(requestedTimeMs, 0, durationMs);
     pendingSeekStartedAt = performance.now();
     setVideoTimeMs(targetTimeMs);
     if (!props.probe.video_url) {
       setSeekLatencyMs(0);
       pendingSeekStartedAt = undefined;
+      clipLoopSeekPending = false;
       return;
     }
     try {
@@ -239,26 +283,42 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     }
   };
 
-  const activateClip = (event?: ViewerEvent) => {
-    let anchorEvent = event;
-    if (!anchorEvent) {
-      const kills = events.filter(
-        (candidate) =>
-          candidate.event_type === "ChampionKill" || candidate.event_type === "FirstBlood",
-      );
-      const nearest = nearestIndexAt(kills, videoTimeMs());
-      if (nearest >= 0 && Math.abs(kills[nearest].video_time_ms - videoTimeMs()) <= 10_000) {
-        anchorEvent = kills[nearest];
-      }
-    }
+  const clipRangeForAnchor = (anchorMs: number, anchorEvent?: ViewerEvent) =>
+    defaultClipRange(
+      anchorMs,
+      durationMs,
+      events,
+      props.probe.recording_fps,
+      anchorEvent,
+    );
+
+  const activateClip = () => {
+    const kills = events.filter(
+      (candidate) =>
+        candidate.event_type === "ChampionKill" || candidate.event_type === "FirstBlood",
+    );
+    const nearest = nearestIndexAt(kills, videoTimeMs());
+    const anchorEvent =
+      nearest >= 0 && Math.abs(kills[nearest].video_time_ms - videoTimeMs()) <= 10_000
+        ? kills[nearest]
+        : undefined;
     const anchorMs = anchorEvent?.video_time_ms ?? videoTimeMs();
-    setClipRange(defaultClipRange(anchorMs, durationMs, events, anchorEvent));
-    if (event) seekTo(event.video_time_ms);
+    setClipRange(clipRangeForAnchor(anchorMs, anchorEvent));
+    seekTo(videoTimeMs());
+  };
+
+  const selectEvent = (event: ViewerEvent) => {
+    if (clipRange()) {
+      setClipRange(clipRangeForAnchor(event.video_time_ms, event));
+    }
+    seekTo(event.video_time_ms);
   };
 
   const exportSelectedClip = () => {
     const range = clipRange();
     if (!range) return;
+    clearEndpointHold();
+    endpointEdit = undefined;
     video.pause();
     setIsFullscreen(false);
     props.onExportClip({
@@ -268,20 +328,56 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     });
   };
 
-  const updateClipEndpoint = (endpoint: "start" | "end", requestedMs: number) => {
+  const updateClipEndpoint = (endpoint: ClipEndpoint, requestedMs: number) => {
+    const range = clipRange();
+    if (!range) return null;
+    const nextRange = moveClipEndpoint(
+      range,
+      endpoint,
+      requestedMs,
+      durationMs,
+      props.probe.recording_fps,
+    );
+    setClipRange(nextRange);
+    seekTo(clipEndpointPreviewMs(nextRange, endpoint, props.probe.recording_fps));
+    return nextRange;
+  };
+
+  const clearEndpointHold = () => {
+    if (!endpointHold) return;
+    cancelAnimationFrame(endpointHold.animationFrameId);
+    endpointHold = undefined;
+  };
+
+  const beginClipEndpointEdit = (endpoint: ClipEndpoint) => {
     const range = clipRange();
     if (!range) return;
-    setClipRange(moveClipEndpoint(range, endpoint, requestedMs, durationMs, visibleEvents()));
+    clearEndpointHold();
+    endpointEdit = endpoint;
+    video.pause();
+    seekTo(clipEndpointPreviewMs(range, endpoint, props.probe.recording_fps));
+  };
+
+  const finishClipEndpointEdit = () => {
+    clearEndpointHold();
+    endpointEdit = undefined;
+    const range = clipRange();
+    if (!range) return;
+    seekTo(range.startMs);
+    if (!props.probe.video_url || mediaUnavailable()) return;
+    void video.play().catch(() => setMediaUnavailable(true));
   };
 
   const beginClipDrag = (
     event: PointerEvent & { currentTarget: HTMLButtonElement },
-    endpoint: "start" | "end",
+    endpoint: ClipEndpoint,
     rail: HTMLDivElement,
   ) => {
     event.preventDefault();
     event.stopPropagation();
     const handle = event.currentTarget;
+    handle.focus({ preventScroll: true });
+    beginClipEndpointEdit(endpoint);
     const update = (pointerEvent: PointerEvent) => {
       const bounds = rail.getBoundingClientRect();
       if (bounds.width <= 0) return;
@@ -290,35 +386,104 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         ((pointerEvent.clientX - bounds.left) / bounds.width) * durationMs,
       );
     };
-    const finish = (pointerEvent: PointerEvent) => {
-      update(pointerEvent);
+    const cleanup = (pointerEvent: PointerEvent) => {
       handle.removeEventListener("pointermove", update);
       handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
+      handle.removeEventListener("pointercancel", cancel);
       if (handle.hasPointerCapture(pointerEvent.pointerId)) {
         handle.releasePointerCapture(pointerEvent.pointerId);
       }
     };
+    const finish = (pointerEvent: PointerEvent) => {
+      update(pointerEvent);
+      cleanup(pointerEvent);
+      finishClipEndpointEdit();
+    };
+    const cancel = (pointerEvent: PointerEvent) => {
+      cleanup(pointerEvent);
+      finishClipEndpointEdit();
+    };
     handle.setPointerCapture(event.pointerId);
     handle.addEventListener("pointermove", update);
     handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
+    handle.addEventListener("pointercancel", cancel);
   };
 
-  const handleClipEndpointKey = (event: KeyboardEvent, endpoint: "start" | "end") => {
-    const range = clipRange();
-    if (!range) return;
-    const current = endpoint === "start" ? range.startMs : range.endMs;
-    const step = event.shiftKey ? 2_000 : 500;
-    let requested = current;
-    if (event.key === "ArrowLeft" || event.key === "ArrowDown") requested -= step;
-    else if (event.key === "ArrowRight" || event.key === "ArrowUp") requested += step;
-    else if (event.key === "Home") requested = endpoint === "start" ? 0 : range.startMs + 5_000;
-    else if (event.key === "End") requested = endpoint === "end" ? durationMs : range.endMs - 5_000;
-    else return;
+  const applyEndpointHoldTime = (hold: EndpointHoldState, now: number) => {
+    if (now - hold.startedAt < ENDPOINT_HOLD_THRESHOLD_MS) return;
+    const elapsedFrames = Math.max(
+      1,
+      Math.round(((now - hold.startedAt) * props.probe.recording_fps) / 1_000),
+    );
+    updateClipEndpoint(
+      hold.endpoint,
+      frameTimeMs(
+        hold.startingFrame + hold.direction * elapsedFrames,
+        props.probe.recording_fps,
+      ),
+    );
+  };
+
+  const handleClipEndpointKeyDown = (event: KeyboardEvent, endpoint: ClipEndpoint) => {
+    if (event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) void togglePlayback();
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     event.stopPropagation();
-    updateClipEndpoint(endpoint, requested);
+    if (event.repeat || endpointHold) return;
+    const range = clipRange();
+    if (!range) return;
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const current = endpoint === "start" ? range.startMs : range.endMs;
+    const startingFrame = frameIndexAt(current, props.probe.recording_fps);
+    const startedAt = performance.now();
+    beginClipEndpointEdit(endpoint);
+    updateClipEndpoint(
+      endpoint,
+      frameTimeMs(startingFrame + direction, props.probe.recording_fps),
+    );
+
+    const advanceHeldEndpoint = (now: number) => {
+      if (!endpointHold) return;
+      applyEndpointHoldTime(endpointHold, now);
+      if (endpointHold) {
+        endpointHold.animationFrameId = requestAnimationFrame(advanceHeldEndpoint);
+      }
+    };
+    endpointHold = {
+      endpoint,
+      key: event.key,
+      direction,
+      startedAt,
+      startingFrame,
+      animationFrameId: requestAnimationFrame(advanceHeldEndpoint),
+    };
+  };
+
+  const handleClipEndpointKeyUp = (event: KeyboardEvent, endpoint: ClipEndpoint) => {
+    const hold = endpointHold;
+    if (!hold || hold.endpoint !== endpoint || hold.key !== event.key) return;
+    event.preventDefault();
+    event.stopPropagation();
+    applyEndpointHoldTime(hold, performance.now());
+    finishClipEndpointEdit();
+  };
+
+  const handleClipEndpointBlur = (endpoint: ClipEndpoint) => {
+    if (endpointEdit !== endpoint) return;
+    if (endpointHold) applyEndpointHoldTime(endpointHold, performance.now());
+    finishClipEndpointEdit();
+  };
+
+  const cancelClipMode = () => {
+    clearEndpointHold();
+    endpointEdit = undefined;
+    clipLoopSeekPending = false;
+    setClipRange(null);
   };
 
   const seekFromRail = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
@@ -329,8 +494,6 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
   const handleRailKey = (event: KeyboardEvent) => {
     let target: number | undefined;
-    if (event.key === "ArrowLeft" || event.key === "ArrowDown") target = videoTimeMs() - 5_000;
-    if (event.key === "ArrowRight" || event.key === "ArrowUp") target = videoTimeMs() + 5_000;
     if (event.key === "PageDown") target = videoTimeMs() - 30_000;
     if (event.key === "PageUp") target = videoTimeMs() + 30_000;
     if (event.key === "Home") target = 0;
@@ -343,6 +506,11 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const togglePlayback = async () => {
     if (!props.probe.video_url || mediaUnavailable()) return;
     if (video.paused) {
+      const range = clipRange();
+      const currentTimeMs = video.currentTime * 1_000;
+      if (range && (currentTimeMs < range.startMs || currentTimeMs >= range.endMs)) {
+        seekTo(range.startMs);
+      }
       try {
         await video.play();
       } catch {
@@ -364,10 +532,12 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   });
 
   onMount(() => {
-    const updateTime = () => setVideoTimeMs(video.currentTime * 1_000);
+    const updateTime = () => syncPresentedTime(video.currentTime * 1_000);
     const onLoadedMetadata = () => {
       setMediaUnavailable(false);
-      updateTime();
+      const range = clipRange();
+      if (range) seekTo(range.startMs);
+      else updateTime();
     };
     const onPlay = () => {
       setIsPlaying(true);
@@ -383,17 +553,49 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       pendingSeekStartedAt ??= performance.now();
     };
     const onSeeked = () => {
+      clipLoopSeekPending = false;
       updateTime();
       if (pendingSeekStartedAt !== undefined) {
         setSeekLatencyMs(performance.now() - pendingSeekStartedAt);
         pendingSeekStartedAt = undefined;
       }
     };
+    const onEnded = () => {
+      const range = clipRange();
+      if (!range) {
+        onPause();
+        return;
+      }
+      clipLoopSeekPending = false;
+      seekTo(range.startMs);
+      void video.play().catch(() => setMediaUnavailable(true));
+    };
     const onError = () => setMediaUnavailable(true);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat) return;
+      if (event.defaultPrevented) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key === " ") {
+        if (target instanceof HTMLButtonElement) return;
+        event.preventDefault();
+        if (!event.repeat) void togglePlayback();
+        return;
+      }
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        if (event.repeat) return;
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        seekTo(videoTimeMs() + direction * (clipRange() ? 5_000 : 15_000));
+        return;
+      }
+      if (event.repeat) return;
       if (event.key === "Escape" && isFullscreen()) {
         event.preventDefault();
         exitFullscreen();
@@ -401,7 +603,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       }
       if (event.key === "Escape" && clipRange()) {
         event.preventDefault();
-        setClipRange(null);
+        cancelClipMode();
         return;
       }
       if (event.key.toLowerCase() === "f") {
@@ -413,7 +615,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     video.addEventListener("loadedmetadata", onLoadedMetadata);
     video.addEventListener("pause", onPause);
     video.addEventListener("play", onPlay);
-    video.addEventListener("ended", onPause);
+    video.addEventListener("ended", onEnded);
     video.addEventListener("seeking", onSeeking);
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("error", onError);
@@ -431,7 +633,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("play", onPlay);
-      video.removeEventListener("ended", onPause);
+      video.removeEventListener("ended", onEnded);
       video.removeEventListener("seeking", onSeeking);
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("error", onError);
@@ -442,6 +644,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         video.cancelVideoFrameCallback(frameCallbackId);
       }
       if (animationFrameId !== undefined) cancelAnimationFrame(animationFrameId);
+      clearEndpointHold();
       if (metricsIntervalId !== undefined) window.clearInterval(metricsIntervalId);
     });
   });
@@ -538,9 +741,17 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 onTogglePlayback={() => void togglePlayback()}
                 onSeek={seekTo}
                 onActivateClip={activateClip}
-                onClipRangeChange={setClipRange}
+                onEventSelect={selectEvent}
+                onClipEndpointEditStart={beginClipEndpointEdit}
+                onClipEndpointPreview={(endpoint, requestedMs) => {
+                  updateClipEndpoint(endpoint, requestedMs);
+                }}
+                onClipEndpointEditFinish={finishClipEndpointEdit}
+                onClipEndpointKeyDown={handleClipEndpointKeyDown}
+                onClipEndpointKeyUp={handleClipEndpointKeyUp}
+                onClipEndpointBlur={handleClipEndpointBlur}
                 onExportClip={exportSelectedClip}
-                onCancelClip={() => setClipRange(null)}
+                onCancelClip={cancelClipMode}
                 onExit={exitFullscreen}
               />
             </Show>
@@ -629,7 +840,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 type="button"
                 aria-label={`Clip starts at ${formatDuration(clipRange()!.startMs)}`}
                 onPointerDown={(event) => beginClipDrag(event, "start", windowedRail)}
-                onKeyDown={(event) => handleClipEndpointKey(event, "start")}
+                onKeyDown={(event) => handleClipEndpointKeyDown(event, "start")}
+                onKeyUp={(event) => handleClipEndpointKeyUp(event, "start")}
+                onBlur={() => handleClipEndpointBlur("start")}
               />
               <button
                 class={`${styles.clipHandle} ${styles.clipHandleEnd}`}
@@ -637,7 +850,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 type="button"
                 aria-label={`Clip ends at ${formatDuration(clipRange()!.endMs)}`}
                 onPointerDown={(event) => beginClipDrag(event, "end", windowedRail)}
-                onKeyDown={(event) => handleClipEndpointKey(event, "end")}
+                onKeyDown={(event) => handleClipEndpointKeyDown(event, "end")}
+                onKeyUp={(event) => handleClipEndpointKeyUp(event, "end")}
+                onBlur={() => handleClipEndpointBlur("end")}
               />
             </Show>
             <span class={styles.scrubberHead} style={`left:${progress()}%`} />
@@ -648,13 +863,13 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                     class={`${styles.marker} ${styles[`marker${marker.tone}`]}`}
                     style={`left:${marker.position}%`}
                     type="button"
-                    aria-label={`Create clip from ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
+                    aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
                     title={`${eventTitle(marker.event)} · ${formatDuration(marker.event.game_time_ms)}`}
                     data-event-index={marker.index}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
-                      activateClip(marker.event);
+                      selectEvent(marker.event);
                     }}
                   />
                 )}
@@ -681,7 +896,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               }
             >
               <div class={styles.clipActions}>
-                <button class={styles.cancelClipButton} type="button" onClick={() => setClipRange(null)}>
+                <button class={styles.cancelClipButton} type="button" onClick={cancelClipMode}>
                   CANCEL
                 </button>
                 <button class={styles.exportClipButton} type="button" onClick={exportSelectedClip}>
