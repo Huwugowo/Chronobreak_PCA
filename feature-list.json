@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "project": {
+    "name": "Chronobreak",
+    "description": "Canonical Chronobreak work state. Draft items are refined; ready features are executed."
+  },
+  "features": [
+    {
+      "id": "SETUP-001",
+      "kind": "feature",
+      "name": "Build Canonical Chronobreak Feature Inventory",
+      "description": "Audit the existing Chronobreak repository against product intent, discover actual implementation/architecture/verification, and replace the setup state with a truthful canonical feature list before implementing new product work.",
+      "priority": "P0",
+      "area": "harness",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Existing user-visible Chronobreak behavior is mapped to canonical epics/features without assuming uninspected functionality is absent.",
+        "Broad product objectives are represented as epics and are not treated as directly executable features.",
+        "Concrete features are marked draft or ready based on the definition-readiness gate.",
+        "Already complete behavior is marked done only when supported by repository evidence and runnable verification.",
+        "Actual build/test/lint/type-check/media/benchmark entry points are documented in docs/development/VERIFICATION.md.",
+        "Durable architecture facts needed by future agents are documented under docs/architecture/.",
+        "The product-intent seed is fully reconciled into canonical state and then removed or archived as non-canonical.",
+        "No new product functionality is implemented as part of this audit."
+      ],
+      "verification": [
+        {
+          "type": "inspection",
+          "description": "Review the resulting feature-list.json for full coverage of existing behavior and product-intent seed items.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Validate feature-list.json against feature-list.schema.json.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Verify documented repository commands were discovered from actual project configuration rather than guessed.",
+          "command": null
+        }
+      ],
+      "notes": "One-time setup item. Remove it from the canonical list after its acceptance criteria are satisfied.",
+      "user_value": 5,
+      "differentiation": 1,
+      "difficulty": 3,
+      "stage": "ready"
+    }
+  ]
+}

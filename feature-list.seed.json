@@ -1,0 +1,1212 @@
+{
+  "schema_version": "1.0",
+  "project": {
+    "name": "Chronobreak",
+    "description": "Non-canonical product-intent seed for the one-time repository audit."
+  },
+  "features": [
+    {
+      "id": "EPIC-CAP-REL",
+      "kind": "epic",
+      "name": "Capture Reliability",
+      "description": "Make automatic recording trustworthy enough that Chronobreak does not silently lose or corrupt the game the user expected it to preserve.",
+      "priority": "P0",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "Known capture failure modes are converted into concrete child features with deterministic detection/recovery behavior.",
+        "Chronobreak does not silently report a failed/frozen recording as healthy.",
+        "Recoverable interruptions preserve as much valid footage as practical.",
+        "Reliability claims are backed by explicit failure-injection or integrity verification."
+      ],
+      "notes": "This is intentionally an epic, not an executable 'optimize reliability' feature.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-001",
+      "kind": "feature",
+      "name": "Automatic Match Recording Lifecycle",
+      "description": "Automatically detect a League match, start recording, stop/finalize at match end, and associate the recording with the correct match.",
+      "priority": "P0",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A configured League match starts recording without manual user action.",
+        "Recording finalizes when the match ends.",
+        "The finalized recording is associated with the correct match.",
+        "Unexpected League termination leaves Chronobreak in a recoverable/known state."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify lifecycle/state transitions where testable.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Run an end-to-end match lifecycle against the supported test environment.",
+          "command": null
+        }
+      ],
+      "notes": "Likely already implemented or partially implemented; the repository audit must determine actual status.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-002",
+      "kind": "feature",
+      "name": "Recording Health Monitoring",
+      "description": "Detect whether active recording output is actually progressing rather than assuming a running recorder process means healthy capture.",
+      "priority": "P0",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Chronobreak can distinguish healthy progressing output from a stalled/failed capture condition.",
+        "A detected unhealthy state is surfaced clearly and is not silently reported as success.",
+        "Healthy recordings do not generate unacceptable false failure indications."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Inject or simulate stalled/failing output conditions where feasible.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Verify the health signal is based on meaningful output progress/encoder state.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-003",
+      "kind": "feature",
+      "name": "Interrupted Recording Recovery",
+      "description": "Recover as much valid footage as practical after an interrupted or ungracefully finalized recording.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "An intentionally interrupted recording can be recovered to a playable file when the chosen media/container strategy permits it.",
+        "Recovery does not duplicate the match in the library.",
+        "Unrecoverable cases are reported explicitly."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Interrupt a fixture recording before graceful finalization and exercise recovery.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Open and seek through recovered output.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-004",
+      "kind": "feature",
+      "name": "Post-recording Integrity Verification",
+      "description": "Validate finalized recordings cheaply enough to detect obviously broken, malformed, frozen, or missing-stream output.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Chronobreak validates expected media streams and sensible duration/timestamps after finalization.",
+        "Known malformed fixture output is detected.",
+        "A valid recording passes without unnecessary user-facing noise."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Validate good and deliberately malformed media fixtures.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-005",
+      "kind": "feature",
+      "name": "Storage Preflight for Recording",
+      "description": "Prevent avoidable recording failure caused by insufficient available storage before or during a match.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Chronobreak checks whether recording storage is critically constrained before starting capture.",
+        "The user receives a clear actionable state when recording cannot safely start.",
+        "Storage checks do not destructively delete protected media."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exercise preflight against controlled low-space/limit conditions where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Verify user-facing failure behavior.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-CAP-PERF",
+      "kind": "epic",
+      "name": "Negligible Capture Performance Impact",
+      "description": "Make automatic Chronobreak capture cheap enough that competitive League players can leave it enabled by default.",
+      "priority": "P0",
+      "area": "capture-performance",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "A reproducible benchmark protocol and performance budget exist.",
+        "Capture performance is measured using metrics relevant to game responsiveness, not only average resource usage.",
+        "Concrete optimization work is created from measured regressions/bottlenecks rather than vague 'make it faster' tasks."
+      ],
+      "notes": "Do not implement this epic directly. First establish benchmark/budget, then create measured optimization features.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-PERF-001",
+      "kind": "feature",
+      "name": "Capture Benchmark and Performance Budget",
+      "description": "Define and automate/reproduce the benchmark used to measure Chronobreak capture overhead and the budget required before performance claims can be made.",
+      "priority": "P0",
+      "area": "capture-performance",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The benchmark scenario is documented and repeatable.",
+        "The benchmark records the project-selected FPS/frametime and system/encoder metrics.",
+        "A baseline without Chronobreak capture and a Chronobreak-enabled run can be compared.",
+        "An explicit acceptable performance budget is documented before optimization features are declared complete."
+      ],
+      "verification": [
+        {
+          "type": "benchmark",
+          "description": "Run the documented baseline and Chronobreak capture benchmark.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Verify methodology and result storage are reproducible.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-REPLAY",
+      "kind": "epic",
+      "name": "League-native Replay Experience",
+      "description": "Make Chronobreak feel like a playable League match history rather than a generic video player.",
+      "priority": "P0",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "Video, game events, and recorded match state share a reliable timeline.",
+        "Important moments are fast to locate and seek.",
+        "Replay navigation remains responsive on long/event-heavy matches.",
+        "Replay UI exposes descriptive game context without becoming coaching."
+      ],
+      "notes": "",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-DATA-001",
+      "kind": "feature",
+      "name": "Synchronized League Match Data",
+      "description": "Persist League Live Client Data and timestamped events against a common match clock usable by replay features.",
+      "priority": "P0",
+      "area": "match-data",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Persisted events retain usable timestamps.",
+        "Required match/player metadata is stored for replay/search features.",
+        "Video time and game-data time can be mapped consistently across a complete match.",
+        "Missing snapshots/data are represented as missing rather than invented."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use deterministic fixtures to test time mapping and stored event/state retrieval.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Check synchronization at multiple timestamps in a representative recording.",
+          "command": null
+        }
+      ],
+      "notes": "Likely partly implemented; audit actual code and data model.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-REPLAY-001",
+      "kind": "feature",
+      "name": "League-native Timeline Interaction",
+      "description": "Provide a polished timeline that exposes League events clearly and supports precise seeking without becoming visually unreadable.",
+      "priority": "P0",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Supported event markers align with their replay timestamps.",
+        "Dense event periods remain usable.",
+        "Selecting an event seeks accurately.",
+        "Timeline interaction remains responsive on representative long matches."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test event-to-timestamp mapping and seek requests where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review usability on sparse and event-heavy matches.",
+          "command": null
+        }
+      ],
+      "notes": "The vague 'polish timeline' idea is expressed as an epic outcome plus concrete behavior; audit may split further.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-REPLAY-002",
+      "kind": "feature",
+      "name": "Timeline Event Lanes and Filters",
+      "description": "Allow users to focus the replay timeline on event categories such as kills, deaths, objectives, bookmarks, and clips.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Supported event categories can be shown/hidden without changing timestamps.",
+        "Filtering reduces clutter on event-heavy matches.",
+        "The default presentation remains understandable without configuration."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify filtering preserves underlying event data/timestamps.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review dense-match usability.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 2.5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-REPLAY-003",
+      "kind": "feature",
+      "name": "Timeline Hover Thumbnails",
+      "description": "Show a preview frame for the timestamp under the cursor while hovering/scrubbing the replay timeline.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The thumbnail corresponds closely to the hovered timestamp.",
+        "Repeated hover previews are responsive.",
+        "Thumbnail generation/retrieval does not cause unacceptable playback stalls.",
+        "Long recordings do not create uncontrolled cache/storage growth."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test timestamp-to-thumbnail lookup and cache behavior where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Scrub representative short and long recordings.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure hover/preview latency if infrastructure supports it.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 3.5,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-REPLAY-004",
+      "kind": "feature",
+      "name": "State at Playhead",
+      "description": "Update descriptive match/player state in the replay UI according to the current video timestamp.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Seeking to known timestamps displays the corresponding available recorded state.",
+        "Seeking backward restores earlier state correctly.",
+        "Missing data is not fabricated.",
+        "The feature remains descriptive and does not judge player decisions."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use fixtures with known snapshots to test state lookup.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Seek through a representative recording and compare state to known events.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-REPLAY-005",
+      "kind": "feature",
+      "name": "Replay Navigation Shortcuts",
+      "description": "Provide fast keyboard navigation for common replay operations such as seeking and moving between events.",
+      "priority": "P2",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Documented shortcuts perform their intended replay actions.",
+        "Shortcuts do not conflict unexpectedly with focused text/input controls.",
+        "Navigation remains consistent with timeline state."
+      ],
+      "verification": [
+        {
+          "type": "manual",
+          "description": "Exercise each shortcut in the replay viewer.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Test shortcut-to-action mapping where the UI test stack allows it.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 3.5,
+      "differentiation": 3,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-LIBRARY",
+      "kind": "epic",
+      "name": "Playable Match and Clip Library",
+      "description": "Make recorded games and clips searchable, linked, portable, and organized using League semantics rather than opaque filenames.",
+      "priority": "P1",
+      "area": "library",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "Matches are queryable by useful League metadata.",
+        "Clips preserve their relationship to source matches and contained events.",
+        "Library state can be recovered/re-indexed without making one opaque database the sole authority.",
+        "Storage growth remains manageable."
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-001",
+      "kind": "feature",
+      "name": "Searchable Match History",
+      "description": "Search/filter recorded matches using League metadata such as champion, enemy champions, queue/mode, result, participants, and recorded events.",
+      "priority": "P1",
+      "area": "library-search",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Search by played champion returns only matching recorded matches.",
+        "Search by enemy champion and supported event returns matching recorded matches.",
+        "Multiple supported filters can be combined.",
+        "Search operates on persisted indexed metadata rather than filenames alone."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use deterministic library fixtures to verify each supported query and combined filters.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Exercise search/filter UI with a populated test library.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-002",
+      "kind": "feature",
+      "name": "Clip Metadata and Event Tagging",
+      "description": "Derive clip metadata from the source match and attach only timestamped events that occur within the clip interval.",
+      "priority": "P1",
+      "area": "clip-library",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A clip inherits relevant source-match metadata.",
+        "Only events whose timestamps fall within the clip range are attached.",
+        "Clip metadata is queryable by the same relevant library search mechanisms."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Create fixture clips whose ranges include/exclude known events and verify tags.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-003",
+      "kind": "feature",
+      "name": "Source Match and Clip Linking",
+      "description": "Persist the relationship between a Chronobreak-created clip and its source match/time range.",
+      "priority": "P1",
+      "area": "clip-library",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A match exposes clips created from it.",
+        "A clip can navigate back to its source replay at the expected timestamp.",
+        "Deleting a clip does not delete the source match."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Create multiple clips from a fixture match and verify relationships.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Navigate match -> clip and clip -> source replay.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 2.5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-004",
+      "kind": "feature",
+      "name": "Storage Budget and Retention",
+      "description": "Let users set a maximum Chronobreak recording budget, understand remaining capacity, and safely reclaim eligible old recordings.",
+      "priority": "P1",
+      "area": "storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Current Chronobreak-managed media usage is reported accurately enough for user decisions.",
+        "A configured maximum storage budget persists.",
+        "Estimated remaining recording capacity uses a documented model.",
+        "Automatic cleanup never deletes protected items.",
+        "Cleanup behavior is deterministic and explainable."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test budget calculation and retention selection against fixture libraries.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Verify settings/usage/remaining-capacity UI.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Verify destructive tests only operate on designated test data.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 3.5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-005",
+      "kind": "feature",
+      "name": "Portable Re-indexable Chronobreak Library",
+      "description": "Make Chronobreak-created media relationships reconstructable after index loss or library relocation using durable metadata.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A test library can be re-indexed after removing/rebuilding disposable index state.",
+        "Matches regain durable metadata required by supported features.",
+        "Source-match/clip relationships survive reconstruction.",
+        "Relocating the library does not permanently orphan valid Chronobreak media."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Build, discard index state, then reconstruct a fixture library.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Relocate a test library and verify re-link/re-index behavior.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-006",
+      "kind": "feature",
+      "name": "Gaming Session Grouping",
+      "description": "Group temporally adjacent matches into browsing sessions while keeping individual matches independently accessible.",
+      "priority": "P2",
+      "area": "library",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Matches separated by less than the configured/defined threshold group into one session.",
+        "A sufficiently long break creates a new session.",
+        "Session grouping does not alter underlying match metadata."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test grouping against deterministic timestamp fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review session grouping in match-history UI.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 3,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-007",
+      "kind": "feature",
+      "name": "Import and Relink Existing Recordings",
+      "description": "Rediscover moved Chronobreak recordings and provide a safe path for importing compatible external videos with reduced metadata where necessary.",
+      "priority": "P3",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Moved Chronobreak media can be re-linked/re-indexed without metadata corruption.",
+        "Unsupported external footage fails gracefully or imports explicitly as reduced-metadata video.",
+        "Import never pretends to reconstruct unavailable League event data."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test relink/import against controlled fixture directories.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Import representative supported/unsupported test media.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 3.5,
+      "differentiation": 4.5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-CLIP",
+      "kind": "epic",
+      "name": "Fast League-native Clipping",
+      "description": "Make the path from an indexed League event or remembered moment to a usable MP4 exceptionally fast and simple.",
+      "priority": "P1",
+      "area": "clipping",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "Users can create clips directly from meaningful replay moments.",
+        "Chronobreak uses event knowledge to reduce manual endpoint work.",
+        "Export is reliable, compatible, and avoids unnecessary processing."
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 3.5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-001",
+      "kind": "feature",
+      "name": "Smart Event Clustering",
+      "description": "Group temporally related game events into coherent replay moments that can drive timeline display and clip boundaries.",
+      "priority": "P1",
+      "area": "event-model",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Known multikill sequences cluster deterministically.",
+        "Unrelated temporally separated events are not incorrectly merged.",
+        "Cluster start/end timestamps are stable and reusable by clipping."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run deterministic event-clustering fixtures for single/multi-event sequences.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-002",
+      "kind": "feature",
+      "name": "Smart Clip Boundaries",
+      "description": "Pre-position clip endpoints around the full relevant event sequence, especially multikills, while keeping endpoints editable.",
+      "priority": "P1",
+      "area": "clipping",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Creating a clip from a supported multikill includes setup before the first relevant kill and aftermath after the final kill.",
+        "The entire multikill sequence lies inside the initial range.",
+        "Automatically selected endpoints remain manually adjustable.",
+        "Single-event clipping remains supported."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test boundary calculation against event fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Create clips from known single-kill and multikill recordings.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4.5,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-003",
+      "kind": "feature",
+      "name": "Instant Event-to-Clip Action",
+      "description": "Create a clip directly from a replay event using the event/cluster as initial context.",
+      "priority": "P1",
+      "area": "clipping",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A supported event exposes a Create Clip action.",
+        "The action enters clip mode at the correct source moment.",
+        "Smart boundaries are applied when available."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test event action wiring where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Create clips directly from representative event markers.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-004",
+      "kind": "feature",
+      "name": "Fast Compatible MP4 Export",
+      "description": "Export adjusted replay ranges to broadly compatible MP4 while avoiding unnecessary transcoding when the media pipeline permits it.",
+      "priority": "P1",
+      "area": "export",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Exported clips open in the project-defined compatibility targets.",
+        "Audio/video remain synchronized.",
+        "Source recordings are never modified.",
+        "The export path avoids unnecessary re-encoding when correctness/compatibility allow it."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Validate exported media structure with project media tooling.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Open representative exports in defined target players/apps.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure representative export latency once methodology is defined.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-005",
+      "kind": "feature",
+      "name": "Automatic Kill Montage",
+      "description": "Generate one montage containing the selected player's kill sequences using indexed events and smart boundaries.",
+      "priority": "P2",
+      "area": "montage",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "All expected selected-player kill sequences from a fixture match are included.",
+        "Multikill sequences are not redundantly split into separate overlapping clips.",
+        "Unrelated footage is excluded except configured pre/post context.",
+        "Final montage is playable and synchronized."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Generate montage from deterministic event fixture/recording.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review ordering, boundaries, and final media.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 3.5,
+      "differentiation": 3.5,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-006",
+      "kind": "feature",
+      "name": "Automatic Game Highlights Recap",
+      "description": "Generate a deterministic recap from supported recorded events/bookmarks without subjective coaching analysis.",
+      "priority": "P3",
+      "area": "montage",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Highlight-selection rules are explicit and deterministic before implementation.",
+        "Every included segment maps to a supported recorded event/bookmark rule.",
+        "Adjacent related events are not redundantly duplicated.",
+        "The recap does not judge gameplay quality or provide coaching."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify selection rules against representative event fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review recap output from representative matches.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until highlight-selection rules are deliberately defined; this is intentionally late.",
+      "user_value": 3.5,
+      "differentiation": 4,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-AUDIO",
+      "kind": "epic",
+      "name": "Replay and Clip Audio Control",
+      "description": "Record useful audio sources separately enough that users can control what is heard in replay and exported clips.",
+      "priority": "P1",
+      "area": "audio",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "The supported Windows audio-source model is explicitly defined.",
+        "Available tracks can be controlled independently in replay/export.",
+        "The design does not introduce unacceptable capture overhead or reliability regression."
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-AUDIO-001",
+      "kind": "feature",
+      "name": "Separate Audio Tracks",
+      "description": "Record supported audio sources on separate tracks and expose independent volume/mute controls for replay and clip export.",
+      "priority": "P1",
+      "area": "audio",
+      "status": "not-started",
+      "parent_id": "EPIC-AUDIO",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The supported source-separation model is documented from actual Windows/capture capabilities.",
+        "At least two supported sources can be distinguished in a controlled recording.",
+        "Replay controls affect only the selected track/source.",
+        "Exported mix matches selected controls.",
+        "Capture performance/reliability remains within project budgets."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test track mapping/mix logic with controlled audio fixtures where possible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Record distinguishable sources and verify replay/export control.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Run applicable capture-performance regression benchmark.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-BOOKMARK",
+      "kind": "epic",
+      "name": "Remember Unstructured Moments",
+      "description": "Allow users to mark moments that League APIs cannot infer, such as funny comms, bugs, jukes, or personally interesting plays.",
+      "priority": "P2",
+      "area": "bookmarks",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "A user can mark a live moment without disrupting gameplay.",
+        "The bookmark is durable and navigable in the resulting replay."
+      ],
+      "notes": "",
+      "user_value": 3.5,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-BOOKMARK-001",
+      "kind": "feature",
+      "name": "Live Game Bookmark Hotkey",
+      "description": "Provide a configurable global shortcut that records a timestamped bookmark during a live match.",
+      "priority": "P2",
+      "area": "bookmarks",
+      "status": "not-started",
+      "parent_id": "EPIC-BOOKMARK",
+      "dependencies": [],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The configured shortcut creates one bookmark at the correct match timestamp.",
+        "The bookmark persists after the match and appears in replay navigation.",
+        "The shortcut does not unexpectedly interfere with League input."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test timestamp/bookmark persistence where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Create a live bookmark and navigate to it after the match.",
+          "command": null
+        }
+      ],
+      "notes": "",
+      "user_value": 3.5,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "draft"
+    }
+  ]
+}
