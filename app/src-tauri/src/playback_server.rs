@@ -33,6 +33,8 @@ pub struct PlaybackMetrics {
     requests: AtomicU64,
     range_requests: AtomicU64,
     response_bytes: AtomicU64,
+    completed_streams: AtomicU64,
+    cancelled_streams: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -40,6 +42,8 @@ pub struct ServerMetrics {
     pub requests: u64,
     pub range_requests: u64,
     pub response_bytes: u64,
+    pub completed_streams: u64,
+    pub cancelled_streams: u64,
 }
 
 impl PlaybackMetrics {
@@ -48,6 +52,8 @@ impl PlaybackMetrics {
             requests: self.requests.load(Ordering::Relaxed),
             range_requests: self.range_requests.load(Ordering::Relaxed),
             response_bytes: self.response_bytes.load(Ordering::Relaxed),
+            completed_streams: self.completed_streams.load(Ordering::Relaxed),
+            cancelled_streams: self.cancelled_streams.load(Ordering::Relaxed),
         }
     }
 }
@@ -55,12 +61,16 @@ impl PlaybackMetrics {
 #[derive(Debug)]
 pub struct MediaRoots {
     output_directory: RwLock<PathBuf>,
+    imported_music_preview: RwLock<Option<(String, PathBuf)>>,
+    imported_music_token: AtomicU64,
 }
 
 impl MediaRoots {
     pub fn new(output_directory: PathBuf) -> Self {
         Self {
             output_directory: RwLock::new(output_directory),
+            imported_music_preview: RwLock::new(None),
+            imported_music_token: AtomicU64::new(0),
         }
     }
 
@@ -77,6 +87,27 @@ impl MediaRoots {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = output_directory;
     }
+
+    pub fn register_imported_music_preview(&self, path: PathBuf) -> String {
+        let token = format!(
+            "{:016x}",
+            self.imported_music_token.fetch_add(1, Ordering::Relaxed) + 1
+        );
+        *self
+            .imported_music_preview
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((token.clone(), path));
+        token
+    }
+
+    fn imported_music_preview(&self, token: &str) -> Option<PathBuf> {
+        self.imported_music_preview
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .filter(|(registered, path)| registered == token && path.is_file())
+            .map(|(_, path)| path.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -90,11 +121,20 @@ struct PlaybackState {
 struct CountingReader<R> {
     inner: R,
     metrics: Arc<PlaybackMetrics>,
+    expected_bytes: u64,
+    consumed_bytes: u64,
+    completed: bool,
 }
 
 impl<R> CountingReader<R> {
-    fn new(inner: R, metrics: Arc<PlaybackMetrics>) -> Self {
-        Self { inner, metrics }
+    fn new(inner: R, metrics: Arc<PlaybackMetrics>, expected_bytes: u64) -> Self {
+        Self {
+            inner,
+            metrics,
+            expected_bytes,
+            consumed_bytes: 0,
+            completed: false,
+        }
     }
 }
 
@@ -112,8 +152,25 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
             this.metrics
                 .response_bytes
                 .fetch_add(bytes_read, Ordering::Relaxed);
+            this.consumed_bytes = this.consumed_bytes.saturating_add(bytes_read);
+            if !this.completed && this.consumed_bytes >= this.expected_bytes {
+                this.completed = true;
+                this.metrics
+                    .completed_streams
+                    .fetch_add(1, Ordering::Relaxed);
+            }
         }
         result
+    }
+}
+
+impl<R> Drop for CountingReader<R> {
+    fn drop(&mut self) {
+        if !self.completed && self.consumed_bytes < self.expected_bytes {
+            self.metrics
+                .cancelled_streams
+                .fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -136,6 +193,7 @@ pub async fn start(
         .route("/games/{timestamp}/video.mp4", any(game_video))
         .route("/clips/{filename}", any(clip_asset))
         .route("/music/{filename}", any(built_in_music))
+        .route("/music-preview/{token}", any(imported_music_preview))
         .route("/probe/hevc.mp4", any(hevc_probe))
         .route("/ddragon/{version}/{kind}/{asset}", any(ddragon_asset))
         .with_state(state);
@@ -202,6 +260,28 @@ async fn built_in_music(
         return empty_response(StatusCode::NOT_FOUND, "audio/mpeg");
     };
     serve_embedded(state, request, bytes, "audio/mpeg").await
+}
+
+async fn imported_music_preview(
+    State(state): State<PlaybackState>,
+    AxumPath(token): AxumPath<String>,
+    request: Request<Body>,
+) -> Response<Body> {
+    let Some(path) = state.roots.imported_music_preview(&token) else {
+        return empty_response(StatusCode::NOT_FOUND, "application/octet-stream");
+    };
+    let content_type = match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        _ => return empty_response(StatusCode::NOT_FOUND, "application/octet-stream"),
+    };
+    serve_file(state, request, &path, content_type).await
 }
 
 async fn ddragon_asset(
@@ -295,7 +375,11 @@ async fn serve_file(
     let body = if request.method() == Method::HEAD {
         Body::empty()
     } else {
-        let reader = CountingReader::new(file.take(response_length), Arc::clone(&state.metrics));
+        let reader = CountingReader::new(
+            file.take(response_length),
+            Arc::clone(&state.metrics),
+            response_length,
+        );
         Body::from_stream(ReaderStream::new(reader))
     };
     build_response(body, status, start, end, total_length, content_type)
@@ -426,15 +510,48 @@ mod tests {
         assert_eq!(parse_range("bytes=-0", 1_000), None);
     }
 
+    #[test]
+    fn newest_imported_music_preview_invalidates_the_previous_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first.mp3");
+        let second = directory.path().join("second.wav");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        let roots = MediaRoots::new(directory.path().to_path_buf());
+
+        let first_token = roots.register_imported_music_preview(first.clone());
+        assert_eq!(roots.imported_music_preview(&first_token), Some(first));
+
+        let second_token = roots.register_imported_music_preview(second.clone());
+        assert_ne!(first_token, second_token);
+        assert_eq!(roots.imported_music_preview(&first_token), None);
+        assert_eq!(roots.imported_music_preview(&second_token), Some(second));
+    }
+
     #[tokio::test]
     async fn counts_only_bytes_consumed_from_a_response() {
         let metrics = Arc::new(PlaybackMetrics::default());
         let source = tokio::io::repeat(7).take(16);
-        let mut reader = CountingReader::new(source, Arc::clone(&metrics));
+        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 16);
         let mut consumed = [0_u8; 6];
 
         reader.read_exact(&mut consumed).await.unwrap();
 
         assert_eq!(metrics.snapshot().response_bytes, 6);
+        drop(reader);
+        assert_eq!(metrics.snapshot().cancelled_streams, 1);
+    }
+
+    #[tokio::test]
+    async fn counts_completed_streams() {
+        let metrics = Arc::new(PlaybackMetrics::default());
+        let source = tokio::io::repeat(7).take(8);
+        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 8);
+        let mut consumed = [0_u8; 8];
+
+        reader.read_exact(&mut consumed).await.unwrap();
+
+        assert_eq!(metrics.snapshot().completed_streams, 1);
+        assert_eq!(metrics.snapshot().cancelled_streams, 0);
     }
 }

@@ -400,31 +400,55 @@ export const chooseMusicFile = async (): Promise<string | null> => {
   return typeof selected === "string" ? selected : null;
 };
 
+export const prepareImportedMusicPreview = async (path: string): Promise<string> => {
+  if (!isTauri()) return "";
+  return invoke<string>("prepare_imported_music_preview", { path });
+};
+
 export const exportClip = async (
   request: ClipExportRequest,
   onProgress: (progress: ClipExportProgress) => void,
 ): Promise<ClipExportResult> => {
   if (!isTauri()) {
-    for (const percent of [8, 24, 46, 69, 88, 96]) {
-      await pausePreview();
-      onProgress({ stage: percent === 96 ? "thumbnail" : "encoding", percent });
+    const totalOutputs = request.presets.length;
+    for (const [outputIndex, preset] of request.presets.entries()) {
+      for (const localPercent of [8, 24, 46, 69, 88, 96, 99]) {
+        await pausePreview();
+        onProgress({
+          stage: localPercent >= 96 ? "thumbnail" : "encoding",
+          percent: Math.floor(((outputIndex * 100 + localPercent) / totalOutputs)),
+          preset,
+          completed_outputs: outputIndex,
+          total_outputs: totalOutputs,
+        });
+      }
     }
-    const clipTimestamp = Math.floor(Date.now() / 1_000).toString();
-    const filename = `${request.game_timestamp}_${clipTimestamp}`;
+    const firstClipTimestamp = Math.floor(Date.now() / 1_000);
+    const durationSeconds = (request.clip_end_ms - request.clip_start_ms) / 1_000;
+    const outputs = request.presets.map((preset, index) => {
+      const clipTimestamp = (firstClipTimestamp + index).toString();
+      const filename = `${request.game_timestamp}_${clipTimestamp}`;
+      return {
+        preset,
+        filename,
+        output_path: `~/LeagueReplays/clips/${filename}.mp4`,
+        thumbnail_path: `~/LeagueReplays/clips/${filename}.jpg`,
+        file_size_bytes:
+          preset === "discord" ? 9_200_000 : Math.round(durationSeconds * (24_192_000 / 8)),
+      };
+    });
     const result: ClipExportResult = {
-      filename,
-      output_path: `~/LeagueReplays/clips/${filename}.mp4`,
-      thumbnail_path: `~/LeagueReplays/clips/${filename}.jpg`,
+      outputs,
       elapsed_ms: 912,
-      file_size_bytes: request.preset === "discord" ? 9_200_000 : 43_000_000,
+      total_file_size_bytes: outputs.reduce((total, output) => total + output.file_size_bytes, 0),
     };
     mockClips = [
-      {
-        filename,
+      ...outputs.map((output) => ({
+        filename: output.filename,
         game_timestamp: request.game_timestamp,
-        clip_timestamp: clipTimestamp,
+        clip_timestamp: output.filename.slice(request.game_timestamp.length + 1),
         duration_ms: request.clip_end_ms - request.clip_start_ms,
-        file_size_bytes: result.file_size_bytes,
+        file_size_bytes: output.file_size_bytes,
         thumbnail_path: null,
         thumbnail_url: null,
         video_url: "",
@@ -432,10 +456,16 @@ export const exportClip = async (
           mockGames.find((game) => game.timestamp === request.game_timestamp)?.champion ?? null,
         source_date:
           mockGames.find((game) => game.timestamp === request.game_timestamp)?.recorded_at ?? null,
-      },
+      })),
       ...mockClips,
     ];
-    onProgress({ stage: "complete", percent: 100 });
+    onProgress({
+      stage: "complete",
+      percent: 100,
+      preset: null,
+      completed_outputs: totalOutputs,
+      total_outputs: totalOutputs,
+    });
     return result;
   }
   const progress = new Channel<ClipExportProgress>();
@@ -524,7 +554,15 @@ export const ensureHevcCapability = async (): Promise<HevcProbeStatus> => {
 };
 
 export const loadServerMetrics = async (): Promise<ServerMetrics> => {
-  if (!isTauri()) return { requests: 0, range_requests: 0, response_bytes: 0 };
+  if (!isTauri()) {
+    return {
+      requests: 0,
+      range_requests: 0,
+      response_bytes: 0,
+      completed_streams: 0,
+      cancelled_streams: 0,
+    };
+  }
   return invoke<ServerMetrics>("get_playback_server_metrics");
 };
 

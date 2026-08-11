@@ -32,7 +32,9 @@ publishable H.264 output as a source H.264 recording.
 
 ## 3. Export Targets
 
-The format selector has three deliberately small presets:
+The format selector has three deliberately small presets. One or more formats can be
+selected in the same export; a separate **Preview** action chooses which selected format
+is shown in the live preview.
 
 | Preset | Output | Purpose |
 |---|---|---|
@@ -62,14 +64,16 @@ is part of this phase.
 
 ## 4. Preview
 
-The exporter seeks an off-screen `<video>` to `clipStartMs`, captures one JPEG frame
-through Canvas, and then releases the video element. The preview is static; the app
-does not decode video continuously on this screen.
+The exporter uses the source `<video>` directly and restricts playback to the selected
+clip range. It does not capture a Canvas/JPEG frame.
 
-- Horizontal and Discord show the frame in their output aspect ratio.
-- Vertical renders the exact hybrid composition using the captured frame.
-- Duration, start, and end remain visible beside the preview.
-- If frame capture fails, export remains available.
+- Horizontal and Discord show the live source in their output aspect ratio.
+- Vertical uses a synchronized muted background video plus the foreground video to
+  reproduce the exported hybrid composition without lowering source quality.
+- The preview loops the selected range and includes a bounded scrubber.
+- Rapid scrub input is coalesced to at most ten native seeks per second.
+- Duration, start, end, and the current preview offset remain visible.
+- If preview playback fails, export remains available.
 
 ## 5. Music and Audio Mix
 
@@ -80,9 +84,11 @@ Three mutually exclusive choices:
 - **Import file** — an absolute path selected with the native picker; MP3 and WAV are
   accepted and the file is not copied.
 
-Built-in tracks have a ten-second preview button. When music is active, Game Audio
-defaults to 80% and Music to 100%. Both sliders map directly to multipliers from 0.0
-to 1.0.
+Built-in and imported tracks play against the live clip preview, starting at music time
+zero when the clip begins and looping with the same timing used by export. Game audio
+defaults to 80% and Music to 100%. Both sliders apply live and map directly to export
+multipliers from 0.0 to 1.0. Imported files are exposed only through a short-lived opaque
+localhost token; arbitrary filesystem paths are never accepted by the media server.
 
 Music is looped with `-stream_loop -1`. Both sources are trimmed to the selected clip
 duration and mixed with `amix=duration=first`, so a short music track never truncates
@@ -100,13 +106,23 @@ Encoder order is intentionally small:
 
 1. Reuse the recording hardware family for H.264 (`h264_nvenc`, `h264_amf`,
    `h264_qsv`, or `h264_videotoolbox`).
-2. If that encoder cannot initialise, retry with `libx264` using a fast preset.
+2. If that encoder cannot initialise, retry with `libx264` (`medium` for publish
+   masters, `veryfast` for the size-constrained Discord preset).
 
-Horizontal and Vertical target 12 Mbps video plus 192 kbps audio. Discord calculates
-its video bitrate from the selected duration after reserving audio and container
-overhead. The completed file is measured; an oversized Discord result is re-encoded
-once with a corrected bitrate and rejected rather than returned if it still reaches
-10,000,000 bytes.
+Horizontal and Vertical use a high-quality 24 Mbps average / 36 Mbps peak video budget
+plus 192 kbps audio. NVENC uses the P6 high-quality VBR/multipass path with adaptive
+quantization and 32-frame look-ahead; equivalent slower quality presets are used for
+AMF, QSV, and the software fallback. This materially reduces
+second-generation H.264 damage in high-motion 1080p60 footage, but cannot restore detail
+already absent from the source recording. Discord calculates its video bitrate from the
+selected duration after reserving audio and container overhead. The completed file is
+measured; an oversized Discord result is re-encoded once with a corrected bitrate and
+rejected rather than returned if it still reaches 10,000,000 bytes.
+
+Multiple selected formats are submitted as one batch and encoded sequentially. Every
+format needs its own H.264 encode because its dimensions and bitrate constraints differ;
+sequential execution avoids competing hardware-encoder sessions and keeps fallback/error
+handling deterministic.
 
 Until Phase 8 bundles the media tools, `ffmpeg` and `ffprobe` must be available on the system path.
 
@@ -116,8 +132,9 @@ ffmpeg runs with `-progress pipe:1`. The backend converts `out_time_us` into enc
 progress and sends compact progress messages to the exporter. Thumbnail generation is
 a separate final stage.
 
-Exports are written as temporary `.part.mp4` and `.part.jpg` files. Only after both
-commands succeed are they renamed to:
+Exports are written as temporary `.part.mp4` and `.part.jpg` files. For a multi-format
+batch, all selected outputs and thumbnails must succeed before any are published. Only
+then are they renamed to:
 
 ```text
 {output_path}/clips/{game_timestamp}_{clip_timestamp}.mp4
@@ -127,9 +144,10 @@ commands succeed are they renamed to:
 Failed temporary files are removed. A completed MP4 is never exposed without its
 thumbnail sidecar.
 
-On success the screen shows elapsed time, final size, and actions to open the clips
-folder, copy the absolute MP4 path, or go to the Clips tab. On failure it shows the
-last concise ffmpeg error and allows the same request to be retried.
+On success the screen lists every format, filename, individual size, total elapsed time,
+and total size, with actions to open the clips folder, copy all absolute MP4 paths, or go
+to the Clips tab. On failure it shows the last concise ffmpeg error and allows the same
+batch to be retried.
 
 ## 8. Library Contract
 

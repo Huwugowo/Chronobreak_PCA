@@ -10,7 +10,10 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { loadPlaybackProbe, loadServerMetrics } from "../api";
+import {
+  loadPlaybackProbe,
+  loadServerMetrics,
+} from "../api";
 import { formatBytes, formatDate, formatDuration } from "../format";
 import type {
   ClipDraft,
@@ -52,6 +55,28 @@ type ChromiumPerformance = Performance & {
 
 type ClipEndpoint = "start" | "end";
 
+type MediaPreviewState = "loading" | "ready" | "recovering" | "degraded";
+
+type SeekReason =
+  | "navigation"
+  | "endpoint-edit"
+  | "clip-preview"
+  | "clip-loop"
+  | "recovery";
+
+type ScheduledSeek = {
+  generation: number;
+  targetMs: number;
+  reason: SeekReason;
+  playAfter: boolean;
+};
+
+type MediaDiagnosticEvent = {
+  at: number;
+  kind: string;
+  detail: string;
+};
+
 type EndpointHoldState = {
   endpoint: ClipEndpoint;
   key: "ArrowLeft" | "ArrowRight";
@@ -62,6 +87,9 @@ type EndpointHoldState = {
 };
 
 const ENDPOINT_HOLD_THRESHOLD_MS = 200;
+const SEEK_INTERVAL_MS = 100;
+const SEEK_TIMEOUT_MS = 1_500;
+const MAX_DIAGNOSTIC_EVENTS = 50;
 
 function ViewerScreen(props: Props) {
   const [probe] = createResource(() => props.gameTimestamp, loadPlaybackProbe);
@@ -102,12 +130,19 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   let frameCallbackId: number | undefined;
   let animationFrameId: number | undefined;
   let metricsIntervalId: number | undefined;
-  let pendingSeekStartedAt: number | undefined;
+  let seekDispatchTimerId: number | undefined;
+  let seekTimeoutId: number | undefined;
+  let recoveryTimerId: number | undefined;
   let frameSampleStartedAt = performance.now();
+  let lastSeekDispatchedAt = Number.NEGATIVE_INFINITY;
+  let mediaGeneration = 0;
+  let recoveryTargetMs = 0;
+  let inFlightSeek: ScheduledSeek | undefined;
+  let pendingSeek: ScheduledSeek | undefined;
+  let recoveryAttempts: number[] = [];
   let presentedFrames = 0;
   let disposed = false;
   let clipLoopSeekPending = false;
-  let endpointEdit: ClipEndpoint | undefined;
   let endpointHold: EndpointHoldState | undefined;
 
   const events = [...props.probe.events].sort(
@@ -126,7 +161,12 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
   const [videoTimeMs, setVideoTimeMs] = createSignal(0);
   const [isPlaying, setIsPlaying] = createSignal(false);
-  const [mediaUnavailable, setMediaUnavailable] = createSignal(false);
+  const [mediaState, setMediaState] = createSignal<MediaPreviewState>("loading");
+  const [mediaError, setMediaError] = createSignal<string | null>(null);
+  const [editingEndpoint, setEditingEndpoint] = createSignal<ClipEndpoint | null>(null);
+  const [diagnosticEvents, setDiagnosticEvents] = createSignal<MediaDiagnosticEvent[]>([]);
+  const [seekQueueLabel, setSeekQueueLabel] = createSignal("IDLE");
+  const [recoveryCount, setRecoveryCount] = createSignal(0);
   const [presentedFps, setPresentedFps] = createSignal(0);
   const [clockSource, setClockSource] = createSignal<"VIDEO FRAME" | "ANIMATION FRAME">(
     "VIDEO FRAME",
@@ -139,6 +179,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     requests: 0,
     range_requests: 0,
     response_bytes: 0,
+    completed_streams: 0,
+    cancelled_streams: 0,
   });
   const initialClipRange = (): ClipRange | null => {
     const draft = props.initialClipDraft;
@@ -199,7 +241,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const currentKda = createMemo<KdaTimelinePoint | undefined>(() =>
     timelineValue(kdaTimeline, videoTimeMs()),
   );
-
+  const lastDiagnostic = createMemo(() => {
+    const events = diagnosticEvents();
+    return events[events.length - 1];
+  });
   const togglePlayerFilter = (summonerName: string) => {
     setSelectedPlayers((selected) =>
       selected.includes(summonerName)
@@ -220,11 +265,12 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   };
 
   const syncPresentedTime = (presentedTimeMs: number) => {
+    if (editingEndpoint()) return;
     const range = clipRange();
     if (range && !video.paused && presentedTimeMs >= range.endMs) {
       if (!clipLoopSeekPending) {
         clipLoopSeekPending = true;
-        seekTo(range.startMs);
+        seekTo(range.startMs, { reason: "clip-loop" });
       }
       return;
     }
@@ -263,25 +309,187 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     }
   };
 
-  const seekTo = (requestedTimeMs: number) => {
+  const addDiagnostic = (kind: string, detail: string) => {
+    setDiagnosticEvents((events) => [
+      ...events.slice(-(MAX_DIAGNOSTIC_EVENTS - 1)),
+      { at: Date.now(), kind, detail },
+    ]);
+  };
+
+  const mediaErrorDescription = () => {
+    const error = video.error;
+    if (!error) return "The local preview encountered an unknown media error.";
+    const label =
+      error.code === MediaError.MEDIA_ERR_ABORTED
+        ? "Playback aborted"
+        : error.code === MediaError.MEDIA_ERR_NETWORK
+          ? "Local stream error"
+          : error.code === MediaError.MEDIA_ERR_DECODE
+            ? "Decode error"
+            : error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+              ? "Unsupported recording"
+              : "Media error";
+    return `${label} (${error.code})${error.message ? `: ${error.message}` : ""}`;
+  };
+
+  const describeTimeRanges = (ranges: TimeRanges) => {
+    const values: string[] = [];
+    for (let index = 0; index < Math.min(ranges.length, 3); index += 1) {
+      values.push(`${ranges.start(index).toFixed(2)}-${ranges.end(index).toFixed(2)}`);
+    }
+    return values.length > 0 ? values.join(",") : "none";
+  };
+
+  const mediaSnapshot = () =>
+    `time=${video.currentTime.toFixed(3)}; ready=${video.readyState}; network=${video.networkState}; buffered=${describeTimeRanges(video.buffered)}; seekable=${describeTimeRanges(video.seekable)}`;
+
+  const clearSeekDispatchTimer = () => {
+    if (seekDispatchTimerId === undefined) return;
+    window.clearTimeout(seekDispatchTimerId);
+    seekDispatchTimerId = undefined;
+  };
+
+  const clearSeekTimeout = () => {
+    if (seekTimeoutId === undefined) return;
+    window.clearTimeout(seekTimeoutId);
+    seekTimeoutId = undefined;
+  };
+
+  const resetSeekScheduler = () => {
+    clearSeekDispatchTimer();
+    clearSeekTimeout();
+    inFlightSeek = undefined;
+    pendingSeek = undefined;
+    clipLoopSeekPending = false;
+    setSeekQueueLabel("IDLE");
+  };
+
+  const handlePlayRejection = (reason?: unknown) => {
+    addDiagnostic(
+      "play-rejected",
+      `${reason instanceof Error ? reason.name : "unknown"}; mediaError=${video.error?.code ?? "none"}`,
+    );
+    // Pausing for a new endpoint edit intentionally rejects an outstanding
+    // Chromium play() promise with AbortError. A MediaError is the source of
+    // truth for an actual loading or decoding failure.
+    if (video.error !== null) attemptRecovery(mediaErrorDescription());
+  };
+
+  const playNativeVideo = async () => {
+    if (!props.probe.video_url || mediaState() !== "ready") return;
+    try {
+      await video.play();
+    } catch (error) {
+      handlePlayRejection(error);
+    }
+  };
+
+  const dispatchPendingSeek = () => {
+    clearSeekDispatchTimer();
+    if (inFlightSeek || !pendingSeek || mediaState() !== "ready" || video.readyState === 0) {
+      return;
+    }
+    const delay = Math.max(0, lastSeekDispatchedAt + SEEK_INTERVAL_MS - performance.now());
+    if (delay > 0) {
+      seekDispatchTimerId = window.setTimeout(dispatchPendingSeek, delay);
+      return;
+    }
+
+    const request = pendingSeek;
+    pendingSeek = undefined;
+    const frameToleranceMs = 500 / props.probe.recording_fps;
+    if (Math.abs(video.currentTime * 1_000 - request.targetMs) <= frameToleranceMs) {
+      addDiagnostic("seek-deduped", `${request.reason}@${request.targetMs.toFixed(1)}`);
+      if (request.playAfter && request.generation === mediaGeneration) void playNativeVideo();
+      setSeekQueueLabel("IDLE");
+      dispatchPendingSeek();
+      return;
+    }
+
+    inFlightSeek = request;
+    setSeekQueueLabel("1 ACTIVE");
+    lastSeekDispatchedAt = performance.now();
+    addDiagnostic("seek-start", `${request.reason}@${request.targetMs.toFixed(1)}`);
+    try {
+      video.currentTime = request.targetMs / 1_000;
+    } catch (error) {
+      inFlightSeek = undefined;
+      addDiagnostic("seek-assignment-failed", String(error));
+      attemptRecovery("The local preview rejected a seek request.");
+      return;
+    }
+    clearSeekTimeout();
+    seekTimeoutId = window.setTimeout(() => {
+      const timedOut = inFlightSeek;
+      if (!timedOut || timedOut.generation !== mediaGeneration) return;
+      addDiagnostic("seek-timeout", `${timedOut.reason}@${timedOut.targetMs.toFixed(1)}`);
+      attemptRecovery(`Preview seek timed out after ${SEEK_TIMEOUT_MS} ms.`);
+    }, SEEK_TIMEOUT_MS);
+  };
+
+  const seekTo = (
+    requestedTimeMs: number,
+    options: { reason?: SeekReason; playAfter?: boolean } = {},
+  ) => {
     const range = clipRange();
     const targetTimeMs = range
       ? clamp(requestedTimeMs, range.startMs, range.endMs)
       : clamp(requestedTimeMs, 0, durationMs);
-    pendingSeekStartedAt = performance.now();
     setVideoTimeMs(targetTimeMs);
     if (!props.probe.video_url) {
       setSeekLatencyMs(0);
-      pendingSeekStartedAt = undefined;
       clipLoopSeekPending = false;
       return;
     }
-    try {
-      video.currentTime = targetTimeMs / 1_000;
-    } catch {
-      pendingSeekStartedAt = undefined;
-    }
+    pendingSeek = {
+      generation: mediaGeneration,
+      targetMs: targetTimeMs,
+      reason: options.reason ?? "navigation",
+      playAfter: options.playAfter ?? false,
+    };
+    setSeekQueueLabel(inFlightSeek ? "1 ACTIVE + LATEST" : "1 PENDING");
+    dispatchPendingSeek();
   };
+
+  const attemptRecovery = (reason: string, manual = false) => {
+    if (!props.probe.video_url || disposed) return;
+    const now = performance.now();
+    recoveryAttempts = manual
+      ? []
+      : recoveryAttempts.filter((attempt) => now - attempt <= 10_000);
+    if (recoveryAttempts.length >= 2) {
+      resetSeekScheduler();
+      setMediaState("degraded");
+      setMediaError(reason);
+      addDiagnostic("preview-degraded", reason);
+      return;
+    }
+
+    recoveryAttempts.push(now);
+    setRecoveryCount(recoveryAttempts.length);
+    recoveryTargetMs = videoTimeMs();
+    mediaGeneration += 1;
+    resetSeekScheduler();
+    video.pause();
+    setVideoTimeMs(recoveryTargetMs);
+    setMediaState("recovering");
+    setMediaError(reason);
+    addDiagnostic(
+      "recovery-start",
+      `attempt=${recoveryAttempts.length}; target=${recoveryTargetMs.toFixed(1)}; ${reason}; ${mediaSnapshot()}`,
+    );
+    if (recoveryTimerId !== undefined) window.clearTimeout(recoveryTimerId);
+    recoveryTimerId = window.setTimeout(() => {
+      recoveryTimerId = undefined;
+      try {
+        video.load();
+      } catch (error) {
+        attemptRecovery(`Preview reload failed: ${String(error)}`);
+      }
+    }, 0);
+  };
+
+  const retryPreview = () => attemptRecovery("Manual preview retry requested.", true);
 
   const clipRangeForAnchor = (anchorMs: number, anchorEvent?: ViewerEvent) =>
     defaultClipRange(
@@ -303,13 +511,16 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         ? kills[nearest]
         : undefined;
     const anchorMs = anchorEvent?.video_time_ms ?? videoTimeMs();
-    setClipRange(clipRangeForAnchor(anchorMs, anchorEvent));
+    const nextRange = clipRangeForAnchor(anchorMs, anchorEvent);
+    setClipRange(nextRange);
     seekTo(videoTimeMs());
   };
 
   const selectEvent = (event: ViewerEvent) => {
+    setEditingEndpoint(null);
     if (clipRange()) {
-      setClipRange(clipRangeForAnchor(event.video_time_ms, event));
+      const nextRange = clipRangeForAnchor(event.video_time_ms, event);
+      setClipRange(nextRange);
     }
     seekTo(event.video_time_ms);
   };
@@ -318,7 +529,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     const range = clipRange();
     if (!range) return;
     clearEndpointHold();
-    endpointEdit = undefined;
+    setEditingEndpoint(null);
     video.pause();
     setIsFullscreen(false);
     props.onExportClip({
@@ -328,7 +539,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     });
   };
 
-  const updateClipEndpoint = (endpoint: ClipEndpoint, requestedMs: number) => {
+  const updateClipEndpoint = (
+    endpoint: ClipEndpoint,
+    requestedMs: number,
+  ) => {
     const range = clipRange();
     if (!range) return null;
     const nextRange = moveClipEndpoint(
@@ -339,7 +553,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       props.probe.recording_fps,
     );
     setClipRange(nextRange);
-    seekTo(clipEndpointPreviewMs(nextRange, endpoint, props.probe.recording_fps));
+    const previewMs = clipEndpointPreviewMs(nextRange, endpoint, props.probe.recording_fps);
+    seekTo(previewMs, { reason: "endpoint-edit" });
     return nextRange;
   };
 
@@ -353,19 +568,20 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     const range = clipRange();
     if (!range) return;
     clearEndpointHold();
-    endpointEdit = endpoint;
+    setEditingEndpoint(endpoint);
     video.pause();
-    seekTo(clipEndpointPreviewMs(range, endpoint, props.probe.recording_fps));
+    const previewMs = clipEndpointPreviewMs(range, endpoint, props.probe.recording_fps);
+    seekTo(previewMs, { reason: "endpoint-edit" });
   };
 
   const finishClipEndpointEdit = () => {
     clearEndpointHold();
-    endpointEdit = undefined;
     const range = clipRange();
     if (!range) return;
-    seekTo(range.startMs);
-    if (!props.probe.video_url || mediaUnavailable()) return;
-    void video.play().catch(() => setMediaUnavailable(true));
+    const endpoint = editingEndpoint();
+    if (!endpoint) return;
+    const previewMs = clipEndpointPreviewMs(range, endpoint, props.probe.recording_fps);
+    seekTo(previewMs, { reason: "endpoint-edit" });
   };
 
   const beginClipDrag = (
@@ -474,14 +690,14 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   };
 
   const handleClipEndpointBlur = (endpoint: ClipEndpoint) => {
-    if (endpointEdit !== endpoint) return;
+    if (editingEndpoint() !== endpoint) return;
     if (endpointHold) applyEndpointHoldTime(endpointHold, performance.now());
     finishClipEndpointEdit();
   };
 
   const cancelClipMode = () => {
     clearEndpointHold();
-    endpointEdit = undefined;
+    setEditingEndpoint(null);
     clipLoopSeekPending = false;
     setClipRange(null);
   };
@@ -489,6 +705,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const seekFromRail = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0) return;
+    setEditingEndpoint(null);
     seekTo(((event.clientX - bounds.left) / bounds.width) * durationMs);
   };
 
@@ -500,24 +717,22 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     if (event.key === "End") target = durationMs;
     if (target === undefined) return;
     event.preventDefault();
+    setEditingEndpoint(null);
     seekTo(target);
   };
 
   const togglePlayback = async () => {
-    if (!props.probe.video_url || mediaUnavailable()) return;
-    if (video.paused) {
-      const range = clipRange();
-      const currentTimeMs = video.currentTime * 1_000;
-      if (range && (currentTimeMs < range.startMs || currentTimeMs >= range.endMs)) {
-        seekTo(range.startMs);
-      }
-      try {
-        await video.play();
-      } catch {
-        setMediaUnavailable(true);
-      }
-    } else {
+    if (!props.probe.video_url || mediaState() !== "ready") return;
+    if (!video.paused) {
       video.pause();
+      return;
+    }
+    const range = clipRange();
+    setEditingEndpoint(null);
+    if (range) {
+      seekTo(range.startMs, { reason: "clip-preview", playAfter: true });
+    } else {
+      await playNativeVideo();
     }
   };
 
@@ -534,10 +749,23 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   onMount(() => {
     const updateTime = () => syncPresentedTime(video.currentTime * 1_000);
     const onLoadedMetadata = () => {
-      setMediaUnavailable(false);
+      const recovered = mediaState() === "recovering";
+      setMediaState("ready");
+      setMediaError(null);
+      addDiagnostic(
+        recovered ? "recovery-ready" : "metadata-ready",
+        `duration=${(video.duration * 1_000).toFixed(1)}; readyState=${video.readyState}`,
+      );
       const range = clipRange();
-      if (range) seekTo(range.startMs);
-      else updateTime();
+      if (recovered) {
+        seekTo(recoveryTargetMs, { reason: "recovery" });
+      } else if (pendingSeek) {
+        dispatchPendingSeek();
+      } else if (range) {
+        seekTo(range.startMs);
+      } else {
+        updateTime();
+      }
     };
     const onPlay = () => {
       setIsPlaying(true);
@@ -547,18 +775,32 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     };
     const onPause = () => {
       setIsPlaying(false);
-      updateTime();
+      if (!editingEndpoint() && mediaState() !== "recovering") updateTime();
     };
     const onSeeking = () => {
-      pendingSeekStartedAt ??= performance.now();
+      if (inFlightSeek) {
+        addDiagnostic("media-seeking", `${inFlightSeek.reason}@${inFlightSeek.targetMs.toFixed(1)}`);
+      }
     };
     const onSeeked = () => {
       clipLoopSeekPending = false;
-      updateTime();
-      if (pendingSeekStartedAt !== undefined) {
-        setSeekLatencyMs(performance.now() - pendingSeekStartedAt);
-        pendingSeekStartedAt = undefined;
+      const completed = inFlightSeek;
+      clearSeekTimeout();
+      inFlightSeek = undefined;
+      setSeekQueueLabel(pendingSeek ? "1 PENDING" : "IDLE");
+      if (!editingEndpoint()) updateTime();
+      if (completed) {
+        const latency = performance.now() - lastSeekDispatchedAt;
+        setSeekLatencyMs(latency);
+        addDiagnostic(
+          "seek-complete",
+          `${completed.reason}@${completed.targetMs.toFixed(1)} in ${latency.toFixed(0)}ms`,
+        );
+        if (completed.generation === mediaGeneration && completed.playAfter) {
+          void playNativeVideo();
+        }
       }
+      dispatchPendingSeek();
     };
     const onEnded = () => {
       const range = clipRange();
@@ -567,10 +809,16 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         return;
       }
       clipLoopSeekPending = false;
-      seekTo(range.startMs);
-      void video.play().catch(() => setMediaUnavailable(true));
+      seekTo(range.startMs, { reason: "clip-loop", playAfter: true });
     };
-    const onError = () => setMediaUnavailable(true);
+    const onError = () => {
+      const description = mediaErrorDescription();
+      addDiagnostic(
+        "media-error",
+        `${description}; ${mediaSnapshot()}`,
+      );
+      attemptRecovery(description);
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
@@ -592,6 +840,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         event.preventDefault();
         if (event.repeat) return;
         const direction = event.key === "ArrowLeft" ? -1 : 1;
+        setEditingEndpoint(null);
         seekTo(videoTimeMs() + direction * (clipRange() ? 5_000 : 15_000));
         return;
       }
@@ -627,6 +876,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       video.addEventListener("timeupdate", updateTime);
     }
     metricsIntervalId = window.setInterval(() => void updateMetrics(), 1_000);
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) onLoadedMetadata();
 
     onCleanup(() => {
       disposed = true;
@@ -645,6 +895,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       }
       if (animationFrameId !== undefined) cancelAnimationFrame(animationFrameId);
       clearEndpointHold();
+      resetSeekScheduler();
+      if (recoveryTimerId !== undefined) window.clearTimeout(recoveryTimerId);
       if (metricsIntervalId !== undefined) window.clearInterval(metricsIntervalId);
     });
   });
@@ -696,7 +948,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               ref={video}
               src={props.probe.video_url || undefined}
               playsinline
-              preload="metadata"
+              preload="auto"
               aria-label={`${props.probe.game.champion} replay video`}
               onClick={() => void togglePlayback()}
               onDblClick={(event) => {
@@ -704,15 +956,37 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 enterFullscreen();
               }}
             />
-            <Show when={!props.probe.video_url || mediaUnavailable()}>
-              <div class={styles.previewPlaceholder}>
+            <Show
+              when={
+                !props.probe.video_url ||
+                mediaState() === "recovering" ||
+                mediaState() === "degraded"
+              }
+            >
+              <div
+                classList={{
+                  [styles.previewPlaceholder]: true,
+                  [styles.previewPlaceholderInteractive]: mediaState() === "degraded",
+                }}
+              >
                 <span class={styles.previewGlyph} aria-hidden="true">LR</span>
-                <strong>{mediaUnavailable() ? "VIDEO UNAVAILABLE" : "INTERACTIVE PREVIEW"}</strong>
+                <strong>
+                  {mediaState() === "recovering"
+                    ? "RECOVERING PREVIEW"
+                    : mediaState() === "degraded"
+                      ? "PREVIEW UNAVAILABLE"
+                      : "INTERACTIVE PREVIEW"}
+                </strong>
                 <span>
-                  {mediaUnavailable()
-                    ? "The local recording could not be decoded."
+                  {mediaState() === "recovering"
+                    ? "Reloading the local recording without leaving this replay."
+                    : mediaState() === "degraded"
+                      ? mediaError() ?? "The local video preview is temporarily unavailable."
                     : "Timeline data is active; local video attaches in the desktop app."}
                 </span>
+                <Show when={mediaState() === "degraded"}>
+                  <button type="button" onClick={retryPreview}>RETRY PREVIEW</button>
+                </Show>
               </div>
             </Show>
             <Show when={!isFullscreen()}>
@@ -732,7 +1006,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 beforeGameStart={beforeGameStart()}
                 currentKda={currentKda()}
                 isPlaying={isPlaying()}
-                mediaAvailable={Boolean(props.probe.video_url) && !mediaUnavailable()}
+                mediaAvailable={Boolean(props.probe.video_url) && mediaState() === "ready"}
                 participants={props.probe.participants}
                 selectedPlayers={selectedPlayers()}
                 clipRange={clipRange()}
@@ -880,12 +1154,14 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             <button
               class={styles.playButton}
               type="button"
-              disabled={!props.probe.video_url || mediaUnavailable()}
+              disabled={!props.probe.video_url || mediaState() !== "ready"}
               onClick={() => void togglePlayback()}
-              aria-label={isPlaying() ? "Pause replay" : "Play replay"}
+              aria-label={
+                isPlaying() ? "Pause replay" : clipRange() ? "Preview selected clip" : "Play replay"
+              }
             >
               <span aria-hidden="true">{isPlaying() ? "Ⅱ" : "▶"}</span>
-              {isPlaying() ? "PAUSE" : "PLAY"}
+              {isPlaying() ? "PAUSE" : clipRange() ? "PREVIEW CLIP" : "PLAY"}
             </button>
             <Show
               when={clipRange()}
@@ -960,6 +1236,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 <dd>{serverMetrics().range_requests}</dd>
               </div>
               <div>
+                <dt>STREAMS</dt>
+                <dd>{serverMetrics().completed_streams} OK / {serverMetrics().cancelled_streams} CANCEL</dd>
+              </div>
+              <div>
                 <dt>JS HEAP</dt>
                 <dd>{heapBytes() === null ? "—" : formatBytes(heapBytes()!)}</dd>
               </div>
@@ -970,6 +1250,24 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               <div>
                 <dt>INDEXED</dt>
                 <dd>{visibleEvents().length} / {events.length} EVENTS</dd>
+              </div>
+              <div>
+                <dt>MEDIA</dt>
+                <dd>{mediaState().toUpperCase()}</dd>
+              </div>
+              <div>
+                <dt>SEEK QUEUE</dt>
+                <dd>{seekQueueLabel()}</dd>
+              </div>
+              <div>
+                <dt>RECOVERIES</dt>
+                <dd>{recoveryCount()}</dd>
+              </div>
+              <div>
+                <dt>LAST MEDIA EVENT</dt>
+                <dd title={lastDiagnostic()?.detail}>
+                  {lastDiagnostic()?.kind ?? "—"}
+                </dd>
               </div>
             </dl>
           </details>

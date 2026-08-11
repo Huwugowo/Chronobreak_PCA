@@ -320,8 +320,8 @@ function FullscreenOverlay(props: Props) {
           </div>
         </div>
         <div class={styles.fullscreenControls}>
-          <button class={styles.fullscreenPlay} type="button" disabled={!props.mediaAvailable} onClick={props.onTogglePlayback} aria-label={props.isPlaying ? "Pause fullscreen replay" : "Play fullscreen replay"}>
-            <span aria-hidden="true">{props.isPlaying ? "Ⅱ" : "▶"}</span> {props.isPlaying ? "PAUSE" : "PLAY"}
+          <button class={styles.fullscreenPlay} type="button" disabled={!props.mediaAvailable} onClick={props.onTogglePlayback} aria-label={props.isPlaying ? "Pause fullscreen replay" : props.clipRange ? "Preview selected clip" : "Play fullscreen replay"}>
+            <span aria-hidden="true">{props.isPlaying ? "Ⅱ" : "▶"}</span> {props.isPlaying ? "PAUSE" : props.clipRange ? "PREVIEW CLIP" : "PLAY"}
           </button>
           <Show
             when={props.clipRange}

@@ -1,12 +1,12 @@
-# PHASES.md — Build Order & Validation
+# PHASES.md — Historical Build Order & Validation
 
-> This is the standalone project roadmap. `SPEC.md` owns shared architecture and data contracts; the module documents own detailed behavior. A phase is complete only after its validation has passed. Superseded development schemas and code paths are deleted rather than migrated.
+> This is a historical delivery/validation record for the phase-based bootstrap. It is not the current roadmap or work state. `feature-list.json` is canonical; future phase scope must be resolved there before work begins. `SPEC.md` and the module documents remain detailed supporting contracts.
 
 ---
 
 ## Phase Overview
 
-| # | Milestone | Status | Outcome |
+| # | Milestone | Historical status | Outcome |
 |---|---|---|---|
 | 1 | Recorder Core | Complete | League launch and close produce a playable, crash-tolerant video |
 | 2 | Live Client Poller | Complete | Events and player snapshots are synchronized to video |
@@ -180,7 +180,7 @@ Phase 6 is not a prerequisite for Phases 7–9.
 
 ## Phase 8 — Windows Self-Contained Beta
 
-**Status:** Next.
+**Historical status:** Proposed next phase. Its current canonical decomposition is `EPIC-DIST` and child features in `feature-list.json`.
 
 **Goal:** A user on a clean Windows machine can install the product, leave the recorder running, play a game, review it, and export a clip without installing ffmpeg, Rust, Node, or any developer tool.
 
@@ -230,7 +230,7 @@ Phase 6 is not a prerequisite for Phases 7–9.
 
 ## Phase 9 — Public Distribution
 
-**Status:** Later, after Windows beta feedback.
+**Historical status:** Later proposal, not a canonical active item. Refine it into `feature-list.json` before work begins.
 
 **Goal:** Turn the proven beta into maintainable public Windows and macOS releases.
 
@@ -249,9 +249,9 @@ Phase 6 is not a prerequisite for Phases 7–9.
 
 ---
 
-## Working With an AI on a Phase
+## Historical phase prompt
 
-For each phase, provide `SPEC.md`, every module document listed for that phase, and this prompt:
+The following prompt is retained only to explain how the completed phase record was produced. New work follows `AGENTS.md` and `feature-list.json`, not this phase prompt.
 
 > You are implementing Phase {N}, {Phase Name}, of the League Replay Tool. The full project architecture and data contracts are in SPEC.md. Build only what is in scope for this phase. Do not preserve superseded development schemas or implementation paths. If the current documents leave a material product decision unresolved, ask before assuming.
 

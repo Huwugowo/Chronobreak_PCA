@@ -70,6 +70,23 @@ pub fn resolve(directory: &Path, filename: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+pub fn resolve_imported(path: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(path);
+    if !path.is_absolute() || !path.is_file() {
+        bail!("imported music file is unavailable")
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "mp3" | "wav") {
+        bail!("imported music must be an MP3 or WAV file")
+    }
+    fs::canonicalize(&path)
+        .with_context(|| format!("failed to resolve imported music {}", path.display()))
+}
+
 pub fn bytes_for(filename: &str) -> Option<&'static [u8]> {
     match filename {
         "momentum.mp3" => Some(MOMENTUM),
@@ -90,5 +107,20 @@ mod tests {
             tracks[0].preview_url,
             "http://127.0.0.1:9000/music/momentum.mp3"
         );
+    }
+
+    #[test]
+    fn imported_music_must_be_an_existing_supported_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let supported = directory.path().join("track.mp3");
+        fs::write(&supported, b"audio").unwrap();
+        assert_eq!(
+            resolve_imported(supported.to_str().unwrap()).unwrap(),
+            fs::canonicalize(&supported).unwrap()
+        );
+
+        let unsupported = directory.path().join("track.flac");
+        fs::write(&unsupported, b"audio").unwrap();
+        assert!(resolve_imported(unsupported.to_str().unwrap()).is_err());
     }
 }

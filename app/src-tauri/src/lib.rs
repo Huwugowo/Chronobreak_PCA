@@ -98,6 +98,16 @@ fn list_built_in_music(state: State<'_, AppState>) -> Result<Vec<BuiltInMusicTra
 }
 
 #[tauri::command]
+fn prepare_imported_music_preview(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let path = music::resolve_imported(&path).map_err(error_string)?;
+    let token = state.roots.register_imported_music_preview(path);
+    Ok(format!("{}/music-preview/{token}", state.playback_origin))
+}
+
+#[tauri::command]
 async fn export_clip(
     state: State<'_, AppState>,
     request: ClipExportRequest,
@@ -361,6 +371,7 @@ pub fn run() {
             delete_game,
             delete_clip,
             list_built_in_music,
+            prepare_imported_music_preview,
             export_clip,
             get_storage_usage,
             run_auto_delete,

@@ -14,6 +14,7 @@ import {
   exportClip,
   loadBuiltInMusic,
   loadPlaybackProbe,
+  prepareImportedMusicPreview,
 } from "../api";
 import { formatBytes, formatDuration } from "../format";
 import type {
@@ -68,84 +69,44 @@ const importedFilename = (path: string): string => {
   return segments[segments.length - 1] ?? path;
 };
 
-const captureFrame = async (source: string, timeMs: number): Promise<string> => {
-  const video = document.createElement("video");
-  video.crossOrigin = "anonymous";
-  video.muted = true;
-  video.playsInline = true;
-  video.preload = "auto";
-
-  const waitFor = (event: "loadedmetadata" | "seeked"): Promise<void> =>
-    new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(() => finish(new Error("Preview frame timed out")), 8_000);
-      const finish = (error?: Error) => {
-        window.clearTimeout(timeout);
-        video.removeEventListener(event, ready);
-        video.removeEventListener("error", failed);
-        error ? reject(error) : resolve();
-      };
-      const ready = () => finish();
-      const failed = () => finish(new Error("Preview frame could not be decoded"));
-      video.addEventListener(event, ready, { once: true });
-      video.addEventListener("error", failed, { once: true });
-    });
-
-  try {
-    const metadata = waitFor("loadedmetadata");
-    video.src = source;
-    video.load();
-    await metadata;
-    const targetSeconds = clamp(timeMs / 1_000, 0, Math.max(0, video.duration - 0.05));
-    if (Math.abs(video.currentTime - targetSeconds) > 0.01) {
-      const seeked = waitFor("seeked");
-      video.currentTime = targetSeconds;
-      await seeked;
-    }
-
-    const width = Math.min(video.videoWidth || 1_280, 1_280);
-    const height = Math.max(1, Math.round(width * ((video.videoHeight || 720) / (video.videoWidth || 1_280))));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Preview canvas is unavailable");
-    context.drawImage(video, 0, 0, width, height);
-    const blob = await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
-        (value) => (value ? resolve(value) : reject(new Error("Preview frame capture failed"))),
-        "image/jpeg",
-        0.86,
-      ),
-    );
-    return URL.createObjectURL(blob);
-  } finally {
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
-  }
-};
+const presetLabel = (preset: ClipExportPreset): string =>
+  PRESETS.find((option) => option.id === preset)?.label ?? preset;
 
 function ClipExporterScreen(props: Props) {
-  let audioPreview!: HTMLAudioElement;
-  let previewTimer: number | undefined;
+  let previewVideo!: HTMLVideoElement;
+  let previewBackdropVideo: HTMLVideoElement | undefined;
+  let musicPreview!: HTMLAudioElement;
+  let previewAnimationFrameId: number | undefined;
+  let previewSeekTimerId: number | undefined;
+  let pendingPreviewSeekMs: number | undefined;
+  let lastPreviewSeekAt = Number.NEGATIVE_INFINITY;
 
   const [probe] = createResource(() => props.draft.gameTimestamp, loadPlaybackProbe);
   const [tracks] = createResource(loadBuiltInMusic);
-  const [preset, setPreset] = createSignal<ClipExportPreset>("discord");
+  const [selectedPresets, setSelectedPresets] = createSignal<readonly ClipExportPreset[]>([
+    "horizontal",
+  ]);
+  const [previewPreset, setPreviewPreset] = createSignal<ClipExportPreset>("horizontal");
   const [verticalFocus, setVerticalFocus] = createSignal(0.72);
   const [verticalPosition, setVerticalPosition] = createSignal(0.5);
   const [musicMode, setMusicMode] = createSignal<MusicMode>("none");
   const [builtInFilename, setBuiltInFilename] = createSignal("");
   const [importedPath, setImportedPath] = createSignal("");
+  const [importedPreviewUrl, setImportedPreviewUrl] = createSignal("");
   const [gameVolume, setGameVolume] = createSignal(0.8);
   const [musicVolume, setMusicVolume] = createSignal(1);
-  const [previewFrame, setPreviewFrame] = createSignal<string | null>(null);
-  const [previewError, setPreviewError] = createSignal(false);
-  const [playingMusic, setPlayingMusic] = createSignal(false);
+  const [previewReady, setPreviewReady] = createSignal(false);
+  const [previewPlaying, setPreviewPlaying] = createSignal(false);
+  const [previewTimeMs, setPreviewTimeMs] = createSignal(props.draft.clipStartMs);
+  const [previewError, setPreviewError] = createSignal<string | null>(null);
+  const [musicPreviewError, setMusicPreviewError] = createSignal<string | null>(null);
   const [exporting, setExporting] = createSignal(false);
   const [progress, setProgress] = createSignal<ClipExportProgress>({
     stage: "encoding",
     percent: 0,
+    preset: null,
+    completed_outputs: 0,
+    total_outputs: 1,
   });
   const [result, setResult] = createSignal<ClipExportResult | null>(null);
   const [exportError, setExportError] = createSignal<string | null>(null);
@@ -154,38 +115,192 @@ function ClipExporterScreen(props: Props) {
   const selectedTrack = createMemo(() =>
     tracks()?.find((track) => track.filename === builtInFilename()),
   );
+  const musicPreviewSource = createMemo(() =>
+    musicMode() === "builtin"
+      ? selectedTrack()?.preview_url ?? ""
+      : musicMode() === "file"
+        ? importedPreviewUrl()
+        : "",
+  );
   const foregroundRatio = createMemo(() => 16 / 9 - verticalFocus() * (16 / 9 - 1));
   const estimatedSize = createMemo(() => {
-    if (preset() === "discord") return "< 10 MB";
-    const bitrate = 12_192_000;
-    return `~${formatBytes((durationMs() / 1_000) * (bitrate / 8))}`;
+    const bytes = selectedPresets().reduce(
+      (total, preset) =>
+        total +
+        (preset === "discord"
+          ? 10_000_000
+          : (durationMs() / 1_000) * (24_192_000 / 8)),
+      0,
+    );
+    return `${selectedPresets().length} file${selectedPresets().length === 1 ? "" : "s"} · ${selectedPresets().includes("discord") ? "up to " : "~"}${formatBytes(bytes)}`;
   });
 
-  const stopMusicPreview = () => {
-    if (previewTimer !== undefined) window.clearTimeout(previewTimer);
-    previewTimer = undefined;
-    setPlayingMusic(false);
-    if (!audioPreview) return;
-    audioPreview.pause();
-    audioPreview.currentTime = 0;
+  const clearPreviewClock = () => {
+    if (previewAnimationFrameId === undefined) return;
+    cancelAnimationFrame(previewAnimationFrameId);
+    previewAnimationFrameId = undefined;
   };
 
-  const playMusicPreview = async () => {
-    const track = selectedTrack();
-    if (!track?.preview_url || !audioPreview) return;
-    if (playingMusic()) {
-      stopMusicPreview();
+  const pausePreview = () => {
+    clearPreviewClock();
+    previewVideo?.pause();
+    previewBackdropVideo?.pause();
+    musicPreview?.pause();
+    setPreviewPlaying(false);
+  };
+
+  const setMediaTime = (element: HTMLMediaElement | undefined, seconds: number) => {
+    if (!element || element.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    try {
+      element.currentTime = clamp(seconds, 0, Math.max(0, element.duration || seconds));
+    } catch {
+      // The next media event retries synchronization after metadata is available.
+    }
+  };
+
+  const musicTimeFor = (timeMs: number) => {
+    const offsetSeconds = Math.max(0, timeMs - props.draft.clipStartMs) / 1_000;
+    const musicDuration = musicPreview?.duration;
+    return musicDuration && Number.isFinite(musicDuration) && musicDuration > 0
+      ? offsetSeconds % musicDuration
+      : offsetSeconds;
+  };
+
+  const syncSecondaryMedia = (timeMs: number, force = false) => {
+    const seconds = timeMs / 1_000;
+    if (
+      previewBackdropVideo &&
+      (force || Math.abs(previewBackdropVideo.currentTime - seconds) > 0.08)
+    ) {
+      setMediaTime(previewBackdropVideo, seconds);
+    }
+    if (musicPreviewSource() && musicPreview?.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      const musicTime = musicTimeFor(timeMs);
+      if (force || Math.abs(musicPreview.currentTime - musicTime) > 0.12) {
+        setMediaTime(musicPreview, musicTime);
+      }
+    }
+  };
+
+  const seekPreview = (requestedMs: number) => {
+    const targetMs = clamp(
+      requestedMs,
+      props.draft.clipStartMs,
+      props.draft.clipEndMs,
+    );
+    setPreviewTimeMs(targetMs);
+    setMediaTime(previewVideo, targetMs / 1_000);
+    syncSecondaryMedia(targetMs, true);
+  };
+
+  const dispatchPreviewSeek = () => {
+    if (previewSeekTimerId !== undefined) {
+      window.clearTimeout(previewSeekTimerId);
+      previewSeekTimerId = undefined;
+    }
+    if (pendingPreviewSeekMs === undefined || !previewVideo || !previewReady()) return;
+    if (previewVideo.seeking) {
+      previewSeekTimerId = window.setTimeout(dispatchPreviewSeek, 50);
       return;
     }
-    audioPreview.src = track.preview_url;
-    audioPreview.currentTime = 0;
-    try {
-      await audioPreview.play();
-      setPlayingMusic(true);
-      previewTimer = window.setTimeout(stopMusicPreview, 10_000);
-    } catch {
-      setPlayingMusic(false);
+    const delay = Math.max(0, lastPreviewSeekAt + 100 - performance.now());
+    if (delay > 0) {
+      previewSeekTimerId = window.setTimeout(dispatchPreviewSeek, delay);
+      return;
     }
+    const targetMs = pendingPreviewSeekMs;
+    pendingPreviewSeekMs = undefined;
+    lastPreviewSeekAt = performance.now();
+    seekPreview(targetMs);
+  };
+
+  const requestPreviewSeek = (requestedMs: number) => {
+    setPreviewTimeMs(
+      clamp(requestedMs, props.draft.clipStartMs, props.draft.clipEndMs),
+    );
+    pendingPreviewSeekMs = requestedMs;
+    dispatchPreviewSeek();
+  };
+
+  const resumeSecondaryMedia = () => {
+    if (previewPreset() === "vertical" && previewBackdropVideo) {
+      void previewBackdropVideo.play().catch(() => undefined);
+    }
+    if (musicPreviewSource() && musicPreview) {
+      void musicPreview.play().catch(() => {
+        setMusicPreviewError("The selected music could not be played in the live preview.");
+      });
+    }
+  };
+
+  const monitorPreview = () => {
+    previewAnimationFrameId = undefined;
+    if (!previewVideo || previewVideo.paused) {
+      setPreviewPlaying(false);
+      return;
+    }
+    let currentMs = previewVideo.currentTime * 1_000;
+    if (currentMs >= props.draft.clipEndMs - 8) {
+      currentMs = props.draft.clipStartMs;
+      seekPreview(currentMs);
+      resumeSecondaryMedia();
+    } else {
+      setPreviewTimeMs(currentMs);
+      syncSecondaryMedia(currentMs);
+    }
+    previewAnimationFrameId = requestAnimationFrame(monitorPreview);
+  };
+
+  const playPreview = async (restart = false) => {
+    if (!previewVideo || !previewReady()) return;
+    setPreviewError(null);
+    setMusicPreviewError(null);
+    if (restart || previewTimeMs() >= props.draft.clipEndMs - 20) {
+      seekPreview(props.draft.clipStartMs);
+    } else {
+      syncSecondaryMedia(previewTimeMs(), true);
+    }
+    try {
+      const primaryPlayback = previewVideo.play();
+      // Start every media element while the click's user activation is still live.
+      resumeSecondaryMedia();
+      await primaryPlayback;
+      setPreviewPlaying(true);
+      clearPreviewClock();
+      previewAnimationFrameId = requestAnimationFrame(monitorPreview);
+    } catch (error) {
+      pausePreview();
+      setPreviewError(
+        error instanceof Error ? error.message : "The clip preview could not start.",
+      );
+    }
+  };
+
+  const togglePreview = () => {
+    if (previewPlaying()) pausePreview();
+    else void playPreview();
+  };
+
+  const togglePreset = (preset: ClipExportPreset) => {
+    const current = selectedPresets();
+    if (current.includes(preset)) {
+      if (current.length === 1) return;
+      const next = current.filter((selected) => selected !== preset);
+      setSelectedPresets(next);
+      if (previewPreset() === preset) setPreviewPreset(next[0] ?? "horizontal");
+      return;
+    }
+    setSelectedPresets(
+      PRESETS.map((option) => option.id).filter(
+        (candidate) => current.includes(candidate) || candidate === preset,
+      ),
+    );
+    setPreviewPreset(preset);
+  };
+
+  const activatePreviewPreset = (preset: ClipExportPreset) => {
+    if (!selectedPresets().includes(preset)) togglePreset(preset);
+    setPreviewPreset(preset);
   };
 
   createEffect(() => {
@@ -194,42 +309,61 @@ function ClipExporterScreen(props: Props) {
   });
 
   createEffect(() => {
-    musicMode();
-    builtInFilename();
-    stopMusicPreview();
+    const source = musicPreviewSource();
+    pausePreview();
+    setMusicPreviewError(null);
+    if (!musicPreview) return;
+    if (!source) {
+      musicPreview.removeAttribute("src");
+      musicPreview.load();
+      return;
+    }
+    musicPreview.src = source;
+    musicPreview.load();
   });
 
   createEffect(() => {
-    const playback = probe();
-    if (!playback?.video_url) {
-      setPreviewFrame(null);
+    if (previewVideo) {
+      previewVideo.volume = musicMode() === "none" ? 1 : gameVolume();
+    }
+    if (musicPreview) musicPreview.volume = musicVolume();
+  });
+
+  createEffect(() => {
+    const preset = previewPreset();
+    if (preset !== "vertical") {
+      previewBackdropVideo?.pause();
       return;
     }
-    let disposed = false;
-    let frameUrl: string | null = null;
-    setPreviewError(false);
-    void captureFrame(playback.video_url, props.draft.clipStartMs)
-      .then((url) => {
-        frameUrl = url;
-        if (disposed) URL.revokeObjectURL(url);
-        else setPreviewFrame(url);
-      })
-      .catch(() => {
-        if (!disposed) setPreviewError(true);
-      });
-    onCleanup(() => {
-      disposed = true;
-      if (frameUrl) URL.revokeObjectURL(frameUrl);
+    queueMicrotask(() => {
+      syncSecondaryMedia(previewTimeMs(), true);
+      if (previewPlaying()) resumeSecondaryMedia();
     });
   });
 
-  onCleanup(stopMusicPreview);
+  onCleanup(() => {
+    pausePreview();
+    if (previewSeekTimerId !== undefined) window.clearTimeout(previewSeekTimerId);
+    previewVideo?.removeAttribute("src");
+    previewBackdropVideo?.removeAttribute("src");
+    musicPreview?.removeAttribute("src");
+  });
 
   const chooseImport = async () => {
     const path = await chooseMusicFile();
     if (!path) return;
+    pausePreview();
     setImportedPath(path);
     setMusicMode("file");
+    setImportedPreviewUrl("");
+    setMusicPreviewError(null);
+    try {
+      setImportedPreviewUrl(await prepareImportedMusicPreview(path));
+    } catch (error) {
+      setMusicPreviewError(
+        error instanceof Error ? error.message : "Imported music preview is unavailable.",
+      );
+    }
   };
 
   const beginFocusDrag = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
@@ -258,10 +392,17 @@ function ClipExporterScreen(props: Props) {
 
   const runExport = async () => {
     if (exporting()) return;
+    pausePreview();
     setExporting(true);
     setExportError(null);
     setResult(null);
-    setProgress({ stage: "encoding", percent: 0 });
+    setProgress({
+      stage: "encoding",
+      percent: 0,
+      preset: selectedPresets()[0] ?? null,
+      completed_outputs: 0,
+      total_outputs: selectedPresets().length,
+    });
     try {
       const music =
         musicMode() === "builtin"
@@ -274,7 +415,7 @@ function ClipExporterScreen(props: Props) {
           game_timestamp: props.draft.gameTimestamp,
           clip_start_ms: props.draft.clipStartMs,
           clip_end_ms: props.draft.clipEndMs,
-          preset: preset(),
+          presets: [...selectedPresets()],
           vertical_focus: verticalFocus(),
           vertical_position: verticalPosition(),
           music,
@@ -293,8 +434,8 @@ function ClipExporterScreen(props: Props) {
   };
 
   const copyOutputPath = async () => {
-    const path = result()?.output_path;
-    if (path) await navigator.clipboard.writeText(path);
+    const paths = result()?.outputs.map((output) => output.output_path).join("\n");
+    if (paths) await navigator.clipboard.writeText(paths);
   };
 
   return (
@@ -321,7 +462,7 @@ function ClipExporterScreen(props: Props) {
 
       <Switch>
         <Match when={probe.loading}>
-          <div class={styles.loadingState}>Preparing clip frame...</div>
+          <div class={styles.loadingState}>Preparing live clip preview...</div>
         </Match>
         <Match when={probe.error}>
           <div class={styles.errorState} role="alert">{String(probe.error)}</div>
@@ -331,22 +472,40 @@ function ClipExporterScreen(props: Props) {
             <section class={styles.previewPanel}>
               <div class={styles.sectionHeading}>
                 <span>01 / FORMAT</span>
-                <strong>{probe()!.game.champion} · {preset().toUpperCase()}</strong>
+                <strong>{probe()!.game.champion} · {selectedPresets().length} SELECTED</strong>
               </div>
-              <div class={styles.presetGrid} role="radiogroup" aria-label="Export format">
+              <div class={styles.presetGrid} role="group" aria-label="Export formats">
                 <For each={PRESETS}>
                   {(option) => (
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={preset() === option.id}
-                      classList={{ [styles.presetActive]: preset() === option.id }}
-                      onClick={() => setPreset(option.id)}
+                    <div
+                      classList={{
+                        [styles.presetOption]: true,
+                        [styles.presetActive]: selectedPresets().includes(option.id),
+                        [styles.presetPreviewing]: previewPreset() === option.id,
+                      }}
                     >
-                      <span>{option.meta}</span>
-                      <strong>{option.label}</strong>
-                      <small>{option.detail}</small>
-                    </button>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selectedPresets().includes(option.id)}
+                          disabled={
+                            selectedPresets().length === 1 &&
+                            selectedPresets().includes(option.id)
+                          }
+                          onChange={() => togglePreset(option.id)}
+                        />
+                        <span>{option.meta}</span>
+                        <strong>{option.label}</strong>
+                        <small>{option.detail}</small>
+                      </label>
+                      <button
+                        type="button"
+                        aria-pressed={previewPreset() === option.id}
+                        onClick={() => activatePreviewPreset(option.id)}
+                      >
+                        {previewPreset() === option.id ? "PREVIEWING" : "PREVIEW"}
+                      </button>
+                    </div>
                   )}
                 </For>
               </div>
@@ -354,46 +513,120 @@ function ClipExporterScreen(props: Props) {
               <div
                 classList={{
                   [styles.previewStage]: true,
-                  [styles.previewStageVertical]: preset() === "vertical",
+                  [styles.previewStageVertical]: previewPreset() === "vertical",
                 }}
               >
-                <Show
-                  when={previewFrame()}
-                  fallback={
-                    <div class={styles.framePlaceholder}>
-                      <strong>{previewError() ? "FRAME UNAVAILABLE" : "LR"}</strong>
-                      <span>{previewError() ? "The clip can still be exported." : "CAPTURE PREVIEW"}</span>
-                    </div>
-                  }
+                <div
+                  classList={{
+                    [styles.previewViewport]: true,
+                    [styles.verticalCanvas]: previewPreset() === "vertical",
+                  }}
                 >
-                  {(frame) => (
-                    <Show
-                      when={preset() === "vertical"}
-                      fallback={<img class={styles.horizontalFrame} src={frame()} alt="Clip start frame" />}
-                    >
-                      <div class={styles.verticalCanvas}>
-                        <img class={styles.verticalBackdrop} src={frame()} alt="" />
-                        <div
-                          class={styles.verticalForeground}
-                          style={{ "aspect-ratio": foregroundRatio() }}
-                          onPointerDown={beginFocusDrag}
-                          title="Drag to reposition the action"
-                        >
-                          <img
-                            src={frame()}
-                            alt="Vertical clip start frame"
-                            style={{ "object-position": `${verticalPosition() * 100}% 50%` }}
-                          />
-                        </div>
-                        <span class={styles.safeZone} aria-hidden="true" />
-                        <small>PLATFORM SAFE AREA · PREVIEW ONLY</small>
-                      </div>
-                    </Show>
-                  )}
-                </Show>
+                  <Show when={previewPreset() === "vertical"}>
+                    <video
+                      ref={(element) => {
+                        previewBackdropVideo = element;
+                      }}
+                      class={styles.verticalBackdrop}
+                      src={probe()!.video_url || undefined}
+                      playsinline
+                      muted
+                      preload="auto"
+                      aria-hidden="true"
+                      onLoadedMetadata={() => syncSecondaryMedia(previewTimeMs(), true)}
+                    />
+                  </Show>
+                  <div
+                    classList={{
+                      [styles.previewForeground]: true,
+                      [styles.horizontalFrame]: previewPreset() !== "vertical",
+                      [styles.verticalForeground]: previewPreset() === "vertical",
+                    }}
+                    style={{
+                      "aspect-ratio":
+                        previewPreset() === "vertical" ? foregroundRatio() : 16 / 9,
+                    }}
+                    onPointerDown={(event) => {
+                      if (previewPreset() === "vertical") beginFocusDrag(event);
+                    }}
+                    title={
+                      previewPreset() === "vertical"
+                        ? "Drag to reposition the action"
+                        : "Live clip preview"
+                    }
+                  >
+                    <video
+                      ref={previewVideo}
+                      class={styles.livePreviewVideo}
+                      src={probe()!.video_url || undefined}
+                      playsinline
+                      preload="auto"
+                      aria-label={`${previewPreset()} clip preview`}
+                      style={{ "object-position": `${verticalPosition() * 100}% 50%` }}
+                      onLoadedMetadata={() => {
+                        setPreviewReady(true);
+                        setPreviewError(null);
+                        seekPreview(props.draft.clipStartMs);
+                      }}
+                      onCanPlay={() => setPreviewReady(true)}
+                      onPlay={() => setPreviewPlaying(true)}
+                      onPause={() => {
+                        clearPreviewClock();
+                        setPreviewPlaying(false);
+                      }}
+                      onSeeked={() => {
+                        setPreviewTimeMs(previewVideo.currentTime * 1_000);
+                        syncSecondaryMedia(previewVideo.currentTime * 1_000, true);
+                        dispatchPreviewSeek();
+                      }}
+                      onError={() => {
+                        pausePreview();
+                        setPreviewReady(false);
+                        setPreviewError("The source recording could not be decoded for preview.");
+                      }}
+                      onClick={() => {
+                        if (previewPreset() !== "vertical") togglePreview();
+                      }}
+                    />
+                  </div>
+                  <Show when={previewPreset() === "vertical"}>
+                    <span class={styles.safeZone} aria-hidden="true" />
+                    <small>PLATFORM SAFE AREA · PREVIEW ONLY</small>
+                  </Show>
+                  <Show when={!previewReady() || previewError()}>
+                    <div class={styles.previewMessage} role={previewError() ? "alert" : "status"}>
+                      <strong>{previewError() ? "PREVIEW UNAVAILABLE" : "LOADING SOURCE"}</strong>
+                      <span>{previewError() ?? "Preparing the selected clip range..."}</span>
+                    </div>
+                  </Show>
+                </div>
+                <div class={styles.previewTransport}>
+                  <button type="button" disabled={!previewReady()} onClick={togglePreview}>
+                    {previewPlaying() ? "Ⅱ PAUSE" : "▶ PLAY CLIP"}
+                  </button>
+                  <input
+                    type="range"
+                    min={props.draft.clipStartMs}
+                    max={props.draft.clipEndMs}
+                    step={Math.max(1, Math.round(1_000 / probe()!.recording_fps))}
+                    value={previewTimeMs()}
+                    aria-label="Clip preview position"
+                    onInput={(event) => requestPreviewSeek(Number(event.currentTarget.value))}
+                  />
+                  <span>
+                    {formatDuration(previewTimeMs() - props.draft.clipStartMs)} / {formatDuration(durationMs())}
+                  </span>
+                  <button type="button" disabled={!previewReady()} onClick={() => void playPreview(true)}>
+                    RESTART
+                  </button>
+                </div>
+                <div class={styles.previewStatusLine}>
+                  <span>LIVE SOURCE · {previewPreset().toUpperCase()}</span>
+                  <span>{musicMode() === "none" ? "GAME AUDIO" : "GAME + MUSIC MIX"}</span>
+                </div>
               </div>
 
-              <Show when={preset() === "vertical"}>
+              <Show when={previewPreset() === "vertical"}>
                 <div class={styles.reframeControls}>
                   <label>
                     <span><strong>FRAMING</strong><small>Context</small><small>Action</small></span>
@@ -444,8 +677,8 @@ function ClipExporterScreen(props: Props) {
                           {(track: BuiltInMusicTrack) => <option value={track.filename}>{track.display_name} · {track.mood}</option>}
                         </For>
                       </select>
-                      <button type="button" disabled={!selectedTrack()?.preview_url} onClick={() => void playMusicPreview()}>
-                        {playingMusic() ? "STOP" : "▶ 10S"}
+                      <button type="button" disabled={!selectedTrack()?.preview_url || !previewReady()} onClick={() => void playPreview(true)}>
+                        ▶ WITH CLIP
                       </button>
                     </div>
                   </Show>
@@ -455,6 +688,9 @@ function ClipExporterScreen(props: Props) {
                     <button type="button" onClick={(event) => { event.preventDefault(); void chooseImport(); }}>BROWSE</button>
                   </label>
                 </div>
+                <Show when={musicPreviewError()}>
+                  {(message) => <p class={styles.musicPreviewError} role="alert">{message()}</p>}
+                </Show>
                 <Show when={musicMode() !== "none"}>
                   <div class={styles.mixControls}>
                     <label>
@@ -475,14 +711,22 @@ function ClipExporterScreen(props: Props) {
                   <strong>H.264 · AAC · MP4</strong>
                 </div>
                 <dl>
-                  <div><dt>FORMAT</dt><dd>{preset() === "vertical" ? "1080 × 1920" : preset() === "horizontal" ? "16:9 · up to 1080p" : "Adaptive · up to 720p"}</dd></div>
+                  <div><dt>FORMATS</dt><dd>{selectedPresets().map(presetLabel).join(" + ")}</dd></div>
+                  <div><dt>QUALITY</dt><dd>{selectedPresets().some((preset) => preset !== "discord") ? "24 Mbps HQ · up to 1080p60" : "Adaptive size-safe"}</dd></div>
                   <div><dt>EST. SIZE</dt><dd>{estimatedSize()}</dd></div>
                   <div><dt>OUTPUT</dt><dd title={`${props.outputPath}/clips/`}>{props.outputPath}/clips/</dd></div>
                 </dl>
 
                 <Show when={exporting()}>
                   <div class={styles.progressBlock} role="status">
-                    <div><span>{progress().stage === "thumbnail" ? "GENERATING THUMBNAIL" : "ENCODING CLIP"}</span><strong>{Math.round(progress().percent)}%</strong></div>
+                    <div>
+                      <span>
+                        {progress().stage === "thumbnail" ? "GENERATING THUMBNAIL" : "ENCODING"}
+                        {progress().preset ? ` · ${presetLabel(progress().preset!)}` : ""}
+                        {` · ${Math.min(progress().completed_outputs + 1, progress().total_outputs)}/${progress().total_outputs}`}
+                      </span>
+                      <strong>{Math.round(progress().percent)}%</strong>
+                    </div>
                     <span><i style={`width:${progress().percent}%`} /></span>
                   </div>
                 </Show>
@@ -495,7 +739,17 @@ function ClipExporterScreen(props: Props) {
                   {(complete) => (
                     <div class={styles.exportSuccess}>
                       <strong>✓ EXPORTED IN {(complete().elapsed_ms / 1_000).toFixed(1)}S</strong>
-                      <span>{formatBytes(complete().file_size_bytes)} · {complete().filename}.mp4</span>
+                      <span>{complete().outputs.length} file{complete().outputs.length === 1 ? "" : "s"} · {formatBytes(complete().total_file_size_bytes)}</span>
+                      <ul>
+                        <For each={complete().outputs}>
+                          {(output) => (
+                            <li>
+                              <strong>{presetLabel(output.preset)}</strong>
+                              <span>{formatBytes(output.file_size_bytes)} · {output.filename}.mp4</span>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
                       <div>
                         <button type="button" onClick={props.onOpenFolder}>OPEN FOLDER</button>
                         <button type="button" onClick={() => void copyOutputPath()}>COPY PATH</button>
@@ -511,7 +765,11 @@ function ClipExporterScreen(props: Props) {
                   disabled={exporting() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
                   onClick={() => void runExport()}
                 >
-                  {exporting() ? "EXPORTING..." : exportError() ? "TRY AGAIN" : "EXPORT MP4"}
+                  {exporting()
+                    ? "EXPORTING..."
+                    : exportError()
+                      ? "TRY AGAIN"
+                      : `EXPORT ${selectedPresets().length} MP4${selectedPresets().length === 1 ? "" : "S"}`}
                   <span aria-hidden="true">→</span>
                 </button>
               </section>
@@ -519,7 +777,16 @@ function ClipExporterScreen(props: Props) {
           </div>
         </Match>
       </Switch>
-      <audio ref={audioPreview} onEnded={stopMusicPreview} />
+      <audio
+        ref={musicPreview}
+        loop
+        onLoadedMetadata={() => syncSecondaryMedia(previewTimeMs(), true)}
+        onError={() => {
+          if (musicPreviewSource()) {
+            setMusicPreviewError("The selected music could not be decoded for preview.");
+          }
+        }}
+      />
     </section>
   );
 }

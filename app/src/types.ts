@@ -56,7 +56,7 @@ export type ClipExportRequest = {
   game_timestamp: string;
   clip_start_ms: number;
   clip_end_ms: number;
-  preset: ClipExportPreset;
+  presets: ClipExportPreset[];
   vertical_focus: number;
   vertical_position: number;
   music: ClipMusicSource;
@@ -67,14 +67,23 @@ export type ClipExportRequest = {
 export type ClipExportProgress = {
   stage: "encoding" | "thumbnail" | "complete";
   percent: number;
+  preset: ClipExportPreset | null;
+  completed_outputs: number;
+  total_outputs: number;
 };
 
-export type ClipExportResult = {
+export type ClipExportOutput = {
+  preset: ClipExportPreset;
   filename: string;
   output_path: string;
   thumbnail_path: string;
-  elapsed_ms: number;
   file_size_bytes: number;
+};
+
+export type ClipExportResult = {
+  outputs: ClipExportOutput[];
+  elapsed_ms: number;
+  total_file_size_bytes: number;
 };
 
 export type BuiltInMusicTrack = {
@@ -173,6 +182,8 @@ export type ServerMetrics = {
   requests: number;
   range_requests: number;
   response_bytes: number;
+  completed_streams: number;
+  cancelled_streams: number;
 };
 
 export type LibraryTab = "games" | "clips";

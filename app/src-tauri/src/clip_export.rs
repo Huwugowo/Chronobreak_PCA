@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,7 +17,7 @@ const MINIMUM_CLIP_MS: u64 = 5_000;
 const DISCORD_LIMIT_BYTES: u64 = 10_000_000;
 const DISCORD_TARGET_BYTES: u64 = 9_400_000;
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ClipExportPreset {
     Discord,
@@ -37,7 +38,7 @@ pub struct ClipExportRequest {
     pub game_timestamp: String,
     pub clip_start_ms: u64,
     pub clip_end_ms: u64,
-    pub preset: ClipExportPreset,
+    pub presets: Vec<ClipExportPreset>,
     pub vertical_focus: f64,
     pub vertical_position: f64,
     pub music: ClipMusicSource,
@@ -46,12 +47,19 @@ pub struct ClipExportRequest {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ClipExportResult {
+pub struct ClipExportOutput {
+    pub preset: ClipExportPreset,
     pub filename: String,
     pub output_path: String,
     pub thumbnail_path: String,
-    pub elapsed_ms: u64,
     pub file_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ClipExportResult {
+    pub outputs: Vec<ClipExportOutput>,
+    pub elapsed_ms: u64,
+    pub total_file_size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -66,6 +74,9 @@ pub enum ExportStage {
 pub struct ClipExportProgress {
     pub stage: ExportStage,
     pub percent: u8,
+    pub preset: Option<ClipExportPreset>,
+    pub completed_outputs: u8,
+    pub total_outputs: u8,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -89,8 +100,10 @@ enum H264Encoder {
 struct ExportProfile {
     video_filter: String,
     video_bitrate_kbps: u64,
+    max_video_bitrate_kbps: u64,
     audio_bitrate_kbps: u64,
     output_fps: u32,
+    high_quality: bool,
 }
 
 struct ExportPaths {
@@ -99,6 +112,43 @@ struct ExportPaths {
     thumbnail: PathBuf,
     partial_video: PathBuf,
     partial_thumbnail: PathBuf,
+}
+
+struct BatchProgress<'a> {
+    channel: &'a Channel<ClipExportProgress>,
+    preset: ClipExportPreset,
+    output_index: usize,
+    total_outputs: usize,
+    last_percent: u8,
+    last_stage: Option<ExportStage>,
+}
+
+impl BatchProgress<'_> {
+    fn send(&mut self, stage: ExportStage, local_percent: u8) {
+        let overall = (((self.output_index * 100 + usize::from(local_percent)) * 100)
+            / (self.total_outputs * 100))
+            .min(100) as u8;
+        if overall < self.last_percent
+            || (overall == self.last_percent && self.last_stage == Some(stage))
+        {
+            return;
+        }
+        self.last_percent = overall;
+        self.last_stage = Some(stage);
+        self.channel
+            .send(ClipExportProgress {
+                stage,
+                percent: overall,
+                preset: Some(self.preset),
+                completed_outputs: if local_percent >= 100 {
+                    (self.output_index + 1) as u8
+                } else {
+                    self.output_index as u8
+                },
+                total_outputs: self.total_outputs as u8,
+            })
+            .ok();
+    }
 }
 
 pub async fn export(
@@ -128,89 +178,154 @@ pub async fn export(
     let clips_directory = output_directory.join("clips");
     fs::create_dir_all(&clips_directory)
         .with_context(|| format!("failed to create {}", clips_directory.display()))?;
-    let paths = unique_paths(&clips_directory, &request.game_timestamp)?;
     let source_fps = metadata.recording_fps.clamp(24, 60);
-    let mut profile = export_profile(&request, source_fps, None)?;
     let encoders = encoder_candidates(&metadata.encoder_used);
-    let result = async {
-        encode_with_fallback(
+    let total_outputs = request.presets.len();
+    let mut next_clip_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_secs();
+    let mut staged = Vec::with_capacity(total_outputs);
+
+    for (output_index, preset) in request.presets.iter().copied().enumerate() {
+        let paths = unique_paths(
+            &clips_directory,
+            &request.game_timestamp,
+            &mut next_clip_timestamp,
+        )?;
+        let mut reporter = BatchProgress {
+            channel: &progress,
+            preset,
+            output_index,
+            total_outputs,
+            last_percent: ((output_index * 100) / total_outputs) as u8,
+            last_stage: None,
+        };
+        if let Err(error) = encode_output(
             &source_video,
             music_path.as_deref(),
             &request,
-            &profile,
+            preset,
+            source_fps,
             &encoders,
-            &paths.partial_video,
-            &progress,
+            &paths,
+            &mut reporter,
         )
-        .await?;
-
-        if request.preset == ClipExportPreset::Discord {
-            let first_size = fs::metadata(&paths.partial_video)
-                .context("failed to inspect exported clip")?
-                .len();
-            if first_size >= DISCORD_LIMIT_BYTES {
-                let adjusted = ((profile.video_bitrate_kbps as f64)
-                    * (DISCORD_TARGET_BYTES as f64 / first_size as f64)
-                    * 0.94)
-                    .floor()
-                    .max(250.0) as u64;
-                profile = export_profile(&request, source_fps, Some(adjusted))?;
-                encode_with_fallback(
-                    &source_video,
-                    music_path.as_deref(),
-                    &request,
-                    &profile,
-                    &encoders,
-                    &paths.partial_video,
-                    &progress,
-                )
-                .await?;
+        .await
+        {
+            cleanup_export_paths(&paths, false);
+            for (_, staged_paths) in &staged {
+                cleanup_export_paths(staged_paths, false);
             }
-            let final_size = fs::metadata(&paths.partial_video)
-                .context("failed to inspect exported clip")?
-                .len();
-            if final_size >= DISCORD_LIMIT_BYTES {
-                bail!("Discord export could not be kept below 10 MB; shorten the clip")
-            }
+            return Err(error);
         }
+        staged.push((preset, paths));
+    }
 
-        progress
-            .send(ClipExportProgress {
-                stage: ExportStage::Thumbnail,
-                percent: 96,
-            })
-            .ok();
-        generate_thumbnail(&paths.partial_video, &paths.partial_thumbnail).await?;
-        fs::rename(&paths.partial_thumbnail, &paths.thumbnail)
-            .context("failed to finalize clip thumbnail")?;
-        if let Err(error) = fs::rename(&paths.partial_video, &paths.video) {
-            fs::remove_file(&paths.thumbnail).ok();
-            return Err(error).context("failed to finalize exported clip");
+    for (_, paths) in &staged {
+        let finalized = fs::rename(&paths.partial_thumbnail, &paths.thumbnail)
+            .context("failed to finalize clip thumbnail")
+            .and_then(|()| {
+                fs::rename(&paths.partial_video, &paths.video)
+                    .context("failed to finalize exported clip")
+            });
+        if let Err(error) = finalized {
+            for (_, cleanup) in &staged {
+                cleanup_export_paths(cleanup, true);
+            }
+            return Err(error);
         }
+    }
+
+    let mut outputs = Vec::with_capacity(staged.len());
+    let mut total_file_size_bytes = 0_u64;
+    for (preset, paths) in staged {
         let file_size_bytes = fs::metadata(&paths.video)
             .context("failed to inspect completed clip")?
             .len();
-        progress
-            .send(ClipExportProgress {
-                stage: ExportStage::Complete,
-                percent: 100,
-            })
-            .ok();
-        Ok(ClipExportResult {
-            filename: paths.filename.clone(),
+        total_file_size_bytes = total_file_size_bytes.saturating_add(file_size_bytes);
+        outputs.push(ClipExportOutput {
+            preset,
+            filename: paths.filename,
             output_path: paths.video.to_string_lossy().into_owned(),
             thumbnail_path: paths.thumbnail.to_string_lossy().into_owned(),
-            elapsed_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
             file_size_bytes,
+        });
+    }
+    progress
+        .send(ClipExportProgress {
+            stage: ExportStage::Complete,
+            percent: 100,
+            preset: None,
+            completed_outputs: total_outputs as u8,
+            total_outputs: total_outputs as u8,
         })
-    }
-    .await;
+        .ok();
+    Ok(ClipExportResult {
+        outputs,
+        elapsed_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+        total_file_size_bytes,
+    })
+}
 
-    if result.is_err() {
-        fs::remove_file(&paths.partial_video).ok();
-        fs::remove_file(&paths.partial_thumbnail).ok();
+#[allow(clippy::too_many_arguments)]
+async fn encode_output(
+    source_video: &Path,
+    music_path: Option<&Path>,
+    request: &ClipExportRequest,
+    preset: ClipExportPreset,
+    source_fps: u32,
+    encoders: &[H264Encoder],
+    paths: &ExportPaths,
+    progress: &mut BatchProgress<'_>,
+) -> Result<()> {
+    let mut profile = export_profile(request, preset, source_fps, None)?;
+    encode_with_fallback(
+        source_video,
+        music_path,
+        request,
+        &profile,
+        encoders,
+        &paths.partial_video,
+        progress,
+    )
+    .await?;
+
+    if preset == ClipExportPreset::Discord {
+        let first_size = fs::metadata(&paths.partial_video)
+            .context("failed to inspect exported clip")?
+            .len();
+        if first_size >= DISCORD_LIMIT_BYTES {
+            let adjusted = ((profile.video_bitrate_kbps as f64)
+                * (DISCORD_TARGET_BYTES as f64 / first_size as f64)
+                * 0.94)
+                .floor()
+                .max(250.0) as u64;
+            profile = export_profile(request, preset, source_fps, Some(adjusted))?;
+            encode_with_fallback(
+                source_video,
+                music_path,
+                request,
+                &profile,
+                encoders,
+                &paths.partial_video,
+                progress,
+            )
+            .await?;
+        }
+        let final_size = fs::metadata(&paths.partial_video)
+            .context("failed to inspect exported clip")?
+            .len();
+        if final_size >= DISCORD_LIMIT_BYTES {
+            bail!("Discord export could not be kept below 10 MB; shorten the clip")
+        }
     }
-    result
+
+    progress.send(ExportStage::Thumbnail, 96);
+    generate_thumbnail(&paths.partial_video, &paths.partial_thumbnail).await?;
+    // Keep 100% reserved for the atomically published batch result.
+    progress.send(ExportStage::Thumbnail, 99);
+    Ok(())
 }
 
 fn validate_request(request: &ClipExportRequest) -> Result<()> {
@@ -221,6 +336,17 @@ fn validate_request(request: &ClipExportRequest) -> Result<()> {
         || request.clip_end_ms - request.clip_start_ms < MINIMUM_CLIP_MS
     {
         bail!("clips must be at least five seconds long")
+    }
+    if request.presets.is_empty() || request.presets.len() > 3 {
+        bail!("select between one and three export formats")
+    }
+    let mut unique_presets = HashSet::new();
+    if request
+        .presets
+        .iter()
+        .any(|preset| !unique_presets.insert(*preset))
+    {
+        bail!("export formats must be unique")
     }
     for (label, value) in [
         ("vertical focus", request.vertical_focus),
@@ -239,37 +365,31 @@ fn resolve_music(directory: &Path, source: &ClipMusicSource) -> Result<Option<Pa
     match source {
         ClipMusicSource::None => Ok(None),
         ClipMusicSource::Builtin { filename } => music::resolve(directory, filename).map(Some),
-        ClipMusicSource::File { path } => {
-            let path = PathBuf::from(path);
-            if !path.is_absolute() || !path.is_file() {
-                bail!("imported music file is unavailable")
-            }
-            let extension = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if !matches!(extension.as_str(), "mp3" | "wav") {
-                bail!("imported music must be an MP3 or WAV file")
-            }
-            Ok(Some(path))
-        }
+        ClipMusicSource::File { path } => music::resolve_imported(path).map(Some),
     }
 }
 
-fn unique_paths(directory: &Path, game_timestamp: &str) -> Result<ExportPaths> {
-    let mut clip_timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before the Unix epoch")?
-        .as_secs();
+fn unique_paths(
+    directory: &Path,
+    game_timestamp: &str,
+    next_clip_timestamp: &mut u64,
+) -> Result<ExportPaths> {
+    let mut clip_timestamp = *next_clip_timestamp;
     loop {
         let filename = format!("{game_timestamp}_{clip_timestamp}");
         let video = directory.join(format!("{filename}.mp4"));
         let thumbnail = directory.join(format!("{filename}.jpg"));
-        if !video.exists() && !thumbnail.exists() {
+        let partial_video = directory.join(format!("{filename}.part.mp4"));
+        let partial_thumbnail = directory.join(format!("{filename}.part.jpg"));
+        if !video.exists()
+            && !thumbnail.exists()
+            && !partial_video.exists()
+            && !partial_thumbnail.exists()
+        {
+            *next_clip_timestamp = clip_timestamp.saturating_add(1);
             return Ok(ExportPaths {
-                partial_video: directory.join(format!("{filename}.part.mp4")),
-                partial_thumbnail: directory.join(format!("{filename}.part.jpg")),
+                partial_video,
+                partial_thumbnail,
                 filename,
                 video,
                 thumbnail,
@@ -279,24 +399,38 @@ fn unique_paths(directory: &Path, game_timestamp: &str) -> Result<ExportPaths> {
     }
 }
 
+fn cleanup_export_paths(paths: &ExportPaths, include_final: bool) {
+    fs::remove_file(&paths.partial_video).ok();
+    fs::remove_file(&paths.partial_thumbnail).ok();
+    if include_final {
+        fs::remove_file(&paths.video).ok();
+        fs::remove_file(&paths.thumbnail).ok();
+    }
+}
+
 fn export_profile(
     request: &ClipExportRequest,
+    preset: ClipExportPreset,
     source_fps: u32,
     bitrate_override: Option<u64>,
 ) -> Result<ExportProfile> {
     let duration_ms = request.clip_end_ms - request.clip_start_ms;
-    match request.preset {
+    match preset {
         ClipExportPreset::Horizontal => Ok(ExportProfile {
             video_filter: "[0:v]scale=w='trunc(min(1920,iw)/2)*2':h=-2:flags=lanczos,setsar=1,format=yuv420p[vout]".to_owned(),
-            video_bitrate_kbps: 12_000,
+            video_bitrate_kbps: 24_000,
+            max_video_bitrate_kbps: 36_000,
             audio_bitrate_kbps: 192,
             output_fps: source_fps,
+            high_quality: true,
         }),
         ClipExportPreset::Vertical => Ok(ExportProfile {
             video_filter: vertical_filter(request.vertical_focus, request.vertical_position),
-            video_bitrate_kbps: 12_000,
+            video_bitrate_kbps: 24_000,
+            max_video_bitrate_kbps: 36_000,
             audio_bitrate_kbps: 192,
             output_fps: source_fps,
+            high_quality: true,
         }),
         ClipExportPreset::Discord => {
             let seconds = duration_ms as f64 / 1_000.0;
@@ -329,8 +463,10 @@ fn export_profile(
                     "[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2{fps_filter},setsar=1,format=yuv420p[vout]"
                 ),
                 video_bitrate_kbps,
+                max_video_bitrate_kbps: video_bitrate_kbps,
                 audio_bitrate_kbps,
                 output_fps,
+                high_quality: false,
             })
         }
     }
@@ -366,7 +502,7 @@ async fn encode_with_fallback(
     profile: &ExportProfile,
     encoders: &[H264Encoder],
     output: &Path,
-    progress: &Channel<ClipExportProgress>,
+    progress: &mut BatchProgress<'_>,
 ) -> Result<()> {
     let mut errors = Vec::new();
     for encoder in encoders {
@@ -436,12 +572,12 @@ fn ffmpeg_arguments(
         "-map",
         "[aout]",
     ]));
-    append_encoder_arguments(encoder, &mut arguments);
+    append_encoder_arguments(encoder, profile.high_quality, &mut arguments);
     arguments.extend(strings(&[
         "-b:v",
         &format!("{}k", profile.video_bitrate_kbps),
         "-maxrate",
-        &format!("{}k", profile.video_bitrate_kbps),
+        &format!("{}k", profile.max_video_bitrate_kbps),
         "-bufsize",
         &format!("{}k", profile.video_bitrate_kbps * 2),
         "-g",
@@ -470,14 +606,49 @@ fn ffmpeg_arguments(
     arguments
 }
 
-fn append_encoder_arguments(encoder: H264Encoder, arguments: &mut Vec<OsString>) {
+fn append_encoder_arguments(
+    encoder: H264Encoder,
+    high_quality: bool,
+    arguments: &mut Vec<OsString>,
+) {
     match encoder {
+        H264Encoder::Nvenc if high_quality => arguments.extend(strings(&[
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p6",
+            "-tune",
+            "hq",
+            "-rc",
+            "vbr",
+            "-multipass",
+            "fullres",
+            "-spatial-aq",
+            "1",
+            "-temporal-aq",
+            "1",
+            "-aq-strength",
+            "8",
+            "-rc-lookahead",
+            "32",
+            "-b_ref_mode",
+            "middle",
+        ])),
         H264Encoder::Nvenc => arguments.extend(strings(&["-c:v", "h264_nvenc", "-preset", "p5"])),
+        H264Encoder::Amf if high_quality => {
+            arguments.extend(strings(&["-c:v", "h264_amf", "-quality", "quality"]))
+        }
         H264Encoder::Amf => {
             arguments.extend(strings(&["-c:v", "h264_amf", "-quality", "balanced"]))
         }
+        H264Encoder::Qsv if high_quality => {
+            arguments.extend(strings(&["-c:v", "h264_qsv", "-preset", "slow"]))
+        }
         H264Encoder::Qsv => arguments.extend(strings(&["-c:v", "h264_qsv", "-preset", "medium"])),
         H264Encoder::VideoToolbox => arguments.extend(strings(&["-c:v", "h264_videotoolbox"])),
+        H264Encoder::Software if high_quality => {
+            arguments.extend(strings(&["-c:v", "libx264", "-preset", "medium"]))
+        }
         H264Encoder::Software => {
             arguments.extend(strings(&["-c:v", "libx264", "-preset", "veryfast"]))
         }
@@ -497,7 +668,7 @@ fn encoder_name(encoder: H264Encoder) -> &'static str {
 async fn run_ffmpeg(
     arguments: Vec<OsString>,
     duration_ms: u64,
-    progress: &Channel<ClipExportProgress>,
+    progress: &mut BatchProgress<'_>,
 ) -> Result<()> {
     let mut command = Command::new("ffmpeg");
     command
@@ -537,12 +708,7 @@ async fn run_ffmpeg(
             .clamp(0.0, 94.0) as u8;
         if percent > last_percent {
             last_percent = percent;
-            progress
-                .send(ClipExportProgress {
-                    stage: ExportStage::Encoding,
-                    percent,
-                })
-                .ok();
+            progress.send(ExportStage::Encoding, percent);
         }
     }
     let status = child.wait().await.context("failed to wait for ffmpeg")?;
@@ -623,7 +789,7 @@ mod tests {
             game_timestamp: "1786000000".to_owned(),
             clip_start_ms: 10_000,
             clip_end_ms: 10_000 + duration_ms,
-            preset,
+            presets: vec![preset],
             vertical_focus: 0.72,
             vertical_position: 0.5,
             music: ClipMusicSource::None,
@@ -638,6 +804,10 @@ mod tests {
         let mut invalid = request(ClipExportPreset::Vertical, 10_000);
         invalid.vertical_focus = 1.1;
         assert!(validate_request(&invalid).is_err());
+
+        let mut duplicate = request(ClipExportPreset::Horizontal, 10_000);
+        duplicate.presets.push(ClipExportPreset::Horizontal);
+        assert!(validate_request(&duplicate).is_err());
     }
 
     #[test]
@@ -651,12 +821,31 @@ mod tests {
 
     #[test]
     fn discord_profile_spends_less_than_the_file_budget() {
-        let profile =
-            export_profile(&request(ClipExportPreset::Discord, 30_000), 60, None).unwrap();
+        let profile = export_profile(
+            &request(ClipExportPreset::Discord, 30_000),
+            ClipExportPreset::Discord,
+            60,
+            None,
+        )
+        .unwrap();
         let projected_bytes =
             (profile.video_bitrate_kbps + profile.audio_bitrate_kbps) * 1_000 * 30 / 8;
         assert!(projected_bytes < DISCORD_LIMIT_BYTES);
         assert!(profile.video_filter.contains("1280:720"));
+    }
+
+    #[test]
+    fn publish_profiles_allow_high_motion_bitrate_peaks() {
+        let profile = export_profile(
+            &request(ClipExportPreset::Horizontal, 15_000),
+            ClipExportPreset::Horizontal,
+            60,
+            None,
+        )
+        .unwrap();
+        assert_eq!(profile.video_bitrate_kbps, 24_000);
+        assert_eq!(profile.max_video_bitrate_kbps, 36_000);
+        assert!(profile.high_quality);
     }
 
     #[test]

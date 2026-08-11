@@ -2,55 +2,1870 @@
   "schema_version": "1.0",
   "project": {
     "name": "Chronobreak",
-    "description": "Canonical Chronobreak work state. Draft items are refined; ready features are executed."
+    "description": "Canonical Chronobreak roadmap reconciled from repository implementation, product boundaries, specifications, and verification evidence."
   },
   "features": [
     {
-      "id": "SETUP-001",
-      "kind": "feature",
-      "name": "Build Canonical Chronobreak Feature Inventory",
-      "description": "Audit the existing Chronobreak repository against product intent, discover actual implementation/architecture/verification, and replace the setup state with a truthful canonical feature list before implementing new product work.",
+      "id": "EPIC-CAP-REL",
+      "kind": "epic",
+      "name": "Capture Reliability",
+      "description": "Make automatic recording trustworthy enough that Chronobreak does not silently lose or corrupt the game the user expected it to preserve.",
       "priority": "P0",
-      "area": "harness",
-      "status": "not-started",
+      "area": "capture",
+      "status": "in-progress",
       "parent_id": null,
       "dependencies": [],
+      "evidence": [
+        "QB-CAP-001 provides the existing process-driven lifecycle and interrupted fragmented-MP4 baseline; health monitoring, recovery tooling, integrity validation, and storage preflight remain open."
+      ],
+      "success_criteria": [
+        "Known capture failure modes are converted into concrete child features with deterministic detection/recovery behavior.",
+        "Chronobreak does not silently report a failed/frozen recording as healthy.",
+        "Recoverable interruptions preserve as much valid footage as practical.",
+        "Reliability claims are backed by explicit failure-injection or integrity verification."
+      ],
+      "notes": "This is intentionally an epic, not an executable 'optimize reliability' feature.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-001",
+      "kind": "feature",
+      "name": "Automatic Match Recording Lifecycle",
+      "description": "Automatically detect a League match, start recording, stop/finalize at match end, and associate the recording with the correct match.",
+      "priority": "P0",
+      "area": "capture",
+      "status": "done",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [],
+      "evidence": [
+        "recorder/src/service.rs and recorder/src/watcher.rs implement League-process appearance, replacement, disappearance, and shutdown transitions around one active ffmpeg session.",
+        "recorder/src/encoder.rs writes fragmented MP4 and preserves partial output on an unexpected encoder exit; recorder/src/poller.rs writes final match metadata tied to the same game directory.",
+        "PHASES.md records explicit Phase 1 live validation for completed and interrupted games; recorder automated tests and format check passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A configured League match starts recording without manual user action.",
+        "Recording finalizes when the match ends.",
+        "The finalized recording is associated with the correct match.",
+        "Unexpected League termination leaves Chronobreak in a recoverable/known state."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify lifecycle/state transitions where testable.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Run an end-to-end match lifecycle against the supported test environment.",
+          "command": null
+        }
+      ],
+      "notes": "Existing shipped baseline. Full output-progress health monitoring and post-finalization integrity checks are intentionally separate features.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CAP-002",
+      "kind": "feature",
+      "name": "Recording Health Monitoring",
+      "description": "Detect whether active recording output is actually progressing rather than assuming a running recorder process means healthy capture.",
+      "priority": "P0",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
       "evidence": [],
       "execution": {
         "workflow": "planned",
         "plan": null
       },
       "acceptance_criteria": [
-        "Existing user-visible Chronobreak behavior is mapped to canonical epics/features without assuming uninspected functionality is absent.",
-        "Broad product objectives are represented as epics and are not treated as directly executable features.",
-        "Concrete features are marked draft or ready based on the definition-readiness gate.",
-        "Already complete behavior is marked done only when supported by repository evidence and runnable verification.",
-        "Actual build/test/lint/type-check/media/benchmark entry points are documented in docs/development/VERIFICATION.md.",
-        "Durable architecture facts needed by future agents are documented under docs/architecture/.",
-        "The product-intent seed is fully reconciled into canonical state and then removed or archived as non-canonical.",
-        "No new product functionality is implemented as part of this audit."
+        "Chronobreak can distinguish healthy progressing output from a stalled/failed capture condition.",
+        "A detected unhealthy state is surfaced clearly and is not silently reported as success.",
+        "Healthy recordings do not generate unacceptable false failure indications."
       ],
       "verification": [
         {
+          "type": "automated",
+          "description": "Inject or simulate stalled/failing output conditions where feasible.",
+          "command": null
+        },
+        {
           "type": "inspection",
-          "description": "Review the resulting feature-list.json for full coverage of existing behavior and product-intent seed items.",
+          "description": "Verify the health signal is based on meaningful output progress/encoder state.",
+          "command": null
+        }
+      ],
+      "notes": "Current code checks ffmpeg process liveness only; this feature must define and test meaningful output-progress signals and false-positive bounds.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CAP-003",
+      "kind": "feature",
+      "name": "Interrupted Recording Recovery",
+      "description": "Recover as much valid footage as practical after an interrupted or ungracefully finalized recording.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "An intentionally interrupted recording can be recovered to a playable file when the chosen media/container strategy permits it.",
+        "Recovery does not duplicate the match in the library.",
+        "Unrecoverable cases are reported explicitly."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Interrupt a fixture recording before graceful finalization and exercise recovery.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Open and seek through recovered output.",
+          "command": null
+        }
+      ],
+      "notes": "Fragmented MP4 currently preserves completed fragments, but there is no discovery/repair workflow or explicit unrecoverable-state reporting.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CAP-004",
+      "kind": "feature",
+      "name": "Post-recording Integrity Verification",
+      "description": "Validate finalized recordings cheaply enough to detect obviously broken, malformed, frozen, or missing-stream output.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Chronobreak validates expected media streams and sensible duration/timestamps after finalization.",
+        "Known malformed fixture output is detected.",
+        "A valid recording passes without unnecessary user-facing noise."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Validate good and deliberately malformed media fixtures.",
+          "command": null
+        }
+      ],
+      "notes": "The app validates selected metadata before playback/export, but recorder finalization does not currently run ffprobe or a content-progress integrity check.",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CAP-005",
+      "kind": "feature",
+      "name": "Storage Preflight for Recording",
+      "description": "Prevent avoidable recording failure caused by insufficient available storage before or during a match.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Chronobreak checks whether recording storage is critically constrained before starting capture.",
+        "The user receives a clear actionable state when recording cannot safely start.",
+        "Storage checks do not destructively delete protected media."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exercise preflight against controlled low-space/limit conditions where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Verify user-facing failure behavior.",
+          "command": null
+        }
+      ],
+      "notes": "Post-game usage and age retention exist in the app; the recorder does not currently check free space before or during capture.",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "EPIC-CAP-PERF",
+      "kind": "epic",
+      "name": "Negligible Capture Performance Impact",
+      "description": "Make automatic Chronobreak capture cheap enough that competitive League players can leave it enabled by default.",
+      "priority": "P0",
+      "area": "capture-performance",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "A reproducible benchmark protocol and performance budget exist.",
+        "Capture performance is measured using metrics relevant to game responsiveness, not only average resource usage.",
+        "Concrete optimization work is created from measured regressions/bottlenecks rather than vague 'make it faster' tasks."
+      ],
+      "notes": "Do not implement this epic directly. First establish benchmark/budget, then create measured optimization features.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-PERF-001",
+      "kind": "feature",
+      "name": "Capture Benchmark and Performance Budget",
+      "description": "Define and automate/reproduce the benchmark used to measure Chronobreak capture overhead and the budget required before performance claims can be made.",
+      "priority": "P0",
+      "area": "capture-performance",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The benchmark scenario is documented and repeatable.",
+        "The benchmark records the project-selected FPS/frametime and system/encoder metrics.",
+        "A baseline without Chronobreak capture and a Chronobreak-enabled run can be compared.",
+        "An explicit acceptable performance budget is documented before optimization features are declared complete."
+      ],
+      "verification": [
+        {
+          "type": "benchmark",
+          "description": "Run the documented baseline and Chronobreak capture benchmark.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Verify methodology and result storage are reproducible.",
+          "command": null
+        }
+      ],
+      "notes": "Recorder diagnostics has a short synthetic encoder-selection benchmark, but the required baseline-versus-capture League FPS/frametime protocol and budget do not exist.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "EPIC-REPLAY",
+      "kind": "epic",
+      "name": "League-native Replay Experience",
+      "description": "Make Chronobreak feel like a playable League match history rather than a generic video player.",
+      "priority": "P0",
+      "area": "replay",
+      "status": "in-progress",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [
+        "Synchronized match data, the primary event timeline, state-at-playhead, byte-range playback, and Data Dragon presentation exist; category lanes, hover thumbnails, and broader navigation remain open."
+      ],
+      "success_criteria": [
+        "Video, game events, and recorded match state share a reliable timeline.",
+        "Important moments are fast to locate and seek.",
+        "Replay navigation remains responsive on long/event-heavy matches.",
+        "Replay UI exposes descriptive game context without becoming coaching."
+      ],
+      "notes": "",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-DATA-001",
+      "kind": "feature",
+      "name": "Synchronized League Match Data",
+      "description": "Persist League Live Client Data and timestamped events against a common match clock usable by replay features.",
+      "priority": "P0",
+      "area": "match-data",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [],
+      "evidence": [
+        "recorder/src/poller.rs implements monotonic clock calibration, cumulative event deduplication, concurrent snapshots, derived item/level changes, and precomputed video_time_ms.",
+        "recorder/src/storage.rs atomically replaces game_log.json; unavailable fields remain optional rather than inferred.",
+        "PHASES.md records explicit Phase 2 synchronization validation; recorder automated tests and format check passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Persisted events retain usable timestamps.",
+        "Required match/player metadata is stored for replay/search features.",
+        "Video time and game-data time can be mapped consistently across a complete match.",
+        "Missing snapshots/data are represented as missing rather than invented."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use deterministic fixtures to test time mapping and stored event/state retrieval.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Check synchronization at multiple timestamps in a representative recording.",
+          "command": null
+        }
+      ],
+      "notes": "Existing shipped baseline. The Live Client API can disappear independently; video capture continues and unavailable fields remain missing.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-001",
+      "kind": "feature",
+      "name": "League-native Timeline Interaction",
+      "description": "Provide a polished timeline that exposes League events clearly and supports precise seeking without becoming visually unreadable.",
+      "priority": "P0",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-DATA-001"
+      ],
+      "evidence": [
+        "app/src/components/ViewerScreen.tsx renders sorted video_time_ms markers, click/keyboard seeking, dense marker presentation, and shared windowed/fullscreen state.",
+        "app/src-tauri/src/library.rs builds sorted frame-driven playback payloads and tests mandatory frame-rate metadata.",
+        "PHASES.md records explicit Phase 4 and 5 validation on representative recordings; Tauri tests, Clippy, frontend type-check, and frontend build passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Supported event markers align with their replay timestamps.",
+        "Dense event periods remain usable.",
+        "Selecting an event seeks accurately.",
+        "Timeline interaction remains responsive on representative long matches."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test event-to-timestamp mapping and seek requests where feasible.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Review usability on sparse and event-heavy matches.",
+          "command": null
+        }
+      ],
+      "notes": "Existing primary timeline baseline. Category-specific lanes and hover previews remain separate features.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-002",
+      "kind": "feature",
+      "name": "Timeline Event Lanes and Filters",
+      "description": "Allow users to focus the replay timeline on event categories such as kills, deaths, objectives, bookmarks, and clips.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-REPLAY-001"
+      ],
+      "evidence": [
+        "The current viewer supports participant-based event filtering, but it does not expose independent event-category lanes/filters or bookmark/clip lanes."
+      ],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Supported event categories can be shown/hidden without changing timestamps.",
+        "Filtering reduces clutter on event-heavy matches.",
+        "The default presentation remains understandable without configuration."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify filtering preserves underlying event data/timestamps.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review dense-match usability.",
+          "command": null
+        }
+      ],
+      "notes": "Extend the existing marker/filter model; participant filtering is supporting evidence, not completion of category filtering.",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 2.5,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-003",
+      "kind": "feature",
+      "name": "Timeline Hover Thumbnails",
+      "description": "Show a preview frame for the timestamp under the cursor while hovering/scrubbing the replay timeline.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-001",
+        "QB-REPLAY-006"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The thumbnail corresponds closely to the hovered timestamp.",
+        "Repeated hover previews are responsive.",
+        "Thumbnail generation/retrieval does not cause unacceptable playback stalls.",
+        "Long recordings do not create uncontrolled cache/storage growth."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test timestamp-to-thumbnail lookup and cache behavior where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Scrub representative short and long recordings.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure hover/preview latency if infrastructure supports it.",
+          "command": null
+        }
+      ],
+      "notes": "No hover-frame extraction or cache exists. Design must preserve the single-video playback hot path and bound generated cache growth.",
+      "user_value": 4.5,
+      "differentiation": 3.5,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-004",
+      "kind": "feature",
+      "name": "State at Playhead",
+      "description": "Update descriptive match/player state in the replay UI according to the current video timestamp.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-REPLAY-001"
+      ],
+      "evidence": [
+        "app/src/viewerUtils.ts performs binary-search timeline lookup and app/src/components/ViewerScreen.tsx renders recorded champion, KDA, CS, level, and item state from the presented-frame clock.",
+        "APP-VIEWER.md explicitly limits the surface to available descriptive data and records backward-seek behavior.",
+        "PHASES.md records Phase 4 validation; Tauri tests and frontend type-check passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Seeking to known timestamps displays the corresponding available recorded state.",
+        "Seeking backward restores earlier state correctly.",
+        "Missing data is not fabricated.",
+        "The feature remains descriptive and does not judge player decisions."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use fixtures with known snapshots to test state lookup.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Seek through a representative recording and compare state to known events.",
+          "command": null
+        }
+      ],
+      "notes": "Existing shipped baseline; no coaching or inferred unavailable state is part of this feature.",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-005",
+      "kind": "feature",
+      "name": "Replay Navigation Shortcuts",
+      "description": "Provide fast keyboard navigation for common replay operations such as seeking and moving between events.",
+      "priority": "P2",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Documented shortcuts perform their intended replay actions.",
+        "Shortcuts do not conflict unexpectedly with focused text/input controls.",
+        "Navigation remains consistent with timeline state."
+      ],
+      "verification": [
+        {
+          "type": "manual",
+          "description": "Exercise each shortcut in the replay viewer.",
           "command": null
         },
         {
           "type": "automated",
-          "description": "Validate feature-list.json against feature-list.schema.json.",
+          "description": "Test shortcut-to-action mapping where the UI test stack allows it.",
+          "command": null
+        }
+      ],
+      "notes": "The scrubber and clip endpoints already have focused keyboard behavior; this item covers documented viewer-wide navigation and event traversal.",
+      "user_value": 3.5,
+      "differentiation": 3,
+      "difficulty": 2,
+      "stage": "ready"
+    },
+    {
+      "id": "EPIC-LIBRARY",
+      "kind": "epic",
+      "name": "Playable Match and Clip Library",
+      "description": "Make recorded games and clips searchable, linked, portable, and organized using League semantics rather than opaque filenames.",
+      "priority": "P1",
+      "area": "library",
+      "status": "in-progress",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [
+        "Filesystem-derived game/clip browsing, source-derived clip presentation, usage reporting, save protection, and age retention exist; semantic search, durable clip event metadata, relocation, import, and sessions remain open."
+      ],
+      "success_criteria": [
+        "Matches are queryable by useful League metadata.",
+        "Clips preserve their relationship to source matches and contained events.",
+        "Library state can be recovered/re-indexed without making one opaque database the sole authority.",
+        "Storage growth remains manageable."
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-001",
+      "kind": "feature",
+      "name": "Searchable Match History",
+      "description": "Search/filter recorded matches using League metadata such as champion, enemy champions, queue/mode, result, participants, and recorded events.",
+      "priority": "P1",
+      "area": "library-search",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-LIB-008"
+      ],
+      "evidence": [
+        "The current library derives champion, mode, participants/loadout, and KDA-related summary data from bundle metadata, but exposes no search/filter UI or persisted search index."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Search by played champion returns only matching recorded matches.",
+        "Search by enemy champion and supported event returns matching recorded matches.",
+        "Multiple supported filters can be combined.",
+        "Search operates on persisted indexed metadata rather than filenames alone."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use deterministic library fixtures to verify each supported query and combined filters.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Exercise search/filter UI with a populated test library.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until supported filters are reconciled with local-data limits: the current recorder cannot truthfully infer match result, and enemy/participant availability must be defined for incomplete bundles.",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-002",
+      "kind": "feature",
+      "name": "Clip Metadata and Event Tagging",
+      "description": "Derive clip metadata from the source match and attach only timestamped events that occur within the clip interval.",
+      "priority": "P1",
+      "area": "clip-library",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-LIB-001",
+        "QB-LIB-008",
+        "QB-CLIP-007"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A clip inherits relevant source-match metadata.",
+        "Only events whose timestamps fall within the clip range are attached.",
+        "Clip metadata is queryable by the same relevant library search mechanisms."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Create fixture clips whose ranges include/exclude known events and verify tags.",
+          "command": null
+        }
+      ],
+      "notes": "Current clip filenames link to a source game and the library derives source champion/date at scan time, but no clip metadata sidecar persists the selected range or in-range event tags for search.",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-003",
+      "kind": "feature",
+      "name": "Source Match and Clip Linking",
+      "description": "Persist the relationship between a Chronobreak-created clip and its source match/time range.",
+      "priority": "P1",
+      "area": "clip-library",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-008",
+        "QB-CLIP-007"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A match exposes clips created from it.",
+        "A clip can navigate back to its source replay at the expected timestamp.",
+        "Deleting a clip does not delete the source match."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Create multiple clips from a fixture match and verify relationships.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Navigate match -> clip and clip -> source replay.",
+          "command": null
+        }
+      ],
+      "notes": "Current clip names/summaries retain source game identity, but match-to-clips and clip-to-source-at-time navigation are not both exposed in the UI.",
+      "user_value": 4,
+      "differentiation": 5,
+      "difficulty": 2.5,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-004",
+      "kind": "feature",
+      "name": "Storage Budget and Retention",
+      "description": "Let users set a maximum Chronobreak recording budget, understand remaining capacity, and safely reclaim eligible old recordings.",
+      "priority": "P1",
+      "area": "storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-009"
+      ],
+      "evidence": [
+        "app/src-tauri/src/library.rs already reports game-video and clip-MP4 usage and implements tested age-based cleanup that skips saved and incomplete games; no maximum-byte budget or remaining-hours model exists."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Current Chronobreak-managed media usage is reported accurately enough for user decisions.",
+        "A configured maximum storage budget persists.",
+        "Estimated remaining recording capacity uses a documented model.",
+        "Automatic cleanup never deletes protected items.",
+        "Cleanup behavior is deterministic and explainable."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test budget calculation and retention selection against fixture libraries.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Verify settings/usage/remaining-capacity UI.",
           "command": null
         },
         {
           "type": "inspection",
-          "description": "Verify documented repository commands were discovered from actual project configuration rather than guessed.",
+          "description": "Verify destructive tests only operate on designated test data.",
           "command": null
         }
       ],
-      "notes": "One-time setup item. Remove it from the canonical list after its acceptance criteria are satisfied.",
-      "user_value": 5,
-      "differentiation": 1,
+      "notes": "Build on the narrower completed age-retention baseline without weakening saved/incomplete-item protection.",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 3.5,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-005",
+      "kind": "feature",
+      "name": "Portable Re-indexable Chronobreak Library",
+      "description": "Make Chronobreak-created media relationships reconstructable after index loss or library relocation using durable metadata.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-003",
+        "QB-LIB-008"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A test library can be re-indexed after removing/rebuilding disposable index state.",
+        "Matches regain durable metadata required by supported features.",
+        "Source-match/clip relationships survive reconstruction.",
+        "Relocating the library does not permanently orphan valid Chronobreak media."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Build, discard index state, then reconstruct a fixture library.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Relocate a test library and verify re-link/re-index behavior.",
+          "command": null
+        }
+      ],
+      "notes": "In-place app restarts already rescan bundles without a database; relocation and reconstruction of every durable relationship are not yet proved.",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-006",
+      "kind": "feature",
+      "name": "Gaming Session Grouping",
+      "description": "Group temporally adjacent matches into browsing sessions while keeping individual matches independently accessible.",
+      "priority": "P2",
+      "area": "library",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-008"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Matches separated by less than the configured/defined threshold group into one session.",
+        "A sufficiently long break creates a new session.",
+        "Session grouping does not alter underlying match metadata."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test grouping against deterministic timestamp fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review session grouping in match-history UI.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until the session-gap threshold and whether it is fixed or user-configurable are deliberately defined.",
+      "user_value": 3,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-007",
+      "kind": "epic",
+      "name": "Import and Relink Existing Recordings",
+      "description": "Rediscover moved Chronobreak recordings and provide a safe path for importing compatible external videos with reduced metadata where necessary.",
+      "priority": "P3",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-005"
+      ],
+      "evidence": [],
+      "success_criteria": [
+        "Moved Chronobreak libraries can be relinked without corrupting durable bundle relationships.",
+        "Compatible external videos can be imported with an explicit reduced-metadata identity.",
+        "Unsupported or metadata-poor media never pretends to contain unavailable League events."
+      ],
+      "notes": "The seed combined relocation recovery and external-video ingestion. They have different ownership, metadata, and failure semantics and are decomposed into QB-LIB-010 and QB-LIB-011.",
+      "user_value": 3.5,
+      "differentiation": 4.5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-LIB-010",
+      "kind": "feature",
+      "name": "Relink a Moved Chronobreak Library",
+      "description": "Point Chronobreak at a relocated library of existing game bundles and clips and reconstruct supported relationships without rewriting valid source media.",
+      "priority": "P2",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "QB-LIB-007",
+      "dependencies": [
+        "QB-LIB-005"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Selecting a relocated valid Chronobreak root rediscovers its game and clip entries.",
+        "Durable match/clip relationships and supported metadata survive relocation.",
+        "Relinking does not copy, delete, or rewrite valid source media merely to make it visible.",
+        "Missing files, duplicate identities, and incompatible bundles are reported explicitly without corrupting the test library."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Relocate controlled fixture libraries and verify reconstruction, conflicts, and source hashes.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Move a dedicated test library, select the new root, and browse/play its restored entries.",
+          "command": null
+        }
+      ],
+      "notes": "Use only dedicated fixture/test libraries for relocation and conflict tests.",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-011",
+      "kind": "feature",
+      "name": "Import External Video as Reduced-metadata Replay",
+      "description": "Add a compatible external video to the library with an explicit reduced-metadata identity and no fabricated League timeline data.",
+      "priority": "P3",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "QB-LIB-007",
+      "dependencies": [
+        "QB-LIB-008",
+        "QB-REPLAY-006"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A supported external video can be added with a visibly reduced-metadata identity.",
+        "Imported media never claims unavailable League participants, events, snapshots, or source-match relationships.",
+        "Unsupported or malformed media fails explicitly without leaving a false complete library entry.",
+        "The chosen copy-versus-reference ownership policy is visible and preserves the original input."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Import supported, unsupported, missing, and malformed fixture media and verify reduced metadata and cleanup behavior.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Import and play representative test media and verify the reduced-metadata UI and ownership behavior.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until supported containers/codecs and whether Chronobreak copies or references imported files are deliberate product decisions.",
+      "user_value": 3,
+      "differentiation": 3.5,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-CLIP",
+      "kind": "epic",
+      "name": "Fast League-native Clipping",
+      "description": "Make the path from an indexed League event or remembered moment to a usable MP4 exceptionally fast and simple.",
+      "priority": "P1",
+      "area": "clipping",
+      "status": "in-progress",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [
+        "Event-to-clip activation and compatible preset export exist; deterministic event clustering, guaranteed multikill boundaries, remux/copy optimization, and montage generation remain open."
+      ],
+      "success_criteria": [
+        "Users can create clips directly from meaningful replay moments.",
+        "Chronobreak uses event knowledge to reduce manual endpoint work.",
+        "Export is reliable, compatible, and avoids unnecessary processing."
+      ],
+      "notes": "",
+      "user_value": 4.5,
+      "differentiation": 5,
+      "difficulty": 3.5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-001",
+      "kind": "feature",
+      "name": "Smart Event Clustering",
+      "description": "Group temporally related game events into coherent replay moments that can drive timeline display and clip boundaries.",
+      "priority": "P1",
+      "area": "event-model",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-DATA-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Known multikill sequences cluster deterministically.",
+        "Unrelated temporally separated events are not incorrectly merged.",
+        "Cluster start/end timestamps are stable and reusable by clipping."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run deterministic event-clustering fixtures for single/multi-event sequences.",
+          "command": null
+        }
+      ],
+      "notes": "Current clip defaults inspect nearby Multikill telemetry but do not persist deterministic reusable clusters with explicit start/end timestamps.",
+      "user_value": 4,
+      "differentiation": 5,
       "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-002",
+      "kind": "feature",
+      "name": "Smart Clip Boundaries",
+      "description": "Pre-position clip endpoints around the full relevant event sequence, especially multikills, while keeping endpoints editable.",
+      "priority": "P1",
+      "area": "clipping",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-001",
+        "QB-CLIP-003"
+      ],
+      "evidence": [
+        "app/src/viewerUtils.ts supplies editable frame-aligned single-event and multikill-aware heuristic ranges, but it does not prove that first-through-final events of every supported multikill cluster are enclosed."
+      ],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Creating a clip from a supported multikill includes setup before the first relevant kill and aftermath after the final kill.",
+        "The entire multikill sequence lies inside the initial range.",
+        "Automatically selected endpoints remain manually adjustable.",
+        "Single-event clipping remains supported."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test boundary calculation against event fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Create clips from known single-kill and multikill recordings.",
+          "command": null
+        }
+      ],
+      "notes": "The existing heuristic is a partial baseline. Completion requires deterministic cluster-derived boundaries and fixtures proving full-sequence inclusion.",
+      "user_value": 4,
+      "differentiation": 4.5,
+      "difficulty": 2,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-003",
+      "kind": "feature",
+      "name": "Instant Event-to-Clip Action",
+      "description": "Create a clip directly from a replay event using the event/cluster as initial context.",
+      "priority": "P1",
+      "area": "clipping",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-REPLAY-001"
+      ],
+      "evidence": [
+        "app/src/components/ViewerScreen.tsx exposes clip activation from supported replay events and carries the source timestamp into editable clip mode.",
+        "app/src/viewerUtils.ts applies available event-aware pre/post-roll heuristics and frame alignment.",
+        "PHASES.md records explicit Phase 7 end-to-end clip validation; frontend type-check and build passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A supported event exposes a Create Clip action.",
+        "The action enters clip mode at the correct source moment.",
+        "Smart boundaries are applied when available."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test event action wiring where feasible.",
+          "command": "npm run check --prefix app"
+        },
+        {
+          "type": "manual",
+          "description": "Create clips directly from representative event markers.",
+          "command": null
+        }
+      ],
+      "notes": "Existing event-action baseline. Deterministic clustering and guaranteed full multikill boundaries remain QB-CLIP-001 and QB-CLIP-002.",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-004",
+      "kind": "feature",
+      "name": "Fast Compatible MP4 Export",
+      "description": "Export adjusted replay ranges to broadly compatible MP4 while avoiding unnecessary transcoding when the media pipeline permits it.",
+      "priority": "P1",
+      "area": "export",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "The completed preset exporter always creates compatible H.264/AAC output with hardware/software fallback and preserves sources; it does not currently use stream copy/remux when compatible."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Exported clips open in the project-defined compatibility targets.",
+        "Audio/video remain synchronized.",
+        "Source recordings are never modified.",
+        "The export path avoids unnecessary re-encoding when correctness/compatibility allow it."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Validate exported media structure with project media tooling.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Open representative exports in defined target players/apps.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure representative export latency once methodology is defined.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until compatibility targets and the safe stream-copy/remux decision matrix are explicit; the existing re-encoding exporter remains QB-CLIP-007.",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 3,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-005",
+      "kind": "feature",
+      "name": "Automatic Kill Montage",
+      "description": "Generate one montage containing the selected player's kill sequences using indexed events and smart boundaries.",
+      "priority": "P2",
+      "area": "montage",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-001",
+        "QB-CLIP-002",
+        "QB-CLIP-007"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "All expected selected-player kill sequences from a fixture match are included.",
+        "Multikill sequences are not redundantly split into separate overlapping clips.",
+        "Unrelated footage is excluded except configured pre/post context.",
+        "Final montage is playable and synchronized."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Generate montage from deterministic event fixture/recording.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review ordering, boundaries, and final media.",
+          "command": null
+        }
+      ],
+      "notes": "No montage pipeline exists; reuse cluster selection and the proven atomic export/media-validation path.",
+      "user_value": 3.5,
+      "differentiation": 3.5,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-006",
+      "kind": "feature",
+      "name": "Automatic Game Highlights Recap",
+      "description": "Generate a deterministic recap from supported recorded events/bookmarks without subjective coaching analysis.",
+      "priority": "P3",
+      "area": "montage",
+      "status": "not-started",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-001",
+        "QB-CLIP-002",
+        "QB-CLIP-007",
+        "QB-BOOKMARK-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Highlight-selection rules are explicit and deterministic before implementation.",
+        "Every included segment maps to a supported recorded event/bookmark rule.",
+        "Adjacent related events are not redundantly duplicated.",
+        "The recap does not judge gameplay quality or provide coaching."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify selection rules against representative event fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Review recap output from representative matches.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until highlight-selection rules are deliberately defined; this is intentionally late.",
+      "user_value": 3.5,
+      "differentiation": 4,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-REPLAY-006",
+      "kind": "feature",
+      "name": "Local Byte-range Replay Playback",
+      "description": "Stream large local recordings and clips to the Tauri webview with standards-compliant byte ranges so native video playback and seeking do not load whole media files into application memory.",
+      "priority": "P0",
+      "area": "playback",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-LIB-008"
+      ],
+      "evidence": [
+        "app/src-tauri/src/playback_server.rs binds an ephemeral IPv4 loopback origin, validates media identifiers, serves single byte ranges, streams file slices, and records request/byte/completion metrics.",
+        "app/src/components/ViewerScreen.tsx keeps one native video element and uses presented-frame callbacks and serialized seeks rather than decoding or copying video in JavaScript.",
+        "PHASES.md records explicit large-recording browse/seek validation; playback-server tests, Tauri tests, and frontend checks passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Recordings and clips support native webview playback and seeking through a loopback-only URL.",
+        "A range request streams only the requested file interval and does not load the whole recording into memory.",
+        "Unrecognized or traversal-like identifiers cannot escape configured media roots.",
+        "Playback diagnostics expose range/byte/stream counters without interrupting playback."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exercise range parsing, streamed-byte accounting, path validation, and playback payload construction.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Rapidly seek representative multi-gigabyte H.264 and supported HEVC recordings in the Tauri webview and inspect diagnostics.",
+          "command": null
+        }
+      ],
+      "notes": "Existing shipped foundation used by the viewer, clip preview, music preview, and static-asset delivery.",
+      "user_value": 5,
+      "differentiation": 3,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-007",
+      "kind": "feature",
+      "name": "Versioned Data Dragon Asset Cache",
+      "description": "Resolve League champion and item presentation through a versioned local Data Dragon cache that remains non-blocking when the network or CDN is unavailable.",
+      "priority": "P1",
+      "area": "assets",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-006"
+      ],
+      "evidence": [
+        "app/src-tauri/src/ddragon.rs initializes versioned manifests, resolves item names, validates PNG assets, and keeps cached versions usable on refresh failure.",
+        "app/src-tauri/src/playback_server.rs serves cached/missing Data Dragon assets through the loopback origin; the SolidJS library/viewer retain fixed placeholders on failure.",
+        "Data Dragon unit tests, Tauri tests, and frontend checks passed on 2026-08-11; PHASES.md records the cache as delivered in Phase 3."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Champion and item names/icons resolve from a patch-versioned local cache.",
+        "Cached manifests and assets remain usable when refresh is unavailable.",
+        "Invalid or unavailable assets degrade to stable placeholders and never block library or replay playback."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exercise manifest parsing, item lookup, cache fallback, and safe asset resolution.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Open a representative library online and offline and verify cached assets/placeholders do not change layout or block playback.",
+          "command": null
+        }
+      ],
+      "notes": "Existing shipped presentation foundation; static assets are a disposable cache, not canonical match data.",
+      "user_value": 3.5,
+      "differentiation": 3,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-008",
+      "kind": "feature",
+      "name": "Filesystem-derived Game and Clip Library",
+      "description": "Build the local Games and Clips library directly from ordinary recording bundles and clip artifacts without an opaque database.",
+      "priority": "P0",
+      "area": "library-storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-DATA-001"
+      ],
+      "evidence": [
+        "app/src-tauri/src/library.rs scans games and clips, derives summaries from metadata/game logs, marks incomplete bundles conservatively, and validates identifiers before mutation.",
+        "app/src/App.tsx and app/src/components/LibraryScreen.tsx expose Games and Clips tabs, playback entry, save/delete actions, and explicit incomplete states.",
+        "Library fixture tests, Tauri tests, and frontend checks passed on 2026-08-11; PHASES.md records Phase 3 browse/play validation."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Restarting the app rebuilds Games and Clips views by scanning the configured filesystem root without database state.",
+        "Valid game bundles expose League-aware summaries and playback entry; valid clip artifacts expose preview/library entries.",
+        "Incomplete or malformed bundles are represented conservatively rather than silently treated as complete.",
+        "Library mutations are restricted to validated managed entries."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Scan fixture bundles and verify summaries, ordering, incomplete states, save/delete guards, and clip discovery.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Browse and open representative games/clips from a dedicated test library, restart the app, and verify the same entries are rediscovered.",
+          "command": null
+        }
+      ],
+      "notes": "Existing local-first foundation. Relocation, external import, semantic search, and complete relationship reconstruction remain separate features.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-009",
+      "kind": "feature",
+      "name": "Age-based Retention and Save Protection",
+      "description": "Report game-video and clip-MP4 storage use and safely remove eligible recordings older than the configured retention period while preserving saved and incomplete games.",
+      "priority": "P1",
+      "area": "storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-008"
+      ],
+      "evidence": [
+        "app/src-tauri/src/library.rs implements storage_usage, atomic saved-state updates, guarded deletion, and deterministic age-based run_auto_delete.",
+        "The auto-delete fixture test proves old eligible deletion while saved, recent, and incomplete games survive.",
+        "Tauri tests and frontend checks passed on 2026-08-11; APP-LIBRARY.md documents the settings/storage controls."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Game-video and clip-MP4 byte usage and counts are available to the UI.",
+        "The retention-days setting persists and zero disables automatic age cleanup.",
+        "Cleanup deletes only complete, unsaved games older than the threshold.",
+        "Saved, recent, and incomplete games survive cleanup, and destructive tests use temporary libraries."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify usage, saved-state preservation, deletion guards, and retention selection in temporary fixture libraries.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Use a dedicated test library to verify usage, save/unsave, retention settings, and cleanup feedback.",
+          "command": null
+        }
+      ],
+      "notes": "Existing narrower baseline for QB-LIB-004; there is no maximum-byte budget or remaining-recording-capacity estimate yet.",
+      "user_value": 4,
+      "differentiation": 3,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-007",
+      "kind": "feature",
+      "name": "Publishable H.264/AAC Preset Export",
+      "description": "Export an adjusted replay range as atomic, source-preserving H.264/AAC MP4 outputs for Discord, horizontal, and vertical publishing presets.",
+      "priority": "P0",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-003",
+        "QB-REPLAY-006"
+      ],
+      "evidence": [
+        "app/src-tauri/src/clip_export.rs validates frame-aware ranges, encodes H.264/AAC with hardware preference/software fallback, enforces the Discord byte limit, stages batches, and generates paired thumbnails without modifying sources.",
+        "app/src/components/ClipExporterScreen.tsx implements preset selection, progress, retryable errors, and post-export actions.",
+        "PHASES.md records explicit H.264/HEVC-source export validation at phase-7; clip-export/Tauri tests and frontend checks passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A valid selected range exports playable H.264/AAC MP4 for each requested Discord, horizontal, or vertical preset.",
+        "Discord output is verified below 10,000,000 bytes and retries correction before failing explicitly.",
+        "The source recording is never modified, and a failed batch does not expose partial outputs as completed clips.",
+        "Successful outputs use the source-linked filename contract, include thumbnail artifacts, and preserve audio/video synchronization."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exercise request/profile/filter/encoder argument generation, validation, and atomic path rules.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Export all presets from representative H.264 and HEVC fixtures, inspect with ffprobe, play them in compatibility targets, and verify source hashes are unchanged.",
+          "command": null
+        }
+      ],
+      "notes": "Existing shipped re-encoding baseline. Conditional stream-copy/remux optimization remains QB-CLIP-004.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "EPIC-DIST",
+      "kind": "epic",
+      "name": "Self-contained Windows Beta",
+      "description": "Ship the proven local record-to-clip workflow on Windows without requiring users to install ffmpeg, Rust, Node.js, or developer tooling.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "A clean supported Windows machine can install Chronobreak and run the complete record, browse, replay, and export workflow with packaged dependencies.",
+        "Exactly one background recorder instance follows the user's login-startup setting without a console window.",
+        "Upgrade and uninstall preserve user recordings and remove only application-owned binaries and startup registration.",
+        "Bundled third-party tools and assets include required notices and licenses."
+      ],
+      "notes": "Reconciled from the unimplemented Phase 8 scope in PHASES.md. Public signing, updates, and macOS distribution require later refinement and are not implied by this beta epic.",
+      "user_value": 5,
+      "differentiation": 2,
+      "difficulty": 5,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-DIST-001",
+      "kind": "feature",
+      "name": "Packaged Media Tool Contract",
+      "description": "Bundle ffmpeg and ffprobe as Windows application resources and give recorder diagnostics, capture, probing, thumbnailing, and clip export one explicit installed-tool discovery contract.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "Current recorder development discovery supports an adjacent resources/ffmpeg candidate, while app export and library probing still invoke ffmpeg/ffprobe from PATH."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The Windows package contains the required ffmpeg and ffprobe executables and applicable notices/licenses.",
+        "Recorder diagnostics/capture and app probing/export resolve the same packaged tool location in an installed build.",
+        "The installed workflow succeeds when no system ffmpeg or ffprobe is on PATH.",
+        "Missing, blocked, or incompatible packaged tools produce concise actionable errors."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test shared tool-path resolution and missing/incompatible-tool errors with controlled resource layouts.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Run diagnostics, record, probe, and export from an installed build on Windows without system media tools.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Verify packaged binaries and third-party notices are included in the release artifact.",
+          "command": null
+        }
+      ],
+      "notes": "Cross-process packaging and media integrity make this planned work.",
+      "user_value": 5,
+      "differentiation": 2,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-DIST-002",
+      "kind": "feature",
+      "name": "Single Recorder Supervision and Login Startup",
+      "description": "Start and maintain exactly one installed background recorder instance, with a user-controlled Windows login-startup registration and no visible console window.",
+      "priority": "P1",
+      "area": "process-lifecycle",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-DIST-001"
+      ],
+      "evidence": [
+        "The recorder already supports tray/headless lifecycle and hides release console windows, but the app does not supervise an installed recorder or own login registration."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Launching the installed app or logging in when enabled results in exactly one recorder process.",
+        "Repeated app launches and login triggers do not create duplicate recorders.",
+        "The recorder remains unobtrusive with tray state and no console window and can finalize an active recording on intentional shutdown.",
+        "Disabling login startup removes Chronobreak's registration without affecting recordings."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test single-instance/supervision state transitions and registration serialization where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Exercise repeated launch, sign-out/sign-in, enable/disable, active recording, and app-close behavior on Windows.",
+          "command": null
+        }
+      ],
+      "notes": "Process lifecycle and active-capture correctness require an ExecPlan and failure-injection review.",
+      "user_value": 5,
+      "differentiation": 3,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-DIST-003",
+      "kind": "feature",
+      "name": "Complete Installed Settings Contract",
+      "description": "Expose and persist the recording profile, codec preference, output root, retention period, and login-startup settings needed for the installed Windows workflow.",
+      "priority": "P1",
+      "area": "settings",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": [
+        "QB-DIST-002",
+        "QB-LIB-009"
+      ],
+      "evidence": [
+        "Shared configuration and app controls currently cover output root and age retention; recorder profile/codec exist in TOML but are not fully exposed, and login startup does not exist."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Every shipped setting has one validated durable representation shared by the responsible app/recorder component.",
+        "The app exposes recording profile, codec preference, output root, retention period, and login startup with truthful current values.",
+        "Changes take effect at a documented safe lifecycle boundary and never mutate an active recording unexpectedly.",
+        "Invalid paths or values fail without corrupting the previous configuration."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Round-trip all shipped settings, reject invalid updates, and preserve unknown configuration fields atomically.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Change every setting in the installed app and verify the next safe recorder/retention lifecycle uses it.",
+          "command": null
+        }
+      ],
+      "notes": "Shared persistence and recorder lifecycle effects make this planned work.",
+      "user_value": 4.5,
+      "differentiation": 2,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-DIST-004",
+      "kind": "feature",
+      "name": "Windows Installer and Clean-machine Workflow",
+      "description": "Produce a Windows installer whose fresh-install, upgrade, record-to-clip, and uninstall behavior passes on a machine without development prerequisites.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": [
+        "QB-DIST-001",
+        "QB-DIST-002",
+        "QB-DIST-003",
+        "QB-REPLAY-006",
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "Tauri can currently produce a developer-machine executable, but the repository has not validated a complete installer on a clean machine without system media tools."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A clean supported Windows machine installs and runs Chronobreak without Rust, Node.js, ffmpeg, or ffprobe installed.",
+        "The installed workflow records a real match, browses/seeks it, and exports a playable clip using only packaged components.",
+        "Upgrade over the beta preserves configuration and user media or reports an explicit safe migration failure.",
+        "Uninstall removes application binaries and startup registration while preserving user recordings and clips."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Build the configured Windows installer from a clean checkout.",
+          "command": "npm run tauri --prefix app -- build"
+        },
+        {
+          "type": "manual",
+          "description": "Run fresh install, complete real record-to-clip workflow, upgrade, and uninstall on a clean Windows test machine.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Confirm uninstall targets only application-owned files/registration and explicitly preserves the user media root.",
+          "command": null
+        }
+      ],
+      "notes": "This is the integration gate for the beta epic, not a substitute for its dependency features.",
+      "user_value": 5,
+      "differentiation": 2,
+      "difficulty": 5,
+      "stage": "ready"
+    },
+    {
+      "id": "EPIC-AUDIO",
+      "kind": "epic",
+      "name": "Replay and Clip Audio Control",
+      "description": "Record useful audio sources separately enough that users can control what is heard in replay and exported clips.",
+      "priority": "P1",
+      "area": "audio",
+      "status": "in-progress",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [
+        "The current recorder captures one mixed loopback source or silent stereo, and clip export can mix that game track with music; independent recorded source tracks remain open."
+      ],
+      "success_criteria": [
+        "The supported Windows audio-source model is explicitly defined.",
+        "Available tracks can be controlled independently in replay/export.",
+        "The design does not introduce unacceptable capture overhead or reliability regression."
+      ],
+      "notes": "",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-AUDIO-001",
+      "kind": "feature",
+      "name": "Separate Audio Tracks",
+      "description": "Record supported audio sources on separate tracks and expose independent volume/mute controls for replay and clip export.",
+      "priority": "P1",
+      "area": "audio",
+      "status": "not-started",
+      "parent_id": "EPIC-AUDIO",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-PERF-001",
+        "QB-CLIP-007"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The supported source-separation model is documented from actual Windows/capture capabilities.",
+        "At least two supported sources can be distinguished in a controlled recording.",
+        "Replay controls affect only the selected track/source.",
+        "Exported mix matches selected controls.",
+        "Capture performance/reliability remains within project budgets."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test track mapping/mix logic with controlled audio fixtures where possible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Record distinguishable sources and verify replay/export control.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Run applicable capture-performance regression benchmark.",
+          "command": null
+        }
+      ],
+      "notes": "Keep draft until the supported Windows source-separation model is defined from actual capture capabilities. Current game/music export controls do not imply separately recorded League/voice tracks.",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-AUDIO-002",
+      "kind": "feature",
+      "name": "Clip Music and Mix Controls",
+      "description": "Let users preview no music, bundled music, or an imported local track and independently set game-audio and music levels for exported clips.",
+      "priority": "P1",
+      "area": "clip-audio",
+      "status": "done",
+      "parent_id": "EPIC-AUDIO",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "app/src-tauri/src/music.rs installs and safely resolves bundled tracks while imported previews are explicitly registered with the loopback server.",
+        "app/src-tauri/src/clip_export.rs trims/loops selected music and mixes it with the source game-audio track using independent validated volumes.",
+        "PHASES.md records explicit Phase 7 music/mix validation; music and clip-export tests plus frontend checks passed on 2026-08-11."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The user can select no music, a bundled track, or an explicitly chosen local audio file and preview the choice.",
+        "Game-audio and music volumes are independently adjustable and validated.",
+        "The selected mix is applied to every requested export preset without modifying source media.",
+        "Invalid or unavailable music paths fail explicitly and cannot traverse bundled-media roots."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Verify bundled/imported path resolution, traversal rejection, volume validation, and ffmpeg mix arguments.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Preview and export no-music, bundled-music, and imported-music clips with distinguishable volume settings.",
+          "command": null
+        }
+      ],
+      "notes": "This controls the existing single recorded game-audio track plus export music; it is not separate capture of League, microphone, and voice-chat sources.",
+      "user_value": 4,
+      "differentiation": 3,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "EPIC-BOOKMARK",
+      "kind": "epic",
+      "name": "Remember Unstructured Moments",
+      "description": "Allow users to mark moments that League APIs cannot infer, such as funny comms, bugs, jukes, or personally interesting plays.",
+      "priority": "P2",
+      "area": "bookmarks",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [],
+      "success_criteria": [
+        "A user can mark a live moment without disrupting gameplay.",
+        "The bookmark is durable and navigable in the resulting replay."
+      ],
+      "notes": "",
+      "user_value": 3.5,
+      "differentiation": 4,
+      "difficulty": 2,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-BOOKMARK-001",
+      "kind": "feature",
+      "name": "Live Game Bookmark Hotkey",
+      "description": "Provide a configurable global shortcut that records a timestamped bookmark during a live match.",
+      "priority": "P2",
+      "area": "bookmarks",
+      "status": "not-started",
+      "parent_id": "EPIC-BOOKMARK",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-DATA-001",
+        "QB-REPLAY-001"
+      ],
+      "evidence": [],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The configured shortcut creates one bookmark at the correct match timestamp.",
+        "The bookmark persists after the match and appears in replay navigation.",
+        "The shortcut does not unexpectedly interfere with League input."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test timestamp/bookmark persistence where feasible.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Create a live bookmark and navigate to it after the match.",
+          "command": null
+        }
+      ],
+      "notes": "No global hotkey or bookmark record exists. Implementation must avoid anti-cheat-sensitive hooks and unexpected League input conflicts.",
+      "user_value": 3.5,
+      "differentiation": 4,
+      "difficulty": 2,
       "stage": "ready"
     }
   ]

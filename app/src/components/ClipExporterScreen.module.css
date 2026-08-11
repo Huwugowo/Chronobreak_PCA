@@ -135,26 +135,41 @@
   margin-bottom: 14px;
 }
 
-.presetGrid button {
+.presetOption {
   display: grid;
   min-height: 102px;
-  align-content: start;
-  gap: 5px;
-  padding: 13px;
+  grid-template-rows: 1fr auto;
   border: 1px solid var(--color-line);
   color: var(--color-muted-bright);
   background: #101620;
-  text-align: left;
-  cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 
-.presetGrid button:hover {
+.presetOption:hover {
   transform: translateY(-1px);
   border-color: rgba(111, 145, 237, 0.56);
 }
 
-.presetGrid button > span {
+.presetOption label {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 13px 36px 10px 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.presetOption label input {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 15px;
+  height: 15px;
+  accent-color: #4a70e0;
+}
+
+.presetOption label > span {
   color: var(--color-blue-soft);
   font-family: var(--font-mono);
   font-size: 7px;
@@ -162,17 +177,35 @@
   letter-spacing: 0.14em;
 }
 
-.presetGrid button strong {
+.presetOption label strong {
   color: var(--color-text);
   font-family: var(--font-display);
   font-size: 18px;
   text-transform: uppercase;
 }
 
-.presetGrid button small {
+.presetOption label small {
   color: var(--color-muted);
   font-size: 10px;
   line-height: 1.35;
+}
+
+.presetOption > button {
+  min-height: 28px;
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  color: var(--color-muted);
+  background: rgba(0, 0, 0, 0.16);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.presetOption > button[aria-pressed="true"] {
+  color: #fff;
+  background: rgba(74, 112, 224, 0.36);
 }
 
 .presetGrid .presetActive {
@@ -181,26 +214,34 @@
   box-shadow: inset 0 0 0 1px rgba(74, 112, 224, 0.18);
 }
 
+.presetGrid .presetPreviewing {
+  border-color: #8aa6ff;
+  box-shadow: inset 0 0 0 1px rgba(138, 166, 255, 0.42), 0 0 18px rgba(38, 86, 214, 0.14);
+}
+
 .previewStage {
   position: relative;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   min-height: 390px;
   place-items: center;
+  gap: 10px;
+  padding: 14px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: #020305;
 }
 
-.horizontalFrame {
-  display: block;
+.previewViewport {
+  position: relative;
   width: 100%;
-  height: 100%;
-  max-height: 470px;
-  object-fit: contain;
+  max-width: 760px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
 }
 
 .previewStageVertical {
-  padding: 16px;
   background:
     linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
@@ -211,7 +252,7 @@
 .verticalCanvas {
   position: relative;
   display: grid;
-  width: min(100%, 242px);
+  width: min(100%, 224px);
   aspect-ratio: 9 / 16;
   place-items: center;
   overflow: hidden;
@@ -228,22 +269,35 @@
   filter: blur(17px) brightness(0.48) saturate(0.82);
 }
 
-.verticalForeground {
+.previewForeground {
   position: relative;
   z-index: 2;
-  width: 100%;
   overflow: hidden;
-  border-block: 1px solid rgba(255, 255, 255, 0.28);
   background: #000;
+}
+
+.horizontalFrame {
+  width: 100%;
+  height: 100%;
+}
+
+.verticalForeground {
+  width: 100%;
+  border-block: 1px solid rgba(255, 255, 255, 0.28);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.44);
   cursor: ew-resize;
   touch-action: none;
 }
 
-.verticalForeground img {
+.livePreviewVideo {
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.verticalForeground .livePreviewVideo {
   object-fit: cover;
   pointer-events: none;
 }
@@ -269,19 +323,69 @@
   white-space: nowrap;
 }
 
-.framePlaceholder {
+.previewMessage {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
   display: grid;
+  align-content: center;
   place-items: center;
   gap: 7px;
+  padding: 24px;
   color: var(--color-muted);
+  background: rgba(2, 3, 5, 0.9);
   font-family: var(--font-mono);
   font-size: 8px;
   letter-spacing: 0.13em;
+  text-align: center;
 }
 
-.framePlaceholder strong {
+.previewMessage strong {
   color: var(--color-muted-bright);
-  font-size: 24px;
+  font-size: 14px;
+}
+
+.previewTransport {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(80px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.previewTransport button {
+  min-height: 31px;
+  padding: 0 11px;
+  border: 1px solid rgba(111, 145, 237, 0.46);
+  color: #fff;
+  background: rgba(0, 47, 167, 0.54);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.previewTransport button:disabled {
+  color: var(--color-muted);
+  background: #111722;
+  cursor: not-allowed;
+}
+
+.previewTransport > span,
+.previewStatusLine {
+  color: var(--color-muted-bright);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.previewStatusLine {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  color: var(--color-muted);
 }
 
 .reframeControls,
@@ -395,6 +499,13 @@ input[type="range"] {
   opacity: 0.42;
 }
 
+.musicPreviewError {
+  margin: 9px 0 0;
+  color: #ff9baa;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
 .mixControls {
   padding-top: 15px;
   border-top: 1px solid var(--color-line);
@@ -492,6 +603,35 @@ input[type="range"] {
   font-size: 9px;
 }
 
+.exportSuccess ul {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exportSuccess li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  color: var(--color-muted-bright);
+  font-size: 9px;
+}
+
+.exportSuccess li strong {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.exportSuccess li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .exportSuccess > div {
   display: flex;
   flex-wrap: wrap;
@@ -571,5 +711,18 @@ input[type="range"] {
 
   .previewStage {
     min-height: 310px;
+  }
+
+  .previewTransport {
+    grid-template-columns: 1fr auto;
+  }
+
+  .previewTransport input {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .previewStatusLine {
+    gap: 8px;
   }
 }

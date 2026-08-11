@@ -240,6 +240,25 @@
   pointer-events: none;
 }
 
+.previewPlaceholderInteractive {
+  z-index: 6;
+  pointer-events: auto;
+}
+
+.previewPlaceholder button {
+  min-height: 30px;
+  margin-top: 16px;
+  padding: 0 12px;
+  border: 1px solid rgba(138, 166, 255, 0.78);
+  color: #fff;
+  background: rgba(0, 47, 167, 0.82);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.11em;
+  cursor: pointer;
+}
+
 .previewGlyph {
   display: grid;
   width: 68px;

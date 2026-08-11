@@ -62,10 +62,23 @@ Video files are large (5–10GB). They must never be loaded into memory.
 
 - The Rust backend runs a local HTTP server with **range request support**
 - The SolidJS frontend uses one persistent HTML5 `<video>` tag pointed at `http://127.0.0.1:{port}/games/{timestamp}/video.mp4`
-- Seeking, buffering, and playback rate are all handled natively by the browser engine
-- No custom video decoding is implemented
+- Playback and ordinary navigation use the browser engine. Native seeks pass through a
+  latest-wins scheduler with one seek in flight and a maximum dispatch rate of 10 Hz.
+- A media error or 1.5-second seek timeout reloads the same video in place and restores
+  the desired position. Two failed recoveries degrade only the preview; clip export and
+  timeline editing remain available.
+- The video uses `preload="auto"` as a best-effort hint so the webview can read ahead
+  from the local range server. Large recordings are still streamed from disk rather
+  than copied into application memory.
+- No custom video decoding is implemented.
 - The video DOM node is not unmounted when the viewer changes between windowed and fullscreen modes
 - The playback probe exposes mandatory `recording_fps` metadata for frame-aligned clip endpoints
+
+Endpoint editing always displays the original, full-quality recording. The video pauses
+while a handle is active, and endpoint changes enter the same latest-wins seek scheduler.
+Pointer and keyboard bursts can update the handles immediately, but obsolete native seeks
+are coalesced and the webview receives at most ten seeks per second. No storyboard, JPEG
+frame cache, or lower-resolution editing surface is generated or displayed.
 
 **Sync between video and data:**
 
@@ -323,16 +336,20 @@ that event, then seeks to the event.
 - Both endpoints are clamped to 0 and total duration
 - The video pauses and continuously displays the first frame while the start handle moves,
   or the last included frame while the end handle moves
-- Releasing or cancelling either edit always seeks to the updated clip beginning and starts playback
+- Releasing, cancelling, or blurring a handle stops the gesture but remains paused in the
+  endpoint-edit session
+- Clicking **Preview Clip** or pressing `Space` performs one native seek to the updated
+  clip beginning and starts playback
 
 **Keyboard controls:**
-- `Space` toggles playback in windowed and fullscreen modes
+- `Space` explicitly previews the selected clip from its beginning while endpoint editing;
+  during playback it pauses normally
 - Outside clip mode, `ArrowLeft` / `ArrowRight` seek 15 seconds backward / forward
 - In clip mode, those arrows seek 5 seconds while neither endpoint handle has focus
 - With an endpoint handle focused, a quick arrow press moves that endpoint exactly one
   frame earlier/later. Holding the key longer than 200ms advances at elapsed real time,
   quantized to frames; OS key-repeat events are ignored.
-- Releasing a focused-handle arrow edit always restarts playback at the clip beginning
+- Releasing a focused-handle arrow edit remains paused on the selected original-video frame
 - Up/down arrows are unused
 
 **On "Export Clip →":** navigate to the Clip Exporter screen (see `APP-CLIP.md`), passing `{ gameTimestamp, clipStartMs, clipEndMs }`.
