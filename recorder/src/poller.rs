@@ -265,6 +265,7 @@ pub struct PollerSession {
     cancellation: watch::Sender<bool>,
     task: JoinHandle<Result<()>>,
     state: Arc<Mutex<PollerState>>,
+    write_lock: Arc<Mutex<()>>,
     output: PathBuf,
 }
 
@@ -272,6 +273,7 @@ impl PollerSession {
     pub async fn start(directory: &Path, video_started_at: Instant) -> Result<Self> {
         let output = directory.join(GAME_LOG_JSON);
         let state = Arc::new(Mutex::new(PollerState::default()));
+        let write_lock = Arc::new(Mutex::new(()));
         tokio::time::timeout(
             POLLER_STARTUP_WRITE_TIMEOUT,
             write_json_atomic(&output, &GameLog::default()),
@@ -282,15 +284,25 @@ impl PollerSession {
         let client = LiveClient::new(LIVE_CLIENT_BASE_URL)?;
         let (cancellation, receiver) = watch::channel(false);
         let task_state = Arc::clone(&state);
+        let task_write_lock = Arc::clone(&write_lock);
         let task_output = output.clone();
         let task = tokio::spawn(async move {
-            run_poller(client, video_started_at, receiver, task_state, task_output).await
+            run_poller(
+                client,
+                video_started_at,
+                receiver,
+                task_state,
+                task_write_lock,
+                task_output,
+            )
+            .await
         });
 
         Ok(Self {
             cancellation,
             task,
             state,
+            write_lock,
             output,
         })
     }
@@ -322,14 +334,14 @@ impl PollerSession {
         }
 
         let finalization = async {
-            let mut state = self.state.lock().await;
-            if let Err(error) = write_game_log(&mut state, &self.output).await {
+            if let Err(error) = write_game_log(&self.state, &self.write_lock, &self.output).await {
                 error!(%error, "could not perform final game log flush");
             }
             let game_log_bytes = tokio::fs::metadata(&self.output)
                 .await
                 .map(|metadata| metadata.len())
                 .unwrap_or_default();
+            let state = self.state.lock().await;
             log_poller_diagnostics(&state, game_log_bytes);
             state.summary.clone()
         };
@@ -543,6 +555,7 @@ async fn run_poller(
     video_started_at: Instant,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
+    write_lock: Arc<Mutex<()>>,
     output: PathBuf,
 ) -> Result<()> {
     info!("waiting for the Live Client API");
@@ -573,8 +586,8 @@ async fn run_poller(
                 calibration.video_offset_ms,
             )?;
         }
-        write_game_log(&mut state, &output).await?;
     }
+    write_game_log(&state, &write_lock, &output).await?;
     info!(
         video_offset_ms = calibration.video_offset_ms,
         "Live Client clock calibrated"
@@ -585,6 +598,7 @@ async fn run_poller(
         calibration.video_offset_ms,
         cancellation.clone(),
         Arc::clone(&state),
+        Arc::clone(&write_lock),
         output.clone(),
     );
     let snapshot_loop = snapshot_loop(
@@ -592,6 +606,7 @@ async fn run_poller(
         calibration.video_offset_ms,
         cancellation,
         state,
+        write_lock,
         output,
         take_first_snapshot_immediately,
     );
@@ -770,6 +785,7 @@ async fn event_loop(
     video_offset_ms: i64,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
+    write_lock: Arc<Mutex<()>>,
     output: PathBuf,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(EVENT_POLL_INTERVAL);
@@ -800,11 +816,13 @@ async fn event_loop(
             }
         };
 
-        let mut state = state.lock().await;
-        state.diagnostics.observe_response(received.latency);
-        let count = reconcile_events(&mut state, received.value.events, video_offset_ms);
+        let count = {
+            let mut state = state.lock().await;
+            state.diagnostics.observe_response(received.latency);
+            reconcile_events(&mut state, received.value.events, video_offset_ms)
+        };
         if count > 0 {
-            write_game_log(&mut state, &output).await?;
+            write_game_log(&state, &write_lock, &output).await?;
             debug!(count, "stored Live Client event batch");
         }
     }
@@ -815,6 +833,7 @@ async fn snapshot_loop(
     video_offset_ms: i64,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
+    write_lock: Arc<Mutex<()>>,
     output: PathBuf,
     take_first_snapshot_immediately: bool,
 ) -> Result<()> {
@@ -873,24 +892,36 @@ async fn snapshot_loop(
             }
 
             consecutive_failures = 0;
-            let mut state = state.lock().await;
-            update_summary(&mut state.summary, &data);
-            reconcile_events(
-                &mut state,
-                std::mem::take(&mut data.events.events),
-                video_offset_ms,
-            );
-            append_snapshot(&mut state.game_log, &data, video_offset_ms)?;
-            write_game_log(&mut state, &output).await?;
+            {
+                let mut state = state.lock().await;
+                update_summary(&mut state.summary, &data);
+                reconcile_events(
+                    &mut state,
+                    std::mem::take(&mut data.events.events),
+                    video_offset_ms,
+                );
+                append_snapshot(&mut state.game_log, &data, video_offset_ms)?;
+            }
+            write_game_log(&state, &write_lock, &output).await?;
             break;
         }
     }
 }
 
-async fn write_game_log(state: &mut PollerState, output: &Path) -> Result<()> {
+async fn write_game_log(
+    state: &Arc<Mutex<PollerState>>,
+    write_lock: &Arc<Mutex<()>>,
+    output: &Path,
+) -> Result<()> {
+    let _write_guard = write_lock.lock().await;
+    let game_log = state.lock().await.game_log.clone();
     let started_at = Instant::now();
-    let result = write_json_atomic(output, &state.game_log).await;
-    state.diagnostics.observe_json_write(started_at.elapsed());
+    let result = write_json_atomic(output, &game_log).await;
+    state
+        .lock()
+        .await
+        .diagnostics
+        .observe_json_write(started_at.elapsed());
     result
 }
 
@@ -1459,6 +1490,7 @@ mod tests {
             cancellation,
             task,
             state,
+            write_lock: Arc::new(Mutex::new(())),
             output: output.clone(),
         };
 
