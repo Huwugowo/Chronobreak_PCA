@@ -1,6 +1,11 @@
 param(
     [int]$DurationSeconds = 300,
-    [string]$ReadyFile = ''
+    [string]$ReadyFile = '',
+    [ValidateRange(320, 3840)]
+    [int]$Width = 1280,
+    [ValidateRange(240, 2160)]
+    [int]$Height = 720,
+    [switch]$Borderless
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,9 +16,16 @@ Add-Type -AssemblyName System.Drawing
 
 $form = [System.Windows.Forms.Form]::new()
 $form.Text = 'Chronobreak animated non-League capture fixture'
-$form.ClientSize = [System.Drawing.Size]::new(1280, 720)
+$form.ClientSize = [System.Drawing.Size]::new($Width, $Height)
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-$form.Location = [System.Drawing.Point]::new(100, 100)
+$form.Location = if ($Borderless) {
+    [System.Drawing.Point]::new(0, 0)
+} else {
+    [System.Drawing.Point]::new(100, 100)
+}
+if ($Borderless) {
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+}
 $form.BackColor = [System.Drawing.Color]::Black
 $doubleBuffered = $form.GetType().GetProperty(
     'DoubleBuffered',

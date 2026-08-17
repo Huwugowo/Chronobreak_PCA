@@ -1503,6 +1503,8 @@ pub(crate) fn push_args(target: &mut Vec<OsString>, values: &[&str]) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
+    use super::capabilities::DirectInterop;
     use super::*;
 
     fn target() -> CaptureTarget {
@@ -1984,5 +1986,116 @@ goto wait
         };
         assert!(error.to_string().contains("cancelled"));
         assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    #[ignore = "requires a locked QUEUEBACK_MEDIA_RUNTIME_DIR plus QUEUEBACK_FFMPEG_LIFECYCLE_TEST_PID; optional duration/output variables preserve A/B evidence"]
+    async fn real_ffmpeg_lifecycle_records_a_non_league_window() {
+        let pid = std::env::var("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_PID")
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        let duration_seconds = std::env::var("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_SECONDS")
+            .map_or(Ok(5), |value| value.parse::<u64>())
+            .expect("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_SECONDS must be an integer");
+        assert!(
+            (1..=3_600).contains(&duration_seconds),
+            "FFmpeg lifecycle fixture duration must be between 1 and 3600 seconds"
+        );
+        let persistent_directory =
+            std::env::var_os("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_OUTPUT").map(PathBuf::from);
+        let temporary_directory = persistent_directory
+            .is_none()
+            .then(|| tempfile::tempdir().unwrap());
+        let directory = persistent_directory
+            .clone()
+            .unwrap_or_else(|| temporary_directory.as_ref().unwrap().path().to_path_buf());
+        if persistent_directory.is_some() {
+            assert!(
+                !directory.exists(),
+                "persistent FFmpeg lifecycle fixture directory must be new: {}",
+                directory.display()
+            );
+            std::fs::create_dir_all(&directory).unwrap();
+        }
+
+        let ffmpeg = Ffmpeg::resolve().await.unwrap();
+        let decode_ffmpeg = ffmpeg.path().to_path_buf();
+        let target = crate::platform::capture_target_for_process(pid).unwrap();
+        let recording = RecordingConfig {
+            profile: RecordingProfile::High,
+            codec: CodecPreference::H264,
+        };
+        let candidates = ffmpeg
+            .windows_capture_candidates(&target, &recording, false)
+            .await
+            .unwrap();
+        let (selected_plan, selected_candidate) = candidates
+            .into_iter()
+            .find(|(plan, candidate)| {
+                plan.encoder() == EncoderKind::Nvenc
+                    && plan.codec() == VideoCodec::H264
+                    && candidate.interop == DirectInterop::D3d11Nvenc
+            })
+            .expect("locked runtime did not expose the direct D3D11/NVENC candidate");
+        let (_cancel, cancellation) = watch::channel(false);
+        let session = ffmpeg
+            .start_recording_candidate(
+                directory.clone(),
+                &target,
+                selected_plan,
+                &AudioSource::Silent,
+                RecordingCandidateStart::new(0, Duration::from_secs(15), cancellation),
+            )
+            .await
+            .unwrap();
+        let final_evidence = session.evidence_receiver();
+        assert!(final_evidence.borrow().startup_ready());
+        tokio::time::sleep(Duration::from_secs(duration_seconds)).await;
+
+        let published = session.stop().await.unwrap();
+        let video = published.join(VIDEO_MP4);
+        assert!(video.is_file());
+        assert!(std::fs::metadata(&video).unwrap().len() > 0);
+        let final_evidence = final_evidence.borrow().clone();
+        assert!(final_evidence.capture_terminal);
+        assert!(final_evidence.progress_end);
+        assert_eq!(final_evidence.frame_pool_capacity, Some(2));
+        assert_eq!(final_evidence.output_pool_capacity, Some(8));
+        assert!(final_evidence.protocol_error.is_none());
+        assert!(
+            final_evidence.encoded_frames >= duration_seconds.saturating_mul(55),
+            "FFmpeg lifecycle encoded {} frames during a {}-second fixture",
+            final_evidence.encoded_frames,
+            duration_seconds
+        );
+        assert!(final_evidence.muxed_bytes > 0);
+        assert!(final_evidence.output_time_us.is_some_and(|value| value > 0));
+        assert!(
+            final_evidence
+                .latest_qpc
+                .zip(final_evidence.first_qpc)
+                .is_some_and(|(latest, first)| latest > first)
+        );
+        if persistent_directory.is_some() {
+            std::fs::write(
+                published.join("recording-evidence.txt"),
+                format!(
+                    "duration_seconds={duration_seconds}\ninterop={}\n{final_evidence:#?}\n",
+                    selected_candidate.interop.label()
+                ),
+            )
+            .unwrap();
+        }
+        assert!(
+            std::process::Command::new(decode_ffmpeg)
+                .args(["-v", "error", "-i"])
+                .arg(video)
+                .args(["-f", "null", "-"])
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 }
