@@ -7,17 +7,20 @@
 use std::ffi::c_void;
 use std::io::Write;
 use std::marker::PhantomData;
+use std::os::windows::io::AsRawHandle;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
-use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
+use windows::Win32::System::IO::CancelSynchronousIo;
+use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects};
 use windows::core::{GUID, Interface, PCWSTR};
 
 use super::NATIVE_ENCODER_SLOT_COUNT;
@@ -35,6 +38,11 @@ const H264_BITRATE: u32 = 12_000_000;
 const H264_MAX_BITRATE: u32 = 18_000_000;
 const H264_VBV_BUFFER: u32 = 24_000_000;
 const H264_GOP_LENGTH: u32 = 120;
+
+const COMPLETION_EVENT_TIMEOUT_MS: u32 = 5_000;
+const COMPLETION_ACK_TIMEOUT: Duration = Duration::from_secs(6);
+const COMPLETION_JOIN_TIMEOUT: Duration = Duration::from_secs(6);
+const COMPLETION_ABORT_GRACE: Duration = Duration::from_secs(1);
 
 const NVENC_SUCCESS: i32 = 0;
 const NVENC_ERR_NEED_MORE_INPUT: i32 = 17;
@@ -205,6 +213,16 @@ impl OwnedEvent {
         // auto-reset event is uniquely owned and initially nonsignaled.
         let handle = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .context("could not create NVENC completion event")?;
+        Ok(Self {
+            handle: EventHandle(handle),
+        })
+    }
+
+    fn manual_reset() -> Result<Self> {
+        // SAFETY: no security descriptor or name is supplied; the returned
+        // manual-reset event is uniquely owned and initially nonsignaled.
+        let handle = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+            .context("could not create NVENC completion-cancellation event")?;
         Ok(Self {
             handle: EventHandle(handle),
         })
@@ -734,32 +752,32 @@ enum CompletionCommand {
 fn run_completion_thread(
     receiver: Receiver<CompletionCommand>,
     api: CompletionApi,
+    cancellation: EventHandle,
     mut writer: Box<dyn Write + Send>,
     telemetry: Arc<CompletionTelemetry>,
 ) -> Result<()> {
-    let mut first_error = None;
     while let Ok(command) = receiver.recv() {
-        match command {
+        let result = match command {
             CompletionCommand::Frame(task) => {
-                remember_error(
-                    &mut first_error,
-                    process_completion(task, api, &mut *writer, &telemetry),
-                );
+                process_completion(task, api, cancellation, &mut *writer, &telemetry)
             }
             CompletionCommand::Barrier(acknowledged) => {
                 let _ = acknowledged.send(());
+                Ok(())
             }
             CompletionCommand::Eos {
                 event,
                 acknowledged,
             } => {
-                if let Err(error) = wait_for_event(event, "NVENC EOS completion") {
-                    telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-                    telemetry.abort_cleanup.store(true, Ordering::Release);
-                    remember_error(&mut first_error, Some(error));
-                }
+                let result = wait_for_event(event, cancellation, "NVENC EOS completion");
                 let _ = acknowledged.send(());
+                result
             }
+        };
+        if let Err(error) = result {
+            telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
+            telemetry.abort_cleanup.store(true, Ordering::Release);
+            return Err(error);
         }
     }
 
@@ -768,25 +786,20 @@ fn run_completion_thread(
         .context("could not flush native H.264 output")
     {
         telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        remember_error(&mut first_error, Some(error));
+        telemetry.abort_cleanup.store(true, Ordering::Release);
+        return Err(error);
     }
-    match first_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 fn process_completion(
     task: CompletionTask,
     api: CompletionApi,
+    cancellation: EventHandle,
     writer: &mut dyn Write,
     telemetry: &CompletionTelemetry,
-) -> Option<anyhow::Error> {
-    if let Err(error) = wait_for_event(task.event, "NVENC frame completion") {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        telemetry.abort_cleanup.store(true, Ordering::Release);
-        return Some(error);
-    }
+) -> Result<()> {
+    wait_for_event(task.event, cancellation, "NVENC frame completion")?;
 
     let mut lock = NvencBlob::<LOCK_BITSTREAM_SIZE>::zeroed();
     lock.write(0, LOCK_BITSTREAM_VERSION);
@@ -794,36 +807,26 @@ fn process_completion(
     // SAFETY: the completion event for this output buffer was signaled, the
     // session/output handle remain live, and `lock` has the exact pinned ABI.
     let status = unsafe { (api.lock_bitstream)(api.encoder.as_ptr(), lock.as_mut_void()) };
-    if let Err(error) = nvenc_status(status, "nvEncLockBitstream after completion event") {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        telemetry.abort_cleanup.store(true, Ordering::Release);
-        return Some(error);
-    }
+    nvenc_status(status, "nvEncLockBitstream after completion event")?;
 
     let byte_count = lock.read::<u32>(36);
     let bitstream_pointer = lock.read::<*const u8>(56);
-    let mut first_error = None;
+    let mut output_error = None;
     if byte_count > 0 {
         if bitstream_pointer.is_null() {
-            remember_error(
-                &mut first_error,
-                Some(anyhow!(
-                    "NVENC locked {byte_count} bytes with a null bitstream pointer"
-                )),
-            );
+            output_error = Some(anyhow!(
+                "NVENC locked {byte_count} bytes with a null bitstream pointer"
+            ));
         } else {
             let length =
                 usize::try_from(byte_count).expect("u32 bitstream length must fit usize on Win64");
             // SAFETY: NVENC returned this pointer and byte count from a
             // successful lock; the slice is read-only and used before unlock.
             let bytes = unsafe { std::slice::from_raw_parts(bitstream_pointer, length) };
-            remember_error(
-                &mut first_error,
-                writer
-                    .write_all(bytes)
-                    .context("could not write native H.264 bitstream")
-                    .err(),
-            );
+            output_error = writer
+                .write_all(bytes)
+                .context("could not write native H.264 bitstream")
+                .err();
         }
     }
 
@@ -832,10 +835,7 @@ fn process_completion(
     let unlock_status =
         unsafe { (api.unlock_bitstream)(api.encoder.as_ptr(), task.output_bitstream.as_ptr()) };
     if let Err(error) = nvenc_status(unlock_status, "nvEncUnlockBitstream") {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        telemetry.abort_cleanup.store(true, Ordering::Release);
-        remember_error(&mut first_error, Some(error));
-        return first_error;
+        return Err(combine_completion_errors(error, output_error));
     }
 
     // SAFETY: the successful lock proves this submission completed; the
@@ -843,34 +843,47 @@ fn process_completion(
     let unmap_status =
         unsafe { (api.unmap_input_resource)(api.encoder.as_ptr(), task.mapped_input.as_ptr()) };
     if let Err(error) = nvenc_status(unmap_status, "nvEncUnmapInputResource") {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        telemetry.abort_cleanup.store(true, Ordering::Release);
-        remember_error(&mut first_error, Some(error));
-        return first_error;
+        return Err(combine_completion_errors(error, output_error));
     }
 
-    if let Err(error) = task.states.complete_submitted(task.slot_index) {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        telemetry.abort_cleanup.store(true, Ordering::Release);
-        remember_error(&mut first_error, Some(error));
-        return first_error;
-    }
+    task.states
+        .complete_submitted(task.slot_index)
+        .map_err(|error| combine_completion_errors(error, output_error.take()))?;
     telemetry.completed_frames.fetch_add(1, Ordering::Relaxed);
     telemetry
         .output_bytes
         .fetch_add(u64::from(byte_count), Ordering::Relaxed);
-    if first_error.is_some() {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
+    match output_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
-    first_error
 }
 
-fn wait_for_event(event: EventHandle, operation: &str) -> Result<()> {
-    // SAFETY: the event remains owned by its encoder slot until after the
-    // completion thread joins; an infinite wait is confined to this thread.
-    let result = unsafe { WaitForSingleObject(event.0, INFINITE) };
+fn wait_for_event(event: EventHandle, cancellation: EventHandle, operation: &str) -> Result<()> {
+    wait_for_event_with_timeout(event, cancellation, operation, COMPLETION_EVENT_TIMEOUT_MS)
+}
+
+fn wait_for_event_with_timeout(
+    event: EventHandle,
+    cancellation: EventHandle,
+    operation: &str,
+    timeout_ms: u32,
+) -> Result<()> {
+    // SAFETY: both handles remain owned by the encoder until after the
+    // completion thread joins (or are deliberately leaked with a detached
+    // stuck thread). The finite wait covers one frame or cancellation.
+    let result = unsafe { WaitForMultipleObjects(&[event.0, cancellation.0], false, timeout_ms) };
     if result == WAIT_OBJECT_0 {
         return Ok(());
+    }
+    if result.0 == WAIT_OBJECT_0.0 + 1 {
+        bail!("{operation} was cancelled during bounded shutdown");
+    }
+    if result == WAIT_TIMEOUT {
+        bail!(
+            "{operation} exceeded the {} ms completion deadline",
+            timeout_ms
+        );
     }
     if result == WAIT_FAILED {
         return Err(windows::core::Error::from_thread()).with_context(|| operation.to_owned());
@@ -881,6 +894,16 @@ fn wait_for_event(event: EventHandle, operation: &str) -> Result<()> {
     )
 }
 
+fn combine_completion_errors(
+    primary: anyhow::Error,
+    output: Option<anyhow::Error>,
+) -> anyhow::Error {
+    match output {
+        Some(output) => anyhow!("{primary:#}; output error: {output:#}"),
+        None => primary,
+    }
+}
+
 /// Direct H.264 encoder for M3's four fixed NV12 textures. This type is
 /// deliberately !Send/!Sync so D3D/NVENC submission remains on its creator
 /// worker; only ordered output completion crosses to the secondary thread.
@@ -888,12 +911,14 @@ pub struct NativeNvencEncoder {
     api: SubmissionApi,
     completion_sender: Option<SyncSender<CompletionCommand>>,
     completion_thread: Option<JoinHandle<Result<()>>>,
+    completion_done: Receiver<()>,
+    completion_cancellation: Option<OwnedEvent>,
     orphaned_completions: Vec<CompletionTask>,
     abandoned_mappings: Vec<NvencObjectHandle>,
     slots: Option<[NvencSlot; NATIVE_ENCODER_SLOT_COUNT]>,
     states: Arc<NativeNv12SlotStates>,
     session: Option<EncoderSession>,
-    _driver: NvencDriverProbe,
+    driver: Option<NvencDriverProbe>,
     completion_telemetry: Arc<CompletionTelemetry>,
     submitted_frames: u64,
     max_in_flight: u64,
@@ -977,18 +1002,37 @@ impl NativeNvencEncoder {
 
         let completion_telemetry = Arc::new(CompletionTelemetry::default());
         let (completion_sender, completion_receiver) =
-            sync_channel::<CompletionCommand>(NATIVE_ENCODER_SLOT_COUNT);
+            sync_channel::<CompletionCommand>(NATIVE_ENCODER_SLOT_COUNT + 2);
+        let completion_cancellation = match OwnedEvent::manual_reset() {
+            Ok(event) => event,
+            Err(error) => {
+                let mut slots = slots;
+                let cleanup_error = cleanup_slot_resources(api, encoder, &mut slots);
+                let session_error = session.close().err();
+                drop(slots);
+                return Err(combine_initialization_errors(
+                    error,
+                    cleanup_error,
+                    session_error,
+                ));
+            }
+        };
+        let cancellation_handle = completion_cancellation.handle();
+        let (completion_done_sender, completion_done) = sync_channel(1);
         let thread_telemetry = Arc::clone(&completion_telemetry);
         let completion_api = completion_seed.bind(encoder);
         let completion_thread = match std::thread::Builder::new()
             .name("chronobreak-nvenc-output".to_owned())
             .spawn(move || {
-                run_completion_thread(
+                let result = run_completion_thread(
                     completion_receiver,
                     completion_api,
+                    cancellation_handle,
                     Box::new(writer),
                     thread_telemetry,
-                )
+                );
+                let _ = completion_done_sender.send(());
+                result
             }) {
             Ok(thread) => thread,
             Err(error) => {
@@ -1008,12 +1052,14 @@ impl NativeNvencEncoder {
             api,
             completion_sender: Some(completion_sender),
             completion_thread: Some(completion_thread),
+            completion_done,
+            completion_cancellation: Some(completion_cancellation),
             orphaned_completions: Vec::new(),
             abandoned_mappings: Vec::new(),
             slots: Some(slots),
             states,
             session: Some(session),
-            _driver: driver,
+            driver: Some(driver),
             completion_telemetry,
             submitted_frames: 0,
             max_in_flight: 0,
@@ -1035,6 +1081,10 @@ impl NativeNvencEncoder {
             "native NVENC completion thread has reported an output error"
         );
         ensure!(!self.abort_cleanup, "native NVENC encoder is aborting");
+        ensure!(
+            frame.belongs_to(&self.states),
+            "converted NV12 frame belongs to a different four-texture ring than this NVENC encoder"
+        );
         let slot_index = frame.slot_index();
         let qpc_100ns = frame.qpc_100ns();
         let (registered_resource, output_bitstream, event) = {
@@ -1193,12 +1243,31 @@ impl NativeNvencEncoder {
             .as_ref()
             .context("native NVENC completion channel is closed")?;
         let (barrier_sender, barrier_receiver) = sync_channel(0);
-        sender
-            .send(CompletionCommand::Barrier(barrier_sender))
-            .context("NVENC completion thread closed before drain barrier")?;
-        barrier_receiver
-            .recv()
-            .context("NVENC completion thread did not acknowledge drain barrier")?;
+        match sender.try_send(CompletionCommand::Barrier(barrier_sender)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                self.request_completion_abort();
+                bail!("bounded NVENC completion queue was full before drain barrier");
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.request_completion_abort();
+                bail!("NVENC completion thread closed before drain barrier");
+            }
+        }
+        match barrier_receiver.recv_timeout(COMPLETION_ACK_TIMEOUT) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                self.request_completion_abort();
+                bail!(
+                    "NVENC completion thread did not acknowledge drain within {} seconds",
+                    COMPLETION_ACK_TIMEOUT.as_secs_f64()
+                );
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.request_completion_abort();
+                bail!("NVENC completion thread closed without acknowledging drain");
+            }
+        }
         ensure!(
             self.completion_telemetry
                 .completion_errors
@@ -1281,38 +1350,73 @@ impl NativeNvencEncoder {
         let mut first_error = None;
 
         for task in self.orphaned_completions.drain(..) {
-            if sender.send(CompletionCommand::Frame(task)).is_err() {
-                self.abort_cleanup = true;
-                remember_error(
-                    &mut first_error,
-                    Some(anyhow!(
-                        "NVENC completion thread closed during shutdown drain"
-                    )),
-                );
-                break;
+            match sender.try_send(CompletionCommand::Frame(task)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    self.abort_cleanup = true;
+                    remember_error(
+                        &mut first_error,
+                        Some(anyhow!(
+                            "bounded NVENC completion queue filled during shutdown drain"
+                        )),
+                    );
+                    break;
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    self.abort_cleanup = true;
+                    remember_error(
+                        &mut first_error,
+                        Some(anyhow!(
+                            "NVENC completion thread closed during shutdown drain"
+                        )),
+                    );
+                    break;
+                }
             }
         }
 
-        let (barrier_sender, barrier_receiver) = sync_channel(0);
-        if sender
-            .send(CompletionCommand::Barrier(barrier_sender))
-            .is_ok()
-        {
-            if barrier_receiver.recv().is_err() {
-                self.abort_cleanup = true;
-                remember_error(
-                    &mut first_error,
-                    Some(anyhow!("NVENC completion barrier was not acknowledged")),
-                );
+        if !self.abort_cleanup {
+            let (barrier_sender, barrier_receiver) = sync_channel(0);
+            match sender.try_send(CompletionCommand::Barrier(barrier_sender)) {
+                Ok(()) => match barrier_receiver.recv_timeout(COMPLETION_ACK_TIMEOUT) {
+                    Ok(()) => {}
+                    Err(RecvTimeoutError::Timeout) => {
+                        self.abort_cleanup = true;
+                        remember_error(
+                            &mut first_error,
+                            Some(anyhow!(
+                                "NVENC completion barrier exceeded {} seconds",
+                                COMPLETION_ACK_TIMEOUT.as_secs_f64()
+                            )),
+                        );
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        self.abort_cleanup = true;
+                        remember_error(
+                            &mut first_error,
+                            Some(anyhow!("NVENC completion barrier was not acknowledged")),
+                        );
+                    }
+                },
+                Err(TrySendError::Full(_)) => {
+                    self.abort_cleanup = true;
+                    remember_error(
+                        &mut first_error,
+                        Some(anyhow!(
+                            "bounded NVENC completion queue was full before shutdown barrier"
+                        )),
+                    );
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    self.abort_cleanup = true;
+                    remember_error(
+                        &mut first_error,
+                        Some(anyhow!(
+                            "NVENC completion thread closed before shutdown barrier"
+                        )),
+                    );
+                }
             }
-        } else {
-            self.abort_cleanup = true;
-            remember_error(
-                &mut first_error,
-                Some(anyhow!(
-                    "NVENC completion thread closed before shutdown barrier"
-                )),
-            );
         }
 
         let completion_failed = self
@@ -1337,19 +1441,46 @@ impl NativeNvencEncoder {
                 match self.submit_eos(event) {
                     Ok(()) => {
                         let (eos_sender, eos_receiver) = sync_channel(0);
-                        if sender
-                            .send(CompletionCommand::Eos {
-                                event,
-                                acknowledged: eos_sender,
-                            })
-                            .is_err()
-                            || eos_receiver.recv().is_err()
-                        {
-                            self.abort_cleanup = true;
-                            remember_error(
-                                &mut first_error,
-                                Some(anyhow!("NVENC EOS completion was not acknowledged")),
-                            );
+                        match sender.try_send(CompletionCommand::Eos {
+                            event,
+                            acknowledged: eos_sender,
+                        }) {
+                            Ok(()) => match eos_receiver.recv_timeout(COMPLETION_ACK_TIMEOUT) {
+                                Ok(()) => {}
+                                Err(RecvTimeoutError::Timeout) => {
+                                    self.abort_cleanup = true;
+                                    remember_error(
+                                        &mut first_error,
+                                        Some(anyhow!(
+                                            "NVENC EOS completion exceeded {} seconds",
+                                            COMPLETION_ACK_TIMEOUT.as_secs_f64()
+                                        )),
+                                    );
+                                }
+                                Err(RecvTimeoutError::Disconnected) => {
+                                    self.abort_cleanup = true;
+                                    remember_error(
+                                        &mut first_error,
+                                        Some(anyhow!("NVENC EOS completion was not acknowledged")),
+                                    );
+                                }
+                            },
+                            Err(TrySendError::Full(_)) => {
+                                self.abort_cleanup = true;
+                                remember_error(
+                                    &mut first_error,
+                                    Some(anyhow!(
+                                        "bounded NVENC completion queue was full before EOS"
+                                    )),
+                                );
+                            }
+                            Err(TrySendError::Disconnected(_)) => {
+                                self.abort_cleanup = true;
+                                remember_error(
+                                    &mut first_error,
+                                    Some(anyhow!("NVENC completion thread closed before EOS")),
+                                );
+                            }
                         }
                     }
                     Err(error) => {
@@ -1366,18 +1497,36 @@ impl NativeNvencEncoder {
             }
         }
 
+        if self.abort_cleanup
+            || self
+                .completion_telemetry
+                .abort_cleanup
+                .load(Ordering::Acquire)
+        {
+            remember_error(&mut first_error, self.request_completion_abort());
+        }
         drop(sender);
-        if let Some(thread) = self.completion_thread.take() {
-            match thread.join() {
-                Ok(result) => remember_error(&mut first_error, result.err()),
-                Err(_) => {
-                    self.abort_cleanup = true;
-                    remember_error(
-                        &mut first_error,
-                        Some(anyhow!("NVENC completion thread panicked")),
-                    );
-                }
-            }
+
+        let initial_join_timeout = if self.abort_cleanup {
+            COMPLETION_ABORT_GRACE
+        } else {
+            COMPLETION_JOIN_TIMEOUT
+        };
+        let mut joined = self.wait_and_join_completion(initial_join_timeout, &mut first_error);
+        if !joined {
+            remember_error(&mut first_error, self.request_completion_abort());
+            joined = self.wait_and_join_completion(COMPLETION_ABORT_GRACE, &mut first_error);
+        }
+        if !joined {
+            self.abort_cleanup = true;
+            remember_error(
+                &mut first_error,
+                Some(anyhow!(
+                    "NVENC completion/output thread remained stuck after cancellation; native resources were deliberately retained"
+                )),
+            );
+            self.abandon_native_resources();
+            return Err(first_error.expect("stuck completion thread must record an error"));
         }
 
         let encoder = self.session.as_ref().map(EncoderSession::handle);
@@ -1398,12 +1547,84 @@ impl NativeNvencEncoder {
         }
         self.session = None;
         self.slots = None;
+        self.completion_cancellation = None;
         self.abandoned_mappings.clear();
 
         match first_error {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    fn request_completion_abort(&mut self) -> Option<anyhow::Error> {
+        self.abort_cleanup = true;
+        self.completion_telemetry
+            .abort_cleanup
+            .store(true, Ordering::Release);
+        let mut first_error = None;
+        if let Some(event) = self.completion_cancellation.as_ref() {
+            // SAFETY: the manual-reset cancellation event remains owned by the
+            // encoder until the completion thread joins or all native owners
+            // are deliberately retained with a detached stuck thread.
+            remember_error(
+                &mut first_error,
+                unsafe { SetEvent(event.handle().0) }
+                    .context("could not signal NVENC completion cancellation")
+                    .err(),
+            );
+        }
+        if let Some(thread) = self.completion_thread.as_ref() {
+            let thread_handle = HANDLE(thread.as_raw_handle());
+            // SAFETY: `as_raw_handle` is the live OS handle for the completion
+            // thread. ERROR_NOT_FOUND simply means it was not currently in a
+            // cancellable synchronous write, so cancellation-event signaling
+            // remains the primary wakeup and this result is intentionally
+            // advisory.
+            let _ = unsafe { CancelSynchronousIo(thread_handle) };
+        }
+        first_error
+    }
+
+    fn wait_and_join_completion(
+        &mut self,
+        timeout: Duration,
+        first_error: &mut Option<anyhow::Error>,
+    ) -> bool {
+        match self.completion_done.recv_timeout(timeout) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                if let Some(thread) = self.completion_thread.take() {
+                    match thread.join() {
+                        Ok(result) => remember_error(first_error, result.err()),
+                        Err(_) => remember_error(
+                            first_error,
+                            Some(anyhow!("NVENC completion thread panicked")),
+                        ),
+                    }
+                }
+                true
+            }
+            Err(RecvTimeoutError::Timeout) => false,
+        }
+    }
+
+    fn abandon_native_resources(&mut self) {
+        // A detached thread may still be executing a driver call or output
+        // writer. Retaining every object/function-table owner is preferable to
+        // use-after-free. This exceptional path is bounded and terminal for
+        // the recording; the process can still exit normally.
+        if let Some(session) = self.session.take() {
+            std::mem::forget(session);
+        }
+        if let Some(slots) = self.slots.take() {
+            std::mem::forget(slots);
+        }
+        if let Some(event) = self.completion_cancellation.take() {
+            std::mem::forget(event);
+        }
+        if let Some(driver) = self.driver.take() {
+            std::mem::forget(driver);
+        }
+        self.completion_thread = None;
     }
 
     fn submit_eos(&self, event: EventHandle) -> Result<()> {
@@ -1534,5 +1755,48 @@ mod tests {
         assert_eq!(config.read::<u32>(360), 1);
         assert_eq!(config.read::<u32>(380), 8);
         assert_eq!(config.read::<u32>(384), 8);
+    }
+
+    #[test]
+    fn completion_wait_observes_frame_and_cancellation_events() {
+        let completion = OwnedEvent::auto_reset().unwrap();
+        let cancellation = OwnedEvent::manual_reset().unwrap();
+        // SAFETY: both events are live and owned for the duration of the wait.
+        unsafe { SetEvent(completion.handle().0) }.unwrap();
+        wait_for_event_with_timeout(
+            completion.handle(),
+            cancellation.handle(),
+            "test completion",
+            50,
+        )
+        .unwrap();
+
+        // SAFETY: the manual-reset cancellation event remains live/owned.
+        unsafe { SetEvent(cancellation.handle().0) }.unwrap();
+        assert!(
+            wait_for_event_with_timeout(
+                completion.handle(),
+                cancellation.handle(),
+                "test cancellation",
+                50,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn completion_wait_has_a_finite_timeout() {
+        let completion = OwnedEvent::auto_reset().unwrap();
+        let cancellation = OwnedEvent::manual_reset().unwrap();
+        let started = std::time::Instant::now();
+        let error = wait_for_event_with_timeout(
+            completion.handle(),
+            cancellation.handle(),
+            "test timeout",
+            10,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline"));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

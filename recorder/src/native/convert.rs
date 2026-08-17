@@ -509,6 +509,13 @@ impl ConvertedNv12Frame<'_> {
         self.qpc_100ns
     }
 
+    /// Proves that this lease belongs to the exact four-texture ring whose
+    /// resources an encoder registered. Pointer identity is unforgeable
+    /// through the public API while both live `Arc`s exist.
+    pub(super) fn belongs_to(&self, states: &Arc<NativeNv12SlotStates>) -> bool {
+        same_ring(&self.converter.slot_states, states)
+    }
+
     pub fn texture_desc(&self) -> D3D11_TEXTURE2D_DESC {
         output_texture_desc(self.converter.output_width, self.converter.output_height)
     }
@@ -536,6 +543,13 @@ impl ConvertedNv12Frame<'_> {
             self.released = true;
         }
     }
+}
+
+fn same_ring(
+    candidate: &Arc<NativeNv12SlotStates>,
+    registered: &Arc<NativeNv12SlotStates>,
+) -> bool {
+    Arc::ptr_eq(candidate, registered)
 }
 
 impl Drop for ConvertedNv12Frame<'_> {
@@ -854,6 +868,15 @@ mod tests {
         assert!(states.mark_submitted(0).is_err());
         states.complete_submitted(0).unwrap();
         assert_eq!(states.free_count(), NATIVE_ENCODER_SLOT_COUNT);
+    }
+
+    #[test]
+    fn encoder_ring_identity_rejects_a_distinct_four_slot_owner() {
+        let registered = Arc::new(NativeNv12SlotStates::new());
+        let same = Arc::clone(&registered);
+        let different = Arc::new(NativeNv12SlotStates::new());
+        assert!(same_ring(&registered, &same));
+        assert!(!same_ring(&registered, &different));
     }
 
     #[test]
