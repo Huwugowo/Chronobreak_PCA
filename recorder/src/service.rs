@@ -508,7 +508,9 @@ async fn start_recording(
     };
 
     if *cancellation.borrow() {
-        let _ = session.stop().await;
+        let _ = session
+            .stop_with_failure("recording startup was cancelled".to_owned())
+            .await;
         bail!("recording startup was cancelled");
     }
 
@@ -519,12 +521,17 @@ async fn start_recording(
     let poller = match PollerSession::start(&directory, session.video_started_at()).await {
         Ok(poller) => poller,
         Err(error) => {
-            let _ = session.stop().await;
+            let _ = session
+                .stop_with_failure(format!("Live Client poller startup failed: {error:#}"))
+                .await;
             return Err(error).context("failed to start the Live Client poller");
         }
     };
     if *cancellation.borrow() {
-        let _ = tokio::join!(poller.stop(), session.stop());
+        let _ = tokio::join!(
+            poller.stop(),
+            session.stop_with_failure("recording startup was cancelled".to_owned())
+        );
         bail!("recording startup was cancelled");
     }
     let diagnostics = session.evidence_receiver();
@@ -715,10 +722,15 @@ async fn stop_recording_inner(
         poller,
         mut details,
     } = recording;
-    let directory = session.directory().to_path_buf();
     let recorded_at = session.recorded_at();
     let duration = session.video_started_at().elapsed();
-    let (summary, video_result) = tokio::join!(poller.stop(), session.stop());
+    let video_stop = async {
+        match failure_reason {
+            Some(reason) => session.stop_with_failure(reason).await,
+            None => session.stop().await,
+        }
+    };
+    let (summary, video_result) = tokio::join!(poller.stop(), video_stop);
 
     let final_diagnostics = diagnostics.borrow().clone();
     log_capture_progress(
@@ -745,39 +757,38 @@ async fn stop_recording_inner(
             final_diagnostics.capture_terminal && final_diagnostics.progress_end;
     }
 
-    let metadata_result = RecordingMetadata::new(recorded_at, duration, summary, details);
-    match metadata_result {
-        Ok(metadata) => {
-            if let Err(metadata_error) =
-                write_json_atomic(&directory.join(METADATA_JSON), &metadata).await
-            {
-                error!(error = %metadata_error, "could not write recording metadata");
-                events(ServiceEvent::Error {
-                    message: format!("Recording metadata could not be saved: {metadata_error:#}"),
-                });
-            }
-        }
-        Err(metadata_error) => {
-            error!(error = %metadata_error, "could not build recording metadata");
-            events(ServiceEvent::Error {
-                message: format!("Recording metadata could not be created: {metadata_error:#}"),
-            });
-        }
-    }
-
-    let video_result = match (video_result, failure_reason) {
-        (Ok(_), Some(reason)) => Err(anyhow::anyhow!(reason)),
-        (result, _) => result,
-    };
     match video_result {
         Ok(directory) => {
             info!(directory = %directory.display(), "video closed");
+            let metadata_result = RecordingMetadata::new(recorded_at, duration, summary, details);
+            match metadata_result {
+                Ok(metadata) => {
+                    if let Err(metadata_error) =
+                        write_json_atomic(&directory.join(METADATA_JSON), &metadata).await
+                    {
+                        error!(error = %metadata_error, "could not write recording metadata");
+                        events(ServiceEvent::Error {
+                            message: format!(
+                                "Recording metadata could not be saved: {metadata_error:#}"
+                            ),
+                        });
+                    }
+                }
+                Err(metadata_error) => {
+                    error!(error = %metadata_error, "could not build recording metadata");
+                    events(ServiceEvent::Error {
+                        message: format!(
+                            "Recording metadata could not be created: {metadata_error:#}"
+                        ),
+                    });
+                }
+            }
         }
         Err(stop_error) => {
             error!(error = %stop_error, "recording stopped with an error");
             events(ServiceEvent::Error {
                 message: format!(
-                    "Recording stopped unexpectedly; the fragmented MP4 was preserved: {stop_error:#}"
+                    "Recording stopped unexpectedly; no canonical video was published. Any recoverable output remains under an explicit .partial.mp4 name: {stop_error:#}"
                 ),
             });
         }

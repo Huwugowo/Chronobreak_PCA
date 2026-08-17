@@ -7,6 +7,7 @@ use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 
 pub const VIDEO_MP4: &str = "video.mp4";
+pub const VIDEO_PARTIAL_MP4: &str = "video.partial.mp4";
 pub const GAME_LOG_JSON: &str = "game_log.json";
 pub const METADATA_JSON: &str = "metadata.json";
 

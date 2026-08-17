@@ -17,7 +17,7 @@ use crate::config::{CodecPreference, RecordingConfig, RecordingProfile};
 use crate::platform::{
     CaptureSource, CaptureTarget, instant_from_qpc_100ns, validate_capture_target,
 };
-use crate::storage::VIDEO_MP4;
+use crate::storage::{VIDEO_MP4, VIDEO_PARTIAL_MP4};
 
 pub mod capabilities;
 mod progress;
@@ -645,7 +645,7 @@ impl Ffmpeg {
             plan,
             audio,
             RecordingOutputStart {
-                output_name: VIDEO_MP4.to_owned(),
+                output_name: VIDEO_PARTIAL_MP4.to_owned(),
                 startup_timeout: FFMPEG_STARTUP_TIMEOUT,
                 cancellation: None,
             },
@@ -667,7 +667,7 @@ impl Ffmpeg {
             plan,
             audio,
             RecordingOutputStart {
-                output_name: format!("video-candidate-{}.mp4", start.candidate_index),
+                output_name: format!("video-candidate-{}.partial.mp4", start.candidate_index),
                 startup_timeout: start.startup_timeout,
                 cancellation: Some(start.cancellation),
             },
@@ -899,10 +899,18 @@ impl RecordingSession {
             .is_some())
     }
 
-    pub async fn stop(mut self) -> Result<PathBuf> {
+    pub async fn stop(self) -> Result<PathBuf> {
+        self.stop_inner(None).await
+    }
+
+    pub(crate) async fn stop_with_failure(self, failure_reason: String) -> Result<PathBuf> {
+        self.stop_inner(Some(failure_reason)).await
+    }
+
+    async fn stop_inner(mut self, failure_reason: Option<String>) -> Result<PathBuf> {
         let mut exit_status = self.child.try_wait().context("failed to inspect ffmpeg")?;
         let exited_before_stop = exit_status.is_some();
-        let mut stop_error = None;
+        let mut stop_error = failure_reason;
         if exit_status.is_none() {
             if let Some(mut stdin) = self.child.stdin.take() {
                 let delivery = tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, async {
@@ -914,16 +922,18 @@ impl RecordingSession {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
                         warn!(%error, "failed to send graceful stop to ffmpeg");
-                        stop_error =
-                            Some(format!("could not deliver FFmpeg stop command: {error}"));
+                        stop_error.get_or_insert_with(|| {
+                            format!("could not deliver FFmpeg stop command: {error}")
+                        });
                     }
                     Err(_) => {
                         warn!("timed out sending graceful stop to ffmpeg");
-                        stop_error = Some("FFmpeg stop command timed out".to_owned());
+                        stop_error
+                            .get_or_insert_with(|| "FFmpeg stop command timed out".to_owned());
                     }
                 }
             } else {
-                stop_error = Some("FFmpeg stop pipe was unavailable".to_owned());
+                stop_error.get_or_insert_with(|| "FFmpeg stop pipe was unavailable".to_owned());
             }
 
             match tokio::time::timeout(FFMPEG_STOP_TIMEOUT, self.child.wait()).await {
@@ -933,7 +943,8 @@ impl RecordingSession {
                 }
                 Ok(Err(error)) => {
                     warn!(%error, "failed while waiting for ffmpeg");
-                    stop_error = Some(format!("failed while waiting for FFmpeg: {error}"));
+                    stop_error
+                        .get_or_insert_with(|| format!("failed while waiting for FFmpeg: {error}"));
                     let _ = self.child.start_kill();
                     exit_status =
                         tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, self.child.wait())
@@ -943,7 +954,8 @@ impl RecordingSession {
                 }
                 Err(_) => {
                     warn!("ffmpeg did not stop within 10 seconds; forcing termination");
-                    stop_error = Some("FFmpeg did not stop within 10 seconds".to_owned());
+                    stop_error
+                        .get_or_insert_with(|| "FFmpeg did not stop within 10 seconds".to_owned());
                     let _ = self.child.start_kill();
                     exit_status =
                         tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, self.child.wait())
@@ -984,39 +996,50 @@ impl RecordingSession {
             .await
             .with_context(|| format!("recording is missing {}", output.display()))?;
         if output_metadata.len() == 0 {
-            bail!("recording {} is empty", output.display());
-        }
-
-        let canonical_output = self.directory.join(VIDEO_MP4);
-        if output != canonical_output {
-            if tokio::fs::try_exists(&canonical_output).await? {
-                bail!(
-                    "refusing to overwrite an existing recording at {}",
-                    canonical_output.display()
-                );
-            }
-            tokio::fs::rename(&output, &canonical_output)
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to publish candidate output {} as {}",
-                        output.display(),
-                        canonical_output.display()
-                    )
-                })?;
+            bail!(
+                "recording {} is empty; partial output was not published",
+                output.display()
+            );
         }
 
         if let Some(status) = exit_status
             && !status.success()
         {
-            bail!("ffmpeg exited with {status}; the partial MP4 was preserved");
+            bail!(
+                "ffmpeg exited with {status}; partial MP4 preserved at {}",
+                output.display()
+            );
         }
         if exited_before_stop {
-            bail!("FFmpeg exited before QueueBack requested stop; the partial MP4 was preserved");
+            bail!(
+                "FFmpeg exited before QueueBack requested stop; partial MP4 preserved at {}",
+                output.display()
+            );
         }
         if let Some(error) = stop_error {
-            bail!("{error}; the fragmented MP4 was preserved");
+            bail!(
+                "{error}; partial fragmented MP4 preserved at {}",
+                output.display()
+            );
         }
+
+        let canonical_output = self.directory.join(VIDEO_MP4);
+        if tokio::fs::try_exists(&canonical_output).await? {
+            bail!(
+                "refusing to overwrite an existing recording at {}; validated partial remains at {}",
+                canonical_output.display(),
+                output.display()
+            );
+        }
+        tokio::fs::rename(&output, &canonical_output)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to publish validated output {} as {}",
+                    output.display(),
+                    canonical_output.display()
+                )
+            })?;
         Ok(self.directory)
     }
 }
@@ -1500,6 +1523,36 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    fn write_recording_fixture(path: &Path, stop_exit_code: u32) {
+        let script = r#"@echo off
+setlocal EnableDelayedExpansion
+set "last="
+for %%A in (%*) do set "last=%%~A"
+> "!last!" echo fake-fragmented-mp4
+>&2 echo queueback_capture abi=1 event=ready frame_pool_capacity=2 output_pool_capacity=8
+>&2 echo queueback_capture abi=1 event=first_frame source_frames_surfaced=1 source_frames_superseded=0 first_qpc=100 latest_qpc=100
+echo frame=2
+echo total_size=20
+echo out_time_us=16667
+echo progress=continue
+:wait
+set "line="
+set /p line=
+if /I "!line!"=="q" (
+  echo frame=3
+  echo total_size=20
+  echo out_time_us=33333
+  echo progress=end
+  >&2 echo queueback_capture abi=1 event=terminal source_frames_surfaced=2 source_frames_superseded=0 pool_recreations=0 first_qpc=100 latest_qpc=200
+  exit /b __STOP_EXIT_CODE__
+)
+goto wait
+"#
+        .replace("__STOP_EXIT_CODE__", &stop_exit_code.to_string());
+        std::fs::write(path, script).unwrap();
+    }
+
     #[test]
     fn prefers_stereo_mix_over_wasapi() {
         let listing = r#"
@@ -1779,16 +1832,77 @@ goto wait
             .start_recording(bundle.clone(), &target(), selected, &AudioSource::Silent)
             .await
             .unwrap();
-        assert!(bundle.join(VIDEO_MP4).exists());
+        assert!(!bundle.join(VIDEO_MP4).exists());
+        assert!(bundle.join(VIDEO_PARTIAL_MP4).exists());
 
         let completed_directory = session.stop().await.unwrap();
         assert_eq!(completed_directory, bundle);
         assert!(bundle.join(VIDEO_MP4).exists());
+        assert!(!bundle.join(VIDEO_PARTIAL_MP4).exists());
         let completed_files: Vec<_> = std::fs::read_dir(&bundle)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(completed_files, [std::ffi::OsString::from(VIDEO_MP4)]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn failed_ffmpeg_stop_never_publishes_the_partial_recording() {
+        let directory = tempfile::tempdir().unwrap();
+        let fake_ffmpeg = directory.path().join("failing-stop-ffmpeg.cmd");
+        write_recording_fixture(&fake_ffmpeg, 7);
+        let bundle = directory.path().join("bundle");
+        std::fs::create_dir(&bundle).unwrap();
+        let ffmpeg = Ffmpeg {
+            path: fake_ffmpeg,
+            runtime_id: "test-runtime".to_owned(),
+        };
+        let session = ffmpeg
+            .start_recording(
+                bundle.clone(),
+                &target(),
+                plan(RecordingProfile::High, VideoCodec::H264),
+                &AudioSource::Silent,
+            )
+            .await
+            .unwrap();
+
+        let error = session.stop().await.unwrap_err();
+        assert!(error.to_string().contains("partial MP4 preserved"));
+        assert!(!bundle.join(VIDEO_MP4).exists());
+        assert!(bundle.join(VIDEO_PARTIAL_MP4).exists());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn external_failure_never_publishes_an_otherwise_valid_recording() {
+        let directory = tempfile::tempdir().unwrap();
+        let fake_ffmpeg = directory.path().join("external-failure-ffmpeg.cmd");
+        write_recording_fixture(&fake_ffmpeg, 0);
+        let bundle = directory.path().join("bundle");
+        std::fs::create_dir(&bundle).unwrap();
+        let ffmpeg = Ffmpeg {
+            path: fake_ffmpeg,
+            runtime_id: "test-runtime".to_owned(),
+        };
+        let session = ffmpeg
+            .start_recording(
+                bundle.clone(),
+                &target(),
+                plan(RecordingProfile::High, VideoCodec::H264),
+                &AudioSource::Silent,
+            )
+            .await
+            .unwrap();
+
+        let error = session
+            .stop_with_failure("fixture watchdog failure".to_owned())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("fixture watchdog failure"));
+        assert!(!bundle.join(VIDEO_MP4).exists());
+        assert!(bundle.join(VIDEO_PARTIAL_MP4).exists());
     }
 
     #[cfg(target_os = "windows")]
