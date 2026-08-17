@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use windows::Win32::Foundation::RECT;
@@ -37,12 +38,18 @@ const NV12_SLOT_SUBMITTED: u8 = 2;
 /// ownership only; the D3D11 immediate/video contexts never leave the worker.
 pub(super) struct NativeNv12SlotStates {
     states: [AtomicU8; NATIVE_ENCODER_SLOT_COUNT],
+    waiter_active: AtomicBool,
+    wait_lock: Mutex<()>,
+    slot_released: Condvar,
 }
 
 impl NativeNv12SlotStates {
     fn new() -> Self {
         Self {
             states: std::array::from_fn(|_| AtomicU8::new(NV12_SLOT_FREE)),
+            waiter_active: AtomicBool::new(false),
+            wait_lock: Mutex::new(()),
+            slot_released: Condvar::new(),
         }
     }
 
@@ -91,12 +98,53 @@ impl NativeNv12SlotStates {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
-            .map(|_| ())
+            .map(|_| self.notify_slot_released())
             .map_err(|actual| {
                 anyhow::anyhow!(
                     "native NV12 slot {slot_index} completed outside submitted state (state {actual})"
                 )
             })
+    }
+
+    fn wait_for_free_slot(&self, timeout: Duration) -> bool {
+        if self.free_count() > 0 {
+            return true;
+        }
+        self.waiter_active.store(true, Ordering::Release);
+        let result = self.wait_for_free_slot_inner(timeout);
+        self.waiter_active.store(false, Ordering::Release);
+        result
+    }
+
+    fn wait_for_free_slot_inner(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let Ok(mut guard) = self.wait_lock.lock() else {
+            return false;
+        };
+        loop {
+            if self.free_count() > 0 {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let Ok((next_guard, wait)) = self.slot_released.wait_timeout(guard, remaining) else {
+                return false;
+            };
+            guard = next_guard;
+            if wait.timed_out() {
+                return self.free_count() > 0;
+            }
+        }
+    }
+
+    fn notify_slot_released(&self) {
+        if self.waiter_active.load(Ordering::Acquire)
+            && let Ok(_guard) = self.wait_lock.lock()
+        {
+            self.slot_released.notify_one();
+        }
     }
 
     pub(super) fn all_free(&self) -> bool {
@@ -133,6 +181,7 @@ struct LatestSourceSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeNv12TelemetrySnapshot {
     pub converted_frames: u64,
+    pub slot_waits: u64,
     pub no_free_slot_drops: u64,
     pub slot_texture_allocations: u64,
     pub input_view_creations: u64,
@@ -147,6 +196,7 @@ pub struct NativeNv12TelemetrySnapshot {
 #[derive(Default)]
 struct NativeNv12Telemetry {
     converted_frames: u64,
+    slot_waits: u64,
     no_free_slot_drops: u64,
     slot_texture_allocations: u64,
     input_view_creations: u64,
@@ -162,6 +212,7 @@ impl NativeNv12Telemetry {
     fn snapshot(&self) -> NativeNv12TelemetrySnapshot {
         NativeNv12TelemetrySnapshot {
             converted_frames: self.converted_frames,
+            slot_waits: self.slot_waits,
             no_free_slot_drops: self.no_free_slot_drops,
             slot_texture_allocations: self.slot_texture_allocations,
             input_view_creations: self.input_view_creations,
@@ -382,12 +433,30 @@ impl NativeNv12Converter {
         &'converter mut self,
         qpc_100ns: i64,
     ) -> Result<Option<ConvertedNv12Frame<'converter>>> {
+        self.convert_staged_with_wait(qpc_100ns, Duration::ZERO)
+    }
+
+    /// Convert a CFR tick after waiting at most `slot_wait_timeout` for one of
+    /// the exact four encoder slots. The steady path does not enter the wait;
+    /// a timeout remains an accounted drop and cannot grow a frame queue.
+    pub fn convert_staged_with_wait<'converter>(
+        &'converter mut self,
+        qpc_100ns: i64,
+        slot_wait_timeout: Duration,
+    ) -> Result<Option<ConvertedNv12Frame<'converter>>> {
         ensure!(
             self.latest_source.populated,
             "native CFR tick requested before the first source snapshot"
         );
         ensure!(qpc_100ns > 0, "native CFR tick timestamp must be positive");
-        let Some(slot_index) = self.slot_states.try_acquire_converted() else {
+        let mut slot_index = self.slot_states.try_acquire_converted();
+        if slot_index.is_none() && !slot_wait_timeout.is_zero() {
+            self.telemetry.slot_waits = self.telemetry.slot_waits.saturating_add(1);
+            if self.slot_states.wait_for_free_slot(slot_wait_timeout) {
+                slot_index = self.slot_states.try_acquire_converted();
+            }
+        }
+        let Some(slot_index) = slot_index else {
             self.telemetry.no_free_slot_drops = self.telemetry.no_free_slot_drops.saturating_add(1);
             return Ok(None);
         };
@@ -1071,6 +1140,38 @@ mod tests {
         assert!(states.mark_submitted(0).is_err());
         states.complete_submitted(0).unwrap();
         assert_eq!(states.free_count(), NATIVE_ENCODER_SLOT_COUNT);
+    }
+
+    #[test]
+    fn bounded_slot_wait_wakes_when_completion_releases_a_slot() {
+        let states = Arc::new(NativeNv12SlotStates::new());
+        for expected in 0..NATIVE_ENCODER_SLOT_COUNT {
+            assert_eq!(states.try_acquire_converted(), Some(expected));
+            states.mark_submitted(expected).unwrap();
+        }
+
+        let completion_states = Arc::clone(&states);
+        let completion = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            completion_states.complete_submitted(0).unwrap();
+        });
+
+        assert!(states.wait_for_free_slot(Duration::from_secs(1)));
+        completion.join().unwrap();
+        assert_eq!(states.free_count(), 1);
+    }
+
+    #[test]
+    fn bounded_slot_wait_returns_after_finite_timeout() {
+        let states = NativeNv12SlotStates::new();
+        for expected in 0..NATIVE_ENCODER_SLOT_COUNT {
+            assert_eq!(states.try_acquire_converted(), Some(expected));
+            states.mark_submitted(expected).unwrap();
+        }
+
+        let started = Instant::now();
+        assert!(!states.wait_for_free_slot(Duration::from_millis(10)));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

@@ -17,6 +17,7 @@ const NATIVE_WIDTH: u32 = 1920;
 const NATIVE_HEIGHT: u32 = 1080;
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SOURCE_WAIT: Duration = Duration::from_millis(250);
+const MAX_ENCODER_SLOT_WAIT: Duration = Duration::from_millis(16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeSessionTelemetrySnapshot {
@@ -256,7 +257,10 @@ impl NativeRecorderSession {
             self.unstaged_tick_drops = self.unstaged_tick_drops.saturating_add(1);
             return Ok(());
         }
-        let Some(converted) = self.converter.convert_staged(qpc_100ns)? else {
+        let Some(converted) = self
+            .converter
+            .convert_staged_with_wait(qpc_100ns, MAX_ENCODER_SLOT_WAIT)?
+        else {
             self.slot_tick_drops = self.slot_tick_drops.saturating_add(1);
             return Ok(());
         };

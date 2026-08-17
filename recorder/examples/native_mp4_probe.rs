@@ -92,10 +92,13 @@ mod windows_probe {
             telemetry.encode.submission_queue_failures,
             telemetry.encode.completion_errors
         );
+        // Minimize/restore can make WGC recreate through a transient size for
+        // which no frame is admitted. The converter must rebuild only for
+        // dimensions that actually reach its persistent source snapshot.
         ensure!(
             telemetry.conversion.source_snapshot_allocations
-                == telemetry.capture.recreations.saturating_add(1)
-                && telemetry.conversion.processor_recreations == telemetry.capture.recreations
+                == telemetry.conversion.processor_recreations.saturating_add(1)
+                && telemetry.conversion.processor_recreations <= telemetry.capture.recreations
                 && telemetry.conversion.source_snapshot_copies > 0,
             "native CFR source snapshot was not resize-bounded: capture_recreations={} processor_recreations={} allocations={} copies={}",
             telemetry.capture.recreations,
@@ -105,7 +108,7 @@ mod windows_probe {
         );
 
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} cfr_discards={} cfr_duplicates={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} cfr_discards={} cfr_duplicates={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_waits={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} processor_recreations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
             telemetry.cfr.scheduled_ticks,
             telemetry.cfr.source_discards,
             telemetry.cfr.duplicate_ticks,
@@ -116,11 +119,13 @@ mod windows_probe {
             telemetry.mux.output_file_bytes,
             telemetry.mux.output_time_us.unwrap_or_default(),
             telemetry.encode.max_in_flight,
+            telemetry.conversion.slot_waits,
             telemetry.slot_tick_drops,
             telemetry.unstaged_tick_drops,
             telemetry.capture.arrivals,
             telemetry.capture.handoff_drops,
             telemetry.capture.recreations,
+            telemetry.conversion.processor_recreations,
             telemetry.conversion.source_snapshot_allocations,
             telemetry.conversion.source_snapshot_copies,
             output.display()
