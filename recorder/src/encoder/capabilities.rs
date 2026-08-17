@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn each_vendor_boundary_uses_the_same_vendor_neutral_planner() {
         for (encoder, interop, depth) in [
-            (EncoderKind::Nvenc, DirectInterop::D3d11Nvenc, 16),
+            (EncoderKind::Nvenc, DirectInterop::D3d11Nvenc, 4),
             (EncoderKind::Amf, DirectInterop::D3d11Amf, 4),
             (EncoderKind::Qsv, DirectInterop::D3d11Qsv, 4),
         ] {

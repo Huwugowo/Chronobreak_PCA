@@ -8,6 +8,7 @@
 mod capture;
 mod convert;
 mod d3d11;
+mod encode;
 mod mux;
 mod nvenc;
 mod source;
@@ -18,6 +19,7 @@ pub use capture::{
     NativeWgcTelemetrySnapshot,
 };
 pub use convert::{ConvertedNv12Frame, NativeNv12Converter, NativeNv12TelemetrySnapshot};
+pub use encode::{NativeNvencEncoder, NativeNvencTelemetrySnapshot};
 pub use mux::NativeMuxPlan;
 pub use nvenc::{NvencApiVersion, NvencDriverProbe, NvencH264Capability};
 pub use source::NativeWgcSource;

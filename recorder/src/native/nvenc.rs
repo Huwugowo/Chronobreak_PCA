@@ -10,9 +10,9 @@ use windows::core::{GUID, Interface, PCWSTR};
 
 use super::source::NativeWgcSource;
 
-const NVENC_API_MAJOR_VERSION: u32 = 12;
-const NVENC_API_MINOR_VERSION: u32 = 2;
-const NVENC_API_VERSION: u32 = NVENC_API_MAJOR_VERSION | (NVENC_API_MINOR_VERSION << 24);
+pub(super) const NVENC_API_MAJOR_VERSION: u32 = 12;
+pub(super) const NVENC_API_MINOR_VERSION: u32 = 2;
+pub(super) const NVENC_API_VERSION: u32 = NVENC_API_MAJOR_VERSION | (NVENC_API_MINOR_VERSION << 24);
 const NVENC_STRUCT_VERSION_BASE: u32 = 0x7000_0000;
 const NVENC_FUNCTION_LIST_VERSION: u32 = nvenc_struct_version(2);
 const NVENC_OPEN_SESSION_VERSION: u32 = nvenc_struct_version(1);
@@ -29,7 +29,7 @@ const REQUIRED_WIDTH: u32 = 1920;
 const REQUIRED_HEIGHT: u32 = 1080;
 const REQUIRED_MACROBLOCKS_PER_FRAME: u32 = 120 * 68;
 const REQUIRED_MACROBLOCKS_PER_SECOND: u32 = REQUIRED_MACROBLOCKS_PER_FRAME * 60;
-const H264_GUID: GUID = GUID::from_values(
+pub(super) const H264_GUID: GUID = GUID::from_values(
     0x6bc8_2762,
     0x4e63,
     0x4ca4,
@@ -42,7 +42,7 @@ const FUNCTION_GET_CAPS: usize = 7;
 const FUNCTION_DESTROY_ENCODER: usize = 27;
 const FUNCTION_OPEN_SESSION_EX: usize = 29;
 
-const fn nvenc_struct_version(version: u32) -> u32 {
+pub(super) const fn nvenc_struct_version(version: u32) -> u32 {
     NVENC_API_VERSION | (version << 16) | NVENC_STRUCT_VERSION_BASE
 }
 
@@ -60,7 +60,7 @@ type OpenEncodeSessionEx =
     unsafe extern "system" fn(*mut NvencOpenSessionParams, *mut *mut c_void) -> i32;
 
 #[repr(C)]
-struct NvencFunctionList {
+pub(super) struct NvencFunctionList {
     version: u32,
     reserved: u32,
     functions: [*mut c_void; 43],
@@ -110,7 +110,7 @@ impl NvencFunctionList {
         Ok(unsafe { std::mem::transmute::<*mut c_void, OpenEncodeSessionEx>(pointer) })
     }
 
-    fn required_function(&self, index: usize, name: &str) -> Result<*mut c_void> {
+    pub(super) fn required_function(&self, index: usize, name: &str) -> Result<*mut c_void> {
         self.functions
             .get(index)
             .copied()
@@ -120,7 +120,7 @@ impl NvencFunctionList {
 }
 
 #[repr(C)]
-struct NvencOpenSessionParams {
+pub(super) struct NvencOpenSessionParams {
     version: u32,
     device_type: i32,
     device: *mut c_void,
@@ -131,7 +131,7 @@ struct NvencOpenSessionParams {
 }
 
 impl NvencOpenSessionParams {
-    fn directx(device: *mut c_void) -> Self {
+    pub(super) fn directx(device: *mut c_void) -> Self {
         Self {
             version: NVENC_OPEN_SESSION_VERSION,
             device_type: NVENC_DEVICE_TYPE_DIRECTX,
@@ -345,7 +345,7 @@ impl NvencDriverProbe {
         })
     }
 
-    fn create_function_list(&self) -> Result<NvencFunctionList> {
+    pub(super) fn create_function_list(&self) -> Result<NvencFunctionList> {
         // SAFETY: `module` is live and the symbol name is static and
         // NUL-terminated.
         let symbol =
@@ -434,7 +434,7 @@ fn query_u32_cap(
     u32::try_from(value).with_context(|| format!("NVENC returned negative {label}: {value}"))
 }
 
-fn nvenc_status(status: i32, operation: &str) -> Result<()> {
+pub(super) fn nvenc_status(status: i32, operation: &str) -> Result<()> {
     if status == NVENC_SUCCESS {
         return Ok(());
     }

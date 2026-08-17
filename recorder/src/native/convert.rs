@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use anyhow::{Context, Result, ensure};
 use windows::Win32::Foundation::RECT;
@@ -26,10 +28,88 @@ use super::capture::CapturedWgcFrame;
 use super::d3d11::{NativeD3d11Device, NativeSourceTexture};
 use super::{NATIVE_ENCODER_SLOT_COUNT, NATIVE_WGC_FRAME_POOL_CAPACITY};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NativeNv12SlotState {
-    Free,
-    Converted { qpc_100ns: i64 },
+const NV12_SLOT_FREE: u8 = 0;
+const NV12_SLOT_CONVERTED: u8 = 1;
+const NV12_SLOT_SUBMITTED: u8 = 2;
+
+/// Thread-safe ownership states for the fixed texture ring. The atomics carry
+/// ownership only; the D3D11 immediate/video contexts never leave the worker.
+pub(super) struct NativeNv12SlotStates {
+    states: [AtomicU8; NATIVE_ENCODER_SLOT_COUNT],
+}
+
+impl NativeNv12SlotStates {
+    fn new() -> Self {
+        Self {
+            states: std::array::from_fn(|_| AtomicU8::new(NV12_SLOT_FREE)),
+        }
+    }
+
+    fn try_acquire_converted(&self) -> Option<usize> {
+        self.states.iter().position(|state| {
+            state
+                .compare_exchange(
+                    NV12_SLOT_FREE,
+                    NV12_SLOT_CONVERTED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+        })
+    }
+
+    fn release_converted(&self, slot_index: usize) {
+        debug_assert_eq!(
+            self.states[slot_index].load(Ordering::Relaxed),
+            NV12_SLOT_CONVERTED
+        );
+        self.states[slot_index].store(NV12_SLOT_FREE, Ordering::Release);
+    }
+
+    fn mark_submitted(&self, slot_index: usize) -> Result<()> {
+        self.states[slot_index]
+            .compare_exchange(
+                NV12_SLOT_CONVERTED,
+                NV12_SLOT_SUBMITTED,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+            .map(|_| ())
+            .map_err(|actual| {
+                anyhow::anyhow!(
+                    "native NV12 slot {slot_index} changed from converted before NVENC submission (state {actual})"
+                )
+            })
+    }
+
+    pub(super) fn complete_submitted(&self, slot_index: usize) -> Result<()> {
+        self.states[slot_index]
+            .compare_exchange(
+                NV12_SLOT_SUBMITTED,
+                NV12_SLOT_FREE,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map(|_| ())
+            .map_err(|actual| {
+                anyhow::anyhow!(
+                    "native NV12 slot {slot_index} completed outside submitted state (state {actual})"
+                )
+            })
+    }
+
+    pub(super) fn all_free(&self) -> bool {
+        self.states
+            .iter()
+            .all(|state| state.load(Ordering::Acquire) == NV12_SLOT_FREE)
+    }
+
+    fn free_count(&self) -> usize {
+        self.states
+            .iter()
+            .filter(|state| state.load(Ordering::Acquire) == NV12_SLOT_FREE)
+            .count()
+    }
 }
 
 struct NativeNv12Slot {
@@ -49,6 +129,7 @@ pub struct NativeNv12TelemetrySnapshot {
     pub no_free_slot_drops: u64,
     pub slot_texture_allocations: u64,
     pub input_view_creations: u64,
+    pub input_view_replacements: u64,
     pub input_view_cache_resets: u64,
     pub processor_recreations: u64,
     pub output_view_recreations: u64,
@@ -60,6 +141,7 @@ struct NativeNv12Telemetry {
     no_free_slot_drops: u64,
     slot_texture_allocations: u64,
     input_view_creations: u64,
+    input_view_replacements: u64,
     input_view_cache_resets: u64,
     processor_recreations: u64,
     output_view_recreations: u64,
@@ -72,6 +154,7 @@ impl NativeNv12Telemetry {
             no_free_slot_drops: self.no_free_slot_drops,
             slot_texture_allocations: self.slot_texture_allocations,
             input_view_creations: self.input_view_creations,
+            input_view_replacements: self.input_view_replacements,
             input_view_cache_resets: self.input_view_cache_resets,
             processor_recreations: self.processor_recreations,
             output_view_recreations: self.output_view_recreations,
@@ -88,8 +171,9 @@ pub struct NativeNv12Converter {
     enumerator: ID3D11VideoProcessorEnumerator,
     processor: ID3D11VideoProcessor,
     slots: [NativeNv12Slot; NATIVE_ENCODER_SLOT_COUNT],
-    slot_states: [NativeNv12SlotState; NATIVE_ENCODER_SLOT_COUNT],
+    slot_states: Arc<NativeNv12SlotStates>,
     input_views: Vec<CachedInputView>,
+    next_input_view_replacement: usize,
     input_width: u32,
     input_height: u32,
     output_width: u32,
@@ -135,8 +219,9 @@ impl NativeNv12Converter {
             enumerator,
             processor,
             slots,
-            slot_states: [NativeNv12SlotState::Free; NATIVE_ENCODER_SLOT_COUNT],
+            slot_states: Arc::new(NativeNv12SlotStates::new()),
             input_views: Vec::with_capacity(NATIVE_WGC_FRAME_POOL_CAPACITY as usize),
+            next_input_view_replacement: 0,
             input_width,
             input_height,
             output_width,
@@ -159,9 +244,7 @@ impl NativeNv12Converter {
             "native WGC resize is empty"
         );
         ensure!(
-            self.slot_states
-                .iter()
-                .all(|state| *state == NativeNv12SlotState::Free),
+            self.slot_states.all_free(),
             "cannot reconfigure native conversion while an NV12 slot is leased"
         );
         if (input_width, input_height) == (self.input_width, self.input_height) {
@@ -179,6 +262,7 @@ impl NativeNv12Converter {
         let output_views = create_output_views(&self.video_device, &enumerator, &self.slots)?;
 
         self.input_views.clear();
+        self.next_input_view_replacement = 0;
         self.telemetry.input_view_cache_resets =
             self.telemetry.input_view_cache_resets.saturating_add(1);
         self.enumerator = enumerator;
@@ -210,21 +294,23 @@ impl NativeNv12Converter {
             self.input_width,
             self.input_height
         );
-        let Some(slot_index) = acquire_slot(&mut self.slot_states, frame.qpc_100ns()) else {
+        let Some(slot_index) = self.slot_states.try_acquire_converted() else {
             self.telemetry.no_free_slot_drops = self.telemetry.no_free_slot_drops.saturating_add(1);
             return Ok(None);
         };
 
         let result = self.convert_into_slot(frame, slot_index);
         if let Err(error) = result {
-            self.slot_states[slot_index] = NativeNv12SlotState::Free;
+            self.slot_states.release_converted(slot_index);
             return Err(error);
         }
 
+        let qpc_100ns = frame.qpc_100ns();
         self.telemetry.converted_frames = self.telemetry.converted_frames.saturating_add(1);
         Ok(Some(ConvertedNv12Frame {
             converter: self,
             slot_index,
+            qpc_100ns,
             released: false,
         }))
     }
@@ -238,10 +324,21 @@ impl NativeNv12Converter {
     }
 
     pub fn free_slot_count(&self) -> usize {
-        self.slot_states
-            .iter()
-            .filter(|state| **state == NativeNv12SlotState::Free)
-            .count()
+        self.slot_states.free_count()
+    }
+
+    /// Clones the four texture interfaces once for M4 registration and shares
+    /// only their ownership state with the completion thread.
+    pub(super) fn encoder_resources(
+        &self,
+    ) -> (
+        [ID3D11Texture2D; NATIVE_ENCODER_SLOT_COUNT],
+        Arc<NativeNv12SlotStates>,
+    ) {
+        (
+            std::array::from_fn(|index| self.slots[index].texture.clone()),
+            Arc::clone(&self.slot_states),
+        )
     }
 
     fn convert_into_slot(&mut self, frame: &CapturedWgcFrame<'_>, slot_index: usize) -> Result<()> {
@@ -347,10 +444,6 @@ impl NativeNv12Converter {
         {
             return Ok(index);
         }
-        ensure!(
-            self.input_views.len() < NATIVE_WGC_FRAME_POOL_CAPACITY as usize,
-            "native WGC exposed more than its two configured pool surfaces without recreation"
-        );
         let descriptor = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
             FourCC: 0,
             ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
@@ -375,20 +468,26 @@ impl NativeNv12Converter {
         }
         .context("could not create cached WGC video-processor input view")?;
         let view = view.context("D3D11 returned no video-processor input view")?;
-        self.input_views.push(CachedInputView {
+        let cached = CachedInputView {
             texture_identity,
             view,
-        });
+        };
+        let (index, next_replacement, replaced) =
+            input_cache_insertion(self.input_views.len(), self.next_input_view_replacement);
+        if replaced {
+            self.input_views[index] = cached;
+            self.telemetry.input_view_replacements =
+                self.telemetry.input_view_replacements.saturating_add(1);
+        } else {
+            self.input_views.push(cached);
+        }
+        self.next_input_view_replacement = next_replacement;
         self.telemetry.input_view_creations = self.telemetry.input_view_creations.saturating_add(1);
-        Ok(self.input_views.len() - 1)
+        Ok(index)
     }
 
     fn release_slot(&mut self, slot_index: usize) {
-        debug_assert!(matches!(
-            self.slot_states[slot_index],
-            NativeNv12SlotState::Converted { .. }
-        ));
-        self.slot_states[slot_index] = NativeNv12SlotState::Free;
+        self.slot_states.release_converted(slot_index);
     }
 }
 
@@ -397,6 +496,7 @@ impl NativeNv12Converter {
 pub struct ConvertedNv12Frame<'converter> {
     converter: &'converter mut NativeNv12Converter,
     slot_index: usize,
+    qpc_100ns: i64,
     released: bool,
 }
 
@@ -406,10 +506,7 @@ impl ConvertedNv12Frame<'_> {
     }
 
     pub fn qpc_100ns(&self) -> i64 {
-        match self.converter.slot_states[self.slot_index] {
-            NativeNv12SlotState::Converted { qpc_100ns } => qpc_100ns,
-            NativeNv12SlotState::Free => unreachable!("leased NV12 slot became free"),
-        }
+        self.qpc_100ns
     }
 
     pub fn texture_desc(&self) -> D3D11_TEXTURE2D_DESC {
@@ -418,6 +515,19 @@ impl ConvertedNv12Frame<'_> {
 
     pub fn release(mut self) {
         self.release_inner();
+    }
+
+    /// Transfers ownership of this slot from conversion to NVENC. The caller
+    /// must enqueue exactly one completion for the returned index.
+    pub(super) fn mark_submitted(mut self) -> Result<(usize, i64)> {
+        if let Err(error) = self.converter.slot_states.mark_submitted(self.slot_index) {
+            // The state no longer belongs to this Converted lease, so Drop
+            // must not overwrite the unexpected owner with Free.
+            self.released = true;
+            return Err(error);
+        }
+        self.released = true;
+        Ok((self.slot_index, self.qpc_100ns))
     }
 
     fn release_inner(&mut self) {
@@ -668,15 +778,15 @@ fn center_crop_rect(
     })
 }
 
-fn acquire_slot(
-    states: &mut [NativeNv12SlotState; NATIVE_ENCODER_SLOT_COUNT],
-    qpc_100ns: i64,
-) -> Option<usize> {
-    let index = states
-        .iter()
-        .position(|state| *state == NativeNv12SlotState::Free)?;
-    states[index] = NativeNv12SlotState::Converted { qpc_100ns };
-    Some(index)
+fn input_cache_insertion(current_len: usize, next_replacement: usize) -> (usize, usize, bool) {
+    let capacity = NATIVE_WGC_FRAME_POOL_CAPACITY as usize;
+    debug_assert!(capacity > 0);
+    debug_assert!(current_len <= capacity);
+    debug_assert!(next_replacement < capacity);
+    if current_len < capacity {
+        return (current_len, next_replacement, false);
+    }
+    (next_replacement, (next_replacement + 1) % capacity, true)
 }
 
 #[cfg(test)]
@@ -726,14 +836,32 @@ mod tests {
 
     #[test]
     fn fixed_ring_never_acquires_a_fifth_slot() {
-        let mut states = [NativeNv12SlotState::Free; NATIVE_ENCODER_SLOT_COUNT];
+        let states = NativeNv12SlotStates::new();
         for expected in 0..NATIVE_ENCODER_SLOT_COUNT {
-            assert_eq!(acquire_slot(&mut states, expected as i64), Some(expected));
+            assert_eq!(states.try_acquire_converted(), Some(expected));
         }
-        assert_eq!(acquire_slot(&mut states, 99), None);
-        assert_eq!(states[2], NativeNv12SlotState::Converted { qpc_100ns: 2 });
-        states[2] = NativeNv12SlotState::Free;
-        assert_eq!(acquire_slot(&mut states, 100), Some(2));
+        assert_eq!(states.try_acquire_converted(), None);
+        states.release_converted(2);
+        assert_eq!(states.try_acquire_converted(), Some(2));
+    }
+
+    #[test]
+    fn submitted_slot_is_released_only_by_completion() {
+        let states = NativeNv12SlotStates::new();
+        assert_eq!(states.try_acquire_converted(), Some(0));
+        states.mark_submitted(0).unwrap();
+        assert_eq!(states.free_count(), NATIVE_ENCODER_SLOT_COUNT - 1);
+        assert!(states.mark_submitted(0).is_err());
+        states.complete_submitted(0).unwrap();
+        assert_eq!(states.free_count(), NATIVE_ENCODER_SLOT_COUNT);
+    }
+
+    #[test]
+    fn input_view_cache_replaces_in_round_robin_without_exceeding_pool_capacity() {
+        assert_eq!(input_cache_insertion(0, 0), (0, 0, false));
+        assert_eq!(input_cache_insertion(1, 0), (1, 0, false));
+        assert_eq!(input_cache_insertion(2, 0), (0, 1, true));
+        assert_eq!(input_cache_insertion(2, 1), (1, 0, true));
     }
 }
 

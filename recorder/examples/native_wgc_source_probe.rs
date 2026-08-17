@@ -147,11 +147,12 @@ mod windows_probe {
             telemetry.closed,
         );
         println!(
-            "CHRONOBREAK_NATIVE_NV12_PASS converted={} slot_texture_allocations={} free_slots={} input_view_creations={} input_view_cache_resets={} processor_recreations={} output_view_recreations={} no_free_slot_drops={}",
+            "CHRONOBREAK_NATIVE_NV12_PASS converted={} slot_texture_allocations={} free_slots={} input_view_creations={} input_view_replacements={} input_view_cache_resets={} processor_recreations={} output_view_recreations={} no_free_slot_drops={}",
             conversion.converted_frames,
             conversion.slot_texture_allocations,
             converter.free_slot_count(),
             conversion.input_view_creations,
+            conversion.input_view_replacements,
             conversion.input_view_cache_resets,
             conversion.processor_recreations,
             conversion.output_view_recreations,
