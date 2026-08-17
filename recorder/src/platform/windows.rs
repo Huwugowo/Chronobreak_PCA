@@ -50,6 +50,8 @@ pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
     if let Some(candidate) = find_largest_window(pid)? {
         let monitor = monitor_with_largest_intersection(candidate.screen_rect)?;
         let adapter = adapter_for_monitor(monitor)?;
+        // SAFETY: `candidate.hwnd` is an opaque handle supplied by the current
+        // synchronous EnumWindows pass; this query neither owns nor closes it.
         let dpi = unsafe { GetDpiForWindow(candidate.hwnd) };
         if dpi == 0 {
             anyhow::bail!("could not determine League window DPI");
@@ -75,8 +77,9 @@ pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
 }
 
 pub fn fallback_capture_target() -> Result<CaptureTarget> {
-    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    // SAFETY: GetSystemMetrics takes value-only metric identifiers and does not
+    // read caller-provided memory or transfer ownership.
+    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
     if width <= 0 || height <= 0 {
         anyhow::bail!("could not determine a primary display capture size");
     }
@@ -105,10 +108,19 @@ pub fn capture_target_visibility(target: &CaptureTarget) -> Result<CaptureTarget
         return Ok(CaptureTargetVisibility::Visible);
     };
     let hwnd = HWND(*hwnd as usize as *mut _);
-    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+    // SAFETY: `hwnd` is used only as an opaque Win32 handle. These predicates
+    // do not dereference application memory or retain the handle.
+    let (exists, minimized, visible) = unsafe {
+        (
+            IsWindow(Some(hwnd)).as_bool(),
+            IsIconic(hwnd).as_bool(),
+            IsWindowVisible(hwnd).as_bool(),
+        )
+    };
+    if !exists {
         anyhow::bail!("the selected League HWND was closed");
     }
-    if unsafe { IsIconic(hwnd).as_bool() } || !unsafe { IsWindowVisible(hwnd).as_bool() } {
+    if minimized || !visible {
         return Ok(CaptureTargetVisibility::PausedByWindowVisibility);
     }
     Ok(CaptureTargetVisibility::Visible)
@@ -125,10 +137,14 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
         return Ok(());
     };
     let hwnd = HWND(*hwnd as usize as *mut _);
+    // SAFETY: `hwnd` is an opaque, non-owned handle and IsWindow performs the
+    // validity query without dereferencing caller memory.
     if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
         anyhow::bail!("the selected League HWND was closed");
     }
     let mut current_pid = 0_u32;
+    // SAFETY: `current_pid` is a live, aligned u32 for the duration of this
+    // call, and `hwnd` is passed only as a non-owned opaque handle.
     unsafe {
         GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
     }
@@ -164,6 +180,8 @@ pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<Instant> {
     }
     let mut counter = 0_i64;
     let mut frequency = 0_i64;
+    // SAFETY: both output pointers refer to distinct, live, aligned i64 values
+    // that remain valid for the complete duration of each synchronous call.
     unsafe {
         QueryPerformanceCounter(&mut counter)
             .context("could not read QueryPerformanceCounter for the WGC clock anchor")?;
@@ -214,6 +232,9 @@ fn duration_from_100ns(ticks: i128) -> Result<Duration> {
 
 fn find_largest_window(pid: u32) -> Result<Option<WindowCandidate>> {
     let mut context = SearchContext { pid, best: None };
+    // SAFETY: EnumWindows invokes `enum_window` synchronously on this thread.
+    // `context` stays live and exclusively borrowed until enumeration returns,
+    // and the callback does not retain its LPARAM pointer.
     unsafe {
         EnumWindows(
             Some(enum_window),
@@ -225,12 +246,20 @@ fn find_largest_window(pid: u32) -> Result<Option<WindowCandidate>> {
 }
 
 unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    // SAFETY: the only caller encodes a live, exclusively borrowed
+    // `SearchContext` in LPARAM for the duration of synchronous enumeration.
     let context = unsafe { &mut *(lparam.0 as *mut SearchContext) };
-    if !unsafe { IsWindowVisible(hwnd).as_bool() } || unsafe { IsIconic(hwnd).as_bool() } {
+    // SAFETY: EnumWindows supplied `hwnd`; both calls are non-owning queries on
+    // that opaque handle and do not retain it.
+    let (visible, minimized) =
+        unsafe { (IsWindowVisible(hwnd).as_bool(), IsIconic(hwnd).as_bool()) };
+    if !visible || minimized {
         return BOOL(1);
     }
 
     let mut window_pid = 0_u32;
+    // SAFETY: `window_pid` is live and aligned for this synchronous output,
+    // while `hwnd` was supplied by the active EnumWindows callback.
     unsafe {
         GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
     }
@@ -272,6 +301,9 @@ unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 fn monitor_with_largest_intersection(target: RECT) -> Result<HMONITOR> {
     let mut context = MonitorSearchContext { target, best: None };
+    // SAFETY: EnumDisplayMonitors calls the callback synchronously. `context`
+    // remains live and exclusively borrowed until it returns, and neither a
+    // device context nor clipping rectangle is supplied by the caller.
     unsafe {
         if !EnumDisplayMonitors(
             None,
@@ -299,7 +331,11 @@ unsafe extern "system" fn enum_monitor_intersection(
     if bounds.is_null() {
         return BOOL(1);
     }
+    // SAFETY: the caller passes a live, exclusively borrowed context through
+    // LPARAM for synchronous enumeration; the callback never retains it.
     let context = unsafe { &mut *(lparam.0 as *mut MonitorSearchContext) };
+    // SAFETY: EnumDisplayMonitors guarantees that non-null `bounds` points to
+    // a readable RECT for the duration of this callback.
     let area = intersection_area(context.target, unsafe { *bounds });
     if area > 0
         && context
@@ -323,24 +359,34 @@ fn intersection_area(left: RECT, right: RECT) -> u64 {
 }
 
 fn adapter_for_monitor(monitor: HMONITOR) -> Result<AdapterSelection> {
+    // SAFETY: the Windows binding initializes and returns an owned, reference-
+    // counted IDXGIFactory1 interface; no raw caller pointer is supplied.
     let factory: IDXGIFactory1 =
         unsafe { CreateDXGIFactory1() }.context("could not create the DXGI adapter factory")?;
     let mut adapter_index = 0_u32;
     loop {
+        // SAFETY: `factory` owns a valid COM interface pointer, and the binding
+        // returns an owned adapter wrapper or an HRESULT for this value index.
         let adapter = match unsafe { factory.EnumAdapters1(adapter_index) } {
             Ok(adapter) => adapter,
             Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
             Err(error) => return Err(error).context("could not enumerate DXGI adapters"),
         };
+        // SAFETY: `adapter` is a live owned COM wrapper and the binding returns
+        // the fixed-size description by value without retaining Rust memory.
         let adapter_description =
             unsafe { adapter.GetDesc1() }.context("could not inspect a DXGI adapter")?;
         let mut output_index = 0_u32;
         loop {
+            // SAFETY: `adapter` remains live for the call, and the binding
+            // returns an owned output wrapper or an HRESULT for the value index.
             let output = match unsafe { adapter.EnumOutputs(output_index) } {
                 Ok(output) => output,
                 Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
                 Err(error) => return Err(error).context("could not enumerate DXGI outputs"),
             };
+            // SAFETY: `output` is a live owned COM wrapper and the binding
+            // writes its fixed-size description into binding-managed storage.
             let output_description =
                 unsafe { output.GetDesc() }.context("could not inspect a DXGI output")?;
             if output_description.Monitor.0 == monitor.0
@@ -378,6 +424,8 @@ fn wide_string(value: &[u16]) -> String {
 
 fn client_bounds(hwnd: HWND) -> Option<(i32, i32, u32, u32)> {
     let mut rect = RECT::default();
+    // SAFETY: `rect` is a live, aligned output value and `hwnd` is queried only
+    // as a non-owned opaque handle for the duration of this synchronous call.
     unsafe { GetClientRect(hwnd, &mut rect) }.ok()?;
 
     let mut top_left = POINT {
@@ -388,9 +436,13 @@ fn client_bounds(hwnd: HWND) -> Option<(i32, i32, u32, u32)> {
         x: rect.right,
         y: rect.bottom,
     };
-    if !unsafe { ClientToScreen(hwnd, &mut top_left).as_bool() }
-        || !unsafe { ClientToScreen(hwnd, &mut bottom_right).as_bool() }
-    {
+    // SAFETY: both POINT values are distinct, live, aligned in/out buffers and
+    // `hwnd` remains a non-owned opaque handle. The calls are synchronous.
+    let converted = unsafe {
+        ClientToScreen(hwnd, &mut top_left).as_bool()
+            && ClientToScreen(hwnd, &mut bottom_right).as_bool()
+    };
+    if !converted {
         return None;
     }
 
@@ -404,11 +456,15 @@ fn client_bounds(hwnd: HWND) -> Option<(i32, i32, u32, u32)> {
 }
 
 fn window_title(hwnd: HWND) -> Option<String> {
+    // SAFETY: this is a non-owning length query on the opaque HWND and does not
+    // read or retain any caller-provided buffer.
     let length = unsafe { GetWindowTextLengthW(hwnd) };
     if length <= 0 {
         return None;
     }
     let mut buffer = vec![0_u16; length as usize + 1];
+    // SAFETY: the Windows slice binding receives the full initialized buffer;
+    // it can write at most its length, and the buffer remains live for the call.
     let copied = unsafe { GetWindowTextW(hwnd, &mut buffer) };
     if copied <= 0 {
         return None;

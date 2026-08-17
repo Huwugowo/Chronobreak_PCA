@@ -1,3 +1,5 @@
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 pub mod config;
 pub mod encoder;
 #[cfg(target_os = "windows")]
