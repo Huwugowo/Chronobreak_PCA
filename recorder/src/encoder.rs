@@ -1,12 +1,13 @@
 use std::env;
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -33,6 +34,7 @@ const PROFILE_BENCHMARK_DURATION: Duration = Duration::from_secs(3);
 const FFMPEG_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const FFMPEG_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const PROBE_OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const FRAGMENTED_MP4_FLAGS: &str = "+frag_keyframe+empty_moov+default_base_moof";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -491,28 +493,35 @@ impl Ffmpeg {
                 return AudioSource::DirectShow(explicit);
             }
 
-            let output = ffmpeg_command(&self.path)
-                .args([
-                    "-hide_banner",
-                    "-list_devices",
-                    "true",
-                    "-f",
-                    "dshow",
-                    "-i",
-                    "dummy",
-                ])
-                .output()
-                .await;
+            let mut command = ffmpeg_command(&self.path);
+            command.args([
+                "-hide_banner",
+                "-list_devices",
+                "true",
+                "-f",
+                "dshow",
+                "-i",
+                "dummy",
+            ]);
+            let output = run_bounded_probe(
+                command,
+                ENCODER_PROBE_TIMEOUT,
+                "Windows audio-device discovery",
+            )
+            .await;
 
-            if let Ok(output) = output {
-                let listing = format!(
-                    "{}\n{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                if let Some(device) = choose_audio_device(&listing) {
-                    return AudioSource::DirectShow(device);
+            match output {
+                Ok(output) => {
+                    let listing = format!(
+                        "{}\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    if let Some(device) = choose_audio_device(&listing) {
+                        return AudioSource::DirectShow(device);
+                    }
                 }
+                Err(error) => warn!(%error, "Windows audio-device discovery failed"),
             }
 
             warn!("no Windows loopback audio device found; recording a silent audio track");
@@ -526,9 +535,9 @@ impl Ffmpeg {
     }
 
     async fn advertised_encoders(&self) -> Result<String> {
-        let output = ffmpeg_command(&self.path)
-            .args(["-hide_banner", "-encoders"])
-            .output()
+        let mut command = ffmpeg_command(&self.path);
+        command.args(["-hide_banner", "-encoders"]);
+        let output = run_bounded_probe(command, ENCODER_PROBE_TIMEOUT, "FFmpeg encoder discovery")
             .await
             .with_context(|| format!("failed to query encoders from {}", self.path.display()))?;
         let listing = format!(
@@ -569,10 +578,12 @@ impl Ffmpeg {
 
         let mut command = ffmpeg_command(&self.path);
         command.args(arguments);
-        let output = tokio::time::timeout(ENCODER_PROBE_TIMEOUT, command.output())
-            .await
-            .context("hardware recording plan probe timed out")?
-            .context("failed to launch hardware recording plan probe")?;
+        let output = run_bounded_probe(
+            command,
+            ENCODER_PROBE_TIMEOUT,
+            "hardware recording plan probe",
+        )
+        .await?;
         if !output.status.success() {
             bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
         }
@@ -607,13 +618,14 @@ impl Ffmpeg {
         push_args(&mut arguments, &["-pix_fmt", "yuv420p", "-f", "null", "-"]);
 
         let started = Instant::now();
-        let output = tokio::time::timeout(
+        let mut command = ffmpeg_command(&self.path);
+        command.args(arguments);
+        let output = run_bounded_probe(
+            command,
             ENCODER_PROBE_TIMEOUT,
-            ffmpeg_command(&self.path).args(arguments).output(),
+            "recording profile benchmark",
         )
-        .await
-        .context("recording profile benchmark timed out")?
-        .context("failed to launch recording profile benchmark")?;
+        .await?;
         if !output.status.success() {
             bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
         }
@@ -1014,6 +1026,133 @@ fn ffmpeg_command(path: &Path) -> Command {
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+async fn run_bounded_probe(
+    mut command: Command,
+    deadline: Duration,
+    operation: &str,
+) -> Result<Output> {
+    command
+        .kill_on_drop(true)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to launch {operation}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .with_context(|| format!("{operation} stdout pipe was not created"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .with_context(|| format!("{operation} stderr pipe was not created"))?;
+    let mut stdout_task = tokio::spawn(drain_probe_pipe(stdout));
+    let mut stderr_task = tokio::spawn(drain_probe_pipe(stderr));
+
+    let status = match tokio::time::timeout(deadline, child.wait()).await {
+        Ok(status) => status.with_context(|| format!("failed to wait for {operation}"))?,
+        Err(_) => {
+            let kill_error = child
+                .start_kill()
+                .err()
+                .map(|error| format!("kill failed: {error}"));
+            let reap_error =
+                match tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, child.wait()).await {
+                    Ok(Ok(_)) => None,
+                    Ok(Err(error)) => Some(format!("reap failed: {error}")),
+                    Err(_) => Some(format!(
+                        "reap exceeded {} seconds",
+                        FFMPEG_PIPE_DRAIN_TIMEOUT.as_secs_f64()
+                    )),
+                };
+            stop_probe_reader(&mut stdout_task).await;
+            stop_probe_reader(&mut stderr_task).await;
+            let cleanup = [kill_error, reap_error]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("; ");
+            if cleanup.is_empty() {
+                bail!(
+                    "{operation} timed out after {} seconds; child was killed and reaped",
+                    deadline.as_secs_f64()
+                );
+            }
+            bail!(
+                "{operation} timed out after {} seconds ({cleanup})",
+                deadline.as_secs_f64()
+            );
+        }
+    };
+
+    let (stdout, stdout_overflow) =
+        finish_probe_reader(&mut stdout_task, operation, "stdout").await?;
+    let (stderr, stderr_overflow) =
+        finish_probe_reader(&mut stderr_task, operation, "stderr").await?;
+    if stdout_overflow || stderr_overflow {
+        bail!(
+            "{operation} exceeded the {} byte diagnostic-output limit",
+            PROBE_OUTPUT_LIMIT_BYTES
+        );
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn drain_probe_pipe<R>(mut reader: R) -> io::Result<(Vec<u8>, bool)>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let mut output = Vec::new();
+    let mut overflow = false;
+    let mut chunk = [0_u8; 4096];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok((output, overflow));
+        }
+        let remaining = PROBE_OUTPUT_LIMIT_BYTES.saturating_sub(output.len());
+        let retained = remaining.min(read);
+        output.extend_from_slice(&chunk[..retained]);
+        overflow |= retained < read;
+    }
+}
+
+async fn finish_probe_reader(
+    task: &mut JoinHandle<io::Result<(Vec<u8>, bool)>>,
+    operation: &str,
+    stream: &str,
+) -> Result<(Vec<u8>, bool)> {
+    match tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, &mut *task).await {
+        Ok(Ok(result)) => result.with_context(|| format!("failed to read {operation} {stream}")),
+        Ok(Err(error)) => {
+            Err(anyhow::Error::new(error).context(format!("{operation} {stream} reader panicked")))
+        }
+        Err(_) => {
+            task.abort();
+            let _ = task.await;
+            bail!(
+                "{operation} {stream} did not close within {} seconds",
+                FFMPEG_PIPE_DRAIN_TIMEOUT.as_secs_f64()
+            )
+        }
+    }
+}
+
+async fn stop_probe_reader(task: &mut JoinHandle<io::Result<(Vec<u8>, bool)>>) {
+    if tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, &mut *task)
+        .await
+        .is_err()
+    {
+        task.abort();
+        let _ = task.await;
+    }
 }
 
 fn preferred_encoders() -> &'static [EncoderKind] {
@@ -1524,6 +1663,60 @@ mod tests {
             codec_candidates(CodecPreference::Auto, true),
             vec![VideoCodec::Hevc, VideoCodec::H264]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn bounded_probe_kills_and_reaps_a_timed_out_child() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("hang-probe.ps1");
+        let ready = directory.path().join("ready.txt");
+        let lock = directory.path().join("child.lock");
+        std::fs::write(
+            &script,
+            r#"param([string]$ReadyFile, [string]$LockFile)
+$stream = [System.IO.File]::Open(
+    $LockFile,
+    [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::None
+)
+try {
+    [System.IO.File]::WriteAllText($ReadyFile, [string]$PID)
+    while ($true) { Start-Sleep -Milliseconds 100 }
+} finally {
+    $stream.Dispose()
+}
+"#,
+        )
+        .unwrap();
+
+        let mut command = ffmpeg_command(Path::new("powershell.exe"));
+        command
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&script)
+            .arg(&ready)
+            .arg(&lock);
+        let started = Instant::now();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_bounded_probe(command, Duration::from_secs(1), "hanging test probe"),
+        )
+        .await
+        .expect("the helper itself must remain bounded")
+        .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(ready.exists(), "the child never reached its wait loop");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&lock)
+            .expect("the timed-out child still owns its exclusive lock");
     }
 
     #[cfg(target_os = "windows")]
