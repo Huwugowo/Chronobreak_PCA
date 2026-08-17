@@ -3,7 +3,7 @@ mod windows_probe {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use anyhow::{Context, Result, bail, ensure};
+    use anyhow::{Context, Result, anyhow, bail, ensure};
     use league_replay_recorder::encoder::AudioSource;
     use league_replay_recorder::native::NativeRecorderSession;
     use league_replay_recorder::platform::capture_target_for_process;
@@ -14,6 +14,8 @@ mod windows_probe {
         let mut ffmpeg = None;
         let mut output = None;
         let mut duration_seconds = 10_u64;
+        let mut fail_nvenc_after_ticks = None;
+        let mut max_slot_tick_drops = 0_u64;
         while let Some(argument) = args.next() {
             match argument.as_str() {
                 "--pid" => {
@@ -41,6 +43,21 @@ mod windows_probe {
                         .parse::<u64>()
                         .context("--duration-seconds must be an integer")?;
                 }
+                "--fail-nvenc-after-ticks" => {
+                    fail_nvenc_after_ticks = Some(
+                        args.next()
+                            .context("--fail-nvenc-after-ticks requires a value")?
+                            .parse::<u64>()
+                            .context("--fail-nvenc-after-ticks must be an integer")?,
+                    );
+                }
+                "--max-slot-tick-drops" => {
+                    max_slot_tick_drops = args
+                        .next()
+                        .context("--max-slot-tick-drops requires a value")?
+                        .parse::<u64>()
+                        .context("--max-slot-tick-drops must be an integer")?;
+                }
                 other => bail!("unknown argument {other:?}"),
             }
         }
@@ -53,12 +70,29 @@ mod windows_probe {
             .with_context(|| format!("could not resolve exact HWND for fixture PID {pid}"))?;
         let mut session =
             NativeRecorderSession::start(&target, &ffmpeg, &AudioSource::Silent, &output)?;
+        #[cfg(feature = "native-failure-injection")]
+        if let Some(ticks) = fail_nvenc_after_ticks {
+            session.inject_nvenc_failure_after_ticks(ticks)?;
+            println!("CHRONOBREAK_NATIVE_FAILURE_INJECTION nvenc_after_ticks={ticks}");
+        }
+        #[cfg(not(feature = "native-failure-injection"))]
+        ensure!(
+            fail_nvenc_after_ticks.is_none(),
+            "--fail-nvenc-after-ticks requires the native-failure-injection Cargo feature"
+        );
         println!(
             "CHRONOBREAK_NATIVE_MP4_STARTED pid={pid} duration_seconds={duration_seconds} ffmpeg={} output={}",
             ffmpeg.display(),
             session.output().display()
         );
-        session.run_for(Duration::from_secs(duration_seconds))?;
+        if let Err(run_error) = session.run_for(Duration::from_secs(duration_seconds)) {
+            return Err(match session.finish() {
+                Ok(_) => run_error.context("native recording failed before bounded shutdown"),
+                Err(shutdown_error) => anyhow!(
+                    "native recording failed: {run_error:#}; bounded shutdown also failed: {shutdown_error:#}"
+                ),
+            });
+        }
         let telemetry = session.finish()?;
         let expected_ticks = duration_seconds
             .checked_mul(60)
@@ -69,16 +103,24 @@ mod windows_probe {
             telemetry.cfr.scheduled_ticks
         );
         ensure!(
-            telemetry.slot_tick_drops == 0 && telemetry.unstaged_tick_drops == 0,
-            "native CFR lost ticks: slot={} unstaged={}",
+            telemetry.slot_tick_drops <= max_slot_tick_drops && telemetry.unstaged_tick_drops == 0,
+            "native CFR drop ceiling exceeded: slot={} max_slot={} unstaged={}",
             telemetry.slot_tick_drops,
+            max_slot_tick_drops,
             telemetry.unstaged_tick_drops
         );
+        let total_tick_drops = telemetry
+            .slot_tick_drops
+            .checked_add(telemetry.unstaged_tick_drops)
+            .context("native CFR drop accounting overflowed")?;
+        let expected_encoded_ticks = expected_ticks
+            .checked_sub(total_tick_drops)
+            .context("native CFR drops exceeded scheduled ticks")?;
         ensure!(
-            telemetry.encode.submitted_frames == expected_ticks
-                && telemetry.encode.completed_frames == expected_ticks
-                && telemetry.mux.encoded_frames == expected_ticks,
-            "native MP4 accounting mismatch: expected={expected_ticks} submitted={} completed={} muxed={}",
+            telemetry.encode.submitted_frames == expected_encoded_ticks
+                && telemetry.encode.completed_frames == expected_encoded_ticks
+                && telemetry.mux.encoded_frames == expected_encoded_ticks,
+            "native MP4 accounting mismatch: scheduled={expected_ticks} expected_encoded={expected_encoded_ticks} submitted={} completed={} muxed={}",
             telemetry.encode.submitted_frames,
             telemetry.encode.completed_frames,
             telemetry.mux.encoded_frames
@@ -108,7 +150,7 @@ mod windows_probe {
         );
 
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} cfr_discards={} cfr_duplicates={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_waits={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} processor_recreations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} cfr_discards={} cfr_duplicates={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} processor_recreations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
             telemetry.cfr.scheduled_ticks,
             telemetry.cfr.source_discards,
             telemetry.cfr.duplicate_ticks,
@@ -119,7 +161,6 @@ mod windows_probe {
             telemetry.mux.output_file_bytes,
             telemetry.mux.output_time_us.unwrap_or_default(),
             telemetry.encode.max_in_flight,
-            telemetry.conversion.slot_waits,
             telemetry.slot_tick_drops,
             telemetry.unstaged_tick_drops,
             telemetry.capture.arrivals,

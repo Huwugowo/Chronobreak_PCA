@@ -1308,6 +1308,18 @@ impl NativeNvencEncoder {
         }
     }
 
+    /// Test-only terminal failure seam for M6 lifecycle validation. It marks
+    /// the session unsafe for normal resource cleanup without calling an
+    /// invalid or undocumented driver entry point.
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_terminal_failure_for_fixture(&mut self) -> Result<()> {
+        self.abort_cleanup = true;
+        self.completion_telemetry
+            .abort_cleanup
+            .store(true, Ordering::Release);
+        bail!("injected terminal native NVENC failure")
+    }
+
     /// Drain every previously submitted frame. This is a cold-path barrier for
     /// resize/reconfiguration and shutdown, never part of steady-state submit.
     pub fn drain(&mut self) -> Result<()> {

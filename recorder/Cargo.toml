@@ -6,6 +6,9 @@ rust-version = "1.95"
 description = "Hardware-accelerated League of Legends recorder"
 license = "MIT"
 
+[features]
+native-failure-injection = []
+
 [[bin]]
 name = "recorder"
 path = "src/main.rs"

@@ -17,7 +17,6 @@ const NATIVE_WIDTH: u32 = 1920;
 const NATIVE_HEIGHT: u32 = 1080;
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SOURCE_WAIT: Duration = Duration::from_millis(250);
-const MAX_ENCODER_SLOT_WAIT: Duration = Duration::from_millis(16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeSessionTelemetrySnapshot {
@@ -49,6 +48,8 @@ pub struct NativeRecorderSession {
     slot_tick_drops: u64,
     unstaged_tick_drops: u64,
     target_closed: bool,
+    #[cfg(feature = "native-failure-injection")]
+    injected_nvenc_failure_after_ticks: Option<u64>,
 }
 
 impl NativeRecorderSession {
@@ -76,11 +77,23 @@ impl NativeRecorderSession {
             slot_tick_drops: 0,
             unstaged_tick_drops: 0,
             target_closed: false,
+            #[cfg(feature = "native-failure-injection")]
+            injected_nvenc_failure_after_ticks: None,
         })
     }
 
     pub fn output(&self) -> &Path {
         &self.output
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_nvenc_failure_after_ticks(&mut self, scheduled_ticks: u64) -> Result<()> {
+        ensure!(
+            scheduled_ticks > 0,
+            "injected NVENC failure tick must be positive"
+        );
+        self.injected_nvenc_failure_after_ticks = Some(scheduled_ticks);
+        Ok(())
     }
 
     /// Record exactly `duration * 60` scheduled output ticks after the first
@@ -253,14 +266,27 @@ impl NativeRecorderSession {
     }
 
     fn submit_tick(&mut self, qpc_100ns: i64) -> Result<()> {
+        #[cfg(feature = "native-failure-injection")]
+        if self
+            .injected_nvenc_failure_after_ticks
+            .is_some_and(|threshold| {
+                self.clock
+                    .as_ref()
+                    .is_some_and(|clock| clock.telemetry().scheduled_ticks >= threshold)
+            })
+        {
+            self.injected_nvenc_failure_after_ticks = None;
+            return self
+                .encoder
+                .as_mut()
+                .context("native NVENC encoder is closed")?
+                .inject_terminal_failure_for_fixture();
+        }
         if !self.snapshot_ready {
             self.unstaged_tick_drops = self.unstaged_tick_drops.saturating_add(1);
             return Ok(());
         }
-        let Some(converted) = self
-            .converter
-            .convert_staged_with_wait(qpc_100ns, MAX_ENCODER_SLOT_WAIT)?
-        else {
+        let Some(converted) = self.converter.convert_staged(qpc_100ns)? else {
             self.slot_tick_drops = self.slot_tick_drops.saturating_add(1);
             return Ok(());
         };
