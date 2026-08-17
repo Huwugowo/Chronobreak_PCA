@@ -6,11 +6,13 @@
 //! this boundary without changing target discovery or League lifecycle code.
 
 mod capture;
+mod clock;
 mod convert;
 mod d3d11;
 mod encode;
 mod mux;
 mod nvenc;
+mod session;
 mod source;
 mod winrt;
 
@@ -18,10 +20,12 @@ pub use capture::{
     CapturedWgcFrame, NativeWgcCallbackError, NativeWgcCallbackErrorCategory,
     NativeWgcTelemetrySnapshot,
 };
+pub use clock::{NativeCfrClock, NativeCfrTelemetrySnapshot, NativeCfrTick};
 pub use convert::{ConvertedNv12Frame, NativeNv12Converter, NativeNv12TelemetrySnapshot};
 pub use encode::{NativeNvencEncoder, NativeNvencTelemetrySnapshot};
-pub use mux::NativeMuxPlan;
+pub use mux::{NativeMuxPlan, NativeMuxProcess, NativeMuxTelemetrySnapshot};
 pub use nvenc::{NvencApiVersion, NvencDriverProbe, NvencH264Capability};
+pub use session::{NativeRecorderSession, NativeSessionTelemetrySnapshot};
 pub use source::NativeWgcSource;
 
 /// WGC owns two source frames. The callback must never extend this into an

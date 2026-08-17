@@ -7,14 +7,15 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use anyhow::{Context, Result, ensure};
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_RENDER_TARGET, D3D11_BIND_VIDEO_ENCODER, D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
-    D3D11_VIDEO_PROCESSOR_CAPS, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
-    D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT,
-    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0,
-    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0,
-    D3D11_VIDEO_PROCESSOR_STREAM, D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
-    D3D11_VPIV_DIMENSION_TEXTURE2D, D3D11_VPOV_DIMENSION_TEXTURE2D, ID3D11Device, ID3D11Texture2D,
+    D3D11_BIND_RENDER_TARGET, D3D11_BIND_VIDEO_ENCODER, D3D11_BOX, D3D11_TEX2D_VPIV,
+    D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CAPS,
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT,
+    D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
+    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_STREAM,
+    D3D11_VIDEO_USAGE_PLAYBACK_NORMAL, D3D11_VPIV_DIMENSION_TEXTURE2D,
+    D3D11_VPOV_DIMENSION_TEXTURE2D, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
     ID3D11VideoContext1, ID3D11VideoDevice, ID3D11VideoProcessor, ID3D11VideoProcessorEnumerator,
     ID3D11VideoProcessorEnumerator1, ID3D11VideoProcessorInputView, ID3D11VideoProcessorOutputView,
 };
@@ -122,6 +123,12 @@ struct CachedInputView {
     view: ID3D11VideoProcessorInputView,
 }
 
+struct LatestSourceSnapshot {
+    texture: ID3D11Texture2D,
+    view: ID3D11VideoProcessorInputView,
+    populated: bool,
+}
+
 /// Worker-owned accounting for the fixed GPU conversion resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeNv12TelemetrySnapshot {
@@ -133,6 +140,8 @@ pub struct NativeNv12TelemetrySnapshot {
     pub input_view_cache_resets: u64,
     pub processor_recreations: u64,
     pub output_view_recreations: u64,
+    pub source_snapshot_allocations: u64,
+    pub source_snapshot_copies: u64,
 }
 
 #[derive(Default)]
@@ -145,6 +154,8 @@ struct NativeNv12Telemetry {
     input_view_cache_resets: u64,
     processor_recreations: u64,
     output_view_recreations: u64,
+    source_snapshot_allocations: u64,
+    source_snapshot_copies: u64,
 }
 
 impl NativeNv12Telemetry {
@@ -158,6 +169,8 @@ impl NativeNv12Telemetry {
             input_view_cache_resets: self.input_view_cache_resets,
             processor_recreations: self.processor_recreations,
             output_view_recreations: self.output_view_recreations,
+            source_snapshot_allocations: self.source_snapshot_allocations,
+            source_snapshot_copies: self.source_snapshot_copies,
         }
     }
 }
@@ -166,6 +179,8 @@ impl NativeNv12Telemetry {
 /// NV12 output textures. This value is deliberately !Send/!Sync: all video
 /// context calls remain on the worker that constructed the native source.
 pub struct NativeNv12Converter {
+    d3d_device: ID3D11Device,
+    immediate_context: ID3D11DeviceContext,
     video_device: ID3D11VideoDevice,
     video_context: ID3D11VideoContext1,
     enumerator: ID3D11VideoProcessorEnumerator,
@@ -174,6 +189,7 @@ pub struct NativeNv12Converter {
     slot_states: Arc<NativeNv12SlotStates>,
     input_views: Vec<CachedInputView>,
     next_input_view_replacement: usize,
+    latest_source: LatestSourceSnapshot,
     input_width: u32,
     input_height: u32,
     output_width: u32,
@@ -197,6 +213,9 @@ impl NativeNv12Converter {
         let d3d_device = device.device().clone();
         let video_device = device.video_device().clone();
         let video_context = device.video_context().clone();
+        let immediate_context: ID3D11DeviceContext = video_context
+            .cast()
+            .context("could not recover the same-device D3D11 immediate context")?;
         let (enumerator, processor) = create_processor(
             &video_device,
             input_width,
@@ -212,8 +231,17 @@ impl NativeNv12Converter {
             output_width,
             output_height,
         )?;
+        let latest_source = create_source_snapshot(
+            &d3d_device,
+            &video_device,
+            &enumerator,
+            input_width,
+            input_height,
+        )?;
 
         Ok(Self {
+            d3d_device,
+            immediate_context,
             video_device,
             video_context,
             enumerator,
@@ -222,6 +250,7 @@ impl NativeNv12Converter {
             slot_states: Arc::new(NativeNv12SlotStates::new()),
             input_views: Vec::with_capacity(NATIVE_WGC_FRAME_POOL_CAPACITY as usize),
             next_input_view_replacement: 0,
+            latest_source,
             input_width,
             input_height,
             output_width,
@@ -230,6 +259,7 @@ impl NativeNv12Converter {
             output_frame_index: 0,
             telemetry: NativeNv12Telemetry {
                 slot_texture_allocations: NATIVE_ENCODER_SLOT_COUNT as u64,
+                source_snapshot_allocations: 1,
                 ..NativeNv12Telemetry::default()
             },
             _thread_affinity: PhantomData,
@@ -260,6 +290,13 @@ impl NativeNv12Converter {
             self.fps,
         )?;
         let output_views = create_output_views(&self.video_device, &enumerator, &self.slots)?;
+        let latest_source = create_source_snapshot(
+            &self.d3d_device,
+            &self.video_device,
+            &enumerator,
+            input_width,
+            input_height,
+        )?;
 
         self.input_views.clear();
         self.next_input_view_replacement = 0;
@@ -267,6 +304,7 @@ impl NativeNv12Converter {
             self.telemetry.input_view_cache_resets.saturating_add(1);
         self.enumerator = enumerator;
         self.processor = processor;
+        self.latest_source = latest_source;
         for (slot, view) in self.slots.iter_mut().zip(output_views) {
             slot.output_view = view;
         }
@@ -278,7 +316,95 @@ impl NativeNv12Converter {
             .telemetry
             .output_view_recreations
             .saturating_add(NATIVE_ENCODER_SLOT_COUNT as u64);
+        self.telemetry.source_snapshot_allocations =
+            self.telemetry.source_snapshot_allocations.saturating_add(1);
         Ok(())
+    }
+
+    /// Copy the newest admitted WGC surface into one persistent same-device
+    /// BGRA texture. This releases the capacity-two WGC pool surface promptly
+    /// while preserving GPU-resident pixels for future CFR duplicate ticks.
+    pub fn stage_latest_source(&mut self, frame: &CapturedWgcFrame<'_>) -> Result<()> {
+        ensure!(
+            frame.dimensions() == (self.input_width, self.input_height),
+            "native WGC content size {:?} does not match source snapshot {}x{}; reconfigure first",
+            frame.dimensions(),
+            self.input_width,
+            self.input_height
+        );
+        let source = frame.source_texture()?;
+        ensure!(
+            source.desc().Format == DXGI_FORMAT_B8G8R8A8_UNORM,
+            "native WGC source format {:?} is not BGRA8 UNORM",
+            source.desc().Format
+        );
+        ensure!(
+            source.desc().Width >= self.input_width && source.desc().Height >= self.input_height,
+            "native WGC source texture {}x{} is smaller than content {}x{}",
+            source.desc().Width,
+            source.desc().Height,
+            self.input_width,
+            self.input_height
+        );
+        let source_box = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: self.input_width,
+            bottom: self.input_height,
+            back: 1,
+        };
+        // SAFETY: both textures belong to the worker-owned same D3D11 device,
+        // use BGRA8 mip zero, and the checked source dimensions contain the
+        // exact destination-sized box. The worker exclusively submits context
+        // commands, and D3D11 preserves their order before later video blits.
+        unsafe {
+            self.immediate_context.CopySubresourceRegion(
+                &self.latest_source.texture,
+                0,
+                0,
+                0,
+                0,
+                source.texture(),
+                0,
+                Some(&source_box),
+            );
+        }
+        self.latest_source.populated = true;
+        self.telemetry.source_snapshot_copies =
+            self.telemetry.source_snapshot_copies.saturating_add(1);
+        Ok(())
+    }
+
+    /// Convert the persistent latest-source snapshot at an exact CFR tick.
+    /// A full four-slot ring is an accounted drop, never a wait or allocation.
+    pub fn convert_staged<'converter>(
+        &'converter mut self,
+        qpc_100ns: i64,
+    ) -> Result<Option<ConvertedNv12Frame<'converter>>> {
+        ensure!(
+            self.latest_source.populated,
+            "native CFR tick requested before the first source snapshot"
+        );
+        ensure!(qpc_100ns > 0, "native CFR tick timestamp must be positive");
+        let Some(slot_index) = self.slot_states.try_acquire_converted() else {
+            self.telemetry.no_free_slot_drops = self.telemetry.no_free_slot_drops.saturating_add(1);
+            return Ok(None);
+        };
+
+        let input_view = self.latest_source.view.clone();
+        if let Err(error) = self.blit_input_view(input_view, slot_index) {
+            self.slot_states.release_converted(slot_index);
+            return Err(error);
+        }
+
+        self.telemetry.converted_frames = self.telemetry.converted_frames.saturating_add(1);
+        Ok(Some(ConvertedNv12Frame {
+            converter: self,
+            slot_index,
+            qpc_100ns,
+            released: false,
+        }))
     }
 
     /// Convert one live WGC surface into a free fixed slot. A full ring causes
@@ -358,6 +484,14 @@ impl NativeNv12Converter {
         );
         let input_view_index = self.ensure_input_view(&source)?;
         let input_view = self.input_views[input_view_index].view.clone();
+        self.blit_input_view(input_view, slot_index)
+    }
+
+    fn blit_input_view(
+        &mut self,
+        input_view: ID3D11VideoProcessorInputView,
+        slot_index: usize,
+    ) -> Result<()> {
         let source_rect = center_crop_rect(
             self.input_width,
             self.input_height,
@@ -664,6 +798,75 @@ fn create_slots(
             NATIVE_ENCODER_SLOT_COUNT
         )
     })
+}
+
+fn create_source_snapshot(
+    device: &ID3D11Device,
+    video_device: &ID3D11VideoDevice,
+    enumerator: &ID3D11VideoProcessorEnumerator,
+    width: u32,
+    height: u32,
+) -> Result<LatestSourceSnapshot> {
+    let descriptor = D3D11_TEXTURE2D_DESC {
+        Width: width,
+        Height: height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: D3D11_USAGE_DEFAULT,
+        // Microsoft explicitly permits bind flags zero for a video-processor
+        // input view. This snapshot is only a CopySubresourceRegion target and
+        // video-processor input; it is never mapped to the CPU.
+        BindFlags: 0,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+    };
+    let mut texture = None;
+    // SAFETY: the descriptor is fully initialized for one GPU-only BGRA8
+    // texture, no initial data is supplied, and the out-pointer is writable.
+    unsafe { device.CreateTexture2D(&descriptor, None, Some(&mut texture)) }
+        .context("could not allocate persistent native CFR source snapshot")?;
+    let texture = texture.context("D3D11 returned no native CFR source snapshot")?;
+    let view = create_input_view(video_device, enumerator, &texture)?;
+    Ok(LatestSourceSnapshot {
+        texture,
+        view,
+        populated: false,
+    })
+}
+
+fn create_input_view(
+    video_device: &ID3D11VideoDevice,
+    enumerator: &ID3D11VideoProcessorEnumerator,
+    texture: &ID3D11Texture2D,
+) -> Result<ID3D11VideoProcessorInputView> {
+    let descriptor = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
+        FourCC: 0,
+        ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
+        Anonymous: D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0 {
+            Texture2D: D3D11_TEX2D_VPIV {
+                MipSlice: 0,
+                ArraySlice: 0,
+            },
+        },
+    };
+    let mut view = None;
+    // SAFETY: the texture and enumerator belong to the same device, the
+    // descriptor selects mip/array zero, and the out-pointer is writable.
+    unsafe {
+        video_device.CreateVideoProcessorInputView(
+            texture,
+            enumerator,
+            &descriptor,
+            Some(&mut view),
+        )
+    }
+    .context("could not create persistent CFR video-processor input view")?;
+    view.context("D3D11 returned no persistent CFR video-processor input view")
 }
 
 fn create_output_views(

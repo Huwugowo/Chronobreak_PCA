@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
@@ -15,6 +16,7 @@ use windows::core::BOOL;
 use super::{CaptureSource, CaptureTarget};
 
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(1);
+const MAX_WGC_FUTURE_QPC_SKEW_100NS: i128 = 1_000_000; // 100 ms.
 
 #[derive(Debug)]
 struct WindowCandidate {
@@ -146,7 +148,7 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
     Ok(())
 }
 
-pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<std::time::Instant> {
+pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<Instant> {
     if timestamp <= 0 {
         anyhow::bail!("WGC first-frame QPC timestamp is not positive");
     }
@@ -165,22 +167,39 @@ pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<std::time::Instant> {
         .checked_mul(10_000_000)
         .and_then(|value| value.checked_div(i128::from(frequency)))
         .context("WGC performance-counter conversion overflowed")?;
+    instant_from_qpc_sample(timestamp, now_100ns, Instant::now())
+}
+
+fn instant_from_qpc_sample(timestamp: i64, now_100ns: i128, now: Instant) -> Result<Instant> {
     let delta_100ns = now_100ns
         .checked_sub(i128::from(timestamp))
-        .context("WGC first-frame timestamp is ahead of the local QPC clock")?;
-    if delta_100ns < 0 {
-        anyhow::bail!("WGC first-frame timestamp is ahead of the local QPC clock");
+        .context("WGC first-frame timestamp delta overflowed")?;
+    if delta_100ns >= 0 {
+        let elapsed = duration_from_100ns(delta_100ns)?;
+        return now
+            .checked_sub(elapsed)
+            .context("WGC first-frame timestamp predates the process monotonic clock");
     }
-    let delta_100ns =
-        u64::try_from(delta_100ns).context("WGC first-frame timestamp delta is too large")?;
-    let elapsed = std::time::Duration::from_nanos(
-        delta_100ns
+
+    let future_100ns = delta_100ns
+        .checked_neg()
+        .context("WGC future timestamp delta overflowed")?;
+    if future_100ns > MAX_WGC_FUTURE_QPC_SKEW_100NS {
+        anyhow::bail!(
+            "WGC first-frame timestamp is implausibly ahead of the local QPC clock by {future_100ns} 100-ns ticks"
+        );
+    }
+    now.checked_add(duration_from_100ns(future_100ns)?)
+        .context("WGC first-frame timestamp exceeds the process monotonic clock range")
+}
+
+fn duration_from_100ns(ticks: i128) -> Result<Duration> {
+    let ticks = u64::try_from(ticks).context("WGC timestamp delta is too large")?;
+    Ok(Duration::from_nanos(
+        ticks
             .checked_mul(100)
-            .context("WGC first-frame timestamp delta overflowed")?,
-    );
-    std::time::Instant::now()
-        .checked_sub(elapsed)
-        .context("WGC first-frame timestamp predates the process monotonic clock")
+            .context("WGC timestamp delta overflowed")?,
+    ))
 }
 
 fn find_largest_window(pid: u32) -> Result<Option<WindowCandidate>> {
@@ -405,6 +424,25 @@ mod tests {
     #[test]
     fn combines_signed_dxgi_luid_without_losing_bits() {
         assert_eq!(luid_value(0x89ab_cdef, -2), 0xffff_fffe_89ab_cdef);
+    }
+
+    #[test]
+    fn qpc_anchor_accepts_one_compositor_interval_of_future_skew() {
+        let now = Instant::now();
+        let past = instant_from_qpc_sample(9_900_000, 10_000_000, now).unwrap();
+        assert_eq!(past, now - Duration::from_millis(10));
+
+        let future = instant_from_qpc_sample(10_151_036, 10_000_000, now).unwrap();
+        assert_eq!(future, now + Duration::from_nanos(15_103_600));
+
+        assert!(
+            instant_from_qpc_sample(
+                10_000_000 + MAX_WGC_FUTURE_QPC_SKEW_100NS as i64 + 1,
+                10_000_000,
+                now,
+            )
+            .is_err()
+        );
     }
 
     #[test]
