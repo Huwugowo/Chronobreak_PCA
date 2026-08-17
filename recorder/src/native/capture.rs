@@ -9,14 +9,15 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::Capture::{
-    Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
+    Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem,
+    GraphicsCaptureSession, IDirect3D11CaptureFramePoolStatics2, IGraphicsCaptureSessionStatics,
 };
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
-use windows::core::{IInspectable, factory};
+use windows::core::{IInspectable, Interface, Type, factory};
 
 use crate::platform::{CaptureTarget, validate_capture_target_identity};
 
@@ -346,9 +347,7 @@ impl NativeWgcCapture {
             );
         }
 
-        if !GraphicsCaptureSession::IsSupported()
-            .context("could not query Windows Graphics Capture support")?
-        {
+        if !graphics_capture_supported()? {
             bail!("Windows Graphics Capture is not supported on this Windows build");
         }
 
@@ -368,13 +367,7 @@ impl NativeWgcCapture {
             bail!("native WGC target reported an empty content size");
         }
 
-        let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
-            device.winrt_device(),
-            DirectXPixelFormat::B8G8R8A8UIntNormalized,
-            NATIVE_WGC_FRAME_POOL_CAPACITY,
-            item_size,
-        )
-        .context("could not create free-threaded native WGC frame pool")?;
+        let frame_pool = create_free_threaded_frame_pool(device, item_size)?;
         let session = frame_pool
             .CreateCaptureSession(&item)
             .context("could not create native WGC capture session")?;
@@ -607,6 +600,52 @@ impl NativeWgcCapture {
         }
         self.shutdown_complete = true;
         first_error.map_or(Ok(()), Err)
+    }
+}
+
+/// Load the WGC statics for this worker instead of using the generated
+/// process-static FactoryCache. The returned COM pointer is therefore dropped
+/// before this worker's explicit WinRT MTA guard is uninitialized.
+fn graphics_capture_supported() -> Result<bool> {
+    let statics: IGraphicsCaptureSessionStatics =
+        factory::<GraphicsCaptureSession, IGraphicsCaptureSessionStatics>()
+            .context("could not load Windows Graphics Capture session statics")?;
+    let mut supported = false;
+    // SAFETY: `statics` is a live factory loaded in the current MTA and
+    // `supported` is a live, aligned bool output for this synchronous call.
+    unsafe {
+        (Interface::vtable(&statics).IsSupported)(Interface::as_raw(&statics), &mut supported)
+            .ok()
+            .context("could not query Windows Graphics Capture support")?;
+    }
+    Ok(supported)
+}
+
+/// Create the free-threaded pool through a worker-scoped statics interface.
+/// This avoids retaining a generated global factory pointer across separate
+/// worker MTA lifetimes and consecutive recordings.
+fn create_free_threaded_frame_pool(
+    device: &NativeD3d11Device,
+    size: SizeInt32,
+) -> Result<Direct3D11CaptureFramePool> {
+    let statics: IDirect3D11CaptureFramePoolStatics2 =
+        factory::<Direct3D11CaptureFramePool, IDirect3D11CaptureFramePoolStatics2>()
+            .context("could not load native WGC frame-pool statics")?;
+    let mut result = std::ptr::null_mut();
+    // SAFETY: both COM interfaces are live in this worker MTA; `result` is a
+    // valid out pointer, and Type::from_abi consumes the returned reference
+    // only after the HRESULT reports success.
+    unsafe {
+        (Interface::vtable(&statics).CreateFreeThreaded)(
+            Interface::as_raw(&statics),
+            Interface::as_raw(device.winrt_device()),
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            NATIVE_WGC_FRAME_POOL_CAPACITY,
+            size,
+            &mut result,
+        )
+        .and_then(|| Type::from_abi(result))
+        .context("could not create free-threaded native WGC frame pool")
     }
 }
 

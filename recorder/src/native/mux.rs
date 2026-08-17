@@ -147,6 +147,8 @@ const MUX_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_MUX_LINE_BYTES: usize = 16 * 1024;
 const MAX_STDERR_TAIL_LINES: usize = 64;
 const NATIVE_PIPE_BUFFER_BYTES: usize = 1024 * 1024;
+const NATIVE_PIPE_FLUSH_BYTES: usize = 256 * 1024;
+const NATIVE_PIPE_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -237,17 +239,31 @@ impl NativeMuxTelemetry {
 pub struct NativeMuxVideoWriter {
     writer: BufWriter<ChildStdin>,
     telemetry: Arc<NativeMuxTelemetry>,
+    unflushed_bytes: usize,
+    last_flush: Instant,
 }
 
 impl Write for NativeMuxVideoWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.telemetry.ensure_video_sink_open()?;
-        self.writer.write(buffer)
+        let written = self.writer.write(buffer)?;
+        self.unflushed_bytes = self.unflushed_bytes.saturating_add(written);
+        if self.unflushed_bytes >= NATIVE_PIPE_FLUSH_BYTES
+            || self.last_flush.elapsed() >= NATIVE_PIPE_FLUSH_INTERVAL
+        {
+            self.writer.flush()?;
+            self.unflushed_bytes = 0;
+            self.last_flush = Instant::now();
+        }
+        Ok(written)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         self.telemetry.ensure_video_sink_open()?;
-        self.writer.flush()
+        self.writer.flush()?;
+        self.unflushed_bytes = 0;
+        self.last_flush = Instant::now();
+        Ok(())
     }
 }
 
@@ -345,6 +361,8 @@ impl NativeMuxProcess {
         Ok(NativeMuxVideoWriter {
             writer: BufWriter::with_capacity(NATIVE_PIPE_BUFFER_BYTES, stdin),
             telemetry: Arc::clone(&self.telemetry),
+            unflushed_bytes: 0,
+            last_flush: Instant::now(),
         })
     }
 
