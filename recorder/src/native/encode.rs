@@ -10,9 +10,9 @@ use std::marker::PhantomData;
 use std::os::windows::io::AsRawHandle;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -775,6 +775,26 @@ struct CompletionTelemetry {
     output_bytes: AtomicU64,
     completion_errors: AtomicU64,
     abort_cleanup: AtomicBool,
+    first_error: Mutex<Option<String>>,
+}
+
+impl CompletionTelemetry {
+    fn record_error(&self, error: &anyhow::Error) {
+        if let Ok(mut first_error) = self.first_error.lock()
+            && first_error.is_none()
+        {
+            *first_error = Some(format!("{error:#}"));
+        }
+        self.completion_errors.fetch_add(1, Ordering::Release);
+        self.abort_cleanup.store(true, Ordering::Release);
+    }
+
+    fn error_detail(&self) -> Option<String> {
+        self.first_error
+            .lock()
+            .ok()
+            .and_then(|first_error| first_error.clone())
+    }
 }
 
 /// Lock-free snapshot of direct-NVENC queue and output accounting.
@@ -831,8 +851,7 @@ fn run_completion_thread(
             }
         };
         if let Err(error) = result {
-            telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-            telemetry.abort_cleanup.store(true, Ordering::Release);
+            telemetry.record_error(&error);
             return Err(error);
         }
     }
@@ -841,8 +860,7 @@ fn run_completion_thread(
         .flush()
         .context("could not flush native H.264 output")
     {
-        telemetry.completion_errors.fetch_add(1, Ordering::Relaxed);
-        telemetry.abort_cleanup.store(true, Ordering::Release);
+        telemetry.record_error(&error);
         return Err(error);
     }
     Ok(())
@@ -1131,13 +1149,16 @@ impl NativeNvencEncoder {
     /// Submit without waiting for hardware or output I/O. A full fixed ring is
     /// handled by M3 before this call; this method performs no blocking send.
     pub fn submit(&mut self, frame: ConvertedNv12Frame<'_>) -> Result<()> {
-        ensure!(
-            self.completion_telemetry
-                .completion_errors
-                .load(Ordering::Acquire)
-                == 0,
-            "native NVENC completion thread has reported an output error"
-        );
+        if self
+            .completion_telemetry
+            .completion_errors
+            .load(Ordering::Acquire)
+            != 0
+        {
+            return Err(self.completion_failure(
+                "native NVENC completion/output thread failed before frame submission",
+            ));
+        }
         ensure!(!self.abort_cleanup, "native NVENC encoder is aborting");
         ensure!(
             frame.belongs_to(&self.states),
@@ -1320,13 +1341,14 @@ impl NativeNvencEncoder {
                 bail!("NVENC completion thread closed without acknowledging drain");
             }
         }
-        ensure!(
-            self.completion_telemetry
-                .completion_errors
-                .load(Ordering::Acquire)
-                == 0,
-            "native NVENC completion failed during drain"
-        );
+        if self
+            .completion_telemetry
+            .completion_errors
+            .load(Ordering::Acquire)
+            != 0
+        {
+            return Err(self.completion_failure("native NVENC completion/output drain failed"));
+        }
         ensure!(
             self.states.all_free(),
             "native NVENC drain completed with submitted slots still owned"
@@ -1344,6 +1366,13 @@ impl NativeNvencEncoder {
             .as_ref()
             .map(EncoderSession::handle)
             .context("native NVENC session is closed")
+    }
+
+    fn completion_failure(&self, operation: &str) -> anyhow::Error {
+        match self.completion_telemetry.error_detail() {
+            Some(detail) => anyhow!("{operation}: {detail}"),
+            None => anyhow!(operation.to_owned()),
+        }
     }
 
     fn map_input(&mut self, registered: NvencObjectHandle) -> Result<NvencObjectHandle> {
@@ -1860,5 +1889,16 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("deadline"));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn completion_error_detail_preserves_the_first_output_failure() {
+        let telemetry = CompletionTelemetry::default();
+        telemetry.record_error(&anyhow!("mux pipe closed"));
+        telemetry.record_error(&anyhow!("later cleanup failure"));
+
+        assert_eq!(telemetry.error_detail().as_deref(), Some("mux pipe closed"));
+        assert_eq!(telemetry.completion_errors.load(Ordering::Acquire), 2);
+        assert!(telemetry.abort_cleanup.load(Ordering::Acquire));
     }
 }

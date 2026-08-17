@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
-use std::io::{BufWriter, Read};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -165,6 +165,7 @@ struct NativeMuxTelemetry {
     muxed_bytes: AtomicU64,
     output_time_us: AtomicI64,
     progress_end: AtomicBool,
+    progress_pipe_closed: AtomicBool,
     reader_errors: AtomicU64,
     stderr_tail: Mutex<VecDeque<String>>,
 }
@@ -176,6 +177,7 @@ impl Default for NativeMuxTelemetry {
             muxed_bytes: AtomicU64::new(0),
             output_time_us: AtomicI64::new(-1),
             progress_end: AtomicBool::new(false),
+            progress_pipe_closed: AtomicBool::new(false),
             reader_errors: AtomicU64::new(0),
             stderr_tail: Mutex::new(VecDeque::with_capacity(MAX_STDERR_TAIL_LINES)),
         }
@@ -215,6 +217,37 @@ impl NativeMuxTelemetry {
             |_| "<stderr tail unavailable>".to_owned(),
             |tail| tail.iter().cloned().collect::<Vec<_>>().join(" | "),
         )
+    }
+
+    fn ensure_video_sink_open(&self) -> io::Result<()> {
+        if self.progress_pipe_closed.load(Ordering::Acquire)
+            && !self.progress_end.load(Ordering::Acquire)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "mux-only FFmpeg exited before progress=end",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Buffered Annex-B writer that keeps the large syscall-saving buffer while
+/// observing FFmpeg process loss on every NVENC output frame.
+pub struct NativeMuxVideoWriter {
+    writer: BufWriter<ChildStdin>,
+    telemetry: Arc<NativeMuxTelemetry>,
+}
+
+impl Write for NativeMuxVideoWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.telemetry.ensure_video_sink_open()?;
+        self.writer.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.telemetry.ensure_video_sink_open()?;
+        self.writer.flush()
     }
 }
 
@@ -261,6 +294,9 @@ impl NativeMuxProcess {
                 drain_bounded_lines(stdout, &progress_telemetry, |line, telemetry| {
                     ingest_progress_line(line, telemetry);
                 });
+                progress_telemetry
+                    .progress_pipe_closed
+                    .store(true, Ordering::Release);
             }) {
             Ok(thread) => thread,
             Err(error) => {
@@ -295,7 +331,7 @@ impl NativeMuxProcess {
         })
     }
 
-    pub fn take_video_writer(&mut self) -> Result<BufWriter<ChildStdin>> {
+    pub fn take_video_writer(&mut self) -> Result<NativeMuxVideoWriter> {
         ensure!(
             !self.writer_taken,
             "native mux video writer was already taken"
@@ -306,7 +342,10 @@ impl NativeMuxProcess {
             .take()
             .context("mux-only FFmpeg video pipe was not created")?;
         self.writer_taken = true;
-        Ok(BufWriter::with_capacity(NATIVE_PIPE_BUFFER_BYTES, stdin))
+        Ok(NativeMuxVideoWriter {
+            writer: BufWriter::with_capacity(NATIVE_PIPE_BUFFER_BYTES, stdin),
+            telemetry: Arc::clone(&self.telemetry),
+        })
     }
 
     pub fn telemetry(&self) -> NativeMuxTelemetrySnapshot {
@@ -601,6 +640,21 @@ mod tests {
 
         ingest_progress_line("frame=1", &telemetry);
         assert_eq!(telemetry.reader_errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn video_sink_reports_early_mux_exit_without_waiting_for_buffer_flush() {
+        let telemetry = NativeMuxTelemetry::default();
+        telemetry
+            .progress_pipe_closed
+            .store(true, Ordering::Release);
+
+        let error = telemetry.ensure_video_sink_open().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        assert!(error.to_string().contains("before progress=end"));
+
+        telemetry.progress_end.store(true, Ordering::Release);
+        telemetry.ensure_video_sink_open().unwrap();
     }
 }
 
