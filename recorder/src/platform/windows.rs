@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::BOOL;
 
-use super::{CaptureSource, CaptureTarget};
+use super::{CaptureSource, CaptureTarget, CaptureTargetVisibility};
 
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(1);
 const MAX_WGC_FUTURE_QPC_SKEW_100NS: i128 = 1_000_000; // 100 ms.
@@ -94,14 +94,24 @@ pub fn fallback_capture_target() -> Result<CaptureTarget> {
 
 pub fn validate_capture_target(target: &CaptureTarget) -> Result<()> {
     validate_capture_target_identity(target)?;
-    let CaptureSource::WindowsGraphicsCapture { hwnd, .. } = &target.source else {
-        return Ok(());
-    };
-    let hwnd = HWND(*hwnd as usize as *mut _);
-    if !unsafe { IsWindowVisible(hwnd).as_bool() } || unsafe { IsIconic(hwnd).as_bool() } {
+    if capture_target_visibility(target)? == CaptureTargetVisibility::PausedByWindowVisibility {
         anyhow::bail!("the selected League HWND is hidden or minimized");
     }
     Ok(())
+}
+
+pub fn capture_target_visibility(target: &CaptureTarget) -> Result<CaptureTargetVisibility> {
+    let CaptureSource::WindowsGraphicsCapture { hwnd, .. } = &target.source else {
+        return Ok(CaptureTargetVisibility::Visible);
+    };
+    let hwnd = HWND(*hwnd as usize as *mut _);
+    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+        anyhow::bail!("the selected League HWND was closed");
+    }
+    if unsafe { IsIconic(hwnd).as_bool() } || !unsafe { IsWindowVisible(hwnd).as_bool() } {
+        return Ok(CaptureTargetVisibility::PausedByWindowVisibility);
+    }
+    Ok(CaptureTargetVisibility::Visible)
 }
 
 pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
@@ -128,7 +138,7 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
     // A minimized/temporarily hidden exact window remains the same capture
     // identity. WGC may pause frames and resume after restore, so defer bounds
     // and monitor checks until the HWND is visible again.
-    if unsafe { IsIconic(hwnd).as_bool() } || !unsafe { IsWindowVisible(hwnd).as_bool() } {
+    if capture_target_visibility(target)? == CaptureTargetVisibility::PausedByWindowVisibility {
         return Ok(());
     }
     let (x, y, width, height) = client_bounds(hwnd).context("League HWND has no client area")?;

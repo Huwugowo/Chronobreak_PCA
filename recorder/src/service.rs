@@ -16,8 +16,8 @@ use crate::encoder::{
     RecordingPlan, RecordingSession,
 };
 use crate::platform::{
-    CaptureTarget, capture_target_for_process, fallback_capture_target,
-    validate_capture_target_identity,
+    CaptureTarget, CaptureTargetVisibility, capture_target_for_process, capture_target_visibility,
+    fallback_capture_target, validate_capture_target_identity,
 };
 use crate::poller::{CaptureMetadata, PollerSession, RecordingDetails, RecordingMetadata};
 use crate::storage::{METADATA_JSON, create_game_directory, unix_timestamp_now, write_json_atomic};
@@ -71,6 +71,7 @@ const STARTUP_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(6);
 const CAPTURE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct CaptureProgressWatchdog {
+    state: CaptureProgressState,
     source_qpc: i64,
     source_advanced_at: Instant,
     encoded_frames: u64,
@@ -79,9 +80,24 @@ struct CaptureProgressWatchdog {
     muxed_advanced_at: Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureProgressState {
+    Monitoring,
+    PausedByWindowVisibility,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CaptureProgressObservation {
+    Healthy,
+    PausedByWindowVisibility,
+    ResumedAfterWindowVisibility,
+    Stalled(String),
+}
+
 impl CaptureProgressWatchdog {
     fn new(evidence: &RecordingEvidence, now: Instant) -> Self {
         Self {
+            state: CaptureProgressState::Monitoring,
             source_qpc: evidence.latest_qpc.unwrap_or_default(),
             source_advanced_at: now,
             encoded_frames: evidence.encoded_frames,
@@ -91,11 +107,52 @@ impl CaptureProgressWatchdog {
         }
     }
 
-    fn observe(&mut self, evidence: &RecordingEvidence, now: Instant) -> Option<String> {
+    fn observe(
+        &mut self,
+        evidence: &RecordingEvidence,
+        now: Instant,
+        visibility: CaptureTargetVisibility,
+    ) -> CaptureProgressObservation {
         if let Some(error) = evidence.protocol_error.as_deref() {
-            return Some(format!("capture diagnostics failed: {error}"));
+            return CaptureProgressObservation::Stalled(format!(
+                "capture diagnostics failed: {error}"
+            ));
         }
 
+        self.observe_progress(evidence, now);
+        match (self.state, visibility) {
+            (_, CaptureTargetVisibility::PausedByWindowVisibility) => {
+                self.reset_stall_deadlines(now);
+                if self.state == CaptureProgressState::Monitoring {
+                    self.state = CaptureProgressState::PausedByWindowVisibility;
+                    return CaptureProgressObservation::PausedByWindowVisibility;
+                }
+                return CaptureProgressObservation::Healthy;
+            }
+            (CaptureProgressState::PausedByWindowVisibility, CaptureTargetVisibility::Visible) => {
+                self.state = CaptureProgressState::Monitoring;
+                self.reset_stall_deadlines(now);
+                return CaptureProgressObservation::ResumedAfterWindowVisibility;
+            }
+            (CaptureProgressState::Monitoring, CaptureTargetVisibility::Visible) => {}
+        }
+
+        for (label, last_advanced) in [
+            ("WGC source timestamp", self.source_advanced_at),
+            ("encoded frame count", self.encoded_advanced_at),
+            ("muxed byte count", self.muxed_advanced_at),
+        ] {
+            if now.saturating_duration_since(last_advanced) >= CAPTURE_PROGRESS_STALL_TIMEOUT {
+                return CaptureProgressObservation::Stalled(format!(
+                    "{label} did not advance for {} seconds",
+                    CAPTURE_PROGRESS_STALL_TIMEOUT.as_secs()
+                ));
+            }
+        }
+        CaptureProgressObservation::Healthy
+    }
+
+    fn observe_progress(&mut self, evidence: &RecordingEvidence, now: Instant) {
         let source_qpc = evidence.latest_qpc.unwrap_or_default();
         if source_qpc > self.source_qpc {
             self.source_qpc = source_qpc;
@@ -109,20 +166,12 @@ impl CaptureProgressWatchdog {
             self.muxed_bytes = evidence.muxed_bytes;
             self.muxed_advanced_at = now;
         }
+    }
 
-        for (label, last_advanced) in [
-            ("WGC source timestamp", self.source_advanced_at),
-            ("encoded frame count", self.encoded_advanced_at),
-            ("muxed byte count", self.muxed_advanced_at),
-        ] {
-            if now.saturating_duration_since(last_advanced) >= CAPTURE_PROGRESS_STALL_TIMEOUT {
-                return Some(format!(
-                    "{label} did not advance for {} seconds",
-                    CAPTURE_PROGRESS_STALL_TIMEOUT.as_secs()
-                ));
-            }
-        }
-        None
+    fn reset_stall_deadlines(&mut self, now: Instant) {
+        self.source_advanced_at = now;
+        self.encoded_advanced_at = now;
+        self.muxed_advanced_at = now;
     }
 }
 
@@ -233,36 +282,52 @@ pub async fn run(
                     }
                 }
 
-                if let Some(recording) = active.as_mut()
-                    && let Err(target_error) = validate_capture_target_identity(&recording.target)
-                {
-                    let recording = active.take().expect("active recording exists");
-                    warn!(error = %target_error, "the active League capture target became invalid");
-                    stop_recording_with_failure(
-                        recording,
-                        &events,
-                        format!("the exact League capture target became invalid: {target_error:#}"),
-                    )
-                    .await;
-                    failed_process = current_process;
+                let mut visibility = CaptureTargetVisibility::Visible;
+                if let Some(recording) = active.as_ref() {
+                    let target_state = validate_capture_target_identity(&recording.target)
+                        .and_then(|()| capture_target_visibility(&recording.target));
+                    match target_state {
+                        Ok(current_visibility) => visibility = current_visibility,
+                        Err(target_error) => {
+                            let recording = active.take().expect("active recording exists");
+                            warn!(error = %target_error, "the active League capture target became invalid");
+                            stop_recording_with_failure(
+                                recording,
+                                &events,
+                                format!("the exact League capture target became invalid: {target_error:#}"),
+                            )
+                            .await;
+                            failed_process = current_process;
+                        }
+                    }
                 }
 
                 if let Some(recording) = active.as_mut() {
                     let evidence = recording.diagnostics.borrow().clone();
                     let now = Instant::now();
-                    if let Some(stall_reason) = recording.progress_watchdog.observe(&evidence, now)
-                    {
-                        let recording = active.take().expect("active recording exists");
-                        warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
-                        stop_recording_with_failure(recording, &events, stall_reason).await;
-                        failed_process = current_process;
-                    } else if now >= recording.progress_report_due {
-                        log_capture_progress(
-                            &evidence,
-                            recording.session.video_started_at().elapsed(),
-                            false,
-                        );
-                        recording.progress_report_due = now + Duration::from_secs(10);
+                    match recording.progress_watchdog.observe(&evidence, now, visibility) {
+                        CaptureProgressObservation::Stalled(stall_reason) => {
+                            let recording = active.take().expect("active recording exists");
+                            warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
+                            stop_recording_with_failure(recording, &events, stall_reason).await;
+                            failed_process = current_process;
+                        }
+                        CaptureProgressObservation::PausedByWindowVisibility => {
+                            info!("capture progress watchdog paused while the League window is hidden or minimized");
+                        }
+                        CaptureProgressObservation::ResumedAfterWindowVisibility => {
+                            info!("capture progress watchdog resumed after the League window became visible");
+                            recording.progress_report_due = now + Duration::from_secs(10);
+                        }
+                        CaptureProgressObservation::Healthy if now >= recording.progress_report_due => {
+                            log_capture_progress(
+                                &evidence,
+                                recording.session.video_started_at().elapsed(),
+                                false,
+                            );
+                            recording.progress_report_due = now + Duration::from_secs(10);
+                        }
+                        CaptureProgressObservation::Healthy => {}
                     }
                 }
 
@@ -882,12 +947,22 @@ mod tests {
         evidence.encoded_frames = 20;
         evidence.muxed_bytes = 2_000;
         assert_eq!(
-            watchdog.observe(&evidence, start + Duration::from_secs(14)),
-            None
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(14),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Healthy
         );
         assert_eq!(
-            watchdog.observe(&evidence, start + Duration::from_secs(29)),
-            Some("WGC source timestamp did not advance for 15 seconds".to_owned())
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(29),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Stalled(
+                "WGC source timestamp did not advance for 15 seconds".to_owned()
+            )
         );
     }
 
@@ -898,8 +973,65 @@ mod tests {
         let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
         evidence.protocol_error = Some("counter regression".to_owned());
         assert_eq!(
-            watchdog.observe(&evidence, start),
-            Some("capture diagnostics failed: counter regression".to_owned())
+            watchdog.observe(&evidence, start, CaptureTargetVisibility::Visible),
+            CaptureProgressObservation::Stalled(
+                "capture diagnostics failed: counter regression".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn capture_progress_watchdog_pauses_and_resets_for_window_visibility() {
+        let start = Instant::now();
+        let evidence = RecordingEvidence {
+            latest_qpc: Some(100),
+            encoded_frames: 10,
+            muxed_bytes: 1_000,
+            ..RecordingEvidence::default()
+        };
+        let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
+
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(20),
+                CaptureTargetVisibility::PausedByWindowVisibility
+            ),
+            CaptureProgressObservation::PausedByWindowVisibility
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(80),
+                CaptureTargetVisibility::PausedByWindowVisibility
+            ),
+            CaptureProgressObservation::Healthy
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(81),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::ResumedAfterWindowVisibility
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(95),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Healthy
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(96),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Stalled(
+                "WGC source timestamp did not advance for 15 seconds".to_owned()
+            )
         );
     }
 }

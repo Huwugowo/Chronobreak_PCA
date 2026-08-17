@@ -33,6 +33,12 @@ pub struct CaptureTarget {
     pub source: CaptureSource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureTargetVisibility {
+    Visible,
+    PausedByWindowVisibility,
+}
+
 impl CaptureTarget {
     pub fn description(&self) -> String {
         match &self.source {
@@ -129,8 +135,8 @@ mod windows;
 
 #[cfg(target_os = "windows")]
 pub use windows::{
-    capture_target_for_process, fallback_capture_target, instant_from_qpc_100ns,
-    validate_capture_target, validate_capture_target_identity,
+    capture_target_for_process, capture_target_visibility, fallback_capture_target,
+    instant_from_qpc_100ns, validate_capture_target, validate_capture_target_identity,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -141,6 +147,13 @@ pub fn validate_capture_target(_target: &CaptureTarget) -> anyhow::Result<()> {
 #[cfg(not(target_os = "windows"))]
 pub fn validate_capture_target_identity(_target: &CaptureTarget) -> anyhow::Result<()> {
     Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn capture_target_visibility(
+    _target: &CaptureTarget,
+) -> anyhow::Result<CaptureTargetVisibility> {
+    Ok(CaptureTargetVisibility::Visible)
 }
 
 #[cfg(not(target_os = "windows"))]
