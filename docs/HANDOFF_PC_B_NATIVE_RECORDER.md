@@ -4,13 +4,13 @@
 
 Continue only coding/recorder work. Ignore monetization, advertising and other
 business discussion. Before editing, read these handoff-pack sources in order.
-The following paths are relative to the PC-B worktree root:
+The following paths are relative to the PC-B repository root:
 
-1. `../../00_READ_FIRST/README_FIRST.md`
-2. `../../00_READ_FIRST/HANDOFF_STATE.md`
-3. `../../01_CURRENT_REPO_REFERENCE/harness/AGENTS.md`
-4. `../../01_CURRENT_REPO_REFERENCE/docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md`
-5. `../../03_QB_PERF_005_NATIVE/qb-perf-005-planning/docs/exec-plans/active/qb-perf-005-native-windows-recorder.md`
+1. `../chronobreak-coding-handoff-2026-08-17/00_READ_FIRST/README_FIRST.md`
+2. `../chronobreak-coding-handoff-2026-08-17/00_READ_FIRST/HANDOFF_STATE.md`
+3. `../chronobreak-coding-handoff-2026-08-17/01_CURRENT_REPO_REFERENCE/harness/AGENTS.md`
+4. `../chronobreak-coding-handoff-2026-08-17/01_CURRENT_REPO_REFERENCE/docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md`
+5. `../chronobreak-coding-handoff-2026-08-17/03_QB_PERF_005_NATIVE/qb-perf-005-planning/docs/exec-plans/active/qb-perf-005-native-windows-recorder.md`
 6. this document
 7. `docs/PRELIMINARY_BACKEND_AB.md`
 
@@ -26,10 +26,10 @@ session. It remains the source of truth. None of the later QB-PERF-002 takeover
 kit or QB-PERF-005/native work in this PC-B repository should be represented as
 already installed on PC A.
 
-This is the canonical PC-B patch worktree:
+This is the canonical PC-B patch repository:
 
 ```text
-C:\Users\Hugo\Documents\perso\chrnbrk\chronobreak-coding-handoff-2026-08-17\build\pc-b-native-recorder-worktree
+C:\Users\Hugo\Documents\perso\chrnbrk\chronobreak-recorder-pc-b
 branch: pc-b/qb-perf-005-native
 ```
 
@@ -55,7 +55,7 @@ the QB-PERF-002 reference path and its synchronized `frame_seq` fix separately.
 
 | Item | Status on PC B | Meaning |
 | --- | --- | --- |
-| M0: live-tree rebase/attribution seam | **Not authoritative** | The seam and attribution boundary are prepared in the partial PC-B worktree, but the exact whole PC-A tree has not been supplied/rebased. |
+| M0: live-tree rebase/attribution seam | **Not authoritative** | The seam and attribution boundary are prepared in the partial PC-B repository, but the exact whole PC-A tree has not been supplied/rebased. |
 | M1: native prerequisites/preflight | **Provisionally done** | Same-adapter native prerequisites implemented and tested on PC B. |
 | M2: exact-HWND WGC source | **Provisionally done** | Steady, resize, minimize/restore, occlusion and target-close non-League fixtures passed. |
 | M3: D3D11 BGRA-to-NV12 ring | **Provisionally done** | GPU conversion and fixed four-slot ownership implemented/tested. |
@@ -123,7 +123,7 @@ of one native run, not a comparison between backends.
 
 ## Exact runtime blocker
 
-This worktree contains `media-runtime/runtime-lock.json`, the r5 source patch
+This repository contains `media-runtime/runtime-lock.json`, the r5 source patch
 and notices, but no locked executables anywhere in the handoff/worktree. The
 required hashes are documented in `docs/PRELIMINARY_BACKEND_AB.md`.
 
@@ -160,7 +160,7 @@ runtime and does not require League.
 - Do not modify QB-PERF-002 merely to bypass the PerfProc/WMI failure.
 - Do not remove either recorder backend before M8.
 - Do not fabricate R11's empirical fixture.
-- Only commands actually run in this worktree count as evidence.
+- Only commands actually run in this repository count as evidence.
 - Keep new performance output under a new immutable, ignored evidence root.
 - Use `C:\Users\Hugo\.cargo\bin\cargo.exe` explicitly if Cargo path discovery
   is unreliable.

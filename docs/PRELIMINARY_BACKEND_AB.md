@@ -49,7 +49,7 @@ package versions; do not silently upgrade the lock or overwrite PC B's current
 
 ## Commands
 
-Run from the PC-B worktree root in Windows PowerShell. Use an absolute runtime
+Run from the PC-B repository root in Windows PowerShell. Use an absolute runtime
 path.
 
 ```powershell

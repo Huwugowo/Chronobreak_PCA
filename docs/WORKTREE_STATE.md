@@ -1,4 +1,4 @@
-# PC-B worktree state
+# PC-B repository state
 
 ## Provenance
 
@@ -63,6 +63,6 @@
 
 ## Verification rule
 
-Only commands actually run against this worktree count. Scratch evidence can
+Only commands actually run against this repository count. Scratch evidence can
 establish provenance, but new milestone claims require fresh local results.
 The current session handoff is `docs/HANDOFF_PC_B_NATIVE_RECORDER.md`.
