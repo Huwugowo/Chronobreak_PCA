@@ -29,6 +29,11 @@
   fixture with separately sampled recorder/mux resources, valid 60-FPS H.264 +
   AAC media and full decode. The run exposed and fixed misleading FFmpeg
   stream-copy time telemetry.
+- A matched 240-second preliminary non-League backend A/B harness is prepared
+  in commit `9ef92f8`. It compares both backends against one 1920x1080
+  animated exact-HWND fixture and validates process ownership, media and full
+  decode. It has not run because the exact r5 binaries are absent. See
+  `docs/PRELIMINARY_BACKEND_AB.md`.
 
 ## Current milestone
 
@@ -37,6 +42,9 @@
   benchmark is intentionally external to PC B. Until the exact PC-A tree and
   League fixture are available, keep the developer selector and both paths;
   do not make the migration decision or begin M9 removal.
+- Before M8, the prepared non-League A/B may be run as preliminary engineering
+  evidence once the exact locked r5 runtime is staged. A useful preliminary
+  result still does not complete M8.
 
 ## Gates that remain external
 
@@ -57,3 +65,4 @@
 
 Only commands actually run against this worktree count. Scratch evidence can
 establish provenance, but new milestone claims require fresh local results.
+The current session handoff is `docs/HANDOFF_PC_B_NATIVE_RECORDER.md`.
