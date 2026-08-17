@@ -56,11 +56,11 @@ fn run_diagnostics(config: &Config) -> Result<()> {
     println!("  runtime: {}", report.media_runtime_id);
     println!(
         "  encoder: {} ({})",
-        report.plan.encoder.label(),
-        report.plan.encoder.codec_name(report.plan.codec)
+        report.plan.encoder().label(),
+        report.plan.encoder().codec_name(report.plan.codec())
     );
-    println!("  codec:   {}", report.plan.codec.label());
-    println!("  profile: {}", report.plan.profile.label());
+    println!("  codec:   {}", report.plan.codec().label());
+    println!("  profile: {}", report.plan.profile().label());
     println!("  audio:   {}", report.audio.description());
     Ok(())
 }

@@ -188,38 +188,75 @@ impl RecordingProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordingPlan {
-    pub encoder: EncoderKind,
-    pub codec: VideoCodec,
-    pub profile: RecordingProfile,
+    encoder: EncoderKind,
+    codec: VideoCodec,
+    profile: RecordingProfile,
+    spec: ProfileSpec,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordingPlanError {
+    AutoProfile,
+}
+
+impl std::fmt::Display for RecordingPlanError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AutoProfile => {
+                formatter.write_str("a recording plan requires a concrete non-auto profile")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RecordingPlanError {}
+
 impl RecordingPlan {
-    pub fn fps(self) -> u32 {
+    pub fn new(
+        encoder: EncoderKind,
+        codec: VideoCodec,
+        profile: RecordingProfile,
+    ) -> std::result::Result<Self, RecordingPlanError> {
+        let Some(spec) = profile.spec() else {
+            return Err(RecordingPlanError::AutoProfile);
+        };
+        Ok(Self {
+            encoder,
+            codec,
+            profile,
+            spec,
+        })
+    }
+
+    pub const fn encoder(self) -> EncoderKind {
+        self.encoder
+    }
+
+    pub const fn codec(self) -> VideoCodec {
+        self.codec
+    }
+
+    pub const fn profile(self) -> RecordingProfile {
         self.profile
-            .spec()
-            .expect("a selected recording plan has a concrete profile")
-            .fps
+    }
+
+    pub fn fps(self) -> u32 {
+        self.spec.fps
     }
 
     pub fn output_dimensions(self, source: Option<(u32, u32)>) -> Option<(u32, u32)> {
-        let maximum = self
-            .profile
-            .spec()
-            .expect("a selected recording plan has a concrete profile")
-            .max_dimensions;
-        source.map(|dimensions| fit_within(dimensions, maximum))
+        source.map(|dimensions| fit_within(dimensions, self.spec.max_dimensions))
     }
 
     fn benchmark_dimensions(self, source: Option<(u32, u32)>) -> (u32, u32) {
         self.output_dimensions(source)
-            .unwrap_or_else(|| self.profile.spec().unwrap().max_dimensions)
+            .unwrap_or(self.spec.max_dimensions)
     }
 
     fn bitrate_kbps(self, dimensions: (u32, u32)) -> u32 {
-        let spec = self.profile.spec().unwrap();
         let base = match self.codec {
-            VideoCodec::H264 => spec.h264_bitrate_kbps,
-            VideoCodec::Hevc => spec.hevc_bitrate_kbps,
+            VideoCodec::H264 => self.spec.h264_bitrate_kbps,
+            VideoCodec::Hevc => self.spec.hevc_bitrate_kbps,
         };
         if self.profile == RecordingProfile::VeryHigh
             && u64::from(dimensions.0) * u64::from(dimensions.1) > 1920 * 1080
@@ -330,11 +367,7 @@ impl Ffmpeg {
                             .await
                     }
                     profile => {
-                        let plan = RecordingPlan {
-                            encoder,
-                            codec,
-                            profile,
-                        };
+                        let plan = RecordingPlan::new(encoder, codec, profile)?;
                         self.probe_plan(plan, source_dimensions)
                             .await
                             .map(|()| profile)
@@ -343,11 +376,7 @@ impl Ffmpeg {
 
                 match selection {
                     Ok(profile) => {
-                        let plan = RecordingPlan {
-                            encoder,
-                            codec,
-                            profile,
-                        };
+                        let plan = RecordingPlan::new(encoder, codec, profile)?;
                         info!(
                             encoder = codec_name,
                             codec = codec.label(),
@@ -394,11 +423,12 @@ impl Ffmpeg {
         for encoder in [EncoderKind::Nvenc, EncoderKind::Amf, EncoderKind::Qsv] {
             for codec in codecs.iter().copied() {
                 if advertised.contains(encoder.codec_name(codec)) {
-                    capabilities.push(EncoderCapability::compiled_candidate(
-                        encoder,
-                        codec,
-                        adapter_luid,
-                    ));
+                    let Some(capability) =
+                        EncoderCapability::compiled_candidate(encoder, codec, adapter_luid)
+                    else {
+                        continue;
+                    };
+                    capabilities.push(capability);
                 }
             }
         }
@@ -412,16 +442,10 @@ impl Ffmpeg {
         Ok(candidates
             .into_iter()
             .map(|candidate| {
-                (
-                    RecordingPlan {
-                        encoder: candidate.encoder,
-                        codec: candidate.codec,
-                        profile,
-                    },
-                    candidate,
-                )
+                RecordingPlan::new(candidate.encoder, candidate.codec, profile)
+                    .map(|plan| (plan, candidate))
             })
-            .collect())
+            .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     async fn recommend_profile(
@@ -439,11 +463,7 @@ impl Ffmpeg {
             RecordingProfile::Low,
             RecordingProfile::VeryLow,
         ] {
-            let plan = RecordingPlan {
-                encoder,
-                codec,
-                profile,
-            };
+            let plan = RecordingPlan::new(encoder, codec, profile)?;
             match self.benchmark_plan(plan, source_dimensions).await {
                 Ok(elapsed) => {
                     lowest_working = Some(profile);
@@ -1355,7 +1375,7 @@ fn build_recording_arguments(
         if let Some(source) = source_dimensions {
             append_fixed_scale_filter(&mut arguments, source, output_dimensions);
         } else {
-            let maximum = plan.profile.spec().unwrap().max_dimensions;
+            let maximum = plan.spec.max_dimensions;
             push_args(&mut arguments, &["-vf"]);
             arguments.push(
                 format!(
@@ -1429,12 +1449,8 @@ fn append_encoding_arguments(
     plan: RecordingPlan,
     dimensions: (u32, u32),
 ) -> Result<()> {
-    let spec = plan
-        .profile
-        .spec()
-        .context("recording profile is unresolved")?;
     plan.encoder
-        .append_codec_arguments(plan.codec, spec.speed, arguments);
+        .append_codec_arguments(plan.codec, plan.spec.speed, arguments);
 
     let bitrate_kbps = plan.bitrate_kbps(dimensions);
     push_args(arguments, &["-b:v"]);
@@ -1516,11 +1532,23 @@ mod tests {
         profile: RecordingProfile,
         codec: VideoCodec,
     ) -> RecordingPlan {
-        RecordingPlan {
-            encoder,
-            codec,
-            profile,
-        }
+        RecordingPlan::new(encoder, codec, profile).unwrap()
+    }
+
+    #[test]
+    fn recording_plan_constructor_rejects_an_unresolved_profile() {
+        assert_eq!(
+            RecordingPlan::new(EncoderKind::Nvenc, VideoCodec::H264, RecordingProfile::Auto,),
+            Err(RecordingPlanError::AutoProfile)
+        );
+
+        let selected =
+            RecordingPlan::new(EncoderKind::Nvenc, VideoCodec::H264, RecordingProfile::High)
+                .unwrap();
+        assert_eq!(selected.encoder(), EncoderKind::Nvenc);
+        assert_eq!(selected.codec(), VideoCodec::H264);
+        assert_eq!(selected.profile(), RecordingProfile::High);
+        assert_eq!(selected.fps(), 60);
     }
 
     #[cfg(target_os = "windows")]

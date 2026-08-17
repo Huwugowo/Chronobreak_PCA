@@ -543,14 +543,14 @@ async fn start_recording(
                         bail!("recording startup was cancelled");
                     }
                     warn!(
-                        encoder = plan.encoder.codec_name(plan.codec),
+                        encoder = plan.encoder().codec_name(plan.codec()),
                         interop = candidate.interop.label(),
                         error = %error,
                         "same-adapter recording candidate failed"
                     );
                     failures.push(format!(
                         "{} via {}: {error:#}",
-                        plan.encoder.codec_name(plan.codec),
+                        plan.encoder().codec_name(plan.codec()),
                         candidate.interop.label()
                     ));
                 }
@@ -643,7 +643,7 @@ async fn start_recording(
             "windows_graphics_capture_bgra_d3d11".to_owned(),
             "scale_d3d11_video_processor_nv12".to_owned(),
         ];
-        if plan.encoder.label() == "qsv" {
+        if plan.encoder().label() == "qsv" {
             gpu_stages.push("d3d11_to_qsv_direct_hwmap".to_owned());
         }
         gpu_stages.push(encoder_interop.clone());
@@ -656,7 +656,7 @@ async fn start_recording(
             encoder_adapter_luid: capture_adapter_luid.clone(),
             capture_adapter_name: capture_adapter_name.clone(),
             capture_output: capture_output.clone(),
-            encoder_backend: plan.encoder.label().to_owned(),
+            encoder_backend: plan.encoder().label().to_owned(),
             encoder_interop: encoder_interop.clone(),
             media_runtime_id: ffmpeg.runtime_id().to_owned(),
             source_format: "d3d11_bgra".to_owned(),
@@ -731,9 +731,9 @@ async fn start_recording(
         progress_report_due: now + Duration::from_secs(10),
         poller,
         details: RecordingDetails {
-            encoder_used: plan.encoder.label().to_owned(),
-            codec: plan.codec.label().to_owned(),
-            profile: plan.profile.label().to_owned(),
+            encoder_used: plan.encoder().label().to_owned(),
+            codec: plan.codec().label().to_owned(),
+            profile: plan.profile().label().to_owned(),
             resolution: recording_resolution,
             fps: plan.fps(),
             capture_backend: capture_details.0,
