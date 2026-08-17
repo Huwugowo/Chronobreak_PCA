@@ -98,6 +98,26 @@ const H264_HIGH_PROFILE_GUID: GUID = GUID::from_values(
     0x4b89,
     [0xaf, 0x2a, 0xd5, 0x37, 0xc9, 0x2b, 0xe3, 0x10],
 );
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EncodePictureStatus {
+    Accepted,
+    AcceptedNeedsMoreInput,
+}
+
+fn classify_encode_picture_status(
+    status: i32,
+    operation: &'static str,
+) -> Result<EncodePictureStatus> {
+    match status {
+        NVENC_SUCCESS => Ok(EncodePictureStatus::Accepted),
+        NVENC_ERR_NEED_MORE_INPUT => Ok(EncodePictureStatus::AcceptedNeedsMoreInput),
+        status => {
+            nvenc_status(status, operation)?;
+            unreachable!("non-success NVENC status unexpectedly passed validation")
+        }
+    }
+}
 const P4_PRESET_GUID: GUID = GUID::from_values(
     0x90a7_b826,
     0xdf06,
@@ -132,15 +152,51 @@ impl<const N: usize> NvencBlob<N> {
         }
     }
 
-    fn read<T: Copy>(&self, offset: usize) -> T {
+    unsafe fn read_unchecked<T: Copy>(&self, offset: usize) -> T {
         let end = offset
             .checked_add(std::mem::size_of::<T>())
             .expect("NVENC ABI offset arithmetic must not overflow");
         assert!(end <= N, "NVENC ABI read exceeds pinned structure");
-        // SAFETY: the bounds check proves the source covers one T and
-        // `read_unaligned` permits each pinned C offset. Callers only request
-        // integer, GUID, or opaque-pointer fields whose bit patterns are valid.
+        // SAFETY: the caller proves every bit pattern is valid for T. The
+        // bounds check proves the source covers one T and `read_unaligned`
+        // permits each pinned C offset.
         unsafe { self.bytes.as_ptr().add(offset).cast::<T>().read_unaligned() }
+    }
+
+    #[cfg(test)]
+    fn read_u16(&self, offset: usize) -> u16 {
+        // SAFETY: every u16 bit pattern is valid.
+        unsafe { self.read_unchecked(offset) }
+    }
+
+    fn read_u32(&self, offset: usize) -> u32 {
+        // SAFETY: every u32 bit pattern is valid.
+        unsafe { self.read_unchecked(offset) }
+    }
+
+    #[cfg(test)]
+    fn read_i32(&self, offset: usize) -> i32 {
+        // SAFETY: every i32 bit pattern is valid.
+        unsafe { self.read_unchecked(offset) }
+    }
+
+    fn read_mut_ptr(&self, offset: usize) -> *mut c_void {
+        // SAFETY: every bit pattern is valid for a raw pointer; it remains
+        // opaque and is validated for null before wrapping/dereferencing.
+        unsafe { self.read_unchecked(offset) }
+    }
+
+    fn read_const_u8_ptr(&self, offset: usize) -> *const u8 {
+        // SAFETY: every bit pattern is valid for a raw pointer; NVENC's byte
+        // count and null check gate creation of a borrowed slice.
+        unsafe { self.read_unchecked(offset) }
+    }
+
+    #[cfg(test)]
+    fn read_guid(&self, offset: usize) -> GUID {
+        // SAFETY: GUID is composed exclusively of integer fields, so every
+        // 128-bit representation is a valid GUID value.
+        unsafe { self.read_unchecked(offset) }
     }
 
     fn as_mut_void(&mut self) -> *mut c_void {
@@ -629,7 +685,7 @@ fn initialize_slots(
         // remains retained in this slot until after encoder destruction.
         let status = unsafe { (api.register_resource)(encoder.as_ptr(), params.as_mut_void()) };
         nvenc_status(status, "nvEncRegisterResource (D3D11 NV12)")?;
-        let registered = params.read::<*mut c_void>(32);
+        let registered = params.read_mut_ptr(32);
         slot.registered_resource = NonNull::new(registered).map(NvencObjectHandle);
         ensure!(
             slot.registered_resource.is_some(),
@@ -645,7 +701,7 @@ fn initialize_slots(
         let status =
             unsafe { (api.create_bitstream_buffer)(encoder.as_ptr(), params.as_mut_void()) };
         nvenc_status(status, "nvEncCreateBitstreamBuffer")?;
-        let bitstream = params.read::<*mut c_void>(16);
+        let bitstream = params.read_mut_ptr(16);
         slot.bitstream = NonNull::new(bitstream).map(NvencObjectHandle);
         ensure!(
             slot.bitstream.is_some(),
@@ -809,8 +865,8 @@ fn process_completion(
     let status = unsafe { (api.lock_bitstream)(api.encoder.as_ptr(), lock.as_mut_void()) };
     nvenc_status(status, "nvEncLockBitstream after completion event")?;
 
-    let byte_count = lock.read::<u32>(36);
-    let bitstream_pointer = lock.read::<*const u8>(56);
+    let byte_count = lock.read_u32(36);
+    let bitstream_pointer = lock.read_const_u8_ptr(56);
     let mut output_error = None;
     if byte_count > 0 {
         if bitstream_pointer.is_null() {
@@ -913,6 +969,7 @@ pub struct NativeNvencEncoder {
     completion_thread: Option<JoinHandle<Result<()>>>,
     completion_done: Receiver<()>,
     completion_cancellation: Option<OwnedEvent>,
+    eos_event: Option<OwnedEvent>,
     orphaned_completions: Vec<CompletionTask>,
     abandoned_mappings: Vec<NvencObjectHandle>,
     slots: Option<[NvencSlot; NATIVE_ENCODER_SLOT_COUNT]>,
@@ -955,21 +1012,21 @@ impl NativeNvencEncoder {
         let mut config = match preset_h264_config(api, encoder) {
             Ok(config) => config,
             Err(error) => {
-                let _ = session.close();
-                return Err(error);
+                let session_error = session.close().err();
+                return Err(combine_initialization_errors(error, None, session_error));
             }
         };
         if let Err(error) = initialize_encoder(api, encoder, &mut config) {
-            let _ = session.close();
-            return Err(error);
+            let session_error = session.close().err();
+            return Err(combine_initialization_errors(error, None, session_error));
         }
 
         let (textures, states) = converter.encoder_resources();
         let mut slot_vec = match create_slot_shells(textures) {
             Ok(slots) => slots,
             Err(error) => {
-                let _ = session.close();
-                return Err(error);
+                let session_error = session.close().err();
+                return Err(combine_initialization_errors(error, None, session_error));
             }
         };
         if let Err(error) = initialize_slots(api, encoder, &mut slot_vec) {
@@ -1054,6 +1111,7 @@ impl NativeNvencEncoder {
             completion_thread: Some(completion_thread),
             completion_done,
             completion_cancellation: Some(completion_cancellation),
+            eos_event: None,
             orphaned_completions: Vec::new(),
             abandoned_mappings: Vec::new(),
             slots: Some(slots),
@@ -1141,18 +1199,7 @@ impl NativeNvencEncoder {
         // SAFETY: the mapped same-device NV12 input, distinct output/event and
         // exact-layout params all remain live until the queued completion runs.
         let status = unsafe { (self.api.encode_picture)(encoder.as_ptr(), params.as_mut_void()) };
-        if status == NVENC_ERR_NEED_MORE_INPUT {
-            self.abort_cleanup = true;
-            self.completion_telemetry
-                .abort_cleanup
-                .store(true, Ordering::Release);
-            self.abandoned_mappings.push(mapped_input);
-            bail!(
-                "NVENC returned NEED_MORE_INPUT despite zero B frames and disabled lookahead; session will be aborted"
-            );
-        }
-        if status != NVENC_SUCCESS {
-            let submit_error = nvenc_status(status, "nvEncEncodePicture").unwrap_err();
+        if let Err(submit_error) = classify_encode_picture_status(status, "nvEncEncodePicture") {
             let unmap_error = self.unmap_rejected(mapped_input).err();
             let state_error = if unmap_error.is_none() {
                 self.states.complete_submitted(slot_index).err()
@@ -1171,6 +1218,11 @@ impl NativeNvencEncoder {
                 state_error,
             ));
         }
+
+        // Both SUCCESS and NEED_MORE_INPUT accept ownership of the input and
+        // output sample. NVIDIA requires asynchronous clients to wait on every
+        // completion event in submission order; EOS releases any final sample
+        // still deferred for reordering or look-ahead.
 
         self.submitted_frames = self.submitted_frames.saturating_add(1);
         self.frame_index = self.frame_index.wrapping_add(1);
@@ -1304,8 +1356,7 @@ impl NativeNvencEncoder {
         let status =
             unsafe { (self.api.map_input_resource)(encoder.as_ptr(), params.as_mut_void()) };
         nvenc_status(status, "nvEncMapInputResource")?;
-        let Some(mapped) = NonNull::new(params.read::<*mut c_void>(24)).map(NvencObjectHandle)
-        else {
+        let Some(mapped) = NonNull::new(params.read_mut_ptr(24)).map(NvencObjectHandle) else {
             // A successful map without a token contradicts the pinned API
             // contract. Do not continue cleanup through a session whose
             // resource ownership can no longer be established safely.
@@ -1315,7 +1366,7 @@ impl NativeNvencEncoder {
                 .store(true, Ordering::Release);
             bail!("NVENC mapped a resource without returning an input handle");
         };
-        let format = params.read::<u32>(32);
+        let format = params.read_u32(32);
         if format != NV_ENC_BUFFER_FORMAT_NV12 {
             let format_error =
                 anyhow!("NVENC mapped M3 NV12 texture as unexpected format 0x{format:08x}");
@@ -1375,50 +1426,6 @@ impl NativeNvencEncoder {
             }
         }
 
-        if !self.abort_cleanup {
-            let (barrier_sender, barrier_receiver) = sync_channel(0);
-            match sender.try_send(CompletionCommand::Barrier(barrier_sender)) {
-                Ok(()) => match barrier_receiver.recv_timeout(COMPLETION_ACK_TIMEOUT) {
-                    Ok(()) => {}
-                    Err(RecvTimeoutError::Timeout) => {
-                        self.abort_cleanup = true;
-                        remember_error(
-                            &mut first_error,
-                            Some(anyhow!(
-                                "NVENC completion barrier exceeded {} seconds",
-                                COMPLETION_ACK_TIMEOUT.as_secs_f64()
-                            )),
-                        );
-                    }
-                    Err(RecvTimeoutError::Disconnected) => {
-                        self.abort_cleanup = true;
-                        remember_error(
-                            &mut first_error,
-                            Some(anyhow!("NVENC completion barrier was not acknowledged")),
-                        );
-                    }
-                },
-                Err(TrySendError::Full(_)) => {
-                    self.abort_cleanup = true;
-                    remember_error(
-                        &mut first_error,
-                        Some(anyhow!(
-                            "bounded NVENC completion queue was full before shutdown barrier"
-                        )),
-                    );
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    self.abort_cleanup = true;
-                    remember_error(
-                        &mut first_error,
-                        Some(anyhow!(
-                            "NVENC completion thread closed before shutdown barrier"
-                        )),
-                    );
-                }
-            }
-        }
-
         let completion_failed = self
             .completion_telemetry
             .completion_errors
@@ -1430,69 +1437,72 @@ impl NativeNvencEncoder {
                 .completion_telemetry
                 .abort_cleanup
                 .load(Ordering::Acquire)
-            && self.states.all_free()
         {
-            let event = self
-                .slots
-                .as_ref()
-                .and_then(|slots| slots.first())
-                .map(NvencSlot::event_handle);
-            if let Some(event) = event {
-                match self.submit_eos(event) {
-                    Ok(()) => {
-                        let (eos_sender, eos_receiver) = sync_channel(0);
-                        match sender.try_send(CompletionCommand::Eos {
-                            event,
-                            acknowledged: eos_sender,
-                        }) {
-                            Ok(()) => match eos_receiver.recv_timeout(COMPLETION_ACK_TIMEOUT) {
-                                Ok(()) => {}
-                                Err(RecvTimeoutError::Timeout) => {
-                                    self.abort_cleanup = true;
-                                    remember_error(
-                                        &mut first_error,
-                                        Some(anyhow!(
-                                            "NVENC EOS completion exceeded {} seconds",
-                                            COMPLETION_ACK_TIMEOUT.as_secs_f64()
-                                        )),
-                                    );
-                                }
-                                Err(RecvTimeoutError::Disconnected) => {
-                                    self.abort_cleanup = true;
-                                    remember_error(
-                                        &mut first_error,
-                                        Some(anyhow!("NVENC EOS completion was not acknowledged")),
-                                    );
-                                }
-                            },
-                            Err(TrySendError::Full(_)) => {
+            match self.prepare_eos_event().and_then(|event| {
+                self.submit_eos(event)?;
+                Ok(event)
+            }) {
+                Ok(event) => {
+                    // EOS is submitted before the completion-thread barrier.
+                    // This lets NVENC release samples accepted with
+                    // NEED_MORE_INPUT while the command order still drains
+                    // every frame before waiting for the dedicated EOS event.
+                    let (eos_sender, eos_receiver) = sync_channel(0);
+                    match sender.try_send(CompletionCommand::Eos {
+                        event,
+                        acknowledged: eos_sender,
+                    }) {
+                        Ok(()) => match eos_receiver.recv_timeout(COMPLETION_ACK_TIMEOUT) {
+                            Ok(()) => {}
+                            Err(RecvTimeoutError::Timeout) => {
                                 self.abort_cleanup = true;
                                 remember_error(
                                     &mut first_error,
                                     Some(anyhow!(
-                                        "bounded NVENC completion queue was full before EOS"
+                                        "NVENC frame/EOS drain exceeded {} seconds",
+                                        COMPLETION_ACK_TIMEOUT.as_secs_f64()
                                     )),
                                 );
                             }
-                            Err(TrySendError::Disconnected(_)) => {
+                            Err(RecvTimeoutError::Disconnected) => {
                                 self.abort_cleanup = true;
                                 remember_error(
                                     &mut first_error,
-                                    Some(anyhow!("NVENC completion thread closed before EOS")),
+                                    Some(anyhow!("NVENC frame/EOS drain was not acknowledged")),
                                 );
                             }
+                        },
+                        Err(TrySendError::Full(_)) => {
+                            self.abort_cleanup = true;
+                            remember_error(
+                                &mut first_error,
+                                Some(anyhow!(
+                                    "bounded NVENC completion queue was full before EOS drain"
+                                )),
+                            );
+                        }
+                        Err(TrySendError::Disconnected(_)) => {
+                            self.abort_cleanup = true;
+                            remember_error(
+                                &mut first_error,
+                                Some(anyhow!("NVENC completion thread closed before EOS drain")),
+                            );
                         }
                     }
-                    Err(error) => {
-                        self.abort_cleanup = true;
-                        remember_error(&mut first_error, Some(error));
-                    }
                 }
-            } else {
+                Err(error) => {
+                    self.abort_cleanup = true;
+                    remember_error(&mut first_error, Some(error));
+                }
+            }
+
+            if !self.abort_cleanup && !self.states.all_free() {
                 self.abort_cleanup = true;
                 remember_error(
                     &mut first_error,
-                    Some(anyhow!("native NVENC has no EOS completion event")),
+                    Some(anyhow!(
+                        "native NVENC EOS drain completed with submitted slots still owned"
+                    )),
                 );
             }
         }
@@ -1535,6 +1545,20 @@ impl NativeNvencEncoder {
                 .completion_telemetry
                 .abort_cleanup
                 .load(Ordering::Acquire);
+        if native_cleanup_safe
+            && let (Some(encoder), Some(event)) = (encoder, self.eos_event.as_ref())
+        {
+            let mut params = event_params(event.handle());
+            // SAFETY: EOS has completed, the event remains live and registered
+            // on this encoder, and no later submission can reference it.
+            let status = unsafe {
+                (self.api.unregister_async_event)(encoder.as_ptr(), params.as_mut_void())
+            };
+            remember_error(
+                &mut first_error,
+                nvenc_status(status, "nvEncUnregisterAsyncEvent (EOS)").err(),
+            );
+        }
         if native_cleanup_safe && let (Some(encoder), Some(slots)) = (encoder, self.slots.as_mut())
         {
             remember_error(
@@ -1547,6 +1571,7 @@ impl NativeNvencEncoder {
         }
         self.session = None;
         self.slots = None;
+        self.eos_event = None;
         self.completion_cancellation = None;
         self.abandoned_mappings.clear();
 
@@ -1554,6 +1579,26 @@ impl NativeNvencEncoder {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    fn prepare_eos_event(&mut self) -> Result<EventHandle> {
+        if let Some(event) = self.eos_event.as_ref() {
+            return Ok(event.handle());
+        }
+
+        let event = OwnedEvent::auto_reset()
+            .context("could not create dedicated NVENC EOS completion event")?;
+        let event_handle = event.handle();
+        let mut params = event_params(event_handle);
+        let encoder = self.encoder_handle()?;
+        // SAFETY: this fresh event and exact-layout params stay live; after a
+        // successful registration ownership moves into the encoder until
+        // normal unregister or deliberate stuck-thread retention.
+        let status =
+            unsafe { (self.api.register_async_event)(encoder.as_ptr(), params.as_mut_void()) };
+        nvenc_status(status, "nvEncRegisterAsyncEvent (EOS)")?;
+        self.eos_event = Some(event);
+        Ok(event_handle)
     }
 
     fn request_completion_abort(&mut self) -> Option<anyhow::Error> {
@@ -1621,6 +1666,9 @@ impl NativeNvencEncoder {
         if let Some(event) = self.completion_cancellation.take() {
             std::mem::forget(event);
         }
+        if let Some(event) = self.eos_event.take() {
+            std::mem::forget(event);
+        }
         if let Some(driver) = self.driver.take() {
             std::mem::forget(driver);
         }
@@ -1633,8 +1681,9 @@ impl NativeNvencEncoder {
         params.write(16, NV_ENC_PIC_FLAG_EOS);
         params.write(56, event.as_ptr());
         let encoder = self.encoder_handle()?;
-        // SAFETY: all prior outputs were drained, this registered event is
-        // free, and the exact-layout EOS params remain live for the call.
+        // SAFETY: the dedicated registered event is not used by a frame and
+        // the exact-layout EOS params remain live for the call. Prior samples
+        // may still be outstanding specifically so EOS can release them.
         let status = unsafe { (self.api.encode_picture)(encoder.as_ptr(), params.as_mut_void()) };
         nvenc_status(status, "nvEncEncodePicture (EOS)")
     }
@@ -1732,29 +1781,42 @@ mod tests {
         let mut config = NvencBlob::<CONFIG_SIZE>::zeroed();
         configure_h264(&mut config);
 
-        assert_eq!(config.read::<u32>(0), CONFIG_VERSION);
-        assert_eq!(config.read::<GUID>(4), H264_HIGH_PROFILE_GUID);
-        assert_eq!(config.read::<u32>(20), 120);
-        assert_eq!(config.read::<i32>(24), 1);
-        assert_eq!(config.read::<u32>(32), 1);
-        assert_eq!(config.read::<u32>(40), RC_PARAMS_VERSION);
-        assert_eq!(config.read::<u32>(44), NV_ENC_PARAMS_RC_VBR);
-        assert_eq!(config.read::<u32>(60), 12_000_000);
-        assert_eq!(config.read::<u32>(64), 18_000_000);
-        assert_eq!(config.read::<u32>(68), 24_000_000);
-        assert_eq!(config.read::<u32>(76), 0);
-        assert_eq!(config.read::<u16>(130), 0);
-        assert_eq!(config.read::<u32>(140), 0);
-        assert_eq!(config.read::<u32>(176), 120);
-        assert_eq!(config.read::<u32>(248), 1);
-        assert_eq!(config.read::<u32>(256), 0);
-        assert_eq!(config.read::<u32>(260), 1);
-        assert_eq!(config.read::<u32>(264), 1);
-        assert_eq!(config.read::<u32>(268), 1);
-        assert_eq!(config.read::<u32>(272), 1);
-        assert_eq!(config.read::<u32>(360), 1);
-        assert_eq!(config.read::<u32>(380), 8);
-        assert_eq!(config.read::<u32>(384), 8);
+        assert_eq!(config.read_u32(0), CONFIG_VERSION);
+        assert_eq!(config.read_guid(4), H264_HIGH_PROFILE_GUID);
+        assert_eq!(config.read_u32(20), 120);
+        assert_eq!(config.read_i32(24), 1);
+        assert_eq!(config.read_u32(32), 1);
+        assert_eq!(config.read_u32(40), RC_PARAMS_VERSION);
+        assert_eq!(config.read_u32(44), NV_ENC_PARAMS_RC_VBR);
+        assert_eq!(config.read_u32(60), 12_000_000);
+        assert_eq!(config.read_u32(64), 18_000_000);
+        assert_eq!(config.read_u32(68), 24_000_000);
+        assert_eq!(config.read_u32(76), 0);
+        assert_eq!(config.read_u16(130), 0);
+        assert_eq!(config.read_u32(140), 0);
+        assert_eq!(config.read_u32(176), 120);
+        assert_eq!(config.read_u32(248), 1);
+        assert_eq!(config.read_u32(256), 0);
+        assert_eq!(config.read_u32(260), 1);
+        assert_eq!(config.read_u32(264), 1);
+        assert_eq!(config.read_u32(268), 1);
+        assert_eq!(config.read_u32(272), 1);
+        assert_eq!(config.read_u32(360), 1);
+        assert_eq!(config.read_u32(380), 8);
+        assert_eq!(config.read_u32(384), 8);
+    }
+
+    #[test]
+    fn encode_picture_status_accepts_success_and_need_more_input_only() {
+        assert_eq!(
+            classify_encode_picture_status(NVENC_SUCCESS, "test").unwrap(),
+            EncodePictureStatus::Accepted
+        );
+        assert_eq!(
+            classify_encode_picture_status(NVENC_ERR_NEED_MORE_INPUT, "test").unwrap(),
+            EncodePictureStatus::AcceptedNeedsMoreInput
+        );
+        assert!(classify_encode_picture_status(8, "test").is_err());
     }
 
     #[test]

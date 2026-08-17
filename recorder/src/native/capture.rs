@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{
     Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel,
 };
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -177,15 +177,18 @@ impl NativeWgcTelemetry {
 #[derive(Default)]
 struct FrameCallbackState {
     active: AtomicU64,
+    owners: AtomicU64,
     reconfiguring: AtomicBool,
     stopping: AtomicBool,
+    wait_lock: Mutex<()>,
+    idle: Condvar,
 }
 
 impl FrameCallbackState {
     fn enter(&self) -> Option<FrameCallbackActivity<'_>> {
-        self.active.fetch_add(1, Ordering::SeqCst);
-        if self.reconfiguring.load(Ordering::SeqCst) || self.stopping.load(Ordering::SeqCst) {
-            self.active.fetch_sub(1, Ordering::SeqCst);
+        self.active.fetch_add(1, Ordering::AcqRel);
+        if self.reconfiguring.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) {
+            self.leave();
             None
         } else {
             Some(FrameCallbackActivity { state: self })
@@ -193,11 +196,62 @@ impl FrameCallbackState {
     }
 
     fn wait_until_idle(&self, timeout: Duration) -> bool {
+        self.wait_for(timeout, false)
+    }
+
+    fn wait_until_released(&self, timeout: Duration) -> bool {
+        self.wait_for(timeout, true)
+    }
+
+    fn wait_for(&self, timeout: Duration, require_owner_release: bool) -> bool {
         let deadline = Instant::now() + timeout;
-        while self.active.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
-            std::thread::yield_now();
+        let Ok(mut guard) = self.wait_lock.lock() else {
+            return false;
+        };
+        loop {
+            let idle = self.active.load(Ordering::Acquire) == 0;
+            let owners_released =
+                !require_owner_release || self.owners.load(Ordering::Acquire) == 0;
+            if idle && owners_released {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let Ok((next_guard, wait)) = self.idle.wait_timeout(guard, remaining) else {
+                return false;
+            };
+            guard = next_guard;
+            if wait.timed_out() {
+                return self.active.load(Ordering::Acquire) == 0
+                    && (!require_owner_release || self.owners.load(Ordering::Acquire) == 0);
+            }
         }
-        self.active.load(Ordering::SeqCst) == 0
+    }
+
+    fn leave(&self) {
+        if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.notify_waiters();
+        }
+    }
+
+    fn add_owner(&self) {
+        self.owners.fetch_add(1, Ordering::Release);
+    }
+
+    fn remove_owner(&self) {
+        if self.owners.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.notify_waiters();
+        }
+    }
+
+    fn notify_waiters(&self) {
+        // Taking the same mutex as the waiter prevents a last-callback
+        // notification from being lost between predicate check and wait.
+        if let Ok(_guard) = self.wait_lock.lock() {
+            self.idle.notify_all();
+        }
     }
 }
 
@@ -207,7 +261,26 @@ struct FrameCallbackActivity<'state> {
 
 impl Drop for FrameCallbackActivity<'_> {
     fn drop(&mut self) {
-        self.state.active.fetch_sub(1, Ordering::SeqCst);
+        self.state.leave();
+    }
+}
+
+struct FrameCallbackOwner {
+    state: Arc<FrameCallbackState>,
+}
+
+impl FrameCallbackOwner {
+    fn new(state: &Arc<FrameCallbackState>) -> Self {
+        state.add_owner();
+        Self {
+            state: Arc::clone(state),
+        }
+    }
+}
+
+impl Drop for FrameCallbackOwner {
+    fn drop(&mut self) {
+        self.state.remove_owner();
     }
 }
 
@@ -217,7 +290,7 @@ struct FrameAdmissionPause {
 
 impl FrameAdmissionPause {
     fn begin(state: &Arc<FrameCallbackState>) -> Self {
-        state.reconfiguring.store(true, Ordering::SeqCst);
+        state.reconfiguring.store(true, Ordering::Release);
         Self {
             state: state.clone(),
         }
@@ -226,7 +299,7 @@ impl FrameAdmissionPause {
 
 impl Drop for FrameAdmissionPause {
     fn drop(&mut self) {
-        self.state.reconfiguring.store(false, Ordering::SeqCst);
+        self.state.reconfiguring.store(false, Ordering::Release);
     }
 }
 
@@ -316,12 +389,12 @@ impl NativeWgcCapture {
         let (sender, receiver) = sync_channel::<QueuedWgcFrame>(NATIVE_WGC_HANDOFF_CAPACITY);
 
         let callback_telemetry = telemetry.clone();
-        let frame_callback_state = callback_state.clone();
+        let frame_callback_owner = FrameCallbackOwner::new(&callback_state);
         let frame_arrived_token = frame_pool
             .FrameArrived(
                 &TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(
                     move |pool, _| {
-                        let Some(_activity) = frame_callback_state.enter() else {
+                        let Some(_activity) = frame_callback_owner.state.enter() else {
                             return Ok(());
                         };
                         let Some(pool) = pool.as_ref() else {
@@ -346,9 +419,11 @@ impl NativeWgcCapture {
             .context("could not register native WGC FrameArrived callback")?;
 
         let closed_telemetry = telemetry.clone();
+        let closed_callback_owner = FrameCallbackOwner::new(&callback_state);
         let item_closed_token = item
             .Closed(
                 &TypedEventHandler::<GraphicsCaptureItem, IInspectable>::new(move |_, _| {
+                    let _owner = &closed_callback_owner;
                     closed_telemetry.closed.store(true, Ordering::Release);
                     Ok(())
                 }),
@@ -476,7 +551,7 @@ impl NativeWgcCapture {
         }
 
         let mut first_error = None;
-        self.callback_state.stopping.store(true, Ordering::SeqCst);
+        self.callback_state.stopping.store(true, Ordering::Release);
         if let Some(token) = self.frame_arrived_token.take()
             && let Err(error) = self.frame_pool.RemoveFrameArrived(token)
         {
@@ -516,14 +591,9 @@ impl NativeWgcCapture {
             ));
         }
 
-        let deadline = Instant::now() + CALLBACK_SHUTDOWN_TIMEOUT;
-        while (Arc::strong_count(&self.telemetry) != 1
-            || Arc::strong_count(&self.callback_state) != 1)
-            && Instant::now() < deadline
-        {
-            std::thread::yield_now();
-        }
-        if (Arc::strong_count(&self.telemetry) != 1 || Arc::strong_count(&self.callback_state) != 1)
+        if !self
+            .callback_state
+            .wait_until_released(CALLBACK_SHUTDOWN_TIMEOUT)
             && first_error.is_none()
         {
             first_error = Some(anyhow::anyhow!(
@@ -663,6 +733,33 @@ mod tests {
                 hresult: Some(i32::from_ne_bytes(0x887a_0005_u32.to_ne_bytes())),
             })
         );
+    }
+
+    #[test]
+    fn callback_quiescence_is_notified_without_polling() {
+        let state = Arc::new(FrameCallbackState::default());
+        let worker_state = Arc::clone(&state);
+        let (started_sender, started_receiver) = sync_channel(0);
+        let worker = std::thread::spawn(move || {
+            let _activity = worker_state.enter().expect("callback should enter");
+            started_sender.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(30));
+        });
+        started_receiver.recv().unwrap();
+        assert!(state.wait_until_idle(Duration::from_secs(1)));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn registered_callback_owner_release_wakes_shutdown() {
+        let state = Arc::new(FrameCallbackState::default());
+        let owner = FrameCallbackOwner::new(&state);
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            drop(owner);
+        });
+        assert!(state.wait_until_released(Duration::from_secs(1)));
+        worker.join().unwrap();
     }
 }
 
