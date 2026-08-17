@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
+use tokio::sync::watch;
 
-use crate::encoder::AudioSource;
+use crate::encoder::capabilities::{NVENC_SURFACE_LIMIT, WGC_FRAME_POOL_CAPACITY};
+use crate::encoder::{AudioSource, RecordingEvidence};
 use crate::platform::{CaptureTarget, instant_from_qpc_100ns};
 
 use super::{
@@ -17,6 +20,8 @@ const NATIVE_WIDTH: u32 = 1920;
 const NATIVE_HEIGHT: u32 = 1080;
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SOURCE_WAIT: Duration = Duration::from_millis(250);
+const NATIVE_EVIDENCE_INTERVAL: Duration = Duration::from_millis(250);
+const NATIVE_SOURCE_SNAPSHOT_CAPACITY: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeSessionTelemetrySnapshot {
@@ -135,6 +140,68 @@ impl NativeRecorderSession {
             self.receive_source(timeout)?;
         }
         Ok(())
+    }
+
+    /// Drive the native graph on its dedicated GPU worker until the lifecycle
+    /// owner requests stop. Progress publication is bounded to four updates per
+    /// second so service observability does not add per-frame synchronization.
+    pub(crate) fn run_until_stopped(
+        &mut self,
+        stop: &AtomicBool,
+        evidence: &watch::Sender<RecordingEvidence>,
+    ) -> Result<()> {
+        let first_frame_deadline = Instant::now() + FIRST_FRAME_TIMEOUT;
+        while self.clock.is_none() {
+            if stop.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            if Instant::now() >= first_frame_deadline {
+                bail!(
+                    "native WGC produced no first frame within {} seconds",
+                    FIRST_FRAME_TIMEOUT.as_secs_f64()
+                );
+            }
+            self.receive_source(MAX_SOURCE_WAIT)?;
+            self.publish_evidence(evidence)?;
+            if self.target_closed {
+                bail!("native WGC target closed before the first CFR frame");
+            }
+        }
+
+        let mut evidence_due = Instant::now();
+        while !stop.load(Ordering::Acquire) {
+            if self.target_closed {
+                bail!("native WGC target closed while recording");
+            }
+            let next_deadline = self
+                .clock
+                .as_ref()
+                .context("native CFR clock disappeared")?
+                .next_deadline()?;
+            let now = Instant::now();
+            if now >= next_deadline {
+                let tick = self
+                    .clock
+                    .as_mut()
+                    .context("native CFR clock disappeared")?
+                    .emit_due(now)?
+                    .context("due native CFR deadline did not emit a tick")?;
+                self.submit_tick(tick.qpc_100ns)?;
+            } else {
+                self.receive_source(
+                    next_deadline
+                        .saturating_duration_since(now)
+                        .min(MAX_SOURCE_WAIT),
+                )?;
+            }
+
+            let now = Instant::now();
+            if now >= evidence_due {
+                self.publish_evidence(evidence)?;
+                evidence_due = now + NATIVE_EVIDENCE_INTERVAL;
+            }
+        }
+        self.publish_evidence(evidence)
     }
 
     pub fn finish(mut self) -> Result<NativeSessionTelemetrySnapshot> {
@@ -295,6 +362,101 @@ impl NativeRecorderSession {
             .context("native NVENC encoder is closed")?
             .submit(converted)
     }
+
+    fn publish_evidence(&self, sender: &watch::Sender<RecordingEvidence>) -> Result<()> {
+        sender.send_replace(self.recording_evidence(false)?);
+        Ok(())
+    }
+
+    fn recording_evidence(&self, terminal: bool) -> Result<RecordingEvidence> {
+        let capture = self
+            .source
+            .as_ref()
+            .context("native WGC source is closed")?
+            .telemetry();
+        let encode = self
+            .encoder
+            .as_ref()
+            .context("native NVENC encoder is closed")?
+            .telemetry();
+        let mux = self
+            .mux
+            .as_ref()
+            .context("native mux process is closed")?
+            .telemetry();
+        let cfr = self.clock.as_ref().map(NativeCfrClock::telemetry);
+        let protocol_error = native_protocol_error(capture, encode, mux);
+        Ok(RecordingEvidence {
+            capture_ready: true,
+            capture_terminal: terminal,
+            frame_pool_capacity: Some(WGC_FRAME_POOL_CAPACITY),
+            output_pool_capacity: Some(NATIVE_SOURCE_SNAPSHOT_CAPACITY),
+            source_frames_surfaced: capture.admitted,
+            source_frames_superseded: capture.handoff_drops,
+            pool_recreations: capture.recreations,
+            first_qpc: capture.first_accepted_qpc_100ns,
+            latest_qpc: capture.latest_accepted_qpc_100ns,
+            encoded_frames: encode.completed_frames,
+            muxed_bytes: mux.muxed_bytes.max(mux.output_file_bytes),
+            output_time_us: mux.output_time_us,
+            cfr_duplicates: cfr.map_or(0, |snapshot| snapshot.duplicate_ticks),
+            cfr_discards: cfr.map_or(0, |snapshot| snapshot.source_discards),
+            progress_end: terminal && mux.progress_end,
+            protocol_error,
+        })
+    }
+}
+
+impl NativeSessionTelemetrySnapshot {
+    pub(crate) fn recording_evidence(self) -> RecordingEvidence {
+        RecordingEvidence {
+            capture_ready: true,
+            capture_terminal: true,
+            frame_pool_capacity: Some(WGC_FRAME_POOL_CAPACITY),
+            output_pool_capacity: Some(NATIVE_SOURCE_SNAPSHOT_CAPACITY),
+            source_frames_surfaced: self.capture.admitted,
+            source_frames_superseded: self.capture.handoff_drops,
+            pool_recreations: self.capture.recreations,
+            first_qpc: self.capture.first_accepted_qpc_100ns,
+            latest_qpc: self.capture.latest_accepted_qpc_100ns,
+            encoded_frames: self.encode.completed_frames,
+            muxed_bytes: self.mux.muxed_bytes.max(self.mux.output_file_bytes),
+            output_time_us: self.mux.output_time_us,
+            cfr_duplicates: self.cfr.duplicate_ticks,
+            cfr_discards: self.cfr.source_discards,
+            progress_end: self.mux.progress_end,
+            protocol_error: native_protocol_error(self.capture, self.encode, self.mux),
+        }
+    }
+}
+
+fn native_protocol_error(
+    capture: NativeWgcTelemetrySnapshot,
+    encode: NativeNvencTelemetrySnapshot,
+    mux: NativeMuxTelemetrySnapshot,
+) -> Option<String> {
+    if let Some(error) = capture.first_callback_error {
+        return Some(format!("native WGC callback failed: {error:?}"));
+    }
+    if encode.completion_errors > 0 || encode.submission_queue_failures > 0 {
+        return Some(format!(
+            "native NVENC reported {} completion and {} submission-queue errors",
+            encode.completion_errors, encode.submission_queue_failures
+        ));
+    }
+    if mux.reader_errors > 0 {
+        return Some(format!(
+            "native mux evidence readers reported {} errors",
+            mux.reader_errors
+        ));
+    }
+    if encode.max_in_flight > u64::from(NVENC_SURFACE_LIMIT) {
+        return Some(format!(
+            "native NVENC exceeded the fixed surface bound: {} > {}",
+            encode.max_in_flight, NVENC_SURFACE_LIMIT
+        ));
+    }
+    None
 }
 
 fn format_result_error<T>(result: Result<T>) -> String {

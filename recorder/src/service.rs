@@ -9,12 +9,16 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::config::{Config, RecordingConfig};
-use crate::encoder::capabilities::FILTER_BUFFERED_FRAME_LIMIT;
-use crate::encoder::{
-    AudioSource, CAPTURE_DIAGNOSTIC_ABI, Ffmpeg, RecordingCandidateStart, RecordingEvidence,
-    RecordingPlan, RecordingSession,
+use crate::config::{CodecPreference, Config, RecordingConfig, RecordingProfile};
+use crate::encoder::capabilities::{
+    DirectInterop, FILTER_BUFFERED_FRAME_LIMIT, NVENC_SURFACE_LIMIT,
 };
+use crate::encoder::{
+    AudioSource, CAPTURE_DIAGNOSTIC_ABI, EncoderKind, Ffmpeg, RecordingCandidateStart,
+    RecordingEvidence, RecordingPlan, RecordingSession, VideoCodec,
+};
+#[cfg(target_os = "windows")]
+use crate::native::NativeRecordingSession;
 use crate::platform::{
     CaptureTarget, CaptureTargetVisibility, capture_target_for_process, capture_target_visibility,
     fallback_capture_target, validate_capture_target_identity,
@@ -42,7 +46,7 @@ pub enum ServiceCommand {
 pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 
 struct ActiveRecording {
-    session: RecordingSession,
+    session: VideoRecordingSession,
     target: CaptureTarget,
     diagnostics: watch::Receiver<RecordingEvidence>,
     progress_watchdog: CaptureProgressWatchdog,
@@ -65,10 +69,121 @@ struct RecordingStartup {
     output_path: PathBuf,
     process: LeagueProcess,
     target: CaptureTarget,
+    #[cfg(target_os = "windows")]
+    windows_backend: WindowsRecorderBackend,
 }
 
 const STARTUP_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(6);
 const CAPTURE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(target_os = "windows")]
+const WINDOWS_RECORDING_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(target_os = "windows")]
+const WINDOWS_RECORDER_BACKEND_ENV: &str = "QUEUEBACK_WINDOWS_RECORDER_BACKEND";
+
+enum VideoRecordingSession {
+    Ffmpeg(Box<RecordingSession>),
+    #[cfg(target_os = "windows")]
+    Native(NativeRecordingSession),
+}
+
+impl VideoRecordingSession {
+    fn directory(&self) -> &std::path::Path {
+        match self {
+            Self::Ffmpeg(session) => session.directory(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.directory(),
+        }
+    }
+
+    fn video_started_at(&self) -> Instant {
+        match self {
+            Self::Ffmpeg(session) => session.video_started_at(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.video_started_at(),
+        }
+    }
+
+    fn recorded_at(&self) -> std::time::SystemTime {
+        match self {
+            Self::Ffmpeg(session) => session.recorded_at(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.recorded_at(),
+        }
+    }
+
+    fn evidence_receiver(&self) -> watch::Receiver<RecordingEvidence> {
+        match self {
+            Self::Ffmpeg(session) => session.evidence_receiver(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.evidence_receiver(),
+        }
+    }
+
+    fn has_exited(&mut self) -> Result<bool> {
+        match self {
+            Self::Ffmpeg(session) => session.has_exited(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => Ok(session.has_exited()),
+        }
+    }
+
+    async fn stop(self) -> Result<PathBuf> {
+        match self {
+            Self::Ffmpeg(session) => (*session).stop().await,
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.stop().await,
+        }
+    }
+
+    async fn stop_with_failure(self, reason: String) -> Result<PathBuf> {
+        match self {
+            Self::Ffmpeg(session) => (*session).stop_with_failure(reason).await,
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.stop_with_failure(reason).await,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsRecorderBackend {
+    Ffmpeg,
+    Native,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsRecorderBackend {
+    fn from_environment() -> Result<Self> {
+        Self::parse(env::var(WINDOWS_RECORDER_BACKEND_ENV).ok().as_deref())
+    }
+
+    fn parse(value: Option<&str>) -> Result<Self> {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("ffmpeg") | Some("ffmpeg-wgc") => Ok(Self::Ffmpeg),
+            Some("native") => Ok(Self::Native),
+            Some(value) => bail!(
+                "unsupported {WINDOWS_RECORDER_BACKEND_ENV} value {value:?}; expected ffmpeg or native"
+            ),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Ffmpeg => "ffmpeg-wgc",
+            Self::Native => "native-wgc-d3d11-nvenc",
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy)]
+struct WindowsCapturePath {
+    interop: DirectInterop,
+    encoder_depth: u32,
+    filter_buffered_frame_limit: u32,
+    backend: &'static str,
+    support_label: &'static str,
+}
 
 struct CaptureProgressWatchdog {
     state: CaptureProgressState,
@@ -190,6 +305,14 @@ pub async fn run(
 
     let ffmpeg = Ffmpeg::resolve().await?;
     let audio = ffmpeg.detect_audio_source().await;
+    #[cfg(target_os = "windows")]
+    let windows_backend = WindowsRecorderBackend::from_environment()?;
+    #[cfg(target_os = "windows")]
+    info!(
+        backend = windows_backend.label(),
+        selector = WINDOWS_RECORDER_BACKEND_ENV,
+        "selected developer Windows recorder backend"
+    );
     info!(
         ffmpeg = %ffmpeg.path().display(),
         media_runtime = ffmpeg.runtime_id(),
@@ -335,16 +458,16 @@ pub async fn run(
                     match recording.session.has_exited() {
                         Ok(true) => {
                             let recording = active.take().expect("active recording exists");
-                            warn!("ffmpeg exited while League was still running");
+                            warn!("recorder backend exited while League was still running");
                             events(ServiceEvent::Error {
-                                message: "ffmpeg exited unexpectedly; preserving the partial recording".to_owned(),
+                                message: "recorder backend exited unexpectedly; preserving the partial recording".to_owned(),
                             });
                             stop_recording(recording, &events).await;
                             failed_process = current_process;
                         }
                         Ok(false) => {}
                         Err(inspect_error) => {
-                            error!(error = %inspect_error, "could not inspect ffmpeg");
+                            error!(error = %inspect_error, "could not inspect recorder backend");
                         }
                     }
                 }
@@ -357,15 +480,17 @@ pub async fn run(
                 ) {
                     match capture_target_for_process(process.pid) {
                         Ok(target) => {
-                            starting = Some(spawn_recording_start(
-                                ffmpeg.clone(),
-                                config.recording.clone(),
-                                config.app.hevc_playback_supported,
-                                audio.clone(),
-                                output_path.clone(),
+                            starting = Some(spawn_recording_start(RecordingStartup {
+                                ffmpeg: ffmpeg.clone(),
+                                recording_config: config.recording.clone(),
+                                hevc_playback_supported: config.app.hevc_playback_supported,
+                                audio: audio.clone(),
+                                output_path: output_path.clone(),
                                 process,
                                 target,
-                            ));
+                                #[cfg(target_os = "windows")]
+                                windows_backend,
+                            }));
                         }
                         Err(target_error) => {
                             tracing::debug!(
@@ -392,25 +517,9 @@ fn startup_candidate(
     current.filter(|process| !has_active && !has_starting && failed != Some(*process))
 }
 
-fn spawn_recording_start(
-    ffmpeg: Ffmpeg,
-    recording_config: RecordingConfig,
-    hevc_playback_supported: bool,
-    audio: AudioSource,
-    output_path: PathBuf,
-    process: LeagueProcess,
-    target: CaptureTarget,
-) -> StartingRecording {
+fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     let (cancellation, receiver) = watch::channel(false);
-    let startup = RecordingStartup {
-        ffmpeg,
-        recording_config,
-        hevc_playback_supported,
-        audio,
-        output_path,
-        process,
-        target,
-    };
+    let process = startup.process;
     let task = tokio::spawn(async move { start_recording(startup, receiver).await });
     StartingRecording {
         process,
@@ -484,17 +593,23 @@ async fn start_recording(
         output_path,
         process,
         target,
+        #[cfg(target_os = "windows")]
+        windows_backend,
     } = startup;
     #[cfg(target_os = "windows")]
-    let candidates = tokio::select! {
-        result = ffmpeg.windows_capture_candidates(
-            &target,
-            &recording_config,
-            hevc_playback_supported,
-        ) => result?,
-        _ = startup_cancelled(&mut cancellation) => {
-            bail!("recording startup was cancelled");
-        }
+    let candidates = if windows_backend == WindowsRecorderBackend::Ffmpeg {
+        Some(tokio::select! {
+            result = ffmpeg.windows_capture_candidates(
+                &target,
+                &recording_config,
+                hevc_playback_supported,
+            ) => result?,
+            _ = startup_cancelled(&mut cancellation) => {
+                bail!("recording startup was cancelled");
+            }
+        })
+    } else {
+        None
     };
     #[cfg(not(target_os = "windows"))]
     let plan = tokio::select! {
@@ -514,54 +629,93 @@ async fn start_recording(
     let directory = create_game_directory(&output_path, unix_timestamp_now()?)?;
 
     #[cfg(target_os = "windows")]
-    let (session, plan, candidate) = {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        let mut failures = Vec::new();
-        let mut selected = None;
-        for (index, (plan, candidate)) in candidates.into_iter().enumerate() {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                failures.push("the total 15-second candidate deadline expired".to_owned());
-                break;
-            }
-            match ffmpeg
-                .start_recording_candidate(
-                    directory.clone(),
-                    &target,
-                    plan,
-                    &audio,
-                    RecordingCandidateStart::new(index, remaining, cancellation.clone()),
-                )
-                .await
+    let (session, plan, capture_path) = match windows_backend {
+        WindowsRecorderBackend::Ffmpeg => {
+            let deadline = std::time::Instant::now() + WINDOWS_RECORDING_STARTUP_TIMEOUT;
+            let mut failures = Vec::new();
+            let mut selected = None;
+            for (index, (plan, candidate)) in candidates
+                .context("FFmpeg/WGC candidates were not planned")?
+                .into_iter()
+                .enumerate()
             {
-                Ok(session) => {
-                    selected = Some((session, plan, candidate));
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    failures.push("the total 15-second candidate deadline expired".to_owned());
                     break;
                 }
-                Err(error) => {
-                    if *cancellation.borrow() {
-                        bail!("recording startup was cancelled");
+                match ffmpeg
+                    .start_recording_candidate(
+                        directory.clone(),
+                        &target,
+                        plan,
+                        &audio,
+                        RecordingCandidateStart::new(index, remaining, cancellation.clone()),
+                    )
+                    .await
+                {
+                    Ok(session) => {
+                        selected = Some((
+                            VideoRecordingSession::Ffmpeg(Box::new(session)),
+                            plan,
+                            WindowsCapturePath {
+                                interop: candidate.interop,
+                                encoder_depth: candidate.encoder_depth,
+                                filter_buffered_frame_limit: FILTER_BUFFERED_FRAME_LIMIT,
+                                backend: "windows_graphics_capture_d3d11",
+                                support_label: "optimized-unvalidated",
+                            },
+                        ));
+                        break;
                     }
-                    warn!(
-                        encoder = plan.encoder().codec_name(plan.codec()),
-                        interop = candidate.interop.label(),
-                        error = %error,
-                        "same-adapter recording candidate failed"
-                    );
-                    failures.push(format!(
-                        "{} via {}: {error:#}",
-                        plan.encoder().codec_name(plan.codec()),
-                        candidate.interop.label()
-                    ));
+                    Err(error) => {
+                        if *cancellation.borrow() {
+                            bail!("recording startup was cancelled");
+                        }
+                        warn!(
+                            encoder = plan.encoder().codec_name(plan.codec()),
+                            interop = candidate.interop.label(),
+                            error = %error,
+                            "same-adapter recording candidate failed"
+                        );
+                        failures.push(format!(
+                            "{} via {}: {error:#}",
+                            plan.encoder().codec_name(plan.codec()),
+                            candidate.interop.label()
+                        ));
+                    }
                 }
             }
+            selected.with_context(|| {
+                format!(
+                    "exact-window GPU capture failed; no display/GDI fallback was attempted ({})",
+                    failures.join("; ")
+                )
+            })?
         }
-        selected.with_context(|| {
-            format!(
-                "exact-window GPU capture failed; no display/GDI fallback was attempted ({})",
-                failures.join("; ")
+        WindowsRecorderBackend::Native => {
+            let plan = native_recording_plan(&recording_config)?;
+            let session = NativeRecordingSession::start(
+                directory.clone(),
+                target.clone(),
+                ffmpeg.path().to_path_buf(),
+                audio.clone(),
+                cancellation.clone(),
+                WINDOWS_RECORDING_STARTUP_TIMEOUT,
             )
-        })?
+            .await?;
+            (
+                VideoRecordingSession::Native(session),
+                plan,
+                WindowsCapturePath {
+                    interop: DirectInterop::D3d11Nvenc,
+                    encoder_depth: NVENC_SURFACE_LIMIT,
+                    filter_buffered_frame_limit: 0,
+                    backend: "native_windows_graphics_capture_d3d11",
+                    support_label: "native-provisional",
+                },
+            )
+        }
     };
 
     #[cfg(not(target_os = "windows"))]
@@ -569,7 +723,7 @@ async fn start_recording(
         let session = ffmpeg
             .start_recording(directory.clone(), &target, plan, &audio)
             .await?;
-        (session, plan)
+        (VideoRecordingSession::Ffmpeg(Box::new(session)), plan)
     };
 
     if *cancellation.borrow() {
@@ -604,13 +758,16 @@ async fn start_recording(
 
     #[cfg(target_os = "windows")]
     let capture_details = {
-        let capture_adapter_luid = format!("{:016x}", candidate.adapter_luid);
+        let capture_adapter_luid_value = target
+            .windows_adapter_luid()
+            .context("optimized Windows target has no adapter LUID")?;
+        let capture_adapter_luid = format!("{capture_adapter_luid_value:016x}");
         let capture_adapter_name = target
             .windows_adapter_name()
             .unwrap_or("unknown")
             .to_owned();
         let capture_output = target.windows_output_name().unwrap_or("unknown").to_owned();
-        let encoder_interop = candidate.interop.label().to_owned();
+        let encoder_interop = capture_path.interop.label().to_owned();
         let output_dimensions = plan
             .output_dimensions(target.dimensions())
             .context("optimized Windows capture has no output dimensions")?;
@@ -628,14 +785,14 @@ async fn start_recording(
             output_dimensions,
             frame_pool_capacity,
             output_pool_capacity,
-            FILTER_BUFFERED_FRAME_LIMIT,
-            candidate.encoder_depth,
+            capture_path.filter_buffered_frame_limit,
+            capture_path.encoder_depth,
         );
         info!(
             frame_pool_capacity,
             output_pool_capacity,
-            filter_buffered_frame_limit = FILTER_BUFFERED_FRAME_LIMIT,
-            encoder_depth = candidate.encoder_depth,
+            filter_buffered_frame_limit = capture_path.filter_buffered_frame_limit,
+            encoder_depth = capture_path.encoder_depth,
             maximum_texture_bytes,
             "optimized capture resource bounds"
         );
@@ -649,9 +806,9 @@ async fn start_recording(
         gpu_stages.push(encoder_interop.clone());
         let capture = CaptureMetadata {
             schema_version: 1,
-            backend: "windows_graphics_capture_d3d11".to_owned(),
+            backend: capture_path.backend.to_owned(),
             diagnostics_abi: CAPTURE_DIAGNOSTIC_ABI,
-            support_label: "optimized-unvalidated".to_owned(),
+            support_label: capture_path.support_label.to_owned(),
             capture_adapter_luid: capture_adapter_luid.clone(),
             encoder_adapter_luid: capture_adapter_luid.clone(),
             capture_adapter_name: capture_adapter_name.clone(),
@@ -665,8 +822,8 @@ async fn start_recording(
             gpu_stages,
             frame_pool_capacity,
             capture_output_pool_capacity: output_pool_capacity,
-            filter_buffered_frame_limit: FILTER_BUFFERED_FRAME_LIMIT,
-            encoder_depth: candidate.encoder_depth,
+            filter_buffered_frame_limit: capture_path.filter_buffered_frame_limit,
+            encoder_depth: capture_path.encoder_depth,
             progress_stall_timeout_seconds: u32::try_from(CAPTURE_PROGRESS_STALL_TIMEOUT.as_secs())
                 .unwrap_or(u32::MAX),
             maximum_texture_bytes,
@@ -706,8 +863,12 @@ async fn start_recording(
     info!(
         pid = process.pid,
         directory = %directory.display(),
-        capture_adapter_luid = format_args!("{:016x}", candidate.adapter_luid),
-        encoder_interop = candidate.interop.label(),
+        capture_adapter_luid = format_args!(
+            "{:016x}",
+            target.windows_adapter_luid().unwrap_or_default()
+        ),
+        encoder_interop = capture_path.interop.label(),
+        backend = capture_path.backend,
         "recording started"
     );
     #[cfg(not(target_os = "windows"))]
@@ -751,6 +912,23 @@ async fn start_recording(
             capture: capture_details.6,
         },
     })
+}
+
+#[cfg(target_os = "windows")]
+fn native_recording_plan(recording: &RecordingConfig) -> Result<RecordingPlan> {
+    if recording.codec == CodecPreference::Hevc {
+        bail!("the provisional native recorder currently supports H.264 only");
+    }
+    if !matches!(
+        recording.profile,
+        RecordingProfile::Auto | RecordingProfile::High
+    ) {
+        bail!(
+            "the provisional native recorder currently requires the auto or high 1080p60 profile"
+        );
+    }
+    RecordingPlan::new(EncoderKind::Nvenc, VideoCodec::H264, RecordingProfile::High)
+        .context("could not select the fixed native 1080p60 H.264 plan")
 }
 
 async fn startup_cancelled(cancellation: &mut watch::Receiver<bool>) {
@@ -904,6 +1082,40 @@ fn maximum_texture_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_recorder_backend_is_explicit_and_defaults_to_ffmpeg() {
+        assert_eq!(
+            WindowsRecorderBackend::parse(None).unwrap(),
+            WindowsRecorderBackend::Ffmpeg
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("ffmpeg-wgc")).unwrap(),
+            WindowsRecorderBackend::Ffmpeg
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("native")).unwrap(),
+            WindowsRecorderBackend::Native
+        );
+        assert!(WindowsRecorderBackend::parse(Some("automatic")).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn provisional_native_plan_is_fixed_to_high_h264() {
+        let mut recording = RecordingConfig::default();
+        let plan = native_recording_plan(&recording).unwrap();
+        assert_eq!(plan.encoder(), EncoderKind::Nvenc);
+        assert_eq!(plan.codec(), VideoCodec::H264);
+        assert_eq!(plan.profile(), RecordingProfile::High);
+
+        recording.codec = CodecPreference::Hevc;
+        assert!(native_recording_plan(&recording).is_err());
+        recording.codec = CodecPreference::H264;
+        recording.profile = RecordingProfile::Low;
+        assert!(native_recording_plan(&recording).is_err());
+    }
 
     #[test]
     fn a_process_without_a_window_remains_eligible_on_the_next_tick() {
