@@ -25,6 +25,7 @@ use crate::encoder::{
 pub struct NativeMuxPlan {
     arguments: Vec<OsString>,
     output: PathBuf,
+    frames_per_second: u32,
 }
 
 impl NativeMuxPlan {
@@ -86,6 +87,7 @@ impl NativeMuxPlan {
         let plan = Self {
             arguments,
             output: output.to_path_buf(),
+            frames_per_second,
         };
         plan.validate_mux_only()?;
         Ok(plan)
@@ -97,6 +99,10 @@ impl NativeMuxPlan {
 
     pub fn output(&self) -> &Path {
         &self.output
+    }
+
+    pub fn frames_per_second(&self) -> u32 {
+        self.frames_per_second
     }
 
     fn validate_mux_only(&self) -> Result<()> {
@@ -163,6 +169,7 @@ pub struct NativeMuxTelemetrySnapshot {
 }
 
 struct NativeMuxTelemetry {
+    frames_per_second: u32,
     encoded_frames: AtomicU64,
     muxed_bytes: AtomicU64,
     output_time_us: AtomicI64,
@@ -172,9 +179,11 @@ struct NativeMuxTelemetry {
     stderr_tail: Mutex<VecDeque<String>>,
 }
 
-impl Default for NativeMuxTelemetry {
-    fn default() -> Self {
+impl NativeMuxTelemetry {
+    fn new(frames_per_second: u32) -> Self {
+        debug_assert!(frames_per_second > 0);
         Self {
+            frames_per_second,
             encoded_frames: AtomicU64::new(0),
             muxed_bytes: AtomicU64::new(0),
             output_time_us: AtomicI64::new(-1),
@@ -184,15 +193,29 @@ impl Default for NativeMuxTelemetry {
             stderr_tail: Mutex::new(VecDeque::with_capacity(MAX_STDERR_TAIL_LINES)),
         }
     }
-}
 
-impl NativeMuxTelemetry {
     fn snapshot(&self, output_file_bytes: u64) -> NativeMuxTelemetrySnapshot {
-        let output_time_us = self.output_time_us.load(Ordering::Relaxed);
+        let encoded_frames = self.encoded_frames.load(Ordering::Relaxed);
+        let reported_output_time_us = self.output_time_us.load(Ordering::Relaxed);
+        // FFmpeg's stream-copy progress can report an audio-biased out_time_us
+        // that stalls near startup even while video frames and mux bytes keep
+        // advancing. `frame` is still FFmpeg's mux progress, so converting that
+        // count through the declared CFR input rate produces truthful mux-time
+        // evidence without borrowing the native encoder's counters.
+        let cfr_output_time_us = (encoded_frames > 0).then(|| {
+            let duration =
+                u128::from(encoded_frames) * 1_000_000 / u128::from(self.frames_per_second);
+            i64::try_from(duration).unwrap_or(i64::MAX)
+        });
+        let output_time_us = (reported_output_time_us >= 0)
+            .then_some(reported_output_time_us)
+            .into_iter()
+            .chain(cfr_output_time_us)
+            .max();
         NativeMuxTelemetrySnapshot {
-            encoded_frames: self.encoded_frames.load(Ordering::Relaxed),
+            encoded_frames,
             muxed_bytes: self.muxed_bytes.load(Ordering::Relaxed),
-            output_time_us: (output_time_us >= 0).then_some(output_time_us),
+            output_time_us,
             output_file_bytes,
             progress_end: self.progress_end.load(Ordering::Acquire),
             reader_errors: self.reader_errors.load(Ordering::Relaxed),
@@ -302,7 +325,7 @@ impl NativeMuxProcess {
             terminate_child(&mut child);
             bail!("mux-only FFmpeg diagnostics pipe was not created");
         };
-        let telemetry = Arc::new(NativeMuxTelemetry::default());
+        let telemetry = Arc::new(NativeMuxTelemetry::new(plan.frames_per_second()));
         let progress_telemetry = Arc::clone(&telemetry);
         let progress_thread = match thread::Builder::new()
             .name("queueback-native-mux-progress".to_owned())
@@ -632,7 +655,7 @@ mod tests {
 
     #[test]
     fn native_progress_evidence_is_monotonic_and_terminal() {
-        let telemetry = NativeMuxTelemetry::default();
+        let telemetry = NativeMuxTelemetry::new(60);
         for line in [
             "frame=1",
             "total_size=4096",
@@ -661,8 +684,27 @@ mod tests {
     }
 
     #[test]
+    fn cfr_mux_time_tracks_ffmpeg_frames_when_reported_time_stalls() {
+        let telemetry = NativeMuxTelemetry::new(60);
+        for line in [
+            "frame=14477",
+            "total_size=2556429",
+            "out_time_us=128000",
+            "progress=end",
+        ] {
+            ingest_progress_line(line, &telemetry);
+        }
+
+        let snapshot = telemetry.snapshot(2_556_429);
+        assert_eq!(snapshot.output_time_us, Some(241_283_333));
+        assert_eq!(snapshot.encoded_frames, 14_477);
+        assert_eq!(snapshot.muxed_bytes, 2_556_429);
+        assert!(snapshot.progress_end);
+    }
+
+    #[test]
     fn video_sink_reports_early_mux_exit_without_waiting_for_buffer_flush() {
-        let telemetry = NativeMuxTelemetry::default();
+        let telemetry = NativeMuxTelemetry::new(60);
         telemetry
             .progress_pipe_closed
             .store(true, Ordering::Release);

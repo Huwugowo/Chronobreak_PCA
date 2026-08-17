@@ -473,7 +473,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    #[ignore = "requires QUEUEBACK_NATIVE_LIFECYCLE_TEST_PID and QUEUEBACK_NATIVE_LIFECYCLE_TEST_FFMPEG"]
+    #[ignore = "requires QUEUEBACK_NATIVE_LIFECYCLE_TEST_PID and QUEUEBACK_NATIVE_LIFECYCLE_TEST_FFMPEG; optional duration/output environment variables preserve long-run evidence"]
     async fn real_native_lifecycle_records_a_non_league_window() {
         let pid = std::env::var("QUEUEBACK_NATIVE_LIFECYCLE_TEST_PID")
             .unwrap()
@@ -483,10 +483,32 @@ mod tests {
             PathBuf::from(std::env::var("QUEUEBACK_NATIVE_LIFECYCLE_TEST_FFMPEG").unwrap());
         let decode_ffmpeg = ffmpeg.clone();
         let target = crate::platform::capture_target_for_process(pid).unwrap();
-        let directory = tempfile::tempdir().unwrap();
+        let persistent_directory =
+            std::env::var_os("QUEUEBACK_NATIVE_LIFECYCLE_TEST_OUTPUT").map(PathBuf::from);
+        let temporary_directory = persistent_directory
+            .is_none()
+            .then(|| tempfile::tempdir().unwrap());
+        let directory = persistent_directory
+            .clone()
+            .unwrap_or_else(|| temporary_directory.as_ref().unwrap().path().to_path_buf());
+        if persistent_directory.is_some() {
+            assert!(
+                !directory.exists(),
+                "persistent native lifecycle fixture directory must be new: {}",
+                directory.display()
+            );
+            std::fs::create_dir_all(&directory).unwrap();
+        }
+        let duration_seconds = std::env::var("QUEUEBACK_NATIVE_LIFECYCLE_TEST_SECONDS")
+            .map_or(Ok(5), |value| value.parse::<u64>())
+            .expect("QUEUEBACK_NATIVE_LIFECYCLE_TEST_SECONDS must be an integer");
+        assert!(
+            (1..=3_600).contains(&duration_seconds),
+            "native lifecycle fixture duration must be between 1 and 3600 seconds"
+        );
         let (_cancel, cancellation) = watch::channel(false);
         let session = NativeRecordingSession::start(
-            directory.path().to_path_buf(),
+            directory.clone(),
             target,
             ffmpeg,
             AudioSource::Silent,
@@ -497,7 +519,7 @@ mod tests {
         .unwrap();
         assert!(session.evidence.borrow().startup_ready());
         let final_evidence = session.evidence_receiver();
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(duration_seconds)).await;
 
         let published = session.stop().await.unwrap();
         let video = published.join(VIDEO_MP4);
@@ -506,7 +528,30 @@ mod tests {
         let final_evidence = final_evidence.borrow().clone();
         assert!(final_evidence.capture_terminal);
         assert!(final_evidence.progress_end);
-        assert!(final_evidence.encoded_frames >= 300);
+        assert_eq!(final_evidence.frame_pool_capacity, Some(2));
+        assert_eq!(final_evidence.output_pool_capacity, Some(1));
+        assert!(final_evidence.protocol_error.is_none());
+        assert!(
+            final_evidence.encoded_frames >= duration_seconds.saturating_mul(60),
+            "native lifecycle encoded {} frames during a {}-second fixture",
+            final_evidence.encoded_frames,
+            duration_seconds
+        );
+        assert!(final_evidence.muxed_bytes > 0);
+        assert!(final_evidence.output_time_us.is_some_and(|value| value > 0));
+        assert!(
+            final_evidence
+                .latest_qpc
+                .zip(final_evidence.first_qpc)
+                .is_some_and(|(latest, first)| latest > first)
+        );
+        if persistent_directory.is_some() {
+            std::fs::write(
+                published.join("recording-evidence.txt"),
+                format!("duration_seconds={duration_seconds}\n{final_evidence:#?}\n"),
+            )
+            .unwrap();
+        }
         assert!(
             std::process::Command::new(decode_ffmpeg)
                 .args(["-v", "error", "-i"])

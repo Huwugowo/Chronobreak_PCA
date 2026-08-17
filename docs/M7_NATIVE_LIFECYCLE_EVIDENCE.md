@@ -66,7 +66,7 @@ Results:
 - format, all-target/all-feature compile and strict Clippy passed;
 - focused lifecycle: 2 passed, 2 environment-gated real tests ignored;
 - focused service: 7 passed;
-- consolidated non-League suite: 91 passed, 0 failed, 2 explicitly ignored,
+- consolidated non-League suite: 92 passed, 0 failed, 2 explicitly ignored,
   and the unavailable R11 empirical parser fixture filtered out.
 
 The ignored real tests were then run sequentially against an ordinary Notepad
@@ -81,6 +81,45 @@ Both passed in 7.11 seconds. The first recorded for five seconds, published a
 nonempty MP4, reported terminal evidence, encoded at least 300 frames and passed
 a full FFmpeg decode. The second immediately exercised pre-start cancellation
 and proved the native worker was reaped within its ten-second bound.
+
+## Integrated 240-second release fixture
+
+The real lifecycle test accepts optional duration and persistent-output
+environment variables so a long run can retain its recording and terminal
+evidence. On 2026-08-17 it was rebuilt in release mode and run directly—without
+Cargo/compiler processes—against a low-entropy Notepad HWND for a 240-second
+steady dwell. The complete test, including startup, finalization and full
+decode, passed in 250.74 seconds.
+
+Evidence is retained under ignored
+`evidence/m7-native-lifecycle-240-release-20260817-161853`:
+
+- terminal native evidence: 14,477 encoded/muxed CFR frames, 6,028 surfaced
+  WGC frames, one handoff supersession, fixed pool capacities 2/1, terminal mux
+  progress and no protocol error;
+- ffprobe: H.264 1920x1080 at exactly 60/1 FPS, 14,477 decoded frames and
+  241.283333-second video; AAC starts at zero and has the same duration;
+- media: 2,556,429 bytes, ffprobe exit 0 and a second full-decode exit 0;
+- native recorder process: 6.578 CPU seconds across 250.742 seconds, or about
+  0.164% of the 16-logical-processor machine; maximum working set 67.51 MiB;
+- mux-only FFmpeg child: 0.141 CPU seconds across 239.881 seconds, or about
+  0.0037% machine CPU; maximum working set 33.35 MiB;
+- combined recorder + mux private memory: first-window median 147.41 MiB,
+  last-window median 148.86 MiB, growth 1.45 MiB and slope 0.0054 MiB/s. The
+  benchmark's three-arm sustained-growth proxy is false.
+
+The separately observed FFmpeg process used for post-recording full decode is
+identified separately in `resource-summary.json`; it is not attributed to the
+mux-only recording child.
+
+This long run also exposed that FFmpeg 9 stream-copy progress can leave
+`out_time_us` near audio startup (128 ms here) while its own `frame` and
+`total_size` fields continue correctly. Native mux telemetry now converts
+FFmpeg's muxed-frame count through the plan's declared CFR input rate and takes
+the maximum of that duration and reported `out_time_us`. It does not borrow the
+native encoder count. A real post-fix five-second regression reported 378
+FFmpeg-muxed frames and exactly 6,300,000 microseconds, and a focused unit test
+preserves the 14,477-frame regression case.
 
 ## Remaining authority gates
 
