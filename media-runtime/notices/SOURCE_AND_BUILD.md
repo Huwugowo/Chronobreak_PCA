@@ -1,10 +1,10 @@
 # QueueBack FFmpeg 8.1.2 runtime provenance
 
-Runtime ID: `queueback-ffmpeg-8.1.2-windows-x86_64-r5`
+Runtime ID: `queueback-ffmpeg-8.1.2-windows-x86_64-r6`
 
-The runtime is built locally by the checked-in maintainer script and locked by
-the hashes in `media-runtime/runtime-lock.json`. QueueBack startup, Cargo/npm
-builds, and ordinary tests never download or rebuild it.
+The runtime was built locally in an isolated, repository-owned MSYS2 tree and
+is locked by the hashes in `media-runtime/runtime-lock.json`. QueueBack
+startup, Cargo/npm builds, and ordinary tests never download or rebuild it.
 
 ## Pinned sources
 
@@ -25,14 +25,20 @@ the FFmpeg source current enough for Windows Graphics Capture.
 
 ## Pinned Windows toolchain inputs
 
-- MSYS2 UCRT64 GCC `14.2.0-2`
-- binutils `2.43.1-1`
-- NASM `2.16.03-1`
-- x264 `0.164.r3161.a354f11-3`
-- Intel oneVPL `2.13.0-1`
-- pkgconf `1~2.3.0-1`
-- GNU make `4.4.1-2`
-- MSYS2 runtime `3.5.4-8`
+The isolated root was bootstrapped from the official
+`msys2-base-x86_64-20260611.tar.zst` archive, SHA-256
+`ace898d250d7302a24259a0288d69354649365af9cc64c8bcc2f219bc1e28374`.
+The materially relevant installed packages are:
+
+- MSYS2 UCRT64 GCC `16.1.0-5`
+- binutils `2.46-4`
+- NASM `3.01-1`
+- libx264 `0.165.r3222.b35605a-2`
+- Intel oneVPL `2.16.0-1`
+- pkgconf `1~2.5.1-1`
+- GNU make `4.4.1-3`
+- MSYS2 runtime `3.6.9-2`
+- Git `2.54.0-1`
 
 AMD's MSYS2 1.4.35 headers are intentionally overridden by the pinned 1.4.36
 source above because FFmpeg 8.1.2 requires 1.4.36 or newer.
@@ -62,9 +68,10 @@ The exact generated configuration is embedded in `ffmpeg -version` and checked
 by the runtime resolver. The material options are:
 
 ```text
---extra-version=queueback-5-captureabi1-nvcodec12.2-amf1.4.36
+--extra-version=queueback-6-captureabi1-nvcodec12.2-amf1.4.36
 --pkg-config-flags=--static
 --extra-ldflags=-static
+--extra-libs=-lstdc++
 --enable-gpl --enable-version3 --enable-static --disable-shared
 --disable-debug --disable-doc --disable-ffplay --disable-autodetect
 --enable-libx264 --enable-libvpl --enable-amf
@@ -78,8 +85,18 @@ by the runtime resolver. The material options are:
 QueueBack production graph uses vendor-neutral `gfxcapture`. AMF H.264/HEVC
 encoding and D3D11 texture input remain enabled.
 
-Use `tools/media_runtime/build_ffmpeg.ps1` to verify/acquire the exact source
-revisions explicitly, configure, compile, and install into the ignored build
-tree. Use `prepare.ps1` to stage only the locked runtime files. The produced
+The nv-codec headers are installed into a repository-local prefix and that
+prefix's `lib/pkgconfig` directory is prepended to `PKG_CONFIG_PATH` during
+configuration. Current static oneVPL contains C++ objects while its MSYS2
+`vpl.pc` omits the C++ runtime from `Libs.private`; the explicit
+`--extra-libs=-lstdc++` above is therefore required for FFmpeg's static VPL
+link probe and final binaries.
+
+For this build, the three pinned repositories were cloned below the ignored
+`build/media-runtime/source` tree, their commits were verified with
+`git rev-parse HEAD`, and the locked patch was applied with `git apply`. FFmpeg
+was configured out-of-tree below `build/media-runtime/build` with the options
+above, then compiled and installed with GNU make into
+`build/media-runtime/install/ffmpeg-8.1.2-queueback-r6`. The produced
 executables import only Windows system/UCRT DLLs; vendor driver APIs are loaded
 dynamically at runtime.

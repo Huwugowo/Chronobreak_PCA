@@ -10,7 +10,7 @@ async fn packaged_runtime_matches_the_embedded_contract() {
 
     assert_eq!(
         tools.runtime_id(),
-        "queueback-ffmpeg-8.1.2-windows-x86_64-r5"
+        "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
     );
     assert!(tools.ffmpeg().starts_with(tools.root()));
     assert!(tools.ffprobe().starts_with(tools.root()));

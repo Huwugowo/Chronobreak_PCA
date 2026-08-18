@@ -14,38 +14,39 @@ backend-removal decision.
 
 ## Current state
 
-The harness and both real lifecycle arms are implemented in commit `9ef92f8`.
-PowerShell parsing, Rust formatting, all-target/all-feature compilation, strict
-Clippy, the focused encoder suite and the consolidated non-League suite pass.
+The harness and both real lifecycle arms are implemented. A truthful r6 media
+runtime was built on PC B from the same pinned FFmpeg 8.1.2, nv-codec, AMF and
+QueueBack WGC patch inputs as r5, using a fresh isolated MSYS2 UCRT64 toolchain.
+The runtime preflight and packaged-runtime integration test pass.
 
-The A/B has **not** been run. This worktree has the r5 source, lock and notices,
-but not the exact locked `ffmpeg.exe` and `ffprobe.exe` files. The harness was
-run in preflight-only mode and correctly failed closed with:
+On 2026-08-18, a 10-second end-to-end smoke comparison and two mirrored
+240-second comparisons passed. The full evidence roots are:
 
 ```text
-CHRONOBREAK-AB-RUNTIME-MISSING
+evidence/preliminary-backend-ab/20260818-103855  ffmpeg-native
+evidence/preliminary-backend-ab/20260818-105008  native-ffmpeg
 ```
 
-Stock FFmpeg 9 is intentionally not accepted as a substitute.
+Stock FFmpeg is not accepted as a substitute for the locked r6 runtime.
 
 ## Required runtime
 
 Supply a staged directory whose `runtime-manifest.json` is the embedded
-`queueback-ffmpeg-8.1.2-windows-x86_64-r5` lock and whose every locked file
+`queueback-ffmpeg-8.1.2-windows-x86_64-r6` lock and whose every locked file
 matches its declared byte length and SHA-256. In particular:
 
 ```text
 bin/ffmpeg.exe
-  bc00f4dcc7870d216015c592b2821def0329cf58c084826027b009c36e1cd39a
+  1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015
 bin/ffprobe.exe
-  fcbc63a4552f56c325704495d91a2b3cb8404f91e5c280c0abf4749269a65d2f
+  639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e
 ```
 
-The preflight also requires the exact r5 version banner, `gfxcapture`,
-`scale_d3d11` and `h264_nvenc`. Prefer a known-good PC-A staged r5 directory.
-If reproduction is required, use an isolated MSYS2 root with the exact locked
-package versions; do not silently upgrade the lock or overwrite PC B's current
-`C:\msys64` installation.
+The preflight also requires the exact r6 version banner, `gfxcapture`,
+`scale_d3d11` and `h264_nvenc`. The local staged directory is
+`build/media-runtime/windows-x86_64`. Provenance and the isolated toolchain
+recipe are in `media-runtime/notices/SOURCE_AND_BUILD.md`; PC B's existing
+`C:\msys64` installation was not modified.
 
 ## Commands
 
@@ -53,7 +54,7 @@ Run from the PC-B repository root in Windows PowerShell. Use an absolute runtime
 path.
 
 ```powershell
-$runtime = 'D:\path\to\queueback-ffmpeg-8.1.2-windows-x86_64-r5'
+$runtime = (Resolve-Path 'build\media-runtime\windows-x86_64').Path
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools\native_backend\run_preliminary_backend_ab.ps1 `
@@ -87,6 +88,37 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Order native-ffmpeg `
   -CooldownSeconds 15
 ```
+
+## Results
+
+All four full arms produced valid 1920x1080 nominal-60-FPS H.264/AAC media,
+terminal evidence, successful ffprobe inspection and a full decode.
+
+| Order | Backend | CPU seconds | Machine CPU | Peak private MiB | Decoded frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| ffmpeg-native | FFmpeg/WGC | 10.844 | 0.284% | 233.91 | 14,432 |
+| ffmpeg-native | native | 4.297 | 0.112% | 159.48 | 14,478 |
+| native-ffmpeg | native | 4.266 | 0.111% | 160.35 | 14,482 |
+| native-ffmpeg | FFmpeg/WGC | 11.844 | 0.309% | 237.32 | 14,423 |
+
+Across the two orders, native averaged 4.281 CPU-seconds versus 11.344 for
+FFmpeg/WGC, a 62.3% reduction. Native averaged 159.91 MiB peak combined private
+memory versus 235.62 MiB, saving 75.70 MiB or 32.1%. Native CPU results differed
+by 0.7% between orders; FFmpeg results differed by 8.8%, but both orders point
+in the same direction.
+
+Native's CFR evidence reported roughly 1,300 duplicate and 1,300 discard
+decisions per run, while FFmpeg reported 7-17 duplicates and no discards. Both
+had zero pool recreations, and source-frame superseding was 0-1. A post-run
+exact-hash check of decoded 160x90 grayscale frames found fewer consecutive
+repeats in native (13.9-15.2%) than FFmpeg (26.7-27.8%), so the scheduler
+counters do not directly imply more repeated decoded frames on this fixture.
+Game-motion quality and pacing still require later validation with the actual
+game.
+
+The native files were about 19% lower bitrate on this synthetic fixture. That
+is not a quality result: encoder behavior and temporal repetition differ, and
+no objective or subjective quality metric was collected.
 
 ## Controls and evidence
 

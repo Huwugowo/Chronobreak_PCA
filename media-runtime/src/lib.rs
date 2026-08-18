@@ -826,12 +826,12 @@ mod tests {
     fn embedded_lock_is_exact_and_immutable() {
         let lock = embedded_lock().unwrap();
         assert_eq!(lock.contract_version, 3);
-        assert_eq!(lock.runtime_id, "queueback-ffmpeg-8.1.2-windows-x86_64-r5");
+        assert_eq!(lock.runtime_id, "queueback-ffmpeg-8.1.2-windows-x86_64-r6");
         assert_eq!(lock.sources.len(), 3);
         assert!(lock.sources.iter().all(|source| source.commit.len() == 40));
         assert_eq!(lock.patches.len(), 1);
         assert_eq!(lock.patches[0].applies_to, "ffmpeg");
-        assert_eq!(lock.toolchain.len(), 8);
+        assert_eq!(lock.toolchain.len(), 9);
         assert!(lock.files.iter().any(|file| file.path == FFMPEG_PATH));
         assert!(lock.files.iter().any(|file| file.path == FFPROBE_PATH));
         assert!(!lock.files.iter().any(|file| file.path.contains("ffplay")));

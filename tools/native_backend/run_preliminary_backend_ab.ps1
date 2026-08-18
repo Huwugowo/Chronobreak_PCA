@@ -43,7 +43,7 @@ function Assert-LockedRuntime {
     param([string]$Root)
 
     if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
-        Stop-WithCode 'RUNTIME-MISSING' "The pinned r5 runtime directory is missing at $Root. Supply the exact staged queueback-ffmpeg-8.1.2-windows-x86_64-r5 pair."
+        Stop-WithCode 'RUNTIME-MISSING' "The pinned r6 runtime directory is missing at $Root. Supply the exact staged queueback-ffmpeg-8.1.2-windows-x86_64-r6 pair."
     }
     $runtimeManifest = Join-Path $Root 'runtime-manifest.json'
     if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
@@ -52,7 +52,7 @@ function Assert-LockedRuntime {
     $lockPath = Join-Path $repo 'media-runtime\runtime-lock.json'
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeManifest).Hash -ne
         (Get-FileHash -Algorithm SHA256 -LiteralPath $lockPath).Hash) {
-        Stop-WithCode 'RUNTIME-LOCK' 'The staged runtime manifest is not byte-identical to the embedded r5 lock.'
+        Stop-WithCode 'RUNTIME-LOCK' 'The staged runtime manifest is not byte-identical to the embedded r6 lock.'
     }
     foreach ($file in $manifest.files) {
         $relative = [string]$file.path
@@ -77,12 +77,12 @@ function Assert-LockedRuntime {
     $ffmpeg = Join-Path $Root 'bin\ffmpeg.exe'
     $version = (& $ffmpeg -hide_banner -version 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0 -or $version -notlike "*ffmpeg version $($manifest.ffmpeg.version_banner)*") {
-        Stop-WithCode 'RUNTIME-IDENTITY' 'ffmpeg.exe does not report the locked r5 version banner.'
+        Stop-WithCode 'RUNTIME-IDENTITY' 'ffmpeg.exe does not report the locked r6 version banner.'
     }
     $filters = (& $ffmpeg -hide_banner -filters 2>&1 | Out-String)
     $encoders = (& $ffmpeg -hide_banner -encoders 2>&1 | Out-String)
     foreach ($required in @('gfxcapture', 'scale_d3d11')) {
-        if ($filters -notmatch "(?m)^\s*[TSC\.]{3}\s+$([Regex]::Escape($required))\s") {
+        if ($filters -notmatch "(?m)^\s*[TSC\.]{2,3}\s+$([Regex]::Escape($required))\s") {
             Stop-WithCode 'RUNTIME-CAPABILITY' "ffmpeg.exe does not advertise required filter $required."
         }
     }
@@ -110,9 +110,18 @@ function Build-TestBinary {
     param([string]$Cargo, [string]$LogPath)
 
     $artifact = $null
-    $output = & $Cargo test --manifest-path (Join-Path $repo 'recorder\Cargo.toml') `
-        --release --lib --all-features --no-run --message-format=json 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell surfaces a native process's stderr as
+        # NativeCommandError when the script preference is Stop. Cargo writes
+        # normal progress there, so capture it and rely on the exit code.
+        $ErrorActionPreference = 'Continue'
+        $output = & $Cargo test --manifest-path (Join-Path $repo 'recorder\Cargo.toml') `
+            --release --lib --all-features --no-run --message-format=json 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     [System.IO.File]::WriteAllLines($LogPath, [string[]]$output, $script:Utf8NoBom)
     foreach ($line in $output) {
         try {
@@ -218,7 +227,8 @@ function Summarize-Arm {
         video_codec = [string]$videoStream.codec_name
         video_width = [int]$videoStream.width
         video_height = [int]$videoStream.height
-        video_frame_rate = [string]$videoStream.avg_frame_rate
+        video_frame_rate = [string]$videoStream.r_frame_rate
+        video_average_frame_rate = [string]$videoStream.avg_frame_rate
         video_duration_seconds = [double]::Parse([string]$videoStream.duration, $script:Invariant)
         decoded_video_frames = [uint64]$videoStream.nb_read_frames
         audio_codec = [string]$audioStream.codec_name
@@ -284,6 +294,9 @@ function Run-Arm {
         $filter, '--ignored', '--exact', '--nocapture', '--test-threads=1'
     ) -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
         -WindowStyle Hidden -PassThru
+    # Windows PowerShell does not retain the native process handle unless it
+    # is materialized before the process exits. Without this, ExitCode is null.
+    [void]$process.Handle
     $samples = New-Object System.Collections.Generic.List[object]
     $sampleIndex = 0
     $deadline = [DateTime]::UtcNow.AddSeconds($DurationSeconds + 120)
@@ -352,10 +365,14 @@ function Run-Arm {
             Stop-Process -Id $ownedPid -Force -ErrorAction SilentlyContinue
         }
     }
+    # Windows PowerShell can leave ExitCode unset for a redirected process
+    # until the process handle has been explicitly finalized.
+    [void]$process.WaitForExit()
+    $exitCode = $process.ExitCode
     $samples | Export-Csv -LiteralPath (Join-Path $Root 'process-resources.csv') `
         -NoTypeInformation -Encoding UTF8
-    if ($process.ExitCode -ne 0) {
-        Stop-WithCode 'ARM-FAILED' "$Backend exited $($process.ExitCode); see $stdout and $stderr."
+    if ($exitCode -ne 0) {
+        Stop-WithCode 'ARM-FAILED' "$Backend exited $exitCode; see $stdout and $stderr."
     }
     $video = Join-Path $recording 'video.mp4'
     if (-not (Test-Path -LiteralPath $video -PathType Leaf)) {
@@ -467,8 +484,10 @@ try {
     $nativeSummary = Summarize-Arm -ArmRoot (Join-Path $ResultRoot 'native') -Backend 'native'
     Assert-ComparableArm $ffmpegSummary
     Assert-ComparableArm $nativeSummary
-    $revision = (& git -C $repo rev-parse HEAD).Trim()
-    $dirty = @(& git -C $repo status --short).Count -gt 0
+    # GUI/elevated runs may execute as a different local account than the
+    # workspace owner. Scope the ownership exception to these read-only calls.
+    $revision = (& git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
+    $dirty = @(& git -c "safe.directory=$repo" -C $repo status --short).Count -gt 0
     $summary = [ordered]@{
         schema = 1
         scope = 'preliminary non-League backend A/B; not QB-PERF-002 or M8 acceptance'
