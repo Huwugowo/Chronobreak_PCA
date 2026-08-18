@@ -134,6 +134,17 @@ while standalone `run_for` fixtures are exact. The same harness/lifecycle
 offset exists in the earlier 10-second and 240-second baselines, so it is not a
 new remediation regression; it remains an A/B harness alignment limitation.
 
+## Baseline-to-current revision A/B
+
+A later ABBA comparison measured the complete remediation set against Package
+0's baseline under the identical 1920x1080 fixture and pinned runtime. Native
+aggregate sampled CPU time was exactly unchanged across two 60-second arms per
+revision; memory was within 0.326 MiB (0.20%). This confirms no measurable
+whole-recorder native resource regression, but it does **not** establish a
+whole-recorder CPU speedup. The FFmpeg-reference change is also inconclusive
+at this sample size. See `docs/PACKAGE7_END_TO_END_REVISION_AB.md` for the
+method, raw roots, baseline R11-build accommodation, and full interpretation.
+
 ## Package disposition
 
 | Package | Exact delta and preserved contract | Verification and measured result | Disposition |
