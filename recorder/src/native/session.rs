@@ -168,6 +168,7 @@ impl NativeRecorderSession {
             let now = Instant::now();
             if now >= next_deadline {
                 self.maybe_inject_worker_stall()?;
+                self.stage_pending_source_for_tick()?;
                 let now = Instant::now();
                 let tick = self
                     .clock
@@ -227,6 +228,7 @@ impl NativeRecorderSession {
             let now = Instant::now();
             if now >= next_deadline {
                 self.maybe_inject_worker_stall()?;
+                self.stage_pending_source_for_tick()?;
                 let now = Instant::now();
                 let tick = self
                     .clock
@@ -284,6 +286,35 @@ impl NativeRecorderSession {
                     encode.completed_frames,
                     mux.encoded_frames
                 );
+                ensure!(
+                    capture.pending_frame_high_water_mark <= 1,
+                    "native WGC pending-frame bound exceeded: {} > 1",
+                    capture.pending_frame_high_water_mark
+                );
+                ensure!(
+                    conversion.source_snapshot_copies <= cfr.scheduled_ticks.saturating_add(1),
+                    "native WGC copied {} source snapshots for {} scheduled ticks",
+                    conversion.source_snapshot_copies,
+                    cfr.scheduled_ticks
+                );
+                ensure!(
+                    capture.admitted
+                        == conversion
+                            .source_snapshot_copies
+                            .saturating_add(capture.pending_frame_replacements)
+                            .saturating_add(capture.worker_frame_discards),
+                    "native WGC admitted-source accounting mismatch: admitted={} copies={} pending_replacements={} worker_discards={}",
+                    capture.admitted,
+                    conversion.source_snapshot_copies,
+                    capture.pending_frame_replacements,
+                    capture.worker_frame_discards
+                );
+                ensure!(
+                    cfr.source_discards == capture.pending_frame_replacements,
+                    "native CFR discard accounting mismatch: cfr={} pending_replacements={}",
+                    cfr.source_discards,
+                    capture.pending_frame_replacements
+                );
                 Ok(NativeSessionTelemetrySnapshot {
                     capture,
                     cfr,
@@ -326,6 +357,22 @@ impl NativeRecorderSession {
     }
 
     fn receive_source(&mut self, timeout: Duration) -> Result<()> {
+        if self.clock.is_some() {
+            let source = self
+                .source
+                .as_mut()
+                .context("native WGC source is closed")?;
+            let (received, replacements) = source.receive_pending_timeout(timeout)?;
+            if !received {
+                self.target_closed = source.telemetry().closed;
+            }
+            self.clock
+                .as_mut()
+                .context("native CFR clock disappeared")?
+                .record_source_discards(replacements);
+            return Ok(());
+        }
+
         let source = self
             .source
             .as_ref()
@@ -338,7 +385,12 @@ impl NativeRecorderSession {
         let qpc_100ns = frame.qpc_100ns();
         let pool_dimensions = source.pool_dimensions();
         if dimensions != pool_dimensions {
-            frame.close()?;
+            let close_result = frame.close();
+            self.source
+                .as_mut()
+                .context("native WGC source is closed")?
+                .record_worker_frame_discard();
+            close_result?;
             self.source
                 .as_mut()
                 .context("native WGC source is closed")?
@@ -357,6 +409,17 @@ impl NativeRecorderSession {
                 pending_resize,
                 dimensions
             );
+            let texture_ready = source_texture_contains_content(&frame);
+            if !matches!(&texture_ready, Ok(true)) {
+                let close_result = frame.close();
+                self.source
+                    .as_mut()
+                    .context("native WGC source is closed")?
+                    .record_worker_frame_discard();
+                texture_ready?;
+                close_result?;
+                return Ok(());
+            }
             self.encoder
                 .as_mut()
                 .context("native NVENC encoder is closed")?
@@ -366,21 +429,112 @@ impl NativeRecorderSession {
             self.pending_resize = None;
         }
 
-        if let Some(clock) = self.clock.as_mut() {
-            ensure!(
-                qpc_100ns > clock.telemetry().latest_source_qpc_100ns,
-                "native WGC source timestamp did not advance monotonically"
-            );
+        let stage_result = self.converter.stage_latest_source(&frame);
+        let close_result = frame.close();
+        if !matches!(&stage_result, Ok(true)) {
+            self.source
+                .as_mut()
+                .context("native WGC source is closed")?
+                .record_worker_frame_discard();
         }
-        self.converter.stage_latest_source(&frame)?;
-        frame.close()?;
-        if let Some(clock) = self.clock.as_mut() {
-            clock.observe_source(qpc_100ns)?;
-        } else {
-            let anchor = instant_from_qpc_100ns(qpc_100ns)?;
-            self.clock = Some(NativeCfrClock::start(NATIVE_FPS, qpc_100ns, anchor)?);
+        let staged = stage_result?;
+        close_result?;
+        if !staged {
+            return Ok(());
         }
+        let anchor = instant_from_qpc_100ns(qpc_100ns)?;
+        self.clock = Some(NativeCfrClock::start(NATIVE_FPS, qpc_100ns, anchor)?);
         self.snapshot_ready = true;
+        Ok(())
+    }
+
+    fn stage_pending_source_for_tick(&mut self) -> Result<()> {
+        if self
+            .clock
+            .as_ref()
+            .context("native CFR clock disappeared")?
+            .telemetry()
+            .scheduled_ticks
+            == 0
+        {
+            // Tick zero belongs to the first frame that established the CFR
+            // anchor. Coalescing starts only after that frame is presented.
+            return Ok(());
+        }
+        let Self {
+            encoder,
+            converter,
+            source,
+            clock,
+            snapshot_ready,
+            pending_resize,
+            target_closed,
+            ..
+        } = self;
+        let source = source.as_mut().context("native WGC source is closed")?;
+        let replacements = source.drain_handoff_to_pending()?;
+        clock
+            .as_mut()
+            .context("native CFR clock disappeared")?
+            .record_source_discards(replacements);
+        let pool_dimensions = source.pool_dimensions();
+        let Some(frame) = source.take_pending() else {
+            *target_closed = source.telemetry().closed;
+            return Ok(());
+        };
+        let dimensions = frame.dimensions();
+        let qpc_100ns = frame.qpc_100ns();
+        if dimensions != pool_dimensions {
+            let close_result = frame.close();
+            source.record_worker_frame_discard();
+            close_result?;
+            source.recreate_for_content_size(dimensions.0, dimensions.1)?;
+            // Keep converting the last valid GPU snapshot while the recreated
+            // WGC pool produces its first new-size surface.
+            *pending_resize = Some(dimensions);
+            return Ok(());
+        }
+
+        if let Some(expected_dimensions) = *pending_resize {
+            ensure!(
+                dimensions == expected_dimensions,
+                "native WGC recreated {:?} but delivered {:?}",
+                expected_dimensions,
+                dimensions
+            );
+            let texture_ready = source_texture_contains_content(&frame);
+            if !matches!(&texture_ready, Ok(true)) {
+                let close_result = frame.close();
+                source.record_worker_frame_discard();
+                texture_ready?;
+                close_result?;
+                return Ok(());
+            }
+            encoder
+                .as_mut()
+                .context("native NVENC encoder is closed")?
+                .drain()?;
+            converter.reconfigure_input(dimensions.0, dimensions.1)?;
+            *pending_resize = None;
+        }
+
+        let clock = clock.as_mut().context("native CFR clock disappeared")?;
+        ensure!(
+            qpc_100ns > clock.telemetry().latest_source_qpc_100ns,
+            "native WGC source timestamp did not advance monotonically"
+        );
+        let stage_result = converter.stage_latest_source(&frame);
+        let close_result = frame.close();
+        if !matches!(&stage_result, Ok(true)) {
+            source.record_worker_frame_discard();
+        }
+        let staged = stage_result?;
+        close_result?;
+        if !staged {
+            return Ok(());
+        }
+        clock.observe_source(qpc_100ns)?;
+        *snapshot_ready = true;
         Ok(())
     }
 
@@ -490,7 +644,9 @@ impl NativeRecorderSession {
             frame_pool_capacity: Some(WGC_FRAME_POOL_CAPACITY),
             output_pool_capacity: Some(NATIVE_SOURCE_SNAPSHOT_CAPACITY),
             source_frames_surfaced: capture.admitted,
-            source_frames_superseded: capture.handoff_drops,
+            source_frames_superseded: capture
+                .handoff_drops
+                .saturating_add(capture.pending_frame_replacements),
             pool_recreations: capture.recreations,
             first_qpc: capture.first_accepted_qpc_100ns,
             latest_qpc: capture.latest_accepted_qpc_100ns,
@@ -503,6 +659,12 @@ impl NativeRecorderSession {
             protocol_error,
         })
     }
+}
+
+fn source_texture_contains_content(frame: &super::CapturedWgcFrame<'_>) -> Result<bool> {
+    let desc = frame.texture_desc()?;
+    let (width, height) = frame.dimensions();
+    Ok(desc.Width >= width && desc.Height >= height)
 }
 
 #[cfg(feature = "native-failure-injection")]
@@ -518,7 +680,10 @@ impl NativeSessionTelemetrySnapshot {
             frame_pool_capacity: Some(WGC_FRAME_POOL_CAPACITY),
             output_pool_capacity: Some(NATIVE_SOURCE_SNAPSHOT_CAPACITY),
             source_frames_surfaced: self.capture.admitted,
-            source_frames_superseded: self.capture.handoff_drops,
+            source_frames_superseded: self
+                .capture
+                .handoff_drops
+                .saturating_add(self.capture.pending_frame_replacements),
             pool_recreations: self.capture.recreations,
             first_qpc: self.capture.first_accepted_qpc_100ns,
             latest_qpc: self.capture.latest_accepted_qpc_100ns,
@@ -557,6 +722,12 @@ fn native_protocol_error(
         return Some(format!(
             "native NVENC exceeded the fixed surface bound: {} > {}",
             encode.max_in_flight, NVENC_SURFACE_LIMIT
+        ));
+    }
+    if capture.pending_frame_high_water_mark > 1 {
+        return Some(format!(
+            "native WGC exceeded the worker pending-frame bound: {} > 1",
+            capture.pending_frame_high_water_mark
         ));
     }
     None

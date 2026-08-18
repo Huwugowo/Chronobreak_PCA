@@ -193,9 +193,38 @@ mod windows_probe {
             telemetry.conversion.processor_recreations,
             telemetry.conversion.processor_state_configurations
         );
+        ensure!(
+            telemetry.capture.pending_frame_high_water_mark <= 1,
+            "native WGC pending-frame bound exceeded: {} > 1",
+            telemetry.capture.pending_frame_high_water_mark
+        );
+        ensure!(
+            telemetry.conversion.source_snapshot_copies <= expected_ticks.saturating_add(1),
+            "native WGC copied {} source snapshots for {expected_ticks} ticks",
+            telemetry.conversion.source_snapshot_copies
+        );
+        let accounted_admitted_sources = telemetry
+            .conversion
+            .source_snapshot_copies
+            .saturating_add(telemetry.capture.pending_frame_replacements)
+            .saturating_add(telemetry.capture.worker_frame_discards);
+        ensure!(
+            telemetry.capture.admitted == accounted_admitted_sources,
+            "native WGC admitted-source accounting mismatch: admitted={} copies={} pending_replacements={} worker_discards={}",
+            telemetry.capture.admitted,
+            telemetry.conversion.source_snapshot_copies,
+            telemetry.capture.pending_frame_replacements,
+            telemetry.capture.worker_frame_discards
+        );
+        ensure!(
+            telemetry.cfr.source_discards == telemetry.capture.pending_frame_replacements,
+            "native CFR discard accounting mismatch: cfr={} pending_replacements={}",
+            telemetry.cfr.source_discards,
+            telemetry.capture.pending_frame_replacements
+        );
 
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
             telemetry.cfr.scheduled_ticks,
             telemetry.cfr.media_time_base_numerator,
             telemetry.cfr.media_time_base_denominator,
@@ -221,7 +250,11 @@ mod windows_probe {
             telemetry.slot_tick_drops,
             telemetry.unstaged_tick_drops,
             telemetry.capture.arrivals,
+            telemetry.capture.admitted,
             telemetry.capture.handoff_drops,
+            telemetry.capture.pending_frame_replacements,
+            telemetry.capture.pending_frame_high_water_mark,
+            telemetry.capture.worker_frame_discards,
             telemetry.capture.recreations,
             telemetry.conversion.processor_recreations,
             telemetry.conversion.processor_state_configurations,

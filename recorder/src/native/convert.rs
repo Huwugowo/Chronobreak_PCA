@@ -348,7 +348,7 @@ impl NativeNv12Converter {
     /// Copy the newest admitted WGC surface into one persistent same-device
     /// BGRA texture. This releases the capacity-two WGC pool surface promptly
     /// while preserving GPU-resident pixels for future CFR duplicate ticks.
-    pub fn stage_latest_source(&mut self, frame: &CapturedWgcFrame<'_>) -> Result<()> {
+    pub fn stage_latest_source(&mut self, frame: &CapturedWgcFrame<'_>) -> Result<bool> {
         ensure!(
             frame.dimensions() == (self.input_width, self.input_height),
             "native WGC content size {:?} does not match source snapshot {}x{}; reconfigure first",
@@ -362,14 +362,14 @@ impl NativeNv12Converter {
             "native WGC source format {:?} is not BGRA8 UNORM",
             source.desc().Format
         );
-        ensure!(
-            source.desc().Width >= self.input_width && source.desc().Height >= self.input_height,
-            "native WGC source texture {}x{} is smaller than content {}x{}",
-            source.desc().Width,
-            source.desc().Height,
-            self.input_width,
-            self.input_height
-        );
+        if source.desc().Width < self.input_width || source.desc().Height < self.input_height {
+            // WGC can surface one transition frame whose ContentSize already
+            // reflects restored/resized bounds while its pool texture still
+            // has the prior smaller allocation. It is not safe to copy the
+            // larger box; close this admitted frame and keep the last valid
+            // snapshot until a dimensionally consistent surface arrives.
+            return Ok(false);
+        }
         let source_box = D3D11_BOX {
             left: 0,
             top: 0,
@@ -397,7 +397,7 @@ impl NativeNv12Converter {
         self.latest_source.populated = true;
         self.telemetry.source_snapshot_copies =
             self.telemetry.source_snapshot_copies.saturating_add(1);
-        Ok(())
+        Ok(true)
     }
 
     /// Convert the persistent latest-source snapshot at an exact CFR tick.

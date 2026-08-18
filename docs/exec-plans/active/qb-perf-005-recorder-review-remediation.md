@@ -1,6 +1,6 @@
 # QB-PERF-005 recorder review remediation addendum
 
-Status: implementation in progress; Packages 0-3 complete.
+Status: implementation in progress; Packages 0-4 complete.
 
 Date: 2026-08-18
 
@@ -486,6 +486,11 @@ review findings.
   cleanup. Diagnostics/ownership/timestamp invariants are terminal. Active
   failures remain blocked for the PID because implicit restart still lacks a
   match-segment contract.
+- 2026-08-18: Package 4 keeps the first source as tick-zero authority, then
+  coalesces admitted WGC frames in one worker-owned pending slot and copies
+  only the freshest source at a due tick. Resize-transition surfaces whose
+  texture allocation lags `ContentSize` are closed and accounted while the
+  last valid snapshot supplies CFR.
 
 ## Progress
 
@@ -500,7 +505,8 @@ review findings.
   `docs/PACKAGE2_CONTROL_PLANE_EVIDENCE.md`.
 - [x] Package 3: retryable startup recovery. Evidence:
   `docs/PACKAGE3_STARTUP_RECOVERY_EVIDENCE.md`.
-- [ ] Package 4: WGC source coalescing.
+- [x] Package 4: WGC source coalescing. Evidence:
+  `docs/PACKAGE4_WGC_SOURCE_COALESCING_EVIDENCE.md`.
 - [ ] Package 5: transactional late-tick recovery.
 - [ ] Package 6: profile-gated poller persistence, if triggered.
 - [ ] Package 7: full non-League evidence refresh.

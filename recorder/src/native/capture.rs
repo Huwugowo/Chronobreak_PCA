@@ -50,6 +50,42 @@ struct QueuedWgcFrame {
     height: u32,
 }
 
+#[derive(Debug)]
+struct LatestPending<T> {
+    value: Option<T>,
+    replacements: u64,
+    high_water_mark: u64,
+}
+
+impl<T> Default for LatestPending<T> {
+    fn default() -> Self {
+        Self {
+            value: None,
+            replacements: 0,
+            high_water_mark: 0,
+        }
+    }
+}
+
+impl<T> LatestPending<T> {
+    fn replace(&mut self, value: T) -> bool {
+        let replaced = self.value.replace(value).is_some();
+        if replaced {
+            self.replacements = self.replacements.saturating_add(1);
+        }
+        self.high_water_mark = 1;
+        replaced
+    }
+
+    fn take(&mut self) -> Option<T> {
+        self.value.take()
+    }
+
+    fn clear(&mut self) -> bool {
+        self.value.take().is_some()
+    }
+}
+
 impl QueuedWgcFrame {
     fn close_inner(&mut self) -> Result<()> {
         let Some(frame) = self.frame.take() else {
@@ -123,6 +159,9 @@ pub struct NativeWgcTelemetrySnapshot {
     pub arrivals: u64,
     pub admitted: u64,
     pub handoff_drops: u64,
+    pub pending_frame_replacements: u64,
+    pub pending_frame_high_water_mark: u64,
+    pub worker_frame_discards: u64,
     pub callback_errors: u64,
     pub first_arrival_qpc_100ns: Option<i64>,
     pub latest_arrival_qpc_100ns: Option<i64>,
@@ -143,6 +182,9 @@ impl NativeWgcTelemetry {
             arrivals: self.arrivals.load(Ordering::Relaxed),
             admitted: self.admitted.load(Ordering::Relaxed),
             handoff_drops: self.handoff_drops.load(Ordering::Relaxed),
+            pending_frame_replacements: 0,
+            pending_frame_high_water_mark: 0,
+            worker_frame_discards: 0,
             callback_errors: self.callback_errors.load(Ordering::Relaxed),
             first_arrival_qpc_100ns: (first_arrival > 0).then_some(first_arrival),
             latest_arrival_qpc_100ns: (latest_arrival > 0).then_some(latest_arrival),
@@ -315,6 +357,8 @@ pub(crate) struct NativeWgcCapture {
     frame_arrived_token: Option<i64>,
     item_closed_token: Option<i64>,
     receiver: Receiver<QueuedWgcFrame>,
+    pending: LatestPending<QueuedWgcFrame>,
+    worker_frame_discards: u64,
     telemetry: Arc<NativeWgcTelemetry>,
     callback_state: Arc<FrameCallbackState>,
     pool_width: u32,
@@ -435,6 +479,8 @@ impl NativeWgcCapture {
             frame_arrived_token: Some(frame_arrived_token),
             item_closed_token: Some(item_closed_token),
             receiver,
+            pending: LatestPending::default(),
+            worker_frame_discards: 0,
             telemetry,
             callback_state,
             pool_width: item_size.Width as u32,
@@ -473,8 +519,57 @@ impl NativeWgcCapture {
         }
     }
 
+    pub(crate) fn receive_pending_timeout(&mut self, timeout: Duration) -> Result<(bool, u64)> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(frame) => {
+                let replacements = u64::from(self.pending.replace(frame))
+                    .saturating_add(self.drain_handoff_to_pending()?);
+                Ok((true, replacements))
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                self.refresh_closed_state();
+                Ok((false, 0))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                bail!("native WGC callback handoff disconnected")
+            }
+        }
+    }
+
+    pub(crate) fn drain_handoff_to_pending(&mut self) -> Result<u64> {
+        let mut replacements = 0_u64;
+        loop {
+            match self.receiver.try_recv() {
+                Ok(frame) => {
+                    if self.pending.replace(frame) {
+                        replacements = replacements.saturating_add(1);
+                    }
+                }
+                Err(TryRecvError::Empty) => return Ok(replacements),
+                Err(TryRecvError::Disconnected) => {
+                    bail!("native WGC callback handoff disconnected")
+                }
+            }
+        }
+    }
+
+    pub(crate) fn take_pending(&mut self) -> Option<CapturedWgcFrame<'_>> {
+        self.pending.take().map(|inner| CapturedWgcFrame {
+            inner,
+            _source: PhantomData,
+        })
+    }
+
+    pub(crate) fn record_worker_frame_discard(&mut self) {
+        self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+    }
+
     pub(crate) fn telemetry(&self) -> NativeWgcTelemetrySnapshot {
-        self.telemetry.snapshot()
+        let mut snapshot = self.telemetry.snapshot();
+        snapshot.pending_frame_replacements = self.pending.replacements;
+        snapshot.pending_frame_high_water_mark = self.pending.high_water_mark;
+        snapshot.worker_frame_discards = self.worker_frame_discards;
+        snapshot
     }
 
     fn refresh_closed_state(&self) {
@@ -520,6 +615,10 @@ impl NativeWgcCapture {
         }
         while let Ok(frame) = self.receiver.try_recv() {
             drop(frame);
+            self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+        }
+        if self.pending.clear() {
+            self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
         }
         self.frame_pool
             .Recreate(
@@ -560,6 +659,25 @@ impl NativeWgcCapture {
                 anyhow::Error::new(error).context("could not detach native WGC close callback"),
             );
         }
+        if !self
+            .callback_state
+            .wait_until_idle(CALLBACK_SHUTDOWN_TIMEOUT)
+            && first_error.is_none()
+        {
+            first_error = Some(anyhow::anyhow!(
+                "native WGC frame callback did not stop within {} ms",
+                CALLBACK_SHUTDOWN_TIMEOUT.as_millis()
+            ));
+        }
+
+        while let Ok(frame) = self.receiver.try_recv() {
+            drop(frame);
+            self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+        }
+        if self.pending.clear() {
+            self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+        }
+
         if let Err(error) = self.session.Close()
             && first_error.is_none()
         {
@@ -575,17 +693,6 @@ impl NativeWgcCapture {
 
         if !self
             .callback_state
-            .wait_until_idle(CALLBACK_SHUTDOWN_TIMEOUT)
-            && first_error.is_none()
-        {
-            first_error = Some(anyhow::anyhow!(
-                "native WGC frame callback did not stop within {} ms",
-                CALLBACK_SHUTDOWN_TIMEOUT.as_millis()
-            ));
-        }
-
-        if !self
-            .callback_state
             .wait_until_released(CALLBACK_SHUTDOWN_TIMEOUT)
             && first_error.is_none()
         {
@@ -595,9 +702,6 @@ impl NativeWgcCapture {
             ));
         }
 
-        while let Ok(frame) = self.receiver.try_recv() {
-            drop(frame);
-        }
         self.shutdown_complete = true;
         first_error.map_or(Ok(()), Err)
     }
@@ -772,6 +876,84 @@ mod tests {
                 hresult: Some(i32::from_ne_bytes(0x887a_0005_u32.to_ne_bytes())),
             })
         );
+    }
+
+    #[test]
+    fn latest_pending_policy_selects_the_freshest_source_at_sixty_hz() {
+        const NANOS_PER_SECOND: u128 = 1_000_000_000;
+        const OUTPUT_RATE: u128 = 60;
+        const OUTPUT_TICKS: u64 = 60;
+
+        for source_rate in [60_u64, 144, 240] {
+            let mut pending = LatestPending::default();
+            let mut source_index = 1_u64;
+            let mut arrivals = 1_u64;
+            let mut snapshot_copies = 1_u64;
+            let mut observed_replacements = 0_u64;
+
+            for tick_index in 1..OUTPUT_TICKS {
+                let tick_nanos = u128::from(tick_index) * NANOS_PER_SECOND / OUTPUT_RATE;
+                while u128::from(source_index) * NANOS_PER_SECOND / u128::from(source_rate)
+                    <= tick_nanos
+                {
+                    let source_nanos =
+                        u128::from(source_index) * NANOS_PER_SECOND / u128::from(source_rate);
+                    if pending.replace((source_index, source_nanos)) {
+                        observed_replacements = observed_replacements.saturating_add(1);
+                    }
+                    arrivals = arrivals.saturating_add(1);
+                    source_index = source_index.saturating_add(1);
+                }
+
+                let (selected_index, selected_nanos) =
+                    pending.take().expect("each output tick has a source");
+                assert_eq!(
+                    selected_index,
+                    source_index - 1,
+                    "source rate {source_rate} did not select its freshest eligible source"
+                );
+                assert!(
+                    tick_nanos.saturating_sub(selected_nanos) <= NANOS_PER_SECOND / OUTPUT_RATE,
+                    "source rate {source_rate} exceeded one output interval of source age"
+                );
+                snapshot_copies = snapshot_copies.saturating_add(1);
+            }
+
+            assert_eq!(pending.high_water_mark, 1, "source rate {source_rate}");
+            assert_eq!(
+                pending.replacements, observed_replacements,
+                "source rate {source_rate} replacement accounting differs"
+            );
+            assert_eq!(
+                pending.replacements,
+                arrivals.saturating_sub(snapshot_copies),
+                "source rate {source_rate} did not coalesce every excess admitted source"
+            );
+            assert!(snapshot_copies <= OUTPUT_TICKS + 1);
+        }
+    }
+
+    #[test]
+    fn replacing_pending_ownership_drops_the_older_frame_immediately() {
+        struct DropCounter(Arc<AtomicU64>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let drops = Arc::new(AtomicU64::new(0));
+        let mut pending = LatestPending::default();
+        assert!(!pending.replace(DropCounter(Arc::clone(&drops))));
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+        assert!(pending.replace(DropCounter(Arc::clone(&drops))));
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        assert_eq!(pending.high_water_mark, 1);
+
+        drop(pending.take());
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
     }
 
     #[test]

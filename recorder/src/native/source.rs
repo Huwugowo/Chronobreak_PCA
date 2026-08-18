@@ -45,6 +45,22 @@ impl NativeWgcSource {
         self.capture.recv_timeout(timeout)
     }
 
+    pub(crate) fn receive_pending_timeout(&mut self, timeout: Duration) -> Result<(bool, u64)> {
+        self.capture.receive_pending_timeout(timeout)
+    }
+
+    pub(crate) fn drain_handoff_to_pending(&mut self) -> Result<u64> {
+        self.capture.drain_handoff_to_pending()
+    }
+
+    pub(crate) fn take_pending(&mut self) -> Option<CapturedWgcFrame<'_>> {
+        self.capture.take_pending()
+    }
+
+    pub(crate) fn record_worker_frame_discard(&mut self) {
+        self.capture.record_worker_frame_discard();
+    }
+
     pub fn telemetry(&self) -> NativeWgcTelemetrySnapshot {
         self.capture.telemetry()
     }

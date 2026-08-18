@@ -98,6 +98,10 @@ impl NativeCfrClock {
         Ok(())
     }
 
+    pub(crate) fn record_source_discards(&mut self, count: u64) {
+        self.source_discards = self.source_discards.saturating_add(count);
+    }
+
     pub fn next_deadline(&self) -> Result<Instant> {
         self.anchor_deadline
             .checked_add(tick_duration(self.next_tick_index, self.frames_per_second)?)
