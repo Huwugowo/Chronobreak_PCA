@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
@@ -33,6 +33,7 @@ const POLLER_STARTUP_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const POLLER_TASK_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const POLLER_ABORT_REAP_TIMEOUT: Duration = Duration::from_secs(1);
 const POLLER_FINALIZATION_TIMEOUT: Duration = Duration::from_secs(5);
+const GAME_LOG_WRITE_COALESCE_WINDOW: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct GameLog {
@@ -267,15 +268,108 @@ pub struct PollerSession {
     cancellation: watch::Sender<bool>,
     task: JoinHandle<Result<()>>,
     state: Arc<Mutex<PollerState>>,
-    write_lock: Arc<Mutex<()>>,
+    writer: GameLogWriter,
     output: PathBuf,
+}
+
+struct GameLogWriter {
+    revisions: watch::Sender<u64>,
+    commands: mpsc::Sender<GameLogWriterCommand>,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
+enum GameLogWriterCommand {
+    FlushAndStop {
+        required_revision: u64,
+        completed: oneshot::Sender<()>,
+    },
+}
+
+impl GameLogWriter {
+    fn start(state: Arc<Mutex<PollerState>>, output: PathBuf) -> Self {
+        Self::start_with_window(state, output, GAME_LOG_WRITE_COALESCE_WINDOW)
+    }
+
+    fn start_with_window(
+        state: Arc<Mutex<PollerState>>,
+        output: PathBuf,
+        coalesce_window: Duration,
+    ) -> Self {
+        let (revisions, revision_receiver) = watch::channel(0_u64);
+        let (commands, command_receiver) = mpsc::channel(1);
+        let task = tokio::spawn(run_game_log_writer(
+            state,
+            output,
+            coalesce_window,
+            revision_receiver,
+            command_receiver,
+        ));
+        Self {
+            revisions,
+            commands,
+            task: Some(task),
+        }
+    }
+
+    fn notifier(&self) -> watch::Sender<u64> {
+        self.revisions.clone()
+    }
+
+    async fn flush_and_stop(&mut self, required_revision: u64) -> Result<()> {
+        let (completed, completion) = oneshot::channel();
+        let send_error = self
+            .commands
+            .send(GameLogWriterCommand::FlushAndStop {
+                required_revision,
+                completed,
+            })
+            .await
+            .err();
+        let completion_error = if send_error.is_none() {
+            completion.await.err()
+        } else {
+            None
+        };
+        let task_result = self
+            .task
+            .as_mut()
+            .context("game-log writer task was already reaped")?
+            .await
+            .context("game-log writer task panicked");
+        self.task = None;
+        task_result??;
+        if let Some(error) = send_error {
+            return Err(error).context("game-log writer stopped before its final flush request");
+        }
+        if let Some(error) = completion_error {
+            return Err(error)
+                .context("game-log writer stopped before acknowledging its final flush");
+        }
+        Ok(())
+    }
+
+    async fn abort_and_reap(&mut self) {
+        let Some(task) = self.task.as_mut() else {
+            return;
+        };
+        task.abort();
+        let _ = tokio::time::timeout(POLLER_ABORT_REAP_TIMEOUT, task).await;
+        self.task = None;
+    }
+}
+
+impl Drop for GameLogWriter {
+    fn drop(&mut self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
 }
 
 impl PollerSession {
     pub async fn start(directory: &Path, video_started_at: Instant) -> Result<Self> {
         let output = directory.join(GAME_LOG_JSON);
         let state = Arc::new(Mutex::new(PollerState::default()));
-        let write_lock = Arc::new(Mutex::new(()));
         tokio::time::timeout(
             POLLER_STARTUP_WRITE_TIMEOUT,
             write_json_atomic(&output, &GameLog::default()),
@@ -284,18 +378,17 @@ impl PollerSession {
         .context("initial game log write timed out")??;
 
         let client = LiveClient::new(LIVE_CLIENT_BASE_URL)?;
+        let writer = GameLogWriter::start(Arc::clone(&state), output.clone());
+        let writer_notifier = writer.notifier();
         let (cancellation, receiver) = watch::channel(false);
         let task_state = Arc::clone(&state);
-        let task_write_lock = Arc::clone(&write_lock);
-        let task_output = output.clone();
         let task = tokio::spawn(async move {
             run_poller(
                 client,
                 video_started_at,
                 receiver,
                 task_state,
-                task_write_lock,
-                task_output,
+                writer_notifier,
             )
             .await
         });
@@ -304,7 +397,7 @@ impl PollerSession {
             cancellation,
             task,
             state,
-            write_lock,
+            writer,
             output,
         })
     }
@@ -335,8 +428,9 @@ impl PollerSession {
             }
         }
 
+        let required_revision = self.state.lock().await.revision;
         let finalization = async {
-            if let Err(error) = write_game_log(&self.state, &self.write_lock, &self.output).await {
+            if let Err(error) = self.writer.flush_and_stop(required_revision).await {
                 error!(%error, "could not perform final game log flush");
             }
             let game_log_bytes = tokio::fs::metadata(&self.output)
@@ -351,6 +445,7 @@ impl PollerSession {
         match tokio::time::timeout(POLLER_FINALIZATION_TIMEOUT, finalization).await {
             Ok(summary) => summary,
             Err(_) => {
+                self.writer.abort_and_reap().await;
                 error!(
                     timeout_ms = POLLER_FINALIZATION_TIMEOUT.as_millis(),
                     "could not perform final game log flush: finalization timed out"
@@ -385,6 +480,7 @@ fn log_poller_diagnostics(state: &PollerState, game_log_bytes: u64) {
         durable_game_log_revision = state.durable_revision,
         json_write_requests = diagnostics.json_write_requests,
         json_writes = diagnostics.json_writes,
+        json_coalesced_writes = diagnostics.json_coalesced_writes,
         json_write_failures = diagnostics.json_write_failures,
         json_serialized_bytes = diagnostics.json_serialized_bytes,
         total_json_clone_ms = duration_ms_f64(diagnostics.total_json_clone),
@@ -418,8 +514,11 @@ struct PollerState {
 }
 
 impl PollerState {
-    fn mark_dirty(&mut self) {
+    fn mark_dirty(&mut self) -> u64 {
         self.revision = self.revision.saturating_add(1);
+        self.diagnostics.json_write_requests =
+            self.diagnostics.json_write_requests.saturating_add(1);
+        self.revision
     }
 }
 
@@ -433,6 +532,7 @@ struct PollerDiagnostics {
     maximum_response_latency: Duration,
     json_write_requests: u64,
     json_writes: u64,
+    json_coalesced_writes: u64,
     json_write_failures: u64,
     json_serialized_bytes: u64,
     total_json_clone: Duration,
@@ -618,8 +718,7 @@ async fn run_poller(
     video_started_at: Instant,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
-    write_lock: Arc<Mutex<()>>,
-    output: PathBuf,
+    writer: watch::Sender<u64>,
 ) -> Result<()> {
     info!("waiting for the Live Client API");
     let Some(calibration) = calibrate(&client, video_started_at, &mut cancellation, &state).await?
@@ -632,7 +731,7 @@ async fn run_poller(
     }
     let take_first_snapshot_immediately = initial_data.is_none();
 
-    {
+    let calibration_revision = {
         let mut state = state.lock().await;
         state.game_log.game_start_video_offset_ms = Some(calibration.video_offset_ms);
         state.summary.game_start_video_offset_ms = Some(calibration.video_offset_ms);
@@ -649,9 +748,9 @@ async fn run_poller(
                 calibration.video_offset_ms,
             )?;
         }
-        state.mark_dirty();
-    }
-    write_game_log(&state, &write_lock, &output).await?;
+        state.mark_dirty()
+    };
+    notify_game_log_writer(&writer, calibration_revision)?;
     info!(
         video_offset_ms = calibration.video_offset_ms,
         "Live Client clock calibrated"
@@ -662,16 +761,14 @@ async fn run_poller(
         calibration.video_offset_ms,
         cancellation.clone(),
         Arc::clone(&state),
-        Arc::clone(&write_lock),
-        output.clone(),
+        writer.clone(),
     );
     let snapshot_loop = snapshot_loop(
         client,
         calibration.video_offset_ms,
         cancellation,
         state,
-        write_lock,
-        output,
+        writer,
         take_first_snapshot_immediately,
     );
     tokio::try_join!(event_loop, snapshot_loop)?;
@@ -849,8 +946,7 @@ async fn event_loop(
     video_offset_ms: i64,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
-    write_lock: Arc<Mutex<()>>,
-    output: PathBuf,
+    writer: watch::Sender<u64>,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(EVENT_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -880,17 +976,15 @@ async fn event_loop(
             }
         };
 
-        let count = {
+        let (count, revision) = {
             let mut state = state.lock().await;
             state.diagnostics.observe_response(received.latency);
             let count = reconcile_events(&mut state, received.value.events, video_offset_ms);
-            if count > 0 {
-                state.mark_dirty();
-            }
-            count
+            let revision = (count > 0).then(|| state.mark_dirty());
+            (count, revision)
         };
-        if count > 0 {
-            write_game_log(&state, &write_lock, &output).await?;
+        if let Some(revision) = revision {
+            notify_game_log_writer(&writer, revision)?;
             debug!(count, "stored Live Client event batch");
         }
     }
@@ -901,8 +995,7 @@ async fn snapshot_loop(
     video_offset_ms: i64,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
-    write_lock: Arc<Mutex<()>>,
-    output: PathBuf,
+    writer: watch::Sender<u64>,
     take_first_snapshot_immediately: bool,
 ) -> Result<()> {
     let start = if take_first_snapshot_immediately {
@@ -960,7 +1053,7 @@ async fn snapshot_loop(
             }
 
             consecutive_failures = 0;
-            {
+            let revision = {
                 let mut state = state.lock().await;
                 update_summary(&mut state.summary, &data);
                 reconcile_events(
@@ -969,30 +1062,99 @@ async fn snapshot_loop(
                     video_offset_ms,
                 );
                 append_snapshot(&mut state.game_log, &data, video_offset_ms)?;
-                state.mark_dirty();
-            }
-            write_game_log(&state, &write_lock, &output).await?;
+                state.mark_dirty()
+            };
+            notify_game_log_writer(&writer, revision)?;
             break;
         }
     }
 }
 
-async fn write_game_log(
+fn notify_game_log_writer(writer: &watch::Sender<u64>, revision: u64) -> Result<()> {
+    writer
+        .send(revision)
+        .map_err(|_| anyhow::anyhow!("game-log writer stopped before revision {revision}"))
+}
+
+async fn run_game_log_writer(
+    state: Arc<Mutex<PollerState>>,
+    output: PathBuf,
+    coalesce_window: Duration,
+    mut revisions: watch::Receiver<u64>,
+    mut commands: mpsc::Receiver<GameLogWriterCommand>,
+) -> Result<()> {
+    loop {
+        let mut pending_revision = tokio::select! {
+            command = commands.recv() => {
+                let Some(GameLogWriterCommand::FlushAndStop {
+                    required_revision,
+                    completed,
+                }) = command else {
+                    bail!("game-log writer command channel closed before final flush");
+                };
+                let result =
+                    persist_latest_game_log(&state, &output, required_revision, true).await;
+                if result.is_ok() {
+                    let _ = completed.send(());
+                }
+                return result;
+            }
+            changed = revisions.changed() => {
+                changed.context("game-log revision channel closed before final flush")?;
+                *revisions.borrow_and_update()
+            }
+        };
+
+        let coalesce_deadline = tokio::time::Instant::now() + coalesce_window;
+        let coalesce = tokio::time::sleep_until(coalesce_deadline);
+        tokio::pin!(coalesce);
+        loop {
+            tokio::select! {
+                command = commands.recv() => {
+                    let Some(GameLogWriterCommand::FlushAndStop {
+                        required_revision,
+                        completed,
+                    }) = command else {
+                        bail!("game-log writer command channel closed before final flush");
+                    };
+                    let required_revision = required_revision.max(pending_revision);
+                    let result =
+                        persist_latest_game_log(&state, &output, required_revision, true).await;
+                    if result.is_ok() {
+                        let _ = completed.send(());
+                    }
+                    return result;
+                }
+                changed = revisions.changed() => {
+                    changed.context("game-log revision channel closed before final flush")?;
+                    pending_revision = pending_revision.max(*revisions.borrow_and_update());
+                }
+                () = &mut coalesce => break,
+            }
+        }
+        persist_latest_game_log(&state, &output, pending_revision, false).await?;
+    }
+}
+
+async fn persist_latest_game_log(
     state: &Arc<Mutex<PollerState>>,
-    write_lock: &Arc<Mutex<()>>,
     output: &Path,
+    required_revision: u64,
+    force: bool,
 ) -> Result<()> {
     let requested_at = Instant::now();
-    {
-        let mut state = state.lock().await;
-        state.diagnostics.json_write_requests =
-            state.diagnostics.json_write_requests.saturating_add(1);
-    }
-    let _write_guard = write_lock.lock().await;
     let clone_started = Instant::now();
-    let (game_log, revision) = {
+    let Some((game_log, revision)) = ({
         let state = state.lock().await;
-        (state.game_log.clone(), state.revision)
+        ensure!(
+            state.revision >= required_revision,
+            "game-log writer observed revision {} before required revision {required_revision}",
+            state.revision
+        );
+        (force || state.durable_revision < required_revision)
+            .then(|| (state.game_log.clone(), state.revision))
+    }) else {
+        return Ok(());
     };
     let clone_elapsed = clone_started.elapsed();
     let result = write_json_atomic_with_stats(output, &game_log).await;
@@ -1000,6 +1162,11 @@ async fn write_game_log(
     let mut state = state.lock().await;
     match &result {
         Ok(stats) => {
+            let newly_durable = revision.saturating_sub(state.durable_revision);
+            state.diagnostics.json_coalesced_writes = state
+                .diagnostics
+                .json_coalesced_writes
+                .saturating_add(newly_durable.saturating_sub(1));
             state.durable_revision = state.durable_revision.max(revision);
             state
                 .diagnostics
@@ -1551,14 +1718,15 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join(GAME_LOG_JSON);
         let state = Arc::new(Mutex::new(PollerState::default()));
-        let write_lock = Arc::new(Mutex::new(()));
-        {
+        let mut writer = GameLogWriter::start(Arc::clone(&state), output.clone());
+        let revision = {
             let mut state = state.lock().await;
             state.game_log.game_start_video_offset_ms = Some(42);
-            state.mark_dirty();
-        }
+            state.mark_dirty()
+        };
 
-        write_game_log(&state, &write_lock, &output).await.unwrap();
+        notify_game_log_writer(&writer.notifier(), revision).unwrap();
+        writer.flush_and_stop(revision).await.unwrap();
 
         let state = state.lock().await;
         assert_eq!(state.revision, 1);
@@ -1568,6 +1736,290 @@ mod tests {
         assert_eq!(state.diagnostics.json_write_failures, 0);
         assert!(state.diagnostics.json_serialized_bytes > 0);
         assert!(output.is_file());
+    }
+
+    #[tokio::test]
+    async fn game_log_writer_coalesces_concurrent_revisions_to_the_newest_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let mut writer = GameLogWriter::start_with_window(
+            Arc::clone(&state),
+            output.clone(),
+            Duration::from_millis(10),
+        );
+        let notifier = writer.notifier();
+
+        let first_revision = {
+            let mut state = state.lock().await;
+            state.game_log.game_start_video_offset_ms = Some(1);
+            state.mark_dirty()
+        };
+        notify_game_log_writer(&notifier, first_revision).unwrap();
+        let second_revision = {
+            let mut state = state.lock().await;
+            state.game_log.game_start_video_offset_ms = Some(2);
+            state.mark_dirty()
+        };
+        notify_game_log_writer(&notifier, second_revision).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if state.lock().await.durable_revision >= second_revision {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("coalesced game-log revision did not become durable");
+
+        {
+            let state = state.lock().await;
+            assert_eq!(state.diagnostics.json_write_requests, 2);
+            assert_eq!(state.diagnostics.json_writes, 1);
+            assert_eq!(state.diagnostics.json_coalesced_writes, 1);
+        }
+        let stored: GameLog =
+            serde_json::from_slice(&tokio::fs::read(&output).await.unwrap()).unwrap();
+        assert_eq!(stored.game_start_video_offset_ms, Some(2));
+        writer.flush_and_stop(second_revision).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn game_log_writer_final_flush_bypasses_the_coalescing_delay() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let mut writer = GameLogWriter::start_with_window(
+            Arc::clone(&state),
+            output.clone(),
+            Duration::from_secs(60),
+        );
+        let revision = {
+            let mut state = state.lock().await;
+            state.game_log.game_start_video_offset_ms = Some(42);
+            state.mark_dirty()
+        };
+        notify_game_log_writer(&writer.notifier(), revision).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), writer.flush_and_stop(revision))
+            .await
+            .expect("final game-log flush waited for the coalescing window")
+            .unwrap();
+
+        let state = state.lock().await;
+        assert_eq!(state.durable_revision, revision);
+        assert_eq!(state.diagnostics.json_writes, 1);
+        drop(state);
+        let stored: GameLog =
+            serde_json::from_slice(&tokio::fs::read(output).await.unwrap()).unwrap();
+        assert_eq!(stored.game_start_video_offset_ms, Some(42));
+    }
+
+    #[tokio::test]
+    async fn game_log_writer_failure_is_latched_and_returned() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("missing-parent").join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let mut writer =
+            GameLogWriter::start_with_window(Arc::clone(&state), output, Duration::from_millis(1));
+        let revision = state.lock().await.mark_dirty();
+        notify_game_log_writer(&writer.notifier(), revision).unwrap();
+
+        let error = writer.flush_and_stop(revision).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("failed to create temporary file"));
+        let state = state.lock().await;
+        assert_eq!(state.durable_revision, 0);
+        assert_eq!(state.diagnostics.json_write_failures, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit Package 6 disk profile; rewrites a synthetic 50-minute game log"]
+    async fn profile_pre_coalescing_representative_long_synthetic_game_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let mut write_latencies = Vec::new();
+
+        for snapshot_index in 0..300_u32 {
+            if let Some(revision) = append_synthetic_profile_event(&state, snapshot_index).await {
+                let started = Instant::now();
+                persist_latest_game_log(&state, &output, revision, false)
+                    .await
+                    .unwrap();
+                write_latencies.push(started.elapsed());
+            }
+
+            let revision = append_synthetic_profile_snapshot(&state, snapshot_index).await;
+            let started = Instant::now();
+            persist_latest_game_log(&state, &output, revision, false)
+                .await
+                .unwrap();
+            write_latencies.push(started.elapsed());
+        }
+
+        write_latencies.sort_unstable();
+        let state = state.lock().await;
+        let final_bytes = std::fs::metadata(&output).unwrap().len();
+        let p95_index = write_latencies.len().saturating_mul(95).div_ceil(100) - 1;
+        let p95 = write_latencies[p95_index];
+        let rewrite_ratio = state.diagnostics.json_serialized_bytes as f64 / final_bytes as f64;
+        println!(
+            "PACKAGE6_POLLER_PROFILE writes={} final_bytes={} cumulative_bytes={} rewrite_ratio={rewrite_ratio:.3} p95_ms={:.3} slowest_ms={:.3} clone_ms={:.3} serialize_ms={:.3} file_write_ms={:.3} sync_ms={:.3} rename_ms={:.3} total_atomic_ms={:.3} total_requested_ms={:.3}",
+            state.diagnostics.json_writes,
+            final_bytes,
+            state.diagnostics.json_serialized_bytes,
+            duration_ms_f64(p95),
+            duration_ms_f64(state.diagnostics.slowest_json_write),
+            duration_ms_f64(state.diagnostics.total_json_clone),
+            duration_ms_f64(state.diagnostics.total_json_serialize),
+            duration_ms_f64(state.diagnostics.total_json_file_write),
+            duration_ms_f64(state.diagnostics.total_json_sync),
+            duration_ms_f64(state.diagnostics.total_json_rename),
+            duration_ms_f64(state.diagnostics.total_json_atomic),
+            duration_ms_f64(state.diagnostics.total_json_write),
+        );
+        assert_eq!(state.durable_revision, state.revision);
+        assert_eq!(state.diagnostics.json_write_failures, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit Package 6 disk profile; writes a coalesced synthetic 50-minute game log"]
+    async fn profile_coalesced_representative_long_synthetic_game_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let mut writer = GameLogWriter::start_with_window(
+            Arc::clone(&state),
+            output.clone(),
+            Duration::from_millis(25),
+        );
+        let notifier = writer.notifier();
+        let mut cycle_latencies = Vec::new();
+        let mut final_revision = 0_u64;
+
+        for snapshot_index in 0..300_u32 {
+            let cycle_started = Instant::now();
+            if let Some(revision) = append_synthetic_profile_event(&state, snapshot_index).await {
+                notify_game_log_writer(&notifier, revision).unwrap();
+            }
+            final_revision = append_synthetic_profile_snapshot(&state, snapshot_index).await;
+            notify_game_log_writer(&notifier, final_revision).unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if state.lock().await.durable_revision >= final_revision {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("synthetic coalesced revision did not become durable");
+            cycle_latencies.push(cycle_started.elapsed());
+        }
+        writer.flush_and_stop(final_revision).await.unwrap();
+
+        cycle_latencies.sort_unstable();
+        let state = state.lock().await;
+        let final_bytes = std::fs::metadata(&output).unwrap().len();
+        let p95_index = cycle_latencies.len().saturating_mul(95).div_ceil(100) - 1;
+        let p95 = cycle_latencies[p95_index];
+        let rewrite_ratio = state.diagnostics.json_serialized_bytes as f64 / final_bytes as f64;
+        println!(
+            "PACKAGE6_POLLER_COALESCED_PROFILE requests={} writes={} coalesced={} final_bytes={} cumulative_bytes={} rewrite_ratio={rewrite_ratio:.3} cycle_p95_ms={:.3} slowest_write_ms={:.3} clone_ms={:.3} serialize_ms={:.3} file_write_ms={:.3} sync_ms={:.3} rename_ms={:.3} total_atomic_ms={:.3} total_requested_ms={:.3}",
+            state.diagnostics.json_write_requests,
+            state.diagnostics.json_writes,
+            state.diagnostics.json_coalesced_writes,
+            final_bytes,
+            state.diagnostics.json_serialized_bytes,
+            duration_ms_f64(p95),
+            duration_ms_f64(state.diagnostics.slowest_json_write),
+            duration_ms_f64(state.diagnostics.total_json_clone),
+            duration_ms_f64(state.diagnostics.total_json_serialize),
+            duration_ms_f64(state.diagnostics.total_json_file_write),
+            duration_ms_f64(state.diagnostics.total_json_sync),
+            duration_ms_f64(state.diagnostics.total_json_rename),
+            duration_ms_f64(state.diagnostics.total_json_atomic),
+            duration_ms_f64(state.diagnostics.total_json_write),
+        );
+        assert_eq!(state.durable_revision, state.revision);
+        assert_eq!(state.diagnostics.json_write_requests, 400);
+        assert_eq!(state.diagnostics.json_writes, 301);
+        assert_eq!(state.diagnostics.json_coalesced_writes, 100);
+        assert_eq!(state.diagnostics.json_write_failures, 0);
+    }
+
+    async fn append_synthetic_profile_event(
+        state: &Arc<Mutex<PollerState>>,
+        snapshot_index: u32,
+    ) -> Option<u64> {
+        if !snapshot_index.is_multiple_of(3) {
+            return None;
+        }
+        let mut state = state.lock().await;
+        state.game_log.events.push(GameEvent {
+            event_type: "ChampionKill".to_owned(),
+            game_time_ms: i64::from(snapshot_index) * 10_000,
+            video_time_ms: i64::from(snapshot_index) * 10_000 + 750,
+            killer: Some(format!("Player{}", snapshot_index % 10)),
+            victim: Some(format!("Player{}", (snapshot_index + 1) % 10)),
+            assisters: Some(vec![format!("Player{}", (snapshot_index + 2) % 10)]),
+            turret: None,
+            inhibitor: None,
+            dragon_type: None,
+            stolen: None,
+            kill_streak: Some(snapshot_index % 5),
+            acer: None,
+            acing_team: None,
+            result: None,
+        });
+        Some(state.mark_dirty())
+    }
+
+    async fn append_synthetic_profile_snapshot(
+        state: &Arc<Mutex<PollerState>>,
+        snapshot_index: u32,
+    ) -> u64 {
+        let mut state = state.lock().await;
+        state.game_log.snapshots.push(Snapshot {
+            game_time_ms: i64::from(snapshot_index) * 10_000,
+            players: (0..10_u32)
+                .map(|player_index| PlayerSnapshot {
+                    summoner_name: format!("Player{player_index}#TEST"),
+                    team: if player_index < 5 { "ORDER" } else { "CHAOS" }.to_owned(),
+                    champion: format!("Champion{player_index}"),
+                    gold: (player_index == 0).then_some(500 + i64::from(snapshot_index) * 7),
+                    hp: (player_index == 0).then_some(900),
+                    hp_max: (player_index == 0).then_some(1_200),
+                    cs: snapshot_index.saturating_add(player_index),
+                    level: 1 + snapshot_index / 30,
+                    items: vec![ItemSnapshot {
+                        item_id: 3_000 + player_index,
+                        slot: player_index % 6,
+                        count: 1,
+                    }],
+                    summoner_spells: (snapshot_index == 0)
+                        .then(|| vec!["SummonerFlash".to_owned(), "SummonerDot".to_owned()]),
+                    keystone_id: (snapshot_index == 0).then_some(8_005 + player_index),
+                    rune_ids: (snapshot_index == 0)
+                        .then(|| vec![8_005 + player_index, 8_100 + player_index]),
+                })
+                .collect(),
+        });
+        state
+            .game_log
+            .snapshot_derived_changes
+            .push(SnapshotChange {
+                game_time_ms: i64::from(snapshot_index) * 10_000,
+                player: format!("Player{}#TEST", snapshot_index % 10),
+                change_type: SnapshotChangeType::LevelUp,
+                item_id: None,
+                new_level: Some(1 + snapshot_index / 30),
+                video_time_ms: i64::from(snapshot_index) * 10_000 + 750,
+            });
+        state.mark_dirty()
     }
 
     fn snapshot_data_from_aggregate_sample(data: &Value) -> RawSnapshotData {
@@ -1600,8 +2052,8 @@ mod tests {
         let session = PollerSession {
             cancellation,
             task,
+            writer: GameLogWriter::start(Arc::clone(&state), output.clone()),
             state,
-            write_lock: Arc::new(Mutex::new(())),
             output: output.clone(),
         };
 
@@ -1637,12 +2089,14 @@ mod tests {
         });
         tokio::task::yield_now().await;
         let (cancellation, _receiver) = watch::channel(false);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let output = directory.path().join(GAME_LOG_JSON);
         let session = PollerSession {
             cancellation,
             task,
-            state: Arc::new(Mutex::new(PollerState::default())),
-            write_lock: Arc::new(Mutex::new(())),
-            output: directory.path().join(GAME_LOG_JSON),
+            writer: GameLogWriter::start(Arc::clone(&state), output.clone()),
+            state,
+            output,
         };
 
         drop(session);

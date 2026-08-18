@@ -497,6 +497,13 @@ review findings.
   another source first. Catch-up is capped at two submissions per scheduler
   pass, and normal stop receives a finite five-second final catch-up deadline.
   Live 100/250/500-ms stall arms retained every frame and exact A/V duration.
+- 2026-08-18: Package 6's synthetic 50-minute log crossed both the p95 write
+  and 100x rewrite-amplification gates. A single writer now coalesces revisions
+  for at most 250 ms, clones only the newest state, and force-flushes the final
+  acknowledged revision. The modeled event/snapshot workload reduced writes
+  and cumulative bytes by about 25% while preserving identical final JSON.
+  The residual 151.6x long-log ratio is documented; journaling/format/fsync
+  policy changes remain out of scope pending real-match evidence.
 
 ## Progress
 
@@ -515,7 +522,8 @@ review findings.
   `docs/PACKAGE4_WGC_SOURCE_COALESCING_EVIDENCE.md`.
 - [x] Package 5: transactional late-tick recovery. Evidence:
   `docs/PACKAGE5_TRANSACTIONAL_TICK_RECOVERY_EVIDENCE.md`.
-- [ ] Package 6: profile-gated poller persistence, if triggered.
+- [x] Package 6: profile-gated poller persistence (gate triggered). Evidence:
+  `docs/PACKAGE6_POLLER_PERSISTENCE_EVIDENCE.md`.
 - [ ] Package 7: full non-League evidence refresh.
 - [ ] Reconcile into the canonical full repository and complete external League
   gates before M8/M9.
