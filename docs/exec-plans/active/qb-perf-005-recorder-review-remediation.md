@@ -504,6 +504,11 @@ review findings.
   and cumulative bytes by about 25% while preserving identical final JSON.
   The residual 151.6x long-log ratio is documented; journaling/format/fsync
   policy changes remain out of scope pending real-match evidence.
+- 2026-08-18: Package 7 passed the complete available non-League static suite,
+  fresh native lifecycle/failure arms, media audit, 240-second release soak,
+  and matched preliminary A/B in both orders. Keep all remediation packages
+  and both backends. R11, real League impact, canonical-repository integration,
+  segment/rebind design, and M8/M9 remain external gates.
 
 ## Progress
 
@@ -524,7 +529,8 @@ review findings.
   `docs/PACKAGE5_TRANSACTIONAL_TICK_RECOVERY_EVIDENCE.md`.
 - [x] Package 6: profile-gated poller persistence (gate triggered). Evidence:
   `docs/PACKAGE6_POLLER_PERSISTENCE_EVIDENCE.md`.
-- [ ] Package 7: full non-League evidence refresh.
+- [x] Package 7: full non-League evidence refresh. Evidence:
+  `docs/PACKAGE7_FINAL_NON_LEAGUE_ACCEPTANCE.md`.
 - [ ] Reconcile into the canonical full repository and complete external League
   gates before M8/M9.
 
