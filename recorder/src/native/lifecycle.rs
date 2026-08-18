@@ -63,6 +63,58 @@ pub(crate) struct NativeRecordingSession {
     recorded_at: SystemTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeRecordingStartupFailureDisposition {
+    Cancelled,
+    Retryable,
+    Terminal,
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeRecordingStartupFailure {
+    disposition: NativeRecordingStartupFailureDisposition,
+    error: anyhow::Error,
+}
+
+impl NativeRecordingStartupFailure {
+    fn cancelled(error: anyhow::Error) -> Self {
+        Self {
+            disposition: NativeRecordingStartupFailureDisposition::Cancelled,
+            error,
+        }
+    }
+
+    fn retryable(error: anyhow::Error) -> Self {
+        Self {
+            disposition: NativeRecordingStartupFailureDisposition::Retryable,
+            error,
+        }
+    }
+
+    fn terminal(error: anyhow::Error) -> Self {
+        Self {
+            disposition: NativeRecordingStartupFailureDisposition::Terminal,
+            error,
+        }
+    }
+
+    pub(crate) fn disposition(&self) -> NativeRecordingStartupFailureDisposition {
+        self.disposition
+    }
+
+    pub(crate) fn into_error(self) -> anyhow::Error {
+        self.error
+    }
+}
+
+impl std::fmt::Display for NativeRecordingStartupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+type NativeRecordingStartupResult<T> = std::result::Result<T, NativeRecordingStartupFailure>;
+
 impl NativeRecordingSession {
     pub(crate) async fn start(
         directory: PathBuf,
@@ -71,8 +123,12 @@ impl NativeRecordingSession {
         audio: AudioSource,
         mut cancellation: watch::Receiver<bool>,
         startup_timeout: Duration,
-    ) -> Result<Self> {
-        validate_capture_target(&target)?;
+    ) -> NativeRecordingStartupResult<Self> {
+        validate_capture_target(&target).map_err(|error| {
+            NativeRecordingStartupFailure::retryable(
+                error.context("capture target changed before native startup"),
+            )
+        })?;
         let output = directory.join(VIDEO_PARTIAL_MP4);
         let worker_output = output.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -90,7 +146,8 @@ impl NativeRecordingSession {
                     &evidence_sender,
                 )
             })
-            .context("failed to start native recorder GPU worker")?;
+            .context("failed to start native recorder GPU worker")
+            .map_err(NativeRecordingStartupFailure::terminal)?;
         let worker = NativeWorker {
             stop,
             thread: Some(thread),
@@ -100,25 +157,39 @@ impl NativeRecordingSession {
         loop {
             if *cancellation.borrow() {
                 let cleanup = worker.stop_and_join().await.err();
-                return Err(cancellation_error(cleanup));
+                return Err(NativeRecordingStartupFailure::cancelled(
+                    cancellation_error(cleanup),
+                ));
             }
             let snapshot = evidence.borrow().clone();
             if let Some(error) = snapshot.protocol_error.as_deref() {
                 let worker_error = worker.stop_and_join().await.err();
-                return Err(anyhow!(
+                return Err(NativeRecordingStartupFailure::terminal(anyhow!(
                     "native recorder startup failed: {error}{}",
                     format_cleanup_error(worker_error)
-                ));
+                )));
             }
             if snapshot.startup_ready() {
-                let first_qpc = snapshot
-                    .first_qpc
-                    .context("native recorder became ready without a first-frame QPC timestamp")?;
-                let video_started_at = instant_from_qpc_100ns(first_qpc)?;
-                let now = Instant::now();
-                let recorded_at = SystemTime::now()
-                    .checked_sub(now.saturating_duration_since(video_started_at))
-                    .context("native first-frame wall-clock anchor underflowed")?;
+                let anchors: Result<_> = (|| {
+                    let first_qpc = snapshot.first_qpc.context(
+                        "native recorder became ready without a first-frame QPC timestamp",
+                    )?;
+                    let video_started_at = instant_from_qpc_100ns(first_qpc)?;
+                    let now = Instant::now();
+                    let recorded_at = SystemTime::now()
+                        .checked_sub(now.saturating_duration_since(video_started_at))
+                        .context("native first-frame wall-clock anchor underflowed")?;
+                    Ok((video_started_at, recorded_at))
+                })();
+                let (video_started_at, recorded_at) = match anchors {
+                    Ok(anchors) => anchors,
+                    Err(error) => {
+                        let cleanup = worker.stop_and_join().await.err();
+                        return Err(NativeRecordingStartupFailure::terminal(error_with_cleanup(
+                            error, cleanup,
+                        )));
+                    }
+                };
                 return Ok(Self {
                     directory,
                     output,
@@ -133,12 +204,12 @@ impl NativeRecordingSession {
                     || "native recorder stopped before startup became ready".to_owned(),
                     |error| format!("native recorder stopped during startup: {error:#}"),
                 );
-                bail!(error);
+                return Err(NativeRecordingStartupFailure::terminal(anyhow!(error)));
             }
             if Instant::now() >= deadline {
                 let snapshot = evidence.borrow().clone();
                 let worker_error = worker.stop_and_join().await.err();
-                bail!(
+                return Err(NativeRecordingStartupFailure::retryable(anyhow!(
                     "native recorder did not produce source, encode and mux progress within {} seconds (source={}, encoded={}, muxed_bytes={}, output_time_us={:?}){}",
                     startup_timeout.as_secs_f64(),
                     snapshot.source_frames_received(),
@@ -146,19 +217,27 @@ impl NativeRecordingSession {
                     snapshot.muxed_bytes,
                     snapshot.output_time_us,
                     format_cleanup_error(worker_error)
-                );
+                )));
             }
 
             tokio::select! {
                 changed = evidence.changed() => {
                     if changed.is_err() && !worker.is_finished() {
-                        bail!("native recorder evidence channel closed during startup");
+                        let cleanup = worker.stop_and_join().await.err();
+                        return Err(NativeRecordingStartupFailure::terminal(
+                            error_with_cleanup(
+                                anyhow!("native recorder evidence channel closed during startup"),
+                                cleanup,
+                            ),
+                        ));
                     }
                 }
                 changed = cancellation.changed() => {
                     if changed.is_err() || *cancellation.borrow() {
                         let cleanup = worker.stop_and_join().await.err();
-                        return Err(cancellation_error(cleanup));
+                        return Err(NativeRecordingStartupFailure::cancelled(
+                            cancellation_error(cleanup),
+                        ));
                     }
                 }
                 _ = tokio::time::sleep(STARTUP_POLL_INTERVAL) => {}
@@ -301,6 +380,10 @@ fn cancellation_error(cleanup: Option<anyhow::Error>) -> anyhow::Error {
         "native recording startup was cancelled{}",
         format_cleanup_error(cleanup)
     )
+}
+
+fn error_with_cleanup(error: anyhow::Error, cleanup: Option<anyhow::Error>) -> anyhow::Error {
+    anyhow!("{error:#}{}", format_cleanup_error(cleanup))
 }
 
 fn format_cleanup_error(error: Option<anyhow::Error>) -> String {
@@ -477,6 +560,10 @@ mod tests {
             }
             Err(error) => error,
         };
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Cancelled
+        );
         assert!(error.to_string().contains("startup was cancelled"));
         assert!(started.elapsed() < Duration::from_secs(10));
         assert!(!directory.path().join(VIDEO_MP4).exists());

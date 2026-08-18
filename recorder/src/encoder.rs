@@ -297,6 +297,58 @@ pub(crate) struct RecordingCandidateStart {
     cancellation: watch::Receiver<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordingCandidateFailureDisposition {
+    Cancelled,
+    Retryable,
+    Terminal,
+}
+
+#[derive(Debug)]
+pub(crate) struct RecordingCandidateFailure {
+    disposition: RecordingCandidateFailureDisposition,
+    error: anyhow::Error,
+}
+
+impl RecordingCandidateFailure {
+    fn cancelled(error: anyhow::Error) -> Self {
+        Self {
+            disposition: RecordingCandidateFailureDisposition::Cancelled,
+            error,
+        }
+    }
+
+    fn retryable(error: anyhow::Error) -> Self {
+        Self {
+            disposition: RecordingCandidateFailureDisposition::Retryable,
+            error,
+        }
+    }
+
+    fn terminal(error: anyhow::Error) -> Self {
+        Self {
+            disposition: RecordingCandidateFailureDisposition::Terminal,
+            error,
+        }
+    }
+
+    pub(crate) fn disposition(&self) -> RecordingCandidateFailureDisposition {
+        self.disposition
+    }
+
+    pub(crate) fn into_error(self) -> anyhow::Error {
+        self.error
+    }
+}
+
+impl std::fmt::Display for RecordingCandidateFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+type RecordingCandidateResult<T> = std::result::Result<T, RecordingCandidateFailure>;
+
 impl RecordingCandidateStart {
     pub(crate) fn new(
         candidate_index: usize,
@@ -671,6 +723,7 @@ impl Ffmpeg {
             },
         )
         .await
+        .map_err(RecordingCandidateFailure::into_error)
     }
 
     pub(crate) async fn start_recording_candidate(
@@ -680,7 +733,7 @@ impl Ffmpeg {
         plan: RecordingPlan,
         audio: &AudioSource,
         start: RecordingCandidateStart,
-    ) -> Result<RecordingSession> {
+    ) -> RecordingCandidateResult<RecordingSession> {
         self.start_recording_output(
             directory,
             target,
@@ -702,15 +755,28 @@ impl Ffmpeg {
         plan: RecordingPlan,
         audio: &AudioSource,
         start: RecordingOutputStart,
-    ) -> Result<RecordingSession> {
+    ) -> RecordingCandidateResult<RecordingSession> {
         #[cfg(test)]
         if self.runtime_id != "test-runtime" {
-            validate_capture_target(target)?;
+            validate_capture_target(target).map_err(|error| {
+                RecordingCandidateFailure::retryable(
+                    error.context("capture target changed before FFmpeg startup"),
+                )
+            })?;
         }
         #[cfg(not(test))]
-        validate_capture_target(target)?;
+        validate_capture_target(target).map_err(|error| {
+            RecordingCandidateFailure::retryable(
+                error.context("capture target changed before FFmpeg startup"),
+            )
+        })?;
         let output = directory.join(&start.output_name);
-        let arguments = build_recording_arguments(target, plan, audio, &output)?;
+        let arguments =
+            build_recording_arguments(target, plan, audio, &output).map_err(|error| {
+                RecordingCandidateFailure::terminal(
+                    error.context("invalid FFmpeg recording argument contract"),
+                )
+            })?;
         info!(
             ffmpeg = %self.path.display(),
             target = %target.description(),
@@ -731,20 +797,31 @@ impl Ffmpeg {
             .kill_on_drop(true);
         let mut child = command
             .spawn()
-            .with_context(|| format!("failed to start {}", self.path.display()))?;
+            .with_context(|| format!("failed to start {}", self.path.display()))
+            .map_err(RecordingCandidateFailure::retryable)?;
         let (evidence_sender, mut evidence_receiver) = watch::channel(RecordingEvidence::default());
-        let stdout = child
-            .stdout
-            .take()
-            .context("FFmpeg progress pipe was not created")?;
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                terminate_child_before_stream_tasks(&mut child).await;
+                return Err(RecordingCandidateFailure::terminal(anyhow::anyhow!(
+                    "FFmpeg progress pipe was not created"
+                )));
+            }
+        };
+        let stderr = match child.stderr.take() {
+            Some(stderr) => stderr,
+            None => {
+                terminate_child_before_stream_tasks(&mut child).await;
+                return Err(RecordingCandidateFailure::terminal(anyhow::anyhow!(
+                    "FFmpeg diagnostics pipe was not created"
+                )));
+            }
+        };
         let stdout_sender = evidence_sender.clone();
         let stdout_task = tokio::spawn(async move {
             drain_stream(stdout, StreamKind::Progress, stdout_sender).await;
         });
-        let stderr = child
-            .stderr
-            .take()
-            .context("FFmpeg diagnostics pipe was not created")?;
         let stderr_task = tokio::spawn(async move {
             drain_stream(stderr, StreamKind::Stderr, evidence_sender).await;
         });
@@ -762,28 +839,38 @@ impl Ffmpeg {
             }
             Err(_) => {
                 terminate_failed_startup(&mut child, stdout_task, stderr_task).await;
-                bail!(
+                return Err(RecordingCandidateFailure::retryable(anyhow::anyhow!(
                     "FFmpeg did not report a real WGC frame and advancing encoded output within {} seconds",
                     start.startup_timeout.as_secs_f64()
-                );
+                )));
             }
         };
 
-        let first_qpc = evidence
-            .first_qpc
-            .context("capture became ready without a first-frame QPC timestamp")?;
-        #[cfg(test)]
-        let video_started_at = if self.runtime_id == "test-runtime" {
-            Instant::now()
-        } else {
-            instant_from_qpc_100ns(first_qpc)?
+        let anchors: Result<_> = (|| {
+            let first_qpc = evidence
+                .first_qpc
+                .context("capture became ready without a first-frame QPC timestamp")?;
+            #[cfg(test)]
+            let video_started_at = if self.runtime_id == "test-runtime" {
+                Instant::now()
+            } else {
+                instant_from_qpc_100ns(first_qpc)?
+            };
+            #[cfg(not(test))]
+            let video_started_at = instant_from_qpc_100ns(first_qpc)?;
+            let now = Instant::now();
+            let recorded_at = SystemTime::now()
+                .checked_sub(now.saturating_duration_since(video_started_at))
+                .context("WGC first-frame wall-clock anchor underflowed")?;
+            Ok((first_qpc, video_started_at, recorded_at))
+        })();
+        let (first_qpc, video_started_at, recorded_at) = match anchors {
+            Ok(anchors) => anchors,
+            Err(error) => {
+                terminate_failed_startup(&mut child, stdout_task, stderr_task).await;
+                return Err(RecordingCandidateFailure::terminal(error));
+            }
         };
-        #[cfg(not(test))]
-        let video_started_at = instant_from_qpc_100ns(first_qpc)?;
-        let now = Instant::now();
-        let recorded_at = SystemTime::now()
-            .checked_sub(now.saturating_duration_since(video_started_at))
-            .context("WGC first-frame wall-clock anchor underflowed")?;
 
         info!(
             first_qpc,
@@ -810,36 +897,47 @@ async fn wait_for_startup(
     child: &mut Child,
     evidence: &mut watch::Receiver<RecordingEvidence>,
     mut cancellation: Option<watch::Receiver<bool>>,
-) -> Result<RecordingEvidence> {
+) -> RecordingCandidateResult<RecordingEvidence> {
     loop {
         if cancellation
             .as_ref()
             .is_some_and(|receiver| *receiver.borrow())
         {
-            bail!("recording startup was cancelled");
+            return Err(RecordingCandidateFailure::cancelled(anyhow::anyhow!(
+                "recording startup was cancelled"
+            )));
         }
         let snapshot = evidence.borrow().clone();
         if let Some(error) = snapshot.protocol_error.as_deref() {
-            bail!("FFmpeg capture observability failed: {error}");
+            return Err(RecordingCandidateFailure::terminal(anyhow::anyhow!(
+                "FFmpeg capture observability failed: {error}"
+            )));
         }
         if snapshot.startup_ready() {
             return Ok(snapshot);
         }
-        if let Some(status) = child
+        let status = child
             .try_wait()
-            .context("failed to inspect FFmpeg during startup")?
-        {
-            bail!("FFmpeg exited during startup with status {status}");
+            .context("failed to inspect FFmpeg during startup")
+            .map_err(RecordingCandidateFailure::retryable)?;
+        if let Some(status) = status {
+            return Err(RecordingCandidateFailure::retryable(anyhow::anyhow!(
+                "FFmpeg exited during startup with status {status}"
+            )));
         }
 
         tokio::select! {
             changed = evidence.changed() => {
                 if changed.is_err() {
-                    bail!("FFmpeg capture/progress pipes closed before startup became ready");
+                    return Err(RecordingCandidateFailure::retryable(anyhow::anyhow!(
+                        "FFmpeg capture/progress pipes closed before startup became ready"
+                    )));
                 }
             }
             _ = wait_for_cancellation(&mut cancellation) => {
-                bail!("recording startup was cancelled");
+                return Err(RecordingCandidateFailure::cancelled(anyhow::anyhow!(
+                    "recording startup was cancelled"
+                )));
             }
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
@@ -869,6 +967,11 @@ async fn terminate_failed_startup(
         join_or_abort(&mut stdout_task),
         join_or_abort(&mut stderr_task)
     );
+}
+
+async fn terminate_child_before_stream_tasks(child: &mut Child) {
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, child.wait()).await;
 }
 
 async fn join_or_abort(task: &mut JoinHandle<()>) {
@@ -1984,8 +2087,65 @@ goto wait
             Ok(_) => panic!("a cancelled startup unexpectedly became ready"),
             Err(error) => error,
         };
+        assert_eq!(
+            error.disposition(),
+            RecordingCandidateFailureDisposition::Cancelled
+        );
         assert!(error.to_string().contains("cancelled"));
         assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn startup_protocol_violation_is_terminal_and_reaps_the_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let fake_ffmpeg = directory.path().join("invalid-protocol-ffmpeg.cmd");
+        std::fs::write(
+            &fake_ffmpeg,
+            r#"@echo off
+setlocal EnableDelayedExpansion
+set "last="
+for %%A in (%*) do set "last=%%~A"
+> "!last!" echo partial-fragment
+>&2 echo queueback_capture abi=1 event=unexpected
+:wait
+set "line="
+set /p line=
+goto wait
+"#,
+        )
+        .unwrap();
+        let bundle = directory.path().join("bundle");
+        std::fs::create_dir(&bundle).unwrap();
+        let ffmpeg = Ffmpeg {
+            path: fake_ffmpeg,
+            runtime_id: "test-runtime".to_owned(),
+        };
+        let (_cancel, cancellation) = watch::channel(false);
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(4),
+            ffmpeg.start_recording_candidate(
+                bundle.clone(),
+                &target(),
+                plan(RecordingProfile::High, VideoCodec::H264),
+                &AudioSource::Silent,
+                RecordingCandidateStart::new(0, Duration::from_secs(60), cancellation),
+            ),
+        )
+        .await
+        .expect("terminal protocol failure did not reap its child");
+        let error = match result {
+            Ok(_) => panic!("invalid startup protocol unexpectedly became ready"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.disposition(),
+            RecordingCandidateFailureDisposition::Terminal
+        );
+        assert!(error.to_string().contains("observability failed"));
+        assert!(bundle.join("video-candidate-0.partial.mp4").is_file());
     }
 
     #[cfg(target_os = "windows")]

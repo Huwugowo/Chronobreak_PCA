@@ -1,6 +1,6 @@
 # QB-PERF-005 recorder review remediation addendum
 
-Status: planning complete; implementation has not started.
+Status: implementation in progress; Packages 0-3 complete.
 
 Date: 2026-08-18
 
@@ -481,6 +481,11 @@ review findings.
   PC B's differently driven displays and its largest monitor intersection
   changes adapters. Hysteresis or adapter rebinding is a later session-segment
   design, not a control-plane polling optimization.
+- 2026-08-18: Package 3 classifies startup failures at the FFmpeg/native
+  lifecycle boundaries and retries only dynamic pre-publication failures after
+  cleanup. Diagnostics/ownership/timestamp invariants are terminal. Active
+  failures remain blocked for the PID because implicit restart still lacks a
+  match-segment contract.
 
 ## Progress
 
@@ -493,7 +498,8 @@ review findings.
   `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`.
 - [x] Package 2: control-plane polling. Evidence:
   `docs/PACKAGE2_CONTROL_PLANE_EVIDENCE.md`.
-- [ ] Package 3: retryable startup recovery.
+- [x] Package 3: retryable startup recovery. Evidence:
+  `docs/PACKAGE3_STARTUP_RECOVERY_EVIDENCE.md`.
 - [ ] Package 4: WGC source coalescing.
 - [ ] Package 5: transactional late-tick recovery.
 - [ ] Package 6: profile-gated poller persistence, if triggered.

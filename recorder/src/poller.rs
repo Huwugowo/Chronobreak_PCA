@@ -362,6 +362,13 @@ impl PollerSession {
     }
 }
 
+impl Drop for PollerSession {
+    fn drop(&mut self) {
+        let _ = self.cancellation.send(true);
+        self.task.abort();
+    }
+}
+
 fn log_poller_diagnostics(state: &PollerState, game_log_bytes: u64) {
     let diagnostics = &state.diagnostics;
     info!(
@@ -1608,6 +1615,42 @@ mod tests {
 
         assert_eq!(summary, PollerSummary::default());
         assert!(output.is_file());
+    }
+
+    #[tokio::test]
+    async fn dropping_a_poller_session_cannot_orphan_its_task() {
+        struct TaskDrop(Option<tokio::sync::oneshot::Sender<()>>);
+
+        impl Drop for TaskDrop {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let (task_dropped, task_dropped_receiver) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _drop_notification = TaskDrop(Some(task_dropped));
+            std::future::pending::<Result<()>>().await
+        });
+        tokio::task::yield_now().await;
+        let (cancellation, _receiver) = watch::channel(false);
+        let session = PollerSession {
+            cancellation,
+            task,
+            state: Arc::new(Mutex::new(PollerState::default())),
+            write_lock: Arc::new(Mutex::new(())),
+            output: directory.path().join(GAME_LOG_JSON),
+        };
+
+        drop(session);
+
+        tokio::time::timeout(Duration::from_secs(1), task_dropped_receiver)
+            .await
+            .expect("aborted poller task was not reaped")
+            .expect("poller task drop notification was lost");
     }
 
     #[test]
