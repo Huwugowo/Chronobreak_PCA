@@ -485,7 +485,8 @@ review findings.
 - [x] Define package order, invariants, decision gates, and verification.
 - [x] Package 0: baseline and observability. Evidence:
   `docs/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`.
-- [ ] Package 1: invariant D3D11 state.
+- [x] Package 1: invariant D3D11 state. Evidence:
+  `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`.
 - [ ] Package 2: control-plane polling.
 - [ ] Package 3: retryable startup recovery.
 - [ ] Package 4: WGC source coalescing.

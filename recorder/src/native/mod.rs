@@ -1,9 +1,9 @@
 //! Native Windows recorder engine under QB-PERF-005.
 //!
-//! This module is intentionally not wired into the production service yet.
-//! Milestones 1-2 establish the real same-adapter D3D11 + exact-HWND WGC
-//! source. Conversion, direct NVENC and mux/session integration layer on top of
-//! this boundary without changing target discovery or League lifecycle code.
+//! The production service can select this developer-gated backend while the
+//! FFmpeg reference path remains available. It keeps capture, conversion,
+//! direct NVENC, muxing, and lifecycle ownership inside the exact-HWND,
+//! same-adapter boundary without changing League target discovery.
 
 mod capture;
 mod clock;

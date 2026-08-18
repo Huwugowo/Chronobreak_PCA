@@ -350,7 +350,7 @@ mod tests {
             conversion: NativeNv12TelemetrySnapshot {
                 converted_frames: 120,
                 no_free_slot_drops: 0,
-                processor_state_configurations: 120,
+                processor_state_configurations: 1,
                 slot_texture_allocations: 4,
                 input_view_creations: 2,
                 input_view_replacements: 0,

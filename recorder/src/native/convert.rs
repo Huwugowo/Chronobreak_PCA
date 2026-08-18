@@ -227,6 +227,14 @@ impl NativeNv12Converter {
             output_height,
             fps,
         )?;
+        configure_processor_state(
+            &video_context,
+            &processor,
+            input_width,
+            input_height,
+            output_width,
+            output_height,
+        )?;
         let slots = create_slots(
             &d3d_device,
             &video_device,
@@ -261,6 +269,7 @@ impl NativeNv12Converter {
             fps,
             output_frame_index: 0,
             telemetry: NativeNv12Telemetry {
+                processor_state_configurations: 1,
                 slot_texture_allocations: NATIVE_ENCODER_SLOT_COUNT as u64,
                 source_snapshot_allocations: 1,
                 ..NativeNv12Telemetry::default()
@@ -292,6 +301,14 @@ impl NativeNv12Converter {
             self.output_height,
             self.fps,
         )?;
+        configure_processor_state(
+            &self.video_context,
+            &processor,
+            input_width,
+            input_height,
+            self.output_width,
+            self.output_height,
+        )?;
         let output_views = create_output_views(&self.video_device, &enumerator, &self.slots)?;
         let latest_source = create_source_snapshot(
             &self.d3d_device,
@@ -315,6 +332,10 @@ impl NativeNv12Converter {
         self.input_height = input_height;
         self.telemetry.processor_recreations =
             self.telemetry.processor_recreations.saturating_add(1);
+        self.telemetry.processor_state_configurations = self
+            .telemetry
+            .processor_state_configurations
+            .saturating_add(1);
         self.telemetry.output_view_recreations = self
             .telemetry
             .output_view_recreations
@@ -495,63 +516,6 @@ impl NativeNv12Converter {
         input_view: ID3D11VideoProcessorInputView,
         slot_index: usize,
     ) -> Result<()> {
-        let source_rect = center_crop_rect(
-            self.input_width,
-            self.input_height,
-            self.output_width,
-            self.output_height,
-        )?;
-        let destination_rect = RECT {
-            left: 0,
-            top: 0,
-            right: i32::try_from(self.output_width).context("NV12 width exceeds RECT range")?,
-            bottom: i32::try_from(self.output_height).context("NV12 height exceeds RECT range")?,
-        };
-
-        // SAFETY: the converter owns the processor/context, both RECT values
-        // remain live for each call, and stream 0 is supported by the checked
-        // processor capability. The worker is the exclusive immediate-context
-        // submitter.
-        unsafe {
-            self.video_context.VideoProcessorSetStreamColorSpace1(
-                &self.processor,
-                0,
-                DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
-            );
-            self.video_context.VideoProcessorSetOutputColorSpace1(
-                &self.processor,
-                DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
-            );
-            self.video_context.VideoProcessorSetStreamFrameFormat(
-                &self.processor,
-                0,
-                D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
-            );
-            self.video_context
-                .VideoProcessorSetStreamAutoProcessingMode(&self.processor, 0, false);
-            self.video_context.VideoProcessorSetStreamSourceRect(
-                &self.processor,
-                0,
-                true,
-                Some(&source_rect),
-            );
-            self.video_context.VideoProcessorSetStreamDestRect(
-                &self.processor,
-                0,
-                true,
-                Some(&destination_rect),
-            );
-            self.video_context.VideoProcessorSetOutputTargetRect(
-                &self.processor,
-                true,
-                Some(&destination_rect),
-            );
-        }
-        self.telemetry.processor_state_configurations = self
-            .telemetry
-            .processor_state_configurations
-            .saturating_add(1);
-
         let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
             Enable: true.into(),
             pInputSurface: ManuallyDrop::new(Some(input_view)),
@@ -773,6 +737,49 @@ fn create_processor(
     let processor = unsafe { video_device.CreateVideoProcessor(&enumerator, 0) }
         .context("could not create reusable D3D11 video processor")?;
     Ok((enumerator, processor))
+}
+
+fn configure_processor_state(
+    video_context: &ID3D11VideoContext1,
+    processor: &ID3D11VideoProcessor,
+    input_width: u32,
+    input_height: u32,
+    output_width: u32,
+    output_height: u32,
+) -> Result<()> {
+    let source_rect = center_crop_rect(input_width, input_height, output_width, output_height)?;
+    let destination_rect = RECT {
+        left: 0,
+        top: 0,
+        right: i32::try_from(output_width).context("NV12 width exceeds RECT range")?,
+        bottom: i32::try_from(output_height).context("NV12 height exceeds RECT range")?,
+    };
+
+    // SAFETY: the processor and context belong to the worker-owned same
+    // D3D11 device. The checked processor exposes stream zero, and D3D11
+    // copies both RECT values during these calls. This state remains valid
+    // until the processor is replaced after a real input-size change.
+    unsafe {
+        video_context.VideoProcessorSetStreamColorSpace1(
+            processor,
+            0,
+            DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
+        );
+        video_context.VideoProcessorSetOutputColorSpace1(
+            processor,
+            DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
+        );
+        video_context.VideoProcessorSetStreamFrameFormat(
+            processor,
+            0,
+            D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+        );
+        video_context.VideoProcessorSetStreamAutoProcessingMode(processor, 0, false);
+        video_context.VideoProcessorSetStreamSourceRect(processor, 0, true, Some(&source_rect));
+        video_context.VideoProcessorSetStreamDestRect(processor, 0, true, Some(&destination_rect));
+        video_context.VideoProcessorSetOutputTargetRect(processor, true, Some(&destination_rect));
+    }
+    Ok(())
 }
 
 fn create_slots(

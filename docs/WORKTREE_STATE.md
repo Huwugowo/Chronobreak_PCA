@@ -52,8 +52,13 @@
 - Remediation Package 0 is implemented and verified. Its injected-stall
   baseline confirms per-frame processor-state configuration, per-admitted-frame
   snapshot copying, overdue source starvation, and frame-count-derived duration
-  loss. See `docs/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`. Package 1 is the
-  next implementation gate.
+  loss. See `docs/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`.
+- Remediation Package 1 is implemented and verified. Invariant D3D11 processor
+  state is now configured only at initial creation and accepted size changes.
+  Resize/minimize/restore media gates pass, and the matched 60-second check
+  reduced recorder CPU time by 36.56% with neutral-to-better GPU and memory.
+  See `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`. Package 2 is the next
+  implementation gate.
 
 ## Gates that remain external
 
