@@ -20,6 +20,15 @@ pub struct LeagueProcess {
 pub struct ProcessWatcher {
     system: System,
     target_name: String,
+    refreshes: u64,
+    maximum_known_processes: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProcessWatcherTelemetry {
+    pub refreshes: u64,
+    pub known_processes: usize,
+    pub maximum_known_processes: usize,
 }
 
 impl ProcessWatcher {
@@ -27,17 +36,31 @@ impl ProcessWatcher {
         Self {
             system: System::new(),
             target_name: target_name.into(),
+            refreshes: 0,
+            maximum_known_processes: 0,
         }
     }
 
     pub fn refresh(&mut self) -> Option<LeagueProcess> {
         self.system.refresh_processes(ProcessesToUpdate::All, true);
+        self.refreshes = self.refreshes.saturating_add(1);
+        self.maximum_known_processes = self
+            .maximum_known_processes
+            .max(self.system.processes().len());
         self.system
             .processes()
             .iter()
             .filter(|(_, process)| process_name_matches(process.name(), &self.target_name))
             .min_by_key(|(pid, _)| pid.as_u32())
             .map(|(pid, _)| LeagueProcess { pid: pid.as_u32() })
+    }
+
+    pub fn telemetry(&self) -> ProcessWatcherTelemetry {
+        ProcessWatcherTelemetry {
+            refreshes: self.refreshes,
+            known_processes: self.system.processes().len(),
+            maximum_known_processes: self.maximum_known_processes,
+        }
     }
 
     #[cfg(test)]
@@ -117,5 +140,6 @@ mod tests {
     fn watcher_keeps_configured_name() {
         let watcher = ProcessWatcher::new("custom.exe");
         assert_eq!(watcher.target_name(), "custom.exe");
+        assert_eq!(watcher.telemetry(), ProcessWatcherTelemetry::default());
     }
 }

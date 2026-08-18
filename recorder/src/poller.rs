@@ -14,7 +14,9 @@ use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::storage::{GAME_LOG_JSON, write_json_atomic};
+use crate::storage::{
+    GAME_LOG_JSON, JsonWriteStats, write_json_atomic, write_json_atomic_with_stats,
+};
 
 const LIVE_CLIENT_BASE_URL: &str = "https://127.0.0.1:2999/liveclientdata";
 const API_TIMEOUT: Duration = Duration::from_secs(2);
@@ -372,7 +374,19 @@ fn log_poller_diagnostics(state: &PollerState, game_log_bytes: u64) {
         captured_events = state.game_log.events.len(),
         captured_snapshots = state.game_log.snapshots.len(),
         game_log_bytes,
+        game_log_revision = state.revision,
+        durable_game_log_revision = state.durable_revision,
+        json_write_requests = diagnostics.json_write_requests,
         json_writes = diagnostics.json_writes,
+        json_write_failures = diagnostics.json_write_failures,
+        json_serialized_bytes = diagnostics.json_serialized_bytes,
+        total_json_clone_ms = duration_ms_f64(diagnostics.total_json_clone),
+        total_json_serialize_ms = duration_ms_f64(diagnostics.total_json_serialize),
+        total_json_file_write_ms = duration_ms_f64(diagnostics.total_json_file_write),
+        total_json_sync_ms = duration_ms_f64(diagnostics.total_json_sync),
+        total_json_rename_ms = duration_ms_f64(diagnostics.total_json_rename),
+        total_json_atomic_ms = duration_ms_f64(diagnostics.total_json_atomic),
+        total_json_write_ms = duration_ms_f64(diagnostics.total_json_write),
         slowest_json_write_ms = duration_ms_f64(diagnostics.slowest_json_write),
         event_failure_reason = diagnostics
             .event_failure_reason
@@ -391,7 +405,15 @@ struct PollerState {
     game_log: GameLog,
     summary: PollerSummary,
     seen_event_ids: HashSet<i64>,
+    revision: u64,
+    durable_revision: u64,
     diagnostics: PollerDiagnostics,
+}
+
+impl PollerState {
+    fn mark_dirty(&mut self) {
+        self.revision = self.revision.saturating_add(1);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -402,7 +424,17 @@ struct PollerDiagnostics {
     successful_responses: u64,
     total_response_latency: Duration,
     maximum_response_latency: Duration,
+    json_write_requests: u64,
     json_writes: u64,
+    json_write_failures: u64,
+    json_serialized_bytes: u64,
+    total_json_clone: Duration,
+    total_json_serialize: Duration,
+    total_json_file_write: Duration,
+    total_json_sync: Duration,
+    total_json_rename: Duration,
+    total_json_atomic: Duration,
+    total_json_write: Duration,
     slowest_json_write: Duration,
     event_failure_reason: Option<String>,
     snapshot_failure_reason: Option<String>,
@@ -415,9 +447,33 @@ impl PollerDiagnostics {
         self.maximum_response_latency = self.maximum_response_latency.max(latency);
     }
 
-    fn observe_json_write(&mut self, elapsed: Duration) {
-        self.json_writes = self.json_writes.saturating_add(1);
+    fn observe_json_write(
+        &mut self,
+        clone_elapsed: Duration,
+        elapsed: Duration,
+        stats: Option<JsonWriteStats>,
+    ) {
+        self.total_json_clone = self.total_json_clone.saturating_add(clone_elapsed);
+        self.total_json_write = self.total_json_write.saturating_add(elapsed);
         self.slowest_json_write = self.slowest_json_write.max(elapsed);
+        match stats {
+            Some(stats) => {
+                self.json_writes = self.json_writes.saturating_add(1);
+                self.json_serialized_bytes = self
+                    .json_serialized_bytes
+                    .saturating_add(stats.serialized_bytes);
+                self.total_json_serialize = self
+                    .total_json_serialize
+                    .saturating_add(stats.serialization);
+                self.total_json_file_write = self.total_json_file_write.saturating_add(stats.write);
+                self.total_json_sync = self.total_json_sync.saturating_add(stats.sync);
+                self.total_json_rename = self.total_json_rename.saturating_add(stats.rename);
+                self.total_json_atomic = self.total_json_atomic.saturating_add(stats.total);
+            }
+            None => {
+                self.json_write_failures = self.json_write_failures.saturating_add(1);
+            }
+        }
     }
 
     fn average_response_latency_ms(&self) -> f64 {
@@ -586,6 +642,7 @@ async fn run_poller(
                 calibration.video_offset_ms,
             )?;
         }
+        state.mark_dirty();
     }
     write_game_log(&state, &write_lock, &output).await?;
     info!(
@@ -819,7 +876,11 @@ async fn event_loop(
         let count = {
             let mut state = state.lock().await;
             state.diagnostics.observe_response(received.latency);
-            reconcile_events(&mut state, received.value.events, video_offset_ms)
+            let count = reconcile_events(&mut state, received.value.events, video_offset_ms);
+            if count > 0 {
+                state.mark_dirty();
+            }
+            count
         };
         if count > 0 {
             write_game_log(&state, &write_lock, &output).await?;
@@ -901,6 +962,7 @@ async fn snapshot_loop(
                     video_offset_ms,
                 );
                 append_snapshot(&mut state.game_log, &data, video_offset_ms)?;
+                state.mark_dirty();
             }
             write_game_log(&state, &write_lock, &output).await?;
             break;
@@ -913,16 +975,34 @@ async fn write_game_log(
     write_lock: &Arc<Mutex<()>>,
     output: &Path,
 ) -> Result<()> {
+    let requested_at = Instant::now();
+    {
+        let mut state = state.lock().await;
+        state.diagnostics.json_write_requests =
+            state.diagnostics.json_write_requests.saturating_add(1);
+    }
     let _write_guard = write_lock.lock().await;
-    let game_log = state.lock().await.game_log.clone();
-    let started_at = Instant::now();
-    let result = write_json_atomic(output, &game_log).await;
-    state
-        .lock()
-        .await
-        .diagnostics
-        .observe_json_write(started_at.elapsed());
-    result
+    let clone_started = Instant::now();
+    let (game_log, revision) = {
+        let state = state.lock().await;
+        (state.game_log.clone(), state.revision)
+    };
+    let clone_elapsed = clone_started.elapsed();
+    let result = write_json_atomic_with_stats(output, &game_log).await;
+    let elapsed = requested_at.elapsed();
+    let mut state = state.lock().await;
+    match &result {
+        Ok(stats) => {
+            state.durable_revision = state.durable_revision.max(revision);
+            state
+                .diagnostics
+                .observe_json_write(clone_elapsed, elapsed, Some(*stats));
+        }
+        Err(_) => state
+            .diagnostics
+            .observe_json_write(clone_elapsed, elapsed, None),
+    }
+    result.map(|_| ())
 }
 
 fn append_snapshot(
@@ -1458,6 +1538,30 @@ mod tests {
       "gameData": {"gameMode": "CLASSIC", "gameTime": 220.125}
     }
     "#;
+
+    #[tokio::test]
+    async fn game_log_write_records_revision_and_atomic_io_costs() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let write_lock = Arc::new(Mutex::new(()));
+        {
+            let mut state = state.lock().await;
+            state.game_log.game_start_video_offset_ms = Some(42);
+            state.mark_dirty();
+        }
+
+        write_game_log(&state, &write_lock, &output).await.unwrap();
+
+        let state = state.lock().await;
+        assert_eq!(state.revision, 1);
+        assert_eq!(state.durable_revision, 1);
+        assert_eq!(state.diagnostics.json_write_requests, 1);
+        assert_eq!(state.diagnostics.json_writes, 1);
+        assert_eq!(state.diagnostics.json_write_failures, 0);
+        assert!(state.diagnostics.json_serialized_bytes > 0);
+        assert!(output.is_file());
+    }
 
     fn snapshot_data_from_aggregate_sample(data: &Value) -> RawSnapshotData {
         RawSnapshotData {

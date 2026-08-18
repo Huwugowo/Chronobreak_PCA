@@ -334,15 +334,23 @@ mod tests {
             },
             cfr: NativeCfrTelemetrySnapshot {
                 frames_per_second: 60,
+                media_time_base_numerator: 1,
+                media_time_base_denominator: 60,
                 first_source_qpc_100ns: 100,
                 latest_source_qpc_100ns: 200,
                 scheduled_ticks: 120,
                 source_discards: 0,
                 duplicate_ticks: 0,
+                late_ticks: 0,
+                catch_up_ticks: 0,
+                maximum_lateness_100ns: 0,
+                latest_source_age_100ns: 0,
+                maximum_source_age_100ns: 0,
             },
             conversion: NativeNv12TelemetrySnapshot {
                 converted_frames: 120,
                 no_free_slot_drops: 0,
+                processor_state_configurations: 120,
                 slot_texture_allocations: 4,
                 input_view_creations: 2,
                 input_view_replacements: 0,
@@ -370,6 +378,9 @@ mod tests {
             },
             slot_tick_drops: 0,
             unstaged_tick_drops: 0,
+            maximum_catch_up_batch: 0,
+            injected_worker_stalls: 0,
+            injected_worker_stall_100ns: 0,
             target_closed: false,
         }
     }

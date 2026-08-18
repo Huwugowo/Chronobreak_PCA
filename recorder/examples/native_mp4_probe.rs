@@ -15,6 +15,8 @@ mod windows_probe {
         let mut output = None;
         let mut duration_seconds = 10_u64;
         let mut fail_nvenc_after_ticks = None;
+        let mut stall_worker_after_ticks = None;
+        let mut stall_worker_ms = None;
         let mut max_slot_tick_drops = 0_u64;
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -51,6 +53,22 @@ mod windows_probe {
                             .context("--fail-nvenc-after-ticks must be an integer")?,
                     );
                 }
+                "--stall-worker-after-ticks" => {
+                    stall_worker_after_ticks = Some(
+                        args.next()
+                            .context("--stall-worker-after-ticks requires a value")?
+                            .parse::<u64>()
+                            .context("--stall-worker-after-ticks must be an integer")?,
+                    );
+                }
+                "--stall-worker-ms" => {
+                    stall_worker_ms = Some(
+                        args.next()
+                            .context("--stall-worker-ms requires a value")?
+                            .parse::<u64>()
+                            .context("--stall-worker-ms must be an integer")?,
+                    );
+                }
                 "--max-slot-tick-drops" => {
                     max_slot_tick_drops = args
                         .next()
@@ -75,11 +93,31 @@ mod windows_probe {
             session.inject_nvenc_failure_after_ticks(ticks)?;
             println!("CHRONOBREAK_NATIVE_FAILURE_INJECTION nvenc_after_ticks={ticks}");
         }
+        #[cfg(feature = "native-failure-injection")]
+        match (stall_worker_after_ticks, stall_worker_ms) {
+            (Some(ticks), Some(milliseconds)) => {
+                session
+                    .inject_worker_stall_after_ticks(ticks, Duration::from_millis(milliseconds))?;
+                println!(
+                    "CHRONOBREAK_NATIVE_FAILURE_INJECTION worker_stall_after_ticks={ticks} worker_stall_ms={milliseconds}"
+                );
+            }
+            (None, None) => {}
+            _ => {
+                bail!("--stall-worker-after-ticks and --stall-worker-ms must be provided together")
+            }
+        }
         #[cfg(not(feature = "native-failure-injection"))]
-        ensure!(
-            fail_nvenc_after_ticks.is_none(),
-            "--fail-nvenc-after-ticks requires the native-failure-injection Cargo feature"
-        );
+        {
+            ensure!(
+                fail_nvenc_after_ticks.is_none(),
+                "--fail-nvenc-after-ticks requires the native-failure-injection Cargo feature"
+            );
+            ensure!(
+                stall_worker_after_ticks.is_none() && stall_worker_ms.is_none(),
+                "worker stall injection requires the native-failure-injection Cargo feature"
+            );
+        }
         println!(
             "CHRONOBREAK_NATIVE_MP4_STARTED pid={pid} duration_seconds={duration_seconds} ffmpeg={} output={}",
             ffmpeg.display(),
@@ -150,10 +188,22 @@ mod windows_probe {
         );
 
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} cfr_discards={} cfr_duplicates={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} processor_recreations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_handoff_drops={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
             telemetry.cfr.scheduled_ticks,
+            telemetry.cfr.media_time_base_numerator,
+            telemetry.cfr.media_time_base_denominator,
+            telemetry.cfr.first_source_qpc_100ns,
+            telemetry.cfr.latest_source_qpc_100ns,
             telemetry.cfr.source_discards,
             telemetry.cfr.duplicate_ticks,
+            telemetry.cfr.late_ticks,
+            telemetry.cfr.catch_up_ticks,
+            telemetry.cfr.maximum_lateness_100ns,
+            telemetry.cfr.latest_source_age_100ns,
+            telemetry.cfr.maximum_source_age_100ns,
+            telemetry.maximum_catch_up_batch,
+            telemetry.injected_worker_stalls,
+            telemetry.injected_worker_stall_100ns,
             telemetry.encode.submitted_frames,
             telemetry.encode.completed_frames,
             telemetry.mux.encoded_frames,
@@ -167,6 +217,7 @@ mod windows_probe {
             telemetry.capture.handoff_drops,
             telemetry.capture.recreations,
             telemetry.conversion.processor_recreations,
+            telemetry.conversion.processor_state_configurations,
             telemetry.conversion.source_snapshot_allocations,
             telemetry.conversion.source_snapshot_copies,
             output.display()

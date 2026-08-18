@@ -134,6 +134,7 @@ struct LatestSourceSnapshot {
 pub struct NativeNv12TelemetrySnapshot {
     pub converted_frames: u64,
     pub no_free_slot_drops: u64,
+    pub processor_state_configurations: u64,
     pub slot_texture_allocations: u64,
     pub input_view_creations: u64,
     pub input_view_replacements: u64,
@@ -148,6 +149,7 @@ pub struct NativeNv12TelemetrySnapshot {
 struct NativeNv12Telemetry {
     converted_frames: u64,
     no_free_slot_drops: u64,
+    processor_state_configurations: u64,
     slot_texture_allocations: u64,
     input_view_creations: u64,
     input_view_replacements: u64,
@@ -163,6 +165,7 @@ impl NativeNv12Telemetry {
         NativeNv12TelemetrySnapshot {
             converted_frames: self.converted_frames,
             no_free_slot_drops: self.no_free_slot_drops,
+            processor_state_configurations: self.processor_state_configurations,
             slot_texture_allocations: self.slot_texture_allocations,
             input_view_creations: self.input_view_creations,
             input_view_replacements: self.input_view_replacements,
@@ -544,6 +547,10 @@ impl NativeNv12Converter {
                 Some(&destination_rect),
             );
         }
+        self.telemetry.processor_state_configurations = self
+            .telemetry
+            .processor_state_configurations
+            .saturating_add(1);
 
         let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
             Enable: true.into(),

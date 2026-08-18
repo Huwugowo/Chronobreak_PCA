@@ -32,7 +32,17 @@ pub struct NativeSessionTelemetrySnapshot {
     pub mux: NativeMuxTelemetrySnapshot,
     pub slot_tick_drops: u64,
     pub unstaged_tick_drops: u64,
+    pub maximum_catch_up_batch: u64,
+    pub injected_worker_stalls: u64,
+    pub injected_worker_stall_100ns: u64,
     pub target_closed: bool,
+}
+
+#[cfg(feature = "native-failure-injection")]
+#[derive(Debug, Clone, Copy)]
+struct InjectedWorkerStall {
+    after_ticks: u64,
+    duration: Duration,
 }
 
 /// Standalone M5 native recorder session. All WGC, D3D11 conversion and NVENC
@@ -52,9 +62,15 @@ pub struct NativeRecorderSession {
     pending_resize: Option<(u32, u32)>,
     slot_tick_drops: u64,
     unstaged_tick_drops: u64,
+    current_catch_up_batch: u64,
+    maximum_catch_up_batch: u64,
+    injected_worker_stalls: u64,
+    injected_worker_stall_100ns: u64,
     target_closed: bool,
     #[cfg(feature = "native-failure-injection")]
     injected_nvenc_failure_after_ticks: Option<u64>,
+    #[cfg(feature = "native-failure-injection")]
+    injected_worker_stall: Option<InjectedWorkerStall>,
 }
 
 impl NativeRecorderSession {
@@ -81,9 +97,15 @@ impl NativeRecorderSession {
             pending_resize: None,
             slot_tick_drops: 0,
             unstaged_tick_drops: 0,
+            current_catch_up_batch: 0,
+            maximum_catch_up_batch: 0,
+            injected_worker_stalls: 0,
+            injected_worker_stall_100ns: 0,
             target_closed: false,
             #[cfg(feature = "native-failure-injection")]
             injected_nvenc_failure_after_ticks: None,
+            #[cfg(feature = "native-failure-injection")]
+            injected_worker_stall: None,
         })
     }
 
@@ -98,6 +120,27 @@ impl NativeRecorderSession {
             "injected NVENC failure tick must be positive"
         );
         self.injected_nvenc_failure_after_ticks = Some(scheduled_ticks);
+        Ok(())
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_worker_stall_after_ticks(
+        &mut self,
+        scheduled_ticks: u64,
+        duration: Duration,
+    ) -> Result<()> {
+        ensure!(
+            scheduled_ticks > 0,
+            "injected worker stall tick must be positive"
+        );
+        ensure!(
+            !duration.is_zero() && duration <= Duration::from_secs(5),
+            "injected worker stall duration must be in 1 ns..=5 s"
+        );
+        self.injected_worker_stall = Some(InjectedWorkerStall {
+            after_ticks: scheduled_ticks,
+            duration,
+        });
         Ok(())
     }
 
@@ -124,6 +167,8 @@ impl NativeRecorderSession {
 
             let now = Instant::now();
             if now >= next_deadline {
+                self.maybe_inject_worker_stall()?;
+                let now = Instant::now();
                 let tick = self
                     .clock
                     .as_mut()
@@ -131,6 +176,7 @@ impl NativeRecorderSession {
                     .emit_due(now)?
                     .context("due native CFR deadline did not emit a tick")?;
                 self.submit_tick(tick.qpc_100ns)?;
+                self.observe_catch_up_batch(Instant::now())?;
                 continue;
             }
 
@@ -180,6 +226,8 @@ impl NativeRecorderSession {
                 .next_deadline()?;
             let now = Instant::now();
             if now >= next_deadline {
+                self.maybe_inject_worker_stall()?;
+                let now = Instant::now();
                 let tick = self
                     .clock
                     .as_mut()
@@ -187,6 +235,7 @@ impl NativeRecorderSession {
                     .emit_due(now)?
                     .context("due native CFR deadline did not emit a tick")?;
                 self.submit_tick(tick.qpc_100ns)?;
+                self.observe_catch_up_batch(Instant::now())?;
             } else {
                 self.receive_source(
                     next_deadline
@@ -243,6 +292,9 @@ impl NativeRecorderSession {
                     mux,
                     slot_tick_drops: self.slot_tick_drops,
                     unstaged_tick_drops: self.unstaged_tick_drops,
+                    maximum_catch_up_batch: self.maximum_catch_up_batch,
+                    injected_worker_stalls: self.injected_worker_stalls,
+                    injected_worker_stall_100ns: self.injected_worker_stall_100ns,
                     target_closed: self.target_closed,
                 })
             }
@@ -363,6 +415,52 @@ impl NativeRecorderSession {
             .submit(converted)
     }
 
+    fn observe_catch_up_batch(&mut self, now: Instant) -> Result<()> {
+        let another_tick_due = self
+            .clock
+            .as_ref()
+            .context("native CFR clock disappeared")?
+            .next_deadline()?
+            <= now;
+        if self.current_catch_up_batch > 0 || another_tick_due {
+            self.current_catch_up_batch = self.current_catch_up_batch.saturating_add(1);
+            self.maximum_catch_up_batch =
+                self.maximum_catch_up_batch.max(self.current_catch_up_batch);
+            if !another_tick_due {
+                self.current_catch_up_batch = 0;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    fn maybe_inject_worker_stall(&mut self) -> Result<()> {
+        let scheduled_ticks = self
+            .clock
+            .as_ref()
+            .context("native CFR clock disappeared")?
+            .telemetry()
+            .scheduled_ticks;
+        let Some(injection) = self
+            .injected_worker_stall
+            .filter(|injection| scheduled_ticks >= injection.after_ticks)
+        else {
+            return Ok(());
+        };
+        self.injected_worker_stall = None;
+        std::thread::sleep(injection.duration);
+        self.injected_worker_stalls = self.injected_worker_stalls.saturating_add(1);
+        self.injected_worker_stall_100ns = self
+            .injected_worker_stall_100ns
+            .saturating_add(duration_100ns(injection.duration));
+        Ok(())
+    }
+
+    #[cfg(not(feature = "native-failure-injection"))]
+    fn maybe_inject_worker_stall(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     fn publish_evidence(&self, sender: &watch::Sender<RecordingEvidence>) -> Result<()> {
         sender.send_replace(self.recording_evidence(false)?);
         Ok(())
@@ -405,6 +503,10 @@ impl NativeRecorderSession {
             protocol_error,
         })
     }
+}
+
+fn duration_100ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos() / 100).unwrap_or(u64::MAX)
 }
 
 impl NativeSessionTelemetrySnapshot {

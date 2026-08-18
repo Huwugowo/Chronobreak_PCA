@@ -43,6 +43,17 @@
   CFR scheduler counters and visual quality still need validation with actual
   game motion. Keep the developer selector and both paths; do not treat this
   fixture as the M8 migration decision or begin M9 removal.
+- The repository-wide recorder review has a dependency-ordered implementation
+  addendum at
+  `docs/exec-plans/active/qb-perf-005-recorder-review-remediation.md`. It is
+  subordinate to QB-PERF-005, changes no milestone status, and separates safe
+  PC-B remediation from runtime-segmentation and destructive-retention work
+  that require the complete repository.
+- Remediation Package 0 is implemented and verified. Its injected-stall
+  baseline confirms per-frame processor-state configuration, per-admitted-frame
+  snapshot copying, overdue source starvation, and frame-count-derived duration
+  loss. See `docs/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`. Package 1 is the
+  next implementation gate.
 
 ## Gates that remain external
 

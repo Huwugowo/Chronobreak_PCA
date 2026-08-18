@@ -27,7 +27,7 @@ use crate::poller::{CaptureMetadata, PollerSession, RecordingDetails, RecordingM
 use crate::storage::{METADATA_JSON, create_game_directory, unix_timestamp_now, write_json_atomic};
 use crate::watcher::{
     DEFAULT_PROCESS_NAME, LeagueProcess, POLL_INTERVAL, ProcessTransition, ProcessWatcher,
-    transition,
+    ProcessWatcherTelemetry, transition,
 };
 
 #[derive(Debug, Clone)]
@@ -75,6 +75,7 @@ struct RecordingStartup {
 
 const STARTUP_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(6);
 const CAPTURE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(15);
+const CONTROL_TELEMETRY_INTERVAL: Duration = Duration::from_secs(60);
 #[cfg(target_os = "windows")]
 const WINDOWS_RECORDING_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 #[cfg(target_os = "windows")]
@@ -183,6 +184,22 @@ struct WindowsCapturePath {
     filter_buffered_frame_limit: u32,
     backend: &'static str,
     support_label: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct RecorderControlTelemetry {
+    startup_attempts: u64,
+    startup_ready: u64,
+    startup_errors: u64,
+    startup_task_failures: u64,
+    target_identity_checks: u64,
+    target_identity_successes: u64,
+    explicit_visibility_checks: u64,
+    visible_target_checks: u64,
+    paused_target_checks: u64,
+    target_failures: u64,
+    watchdog_stalls: u64,
+    backend_exits: u64,
 }
 
 struct CaptureProgressWatchdog {
@@ -330,6 +347,8 @@ pub async fn run(
     let mut active: Option<ActiveRecording> = None;
     let mut starting: Option<StartingRecording> = None;
     let mut failed_process: Option<LeagueProcess> = None;
+    let mut control_telemetry = RecorderControlTelemetry::default();
+    let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -341,6 +360,7 @@ pub async fn run(
                     if let Some(recording) = active.take() {
                         stop_recording(recording, &events).await;
                     }
+                    log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
                     events(ServiceEvent::ShutdownComplete);
                     return Ok(());
                 }
@@ -379,6 +399,8 @@ pub async fn run(
                     let process = attempt.process;
                     match attempt.task.await {
                         Ok(Ok(recording)) if current_process == Some(process) => {
+                            control_telemetry.startup_ready =
+                                control_telemetry.startup_ready.saturating_add(1);
                             events(ServiceEvent::Recording {
                                 directory: recording.session.directory().to_path_buf(),
                             });
@@ -389,6 +411,8 @@ pub async fn run(
                             stop_recording(recording, &events).await;
                         }
                         Ok(Err(start_error)) => {
+                            control_telemetry.startup_errors =
+                                control_telemetry.startup_errors.saturating_add(1);
                             failed_process = Some(process);
                             error!(error = %start_error, "recording could not start");
                             events(ServiceEvent::Error {
@@ -396,6 +420,8 @@ pub async fn run(
                             });
                         }
                         Err(join_error) => {
+                            control_telemetry.startup_task_failures =
+                                control_telemetry.startup_task_failures.saturating_add(1);
                             failed_process = Some(process);
                             error!(error = %join_error, "recording startup task failed");
                             events(ServiceEvent::Error {
@@ -407,11 +433,40 @@ pub async fn run(
 
                 let mut visibility = CaptureTargetVisibility::Visible;
                 if let Some(recording) = active.as_ref() {
-                    let target_state = validate_capture_target_identity(&recording.target)
-                        .and_then(|()| capture_target_visibility(&recording.target));
+                    control_telemetry.target_identity_checks =
+                        control_telemetry.target_identity_checks.saturating_add(1);
+                    let identity = validate_capture_target_identity(&recording.target);
+                    let target_state = match identity {
+                        Ok(()) => {
+                            control_telemetry.target_identity_successes = control_telemetry
+                                .target_identity_successes
+                                .saturating_add(1);
+                            control_telemetry.explicit_visibility_checks = control_telemetry
+                                .explicit_visibility_checks
+                                .saturating_add(1);
+                            capture_target_visibility(&recording.target)
+                        }
+                        Err(error) => Err(error),
+                    };
                     match target_state {
-                        Ok(current_visibility) => visibility = current_visibility,
+                        Ok(current_visibility) => {
+                            visibility = current_visibility;
+                            match current_visibility {
+                                CaptureTargetVisibility::Visible => {
+                                    control_telemetry.visible_target_checks = control_telemetry
+                                        .visible_target_checks
+                                        .saturating_add(1);
+                                }
+                                CaptureTargetVisibility::PausedByWindowVisibility => {
+                                    control_telemetry.paused_target_checks = control_telemetry
+                                        .paused_target_checks
+                                        .saturating_add(1);
+                                }
+                            }
+                        }
                         Err(target_error) => {
+                            control_telemetry.target_failures =
+                                control_telemetry.target_failures.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
                             warn!(error = %target_error, "the active League capture target became invalid");
                             stop_recording_with_failure(
@@ -430,6 +485,8 @@ pub async fn run(
                     let now = Instant::now();
                     match recording.progress_watchdog.observe(&evidence, now, visibility) {
                         CaptureProgressObservation::Stalled(stall_reason) => {
+                            control_telemetry.watchdog_stalls =
+                                control_telemetry.watchdog_stalls.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
                             warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
                             stop_recording_with_failure(recording, &events, stall_reason).await;
@@ -457,6 +514,8 @@ pub async fn run(
                 if let Some(recording) = active.as_mut() {
                     match recording.session.has_exited() {
                         Ok(true) => {
+                            control_telemetry.backend_exits =
+                                control_telemetry.backend_exits.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
                             warn!("recorder backend exited while League was still running");
                             events(ServiceEvent::Error {
@@ -480,6 +539,8 @@ pub async fn run(
                 ) {
                     match capture_target_for_process(process.pid) {
                         Ok(target) => {
+                            control_telemetry.startup_attempts =
+                                control_telemetry.startup_attempts.saturating_add(1);
                             starting = Some(spawn_recording_start(RecordingStartup {
                                 ffmpeg: ffmpeg.clone(),
                                 recording_config: config.recording.clone(),
@@ -502,6 +563,12 @@ pub async fn run(
                     }
                 }
 
+                let now = Instant::now();
+                if now >= control_report_due {
+                    log_control_telemetry(watcher.telemetry(), &control_telemetry, false);
+                    control_report_due = now + CONTROL_TELEMETRY_INTERVAL;
+                }
+
                 previous_process = current_process;
             }
         }
@@ -515,6 +582,32 @@ fn startup_candidate(
     failed: Option<LeagueProcess>,
 ) -> Option<LeagueProcess> {
     current.filter(|process| !has_active && !has_starting && failed != Some(*process))
+}
+
+fn log_control_telemetry(
+    watcher: ProcessWatcherTelemetry,
+    telemetry: &RecorderControlTelemetry,
+    terminal: bool,
+) {
+    info!(
+        terminal,
+        process_refreshes = watcher.refreshes,
+        known_processes = watcher.known_processes,
+        maximum_known_processes = watcher.maximum_known_processes,
+        startup_attempts = telemetry.startup_attempts,
+        startup_ready = telemetry.startup_ready,
+        startup_errors = telemetry.startup_errors,
+        startup_task_failures = telemetry.startup_task_failures,
+        target_identity_checks = telemetry.target_identity_checks,
+        target_identity_successes = telemetry.target_identity_successes,
+        explicit_visibility_checks = telemetry.explicit_visibility_checks,
+        visible_target_checks = telemetry.visible_target_checks,
+        paused_target_checks = telemetry.paused_target_checks,
+        target_failures = telemetry.target_failures,
+        watchdog_stalls = telemetry.watchdog_stalls,
+        backend_exits = telemetry.backend_exits,
+        "recorder control-plane telemetry"
+    );
 }
 
 fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {

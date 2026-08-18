@@ -16,11 +16,18 @@ pub struct NativeCfrTick {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeCfrTelemetrySnapshot {
     pub frames_per_second: u32,
+    pub media_time_base_numerator: u32,
+    pub media_time_base_denominator: u32,
     pub first_source_qpc_100ns: i64,
     pub latest_source_qpc_100ns: i64,
     pub scheduled_ticks: u64,
     pub source_discards: u64,
     pub duplicate_ticks: u64,
+    pub late_ticks: u64,
+    pub catch_up_ticks: u64,
+    pub maximum_lateness_100ns: u64,
+    pub latest_source_age_100ns: u64,
+    pub maximum_source_age_100ns: u64,
 }
 
 /// Rational, first-frame-anchored CFR scheduler for the native GPU worker.
@@ -37,6 +44,11 @@ pub struct NativeCfrClock {
     source_pending: bool,
     source_discards: u64,
     duplicate_ticks: u64,
+    late_ticks: u64,
+    catch_up_ticks: u64,
+    maximum_lateness_100ns: u64,
+    latest_source_age_100ns: u64,
+    maximum_source_age_100ns: u64,
 }
 
 impl NativeCfrClock {
@@ -62,6 +74,11 @@ impl NativeCfrClock {
             source_pending: true,
             source_discards: 0,
             duplicate_ticks: 0,
+            late_ticks: 0,
+            catch_up_ticks: 0,
+            maximum_lateness_100ns: 0,
+            latest_source_age_100ns: 0,
+            maximum_source_age_100ns: 0,
         })
     }
 
@@ -99,12 +116,22 @@ impl NativeCfrClock {
         if now < deadline {
             return Ok(None);
         }
+        let lateness_100ns = duration_100ns(now.saturating_duration_since(deadline));
+        if lateness_100ns > 0 {
+            self.late_ticks = self.late_ticks.saturating_add(1);
+            self.maximum_lateness_100ns = self.maximum_lateness_100ns.max(lateness_100ns);
+        }
         let index = self.next_tick_index;
         let qpc_offset = tick_qpc_offset(index, self.frames_per_second)?;
         let qpc_100ns = i128::from(self.first_source_qpc_100ns)
             .checked_add(i128::from(qpc_offset))
             .and_then(|value| i64::try_from(value).ok())
             .context("native CFR QPC timestamp overflowed")?;
+        let source_age_100ns = qpc_100ns
+            .saturating_sub(self.latest_source_qpc_100ns)
+            .max(0) as u64;
+        self.latest_source_age_100ns = source_age_100ns;
+        self.maximum_source_age_100ns = self.maximum_source_age_100ns.max(source_age_100ns);
         let duplicate = !self.source_pending;
         if duplicate {
             self.duplicate_ticks = self.duplicate_ticks.saturating_add(1);
@@ -114,6 +141,9 @@ impl NativeCfrClock {
             .next_tick_index
             .checked_add(1)
             .context("native CFR tick index overflowed")?;
+        if self.next_deadline()? <= now {
+            self.catch_up_ticks = self.catch_up_ticks.saturating_add(1);
+        }
         Ok(Some(NativeCfrTick {
             index,
             qpc_100ns,
@@ -125,13 +155,24 @@ impl NativeCfrClock {
     pub fn telemetry(&self) -> NativeCfrTelemetrySnapshot {
         NativeCfrTelemetrySnapshot {
             frames_per_second: self.frames_per_second,
+            media_time_base_numerator: 1,
+            media_time_base_denominator: self.frames_per_second,
             first_source_qpc_100ns: self.first_source_qpc_100ns,
             latest_source_qpc_100ns: self.latest_source_qpc_100ns,
             scheduled_ticks: self.next_tick_index,
             source_discards: self.source_discards,
             duplicate_ticks: self.duplicate_ticks,
+            late_ticks: self.late_ticks,
+            catch_up_ticks: self.catch_up_ticks,
+            maximum_lateness_100ns: self.maximum_lateness_100ns,
+            latest_source_age_100ns: self.latest_source_age_100ns,
+            maximum_source_age_100ns: self.maximum_source_age_100ns,
         }
     }
+}
+
+fn duration_100ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos() / 100).unwrap_or(u64::MAX)
 }
 
 fn tick_qpc_offset(index: u64, frames_per_second: u32) -> Result<u64> {
@@ -208,5 +249,90 @@ mod tests {
         assert!(clock.observe_source(1_000_000).is_err());
         assert!(clock.observe_source(999_999).is_err());
         clock.observe_source(1_000_001).unwrap();
+    }
+
+    #[test]
+    fn delayed_ticks_report_lateness_and_catch_up_pressure() {
+        let anchor = Instant::now();
+        let mut clock = NativeCfrClock::start(60, 1_000_000, anchor).unwrap();
+        let now = anchor + tick_duration(3, 60).unwrap();
+
+        clock.emit_due(now).unwrap().unwrap();
+
+        let telemetry = clock.telemetry();
+        assert_eq!(telemetry.late_ticks, 1);
+        assert_eq!(telemetry.catch_up_ticks, 1);
+        assert_eq!(telemetry.maximum_lateness_100ns, 500_000);
+    }
+
+    #[test]
+    fn selected_source_age_is_separate_from_media_tick_time() {
+        let anchor = Instant::now();
+        let mut clock = NativeCfrClock::start(60, 1_000_000, anchor).unwrap();
+        clock.emit_due(anchor).unwrap().unwrap();
+        clock.observe_source(1_050_000).unwrap();
+
+        clock
+            .emit_due(anchor + tick_duration(1, 60).unwrap())
+            .unwrap()
+            .unwrap();
+
+        let telemetry = clock.telemetry();
+        assert_eq!(telemetry.latest_source_age_100ns, 116_666);
+        assert_eq!(telemetry.maximum_source_age_100ns, 116_666);
+        assert_eq!(telemetry.media_time_base_numerator, 1);
+        assert_eq!(telemetry.media_time_base_denominator, 60);
+    }
+
+    #[test]
+    fn deterministic_source_rates_preserve_the_sixty_hz_media_time_base() {
+        for source_rate in [60_u32, 144, 240] {
+            let (arrivals, telemetry) = simulate_source_rate(source_rate, 60);
+            assert_eq!(telemetry.scheduled_ticks, 60, "source rate {source_rate}");
+            assert_eq!(telemetry.duplicate_ticks, 0, "source rate {source_rate}");
+            assert_eq!(
+                telemetry.source_discards,
+                arrivals.saturating_sub(telemetry.scheduled_ticks),
+                "source rate {source_rate}"
+            );
+            assert_eq!(telemetry.media_time_base_numerator, 1);
+            assert_eq!(telemetry.media_time_base_denominator, 60);
+        }
+    }
+
+    fn simulate_source_rate(
+        source_rate: u32,
+        output_ticks: u64,
+    ) -> (u64, NativeCfrTelemetrySnapshot) {
+        let anchor = Instant::now();
+        let first_qpc = 10_000_000_i64;
+        let mut clock = NativeCfrClock::start(60, first_qpc, anchor).unwrap();
+        let mut arrivals = 1_u64;
+        let mut source_index = 1_u64;
+
+        for tick_index in 0..output_ticks {
+            let tick_nanos = u128::from(tick_index) * NANOS_PER_SECOND / 60;
+            loop {
+                let source_nanos =
+                    u128::from(source_index) * NANOS_PER_SECOND / u128::from(source_rate);
+                if source_nanos > tick_nanos {
+                    break;
+                }
+                let source_offset =
+                    u128::from(source_index) * QPC_100NS_PER_SECOND / u128::from(source_rate);
+                let source_qpc =
+                    i64::try_from(i128::from(first_qpc) + i128::try_from(source_offset).unwrap())
+                        .unwrap();
+                clock.observe_source(source_qpc).unwrap();
+                arrivals = arrivals.saturating_add(1);
+                source_index = source_index.saturating_add(1);
+            }
+            clock
+                .emit_due(anchor + tick_duration(tick_index, 60).unwrap())
+                .unwrap()
+                .unwrap();
+        }
+
+        (arrivals, clock.telemetry())
     }
 }
