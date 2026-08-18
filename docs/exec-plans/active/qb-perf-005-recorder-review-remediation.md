@@ -477,6 +477,10 @@ review findings.
 - 2026-08-18: Preserve the current two-second GOP/no-B-frame/fragmented-MP4
   output as the replay baseline. Shorter GOPs, timestamp-aware muxing, and index
   generation are separate measured experiments, not speculative remediation.
+- 2026-08-18: Preserve terminal cross-adapter behavior when a window straddles
+  PC B's differently driven displays and its largest monitor intersection
+  changes adapters. Hysteresis or adapter rebinding is a later session-segment
+  design, not a control-plane polling optimization.
 
 ## Progress
 
@@ -487,7 +491,8 @@ review findings.
   `docs/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`.
 - [x] Package 1: invariant D3D11 state. Evidence:
   `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`.
-- [ ] Package 2: control-plane polling.
+- [x] Package 2: control-plane polling. Evidence:
+  `docs/PACKAGE2_CONTROL_PLANE_EVIDENCE.md`.
 - [ ] Package 3: retryable startup recovery.
 - [ ] Package 4: WGC source coalescing.
 - [ ] Package 5: transactional late-tick recovery.

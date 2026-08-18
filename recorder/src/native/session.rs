@@ -505,6 +505,7 @@ impl NativeRecorderSession {
     }
 }
 
+#[cfg(feature = "native-failure-injection")]
 fn duration_100ns(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos() / 100).unwrap_or(u64::MAX)
 }

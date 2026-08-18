@@ -13,7 +13,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::BOOL;
 
-use super::{CaptureSource, CaptureTarget, CaptureTargetVisibility};
+use super::{
+    CaptureSource, CaptureTarget, CaptureTargetState, CaptureTargetStateCache,
+    CaptureTargetVisibility, WindowsVisibleBounds,
+};
 
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(1);
 const MAX_WGC_FUTURE_QPC_SKEW_100NS: i128 = 1_000_000; // 100 ms.
@@ -96,8 +99,8 @@ pub fn fallback_capture_target() -> Result<CaptureTarget> {
 }
 
 pub fn validate_capture_target(target: &CaptureTarget) -> Result<()> {
-    validate_capture_target_identity(target)?;
-    if capture_target_visibility(target)? == CaptureTargetVisibility::PausedByWindowVisibility {
+    let state = query_capture_target_state(target, &mut CaptureTargetStateCache::default())?;
+    if state.visibility == CaptureTargetVisibility::PausedByWindowVisibility {
         anyhow::bail!("the selected League HWND is hidden or minimized");
     }
     Ok(())
@@ -127,6 +130,13 @@ pub fn capture_target_visibility(target: &CaptureTarget) -> Result<CaptureTarget
 }
 
 pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
+    query_capture_target_state(target, &mut CaptureTargetStateCache::default()).map(|_| ())
+}
+
+pub fn query_capture_target_state(
+    target: &CaptureTarget,
+    cache: &mut CaptureTargetStateCache,
+) -> Result<CaptureTargetState> {
     let CaptureSource::WindowsGraphicsCapture {
         pid,
         hwnd,
@@ -134,19 +144,30 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
         ..
     } = &target.source
     else {
-        return Ok(());
+        return Ok(CaptureTargetState {
+            visibility: CaptureTargetVisibility::Visible,
+            adapter_validated: false,
+        });
     };
     let hwnd = HWND(*hwnd as usize as *mut _);
-    // SAFETY: `hwnd` is an opaque, non-owned handle and IsWindow performs the
-    // validity query without dereferencing caller memory.
-    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
-        anyhow::bail!("the selected League HWND was closed");
-    }
     let mut current_pid = 0_u32;
-    // SAFETY: `current_pid` is a live, aligned u32 for the duration of this
-    // call, and `hwnd` is passed only as a non-owned opaque handle.
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+    // SAFETY: `hwnd` is an opaque, non-owned handle. The predicates do not
+    // retain it, and `current_pid` is live writable storage for the ownership
+    // query. Combining these checks avoids the service issuing a second
+    // visibility query for the same tick.
+    let (exists, minimized, visible) = unsafe {
+        let exists = IsWindow(Some(hwnd)).as_bool();
+        if exists {
+            GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+        }
+        (
+            exists,
+            IsIconic(hwnd).as_bool(),
+            IsWindowVisible(hwnd).as_bool(),
+        )
+    };
+    if !exists {
+        anyhow::bail!("the selected League HWND was closed");
     }
     if current_pid != *pid {
         anyhow::bail!("the selected League HWND now belongs to a different process");
@@ -154,10 +175,25 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
     // A minimized/temporarily hidden exact window remains the same capture
     // identity. WGC may pause frames and resume after restore, so defer bounds
     // and monitor checks until the HWND is visible again.
-    if capture_target_visibility(target)? == CaptureTargetVisibility::PausedByWindowVisibility {
-        return Ok(());
+    if minimized || !visible {
+        return Ok(CaptureTargetState {
+            visibility: CaptureTargetVisibility::PausedByWindowVisibility,
+            adapter_validated: false,
+        });
     }
     let (x, y, width, height) = client_bounds(hwnd).context("League HWND has no client area")?;
+    let visible_bounds = WindowsVisibleBounds {
+        x,
+        y,
+        width,
+        height,
+    };
+    if !cache.adapter_validation_required(visible_bounds) {
+        return Ok(CaptureTargetState {
+            visibility: CaptureTargetVisibility::Visible,
+            adapter_validated: false,
+        });
+    }
     let current_monitor = monitor_with_largest_intersection(RECT {
         left: x,
         top: y,
@@ -171,7 +207,11 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
             current_adapter.luid
         );
     }
-    Ok(())
+    cache.observe_validated_bounds(visible_bounds);
+    Ok(CaptureTargetState {
+        visibility: CaptureTargetVisibility::Visible,
+        adapter_validated: true,
+    })
 }
 
 pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<Instant> {
@@ -545,5 +585,28 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn adapter_validation_cache_changes_only_with_visible_bounds() {
+        let first = WindowsVisibleBounds {
+            x: 100,
+            y: 100,
+            width: 1280,
+            height: 720,
+        };
+        let moved = WindowsVisibleBounds { x: 2020, ..first };
+        let resized = WindowsVisibleBounds {
+            width: 1600,
+            height: 900,
+            ..first
+        };
+        let mut cache = CaptureTargetStateCache::default();
+
+        assert!(cache.adapter_validation_required(first));
+        cache.observe_validated_bounds(first);
+        assert!(!cache.adapter_validation_required(first));
+        assert!(cache.adapter_validation_required(moved));
+        assert!(cache.adapter_validation_required(resized));
     }
 }

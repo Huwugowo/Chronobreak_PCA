@@ -57,8 +57,13 @@
   state is now configured only at initial creation and accepted size changes.
   Resize/minimize/restore media gates pass, and the matched 60-second check
   reduced recorder CPU time by 36.56% with neutral-to-better GPU and memory.
-  See `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`. Package 2 is the next
-  implementation gate.
+  See `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`.
+- Remediation Package 2 is implemented and verified. Process discovery now
+  refreshes identity-only data, and active Windows supervision combines
+  HWND/PID/visibility checks while caching the last validated visible bounds.
+  Same-adapter resize and minimize/restore pass; close and cross-adapter
+  straddling fail explicitly. See `docs/PACKAGE2_CONTROL_PLANE_EVIDENCE.md`.
+  Package 3 is the next implementation gate.
 
 ## Gates that remain external
 

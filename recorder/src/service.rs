@@ -20,8 +20,8 @@ use crate::encoder::{
 #[cfg(target_os = "windows")]
 use crate::native::NativeRecordingSession;
 use crate::platform::{
-    CaptureTarget, CaptureTargetVisibility, capture_target_for_process, capture_target_visibility,
-    fallback_capture_target, validate_capture_target_identity,
+    CaptureTarget, CaptureTargetStateCache, CaptureTargetVisibility, capture_target_for_process,
+    fallback_capture_target, query_capture_target_state,
 };
 use crate::poller::{CaptureMetadata, PollerSession, RecordingDetails, RecordingMetadata};
 use crate::storage::{METADATA_JSON, create_game_directory, unix_timestamp_now, write_json_atomic};
@@ -48,6 +48,7 @@ pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 struct ActiveRecording {
     session: VideoRecordingSession,
     target: CaptureTarget,
+    target_state_cache: CaptureTargetStateCache,
     diagnostics: watch::Receiver<RecordingEvidence>,
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
@@ -192,9 +193,9 @@ struct RecorderControlTelemetry {
     startup_ready: u64,
     startup_errors: u64,
     startup_task_failures: u64,
-    target_identity_checks: u64,
-    target_identity_successes: u64,
-    explicit_visibility_checks: u64,
+    target_state_queries: u64,
+    target_state_successes: u64,
+    target_adapter_validations: u64,
     visible_target_checks: u64,
     paused_target_checks: u64,
     target_failures: u64,
@@ -432,26 +433,25 @@ pub async fn run(
                 }
 
                 let mut visibility = CaptureTargetVisibility::Visible;
-                if let Some(recording) = active.as_ref() {
-                    control_telemetry.target_identity_checks =
-                        control_telemetry.target_identity_checks.saturating_add(1);
-                    let identity = validate_capture_target_identity(&recording.target);
-                    let target_state = match identity {
-                        Ok(()) => {
-                            control_telemetry.target_identity_successes = control_telemetry
-                                .target_identity_successes
-                                .saturating_add(1);
-                            control_telemetry.explicit_visibility_checks = control_telemetry
-                                .explicit_visibility_checks
-                                .saturating_add(1);
-                            capture_target_visibility(&recording.target)
-                        }
-                        Err(error) => Err(error),
-                    };
+                if let Some(recording) = active.as_mut() {
+                    control_telemetry.target_state_queries =
+                        control_telemetry.target_state_queries.saturating_add(1);
+                    let target_state = query_capture_target_state(
+                        &recording.target,
+                        &mut recording.target_state_cache,
+                    );
                     match target_state {
-                        Ok(current_visibility) => {
-                            visibility = current_visibility;
-                            match current_visibility {
+                        Ok(state) => {
+                            control_telemetry.target_state_successes = control_telemetry
+                                .target_state_successes
+                                .saturating_add(1);
+                            if state.adapter_validated {
+                                control_telemetry.target_adapter_validations = control_telemetry
+                                    .target_adapter_validations
+                                    .saturating_add(1);
+                            }
+                            visibility = state.visibility;
+                            match state.visibility {
                                 CaptureTargetVisibility::Visible => {
                                     control_telemetry.visible_target_checks = control_telemetry
                                         .visible_target_checks
@@ -592,15 +592,18 @@ fn log_control_telemetry(
     info!(
         terminal,
         process_refreshes = watcher.refreshes,
+        refreshed_process_records = watcher.refreshed_process_records,
+        total_process_refresh_100ns = watcher.total_refresh_100ns,
+        maximum_process_refresh_100ns = watcher.maximum_refresh_100ns,
         known_processes = watcher.known_processes,
         maximum_known_processes = watcher.maximum_known_processes,
         startup_attempts = telemetry.startup_attempts,
         startup_ready = telemetry.startup_ready,
         startup_errors = telemetry.startup_errors,
         startup_task_failures = telemetry.startup_task_failures,
-        target_identity_checks = telemetry.target_identity_checks,
-        target_identity_successes = telemetry.target_identity_successes,
-        explicit_visibility_checks = telemetry.explicit_visibility_checks,
+        target_state_queries = telemetry.target_state_queries,
+        target_state_successes = telemetry.target_state_successes,
+        target_adapter_validations = telemetry.target_adapter_validations,
         visible_target_checks = telemetry.visible_target_checks,
         paused_target_checks = telemetry.paused_target_checks,
         target_failures = telemetry.target_failures,
@@ -689,6 +692,12 @@ async fn start_recording(
         #[cfg(target_os = "windows")]
         windows_backend,
     } = startup;
+    let mut target_state_cache = CaptureTargetStateCache::default();
+    let initial_target_state = query_capture_target_state(&target, &mut target_state_cache)
+        .context("capture target changed before recording startup")?;
+    if initial_target_state.visibility == CaptureTargetVisibility::PausedByWindowVisibility {
+        bail!("capture target became hidden or minimized before recording startup");
+    }
     #[cfg(target_os = "windows")]
     let candidates = if windows_backend == WindowsRecorderBackend::Ffmpeg {
         Some(tokio::select! {
@@ -980,6 +989,7 @@ async fn start_recording(
     Ok(ActiveRecording {
         session,
         target,
+        target_state_cache,
         diagnostics,
         progress_watchdog: CaptureProgressWatchdog::new(&initial_diagnostics, now),
         progress_report_due: now + Duration::from_secs(10),
@@ -1052,6 +1062,7 @@ async fn stop_recording_inner(
     let ActiveRecording {
         session,
         target: _,
+        target_state_cache: _,
         diagnostics,
         progress_watchdog: _,
         progress_report_due: _,
