@@ -491,6 +491,12 @@ review findings.
   only the freshest source at a due tick. Resize-transition surfaces whose
   texture allocation lags `ContentSize` are closed and accounted while the
   last valid snapshot supplies CFR.
+- 2026-08-18: Package 5 makes the CFR clock transactional: due-tick inspection
+  is read-only and commit follows successful NVENC submission. A full slot ring
+  leaves the same tick due, waits one millisecond, and retries without copying
+  another source first. Catch-up is capped at two submissions per scheduler
+  pass, and normal stop receives a finite five-second final catch-up deadline.
+  Live 100/250/500-ms stall arms retained every frame and exact A/V duration.
 
 ## Progress
 
@@ -507,7 +513,8 @@ review findings.
   `docs/PACKAGE3_STARTUP_RECOVERY_EVIDENCE.md`.
 - [x] Package 4: WGC source coalescing. Evidence:
   `docs/PACKAGE4_WGC_SOURCE_COALESCING_EVIDENCE.md`.
-- [ ] Package 5: transactional late-tick recovery.
+- [x] Package 5: transactional late-tick recovery. Evidence:
+  `docs/PACKAGE5_TRANSACTIONAL_TICK_RECOVERY_EVIDENCE.md`.
 - [ ] Package 6: profile-gated poller persistence, if triggered.
 - [ ] Package 7: full non-League evidence refresh.
 - [ ] Reconcile into the canonical full repository and complete external League

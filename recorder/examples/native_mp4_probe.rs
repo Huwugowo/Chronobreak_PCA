@@ -17,7 +17,7 @@ mod windows_probe {
         let mut fail_nvenc_after_ticks = None;
         let mut stall_worker_after_ticks = None;
         let mut stall_worker_ms = None;
-        let mut max_slot_tick_drops = 0_u64;
+        let mut max_no_slot_admission_failures = 0_u64;
         while let Some(argument) = args.next() {
             match argument.as_str() {
                 "--pid" => {
@@ -69,12 +69,12 @@ mod windows_probe {
                             .context("--stall-worker-ms must be an integer")?,
                     );
                 }
-                "--max-slot-tick-drops" => {
-                    max_slot_tick_drops = args
+                "--max-no-slot-admission-failures" | "--max-slot-tick-drops" => {
+                    max_no_slot_admission_failures = args
                         .next()
-                        .context("--max-slot-tick-drops requires a value")?
+                        .context("no-slot admission ceiling requires a value")?
                         .parse::<u64>()
-                        .context("--max-slot-tick-drops must be an integer")?;
+                        .context("no-slot admission ceiling must be an integer")?;
                 }
                 other => bail!("unknown argument {other:?}"),
             }
@@ -141,27 +141,26 @@ mod windows_probe {
             telemetry.cfr.scheduled_ticks
         );
         ensure!(
-            telemetry.slot_tick_drops <= max_slot_tick_drops && telemetry.unstaged_tick_drops == 0,
-            "native CFR drop ceiling exceeded: slot={} max_slot={} unstaged={}",
-            telemetry.slot_tick_drops,
-            max_slot_tick_drops,
-            telemetry.unstaged_tick_drops
+            telemetry.no_slot_admission_failures <= max_no_slot_admission_failures
+                && telemetry.unstaged_tick_admission_failures == 0,
+            "native CFR admission-failure ceiling exceeded: no_slot={} max_no_slot={} unstaged={}",
+            telemetry.no_slot_admission_failures,
+            max_no_slot_admission_failures,
+            telemetry.unstaged_tick_admission_failures
         );
-        let total_tick_drops = telemetry
-            .slot_tick_drops
-            .checked_add(telemetry.unstaged_tick_drops)
-            .context("native CFR drop accounting overflowed")?;
-        let expected_encoded_ticks = expected_ticks
-            .checked_sub(total_tick_drops)
-            .context("native CFR drops exceeded scheduled ticks")?;
         ensure!(
-            telemetry.encode.submitted_frames == expected_encoded_ticks
-                && telemetry.encode.completed_frames == expected_encoded_ticks
-                && telemetry.mux.encoded_frames == expected_encoded_ticks,
-            "native MP4 accounting mismatch: scheduled={expected_ticks} expected_encoded={expected_encoded_ticks} submitted={} completed={} muxed={}",
+            telemetry.encode.submitted_frames == expected_ticks
+                && telemetry.encode.completed_frames == expected_ticks
+                && telemetry.mux.encoded_frames == expected_ticks,
+            "native MP4 accounting mismatch: committed={expected_ticks} submitted={} completed={} muxed={}",
             telemetry.encode.submitted_frames,
             telemetry.encode.completed_frames,
             telemetry.mux.encoded_frames
+        );
+        ensure!(
+            telemetry.maximum_catch_up_batch <= 2,
+            "native CFR catch-up batch exceeded 2: {}",
+            telemetry.maximum_catch_up_batch
         );
         ensure!(
             telemetry.encode.max_in_flight <= 4
@@ -224,7 +223,7 @@ mod windows_probe {
         );
 
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} slot_tick_drops={} unstaged_tick_drops={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} no_slot_admission_failures={} unstaged_tick_admission_failures={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
             telemetry.cfr.scheduled_ticks,
             telemetry.cfr.media_time_base_numerator,
             telemetry.cfr.media_time_base_denominator,
@@ -247,8 +246,8 @@ mod windows_probe {
             telemetry.mux.output_file_bytes,
             telemetry.mux.output_time_us.unwrap_or_default(),
             telemetry.encode.max_in_flight,
-            telemetry.slot_tick_drops,
-            telemetry.unstaged_tick_drops,
+            telemetry.no_slot_admission_failures,
+            telemetry.unstaged_tick_admission_failures,
             telemetry.capture.arrivals,
             telemetry.capture.admitted,
             telemetry.capture.handoff_drops,

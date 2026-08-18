@@ -125,12 +125,14 @@ mod windows_probe {
                 converter.free_slot_count()
             );
         }
-        if conversion.converted_frames != consumed || conversion.no_free_slot_drops != 0 {
+        if conversion.converted_frames != consumed
+            || conversion.no_free_slot_admission_failures != 0
+        {
             bail!(
                 "native NV12 conversion accounting mismatch: converted={} consumed={} slot_drops={}",
                 conversion.converted_frames,
                 consumed,
-                conversion.no_free_slot_drops
+                conversion.no_free_slot_admission_failures
             );
         }
         println!(
@@ -147,7 +149,7 @@ mod windows_probe {
             telemetry.closed,
         );
         println!(
-            "CHRONOBREAK_NATIVE_NV12_PASS converted={} slot_texture_allocations={} free_slots={} input_view_creations={} input_view_replacements={} input_view_cache_resets={} processor_recreations={} output_view_recreations={} no_free_slot_drops={}",
+            "CHRONOBREAK_NATIVE_NV12_PASS converted={} slot_texture_allocations={} free_slots={} input_view_creations={} input_view_replacements={} input_view_cache_resets={} processor_recreations={} output_view_recreations={} no_free_slot_admission_failures={}",
             conversion.converted_frames,
             conversion.slot_texture_allocations,
             converter.free_slot_count(),
@@ -156,7 +158,7 @@ mod windows_probe {
             conversion.input_view_cache_resets,
             conversion.processor_recreations,
             conversion.output_view_recreations,
-            conversion.no_free_slot_drops,
+            conversion.no_free_slot_admission_failures,
         );
         source.close()?;
         Ok(())

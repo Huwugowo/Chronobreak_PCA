@@ -133,7 +133,7 @@ struct LatestSourceSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeNv12TelemetrySnapshot {
     pub converted_frames: u64,
-    pub no_free_slot_drops: u64,
+    pub no_free_slot_admission_failures: u64,
     pub processor_state_configurations: u64,
     pub slot_texture_allocations: u64,
     pub input_view_creations: u64,
@@ -148,7 +148,7 @@ pub struct NativeNv12TelemetrySnapshot {
 #[derive(Default)]
 struct NativeNv12Telemetry {
     converted_frames: u64,
-    no_free_slot_drops: u64,
+    no_free_slot_admission_failures: u64,
     processor_state_configurations: u64,
     slot_texture_allocations: u64,
     input_view_creations: u64,
@@ -164,7 +164,7 @@ impl NativeNv12Telemetry {
     fn snapshot(&self) -> NativeNv12TelemetrySnapshot {
         NativeNv12TelemetrySnapshot {
             converted_frames: self.converted_frames,
-            no_free_slot_drops: self.no_free_slot_drops,
+            no_free_slot_admission_failures: self.no_free_slot_admission_failures,
             processor_state_configurations: self.processor_state_configurations,
             slot_texture_allocations: self.slot_texture_allocations,
             input_view_creations: self.input_view_creations,
@@ -400,8 +400,13 @@ impl NativeNv12Converter {
         Ok(true)
     }
 
+    pub fn has_free_slot(&self) -> bool {
+        self.slot_states.free_count() > 0
+    }
+
     /// Convert the persistent latest-source snapshot at an exact CFR tick.
-    /// A full four-slot ring is an accounted drop, never a wait or allocation.
+    /// A full four-slot ring rejects this admission attempt without waiting or
+    /// allocating a fifth slot; the media clock remains the caller's concern.
     pub fn convert_staged<'converter>(
         &'converter mut self,
         qpc_100ns: i64,
@@ -412,7 +417,10 @@ impl NativeNv12Converter {
         );
         ensure!(qpc_100ns > 0, "native CFR tick timestamp must be positive");
         let Some(slot_index) = self.slot_states.try_acquire_converted() else {
-            self.telemetry.no_free_slot_drops = self.telemetry.no_free_slot_drops.saturating_add(1);
+            self.telemetry.no_free_slot_admission_failures = self
+                .telemetry
+                .no_free_slot_admission_failures
+                .saturating_add(1);
             return Ok(None);
         };
 
@@ -445,7 +453,10 @@ impl NativeNv12Converter {
             self.input_height
         );
         let Some(slot_index) = self.slot_states.try_acquire_converted() else {
-            self.telemetry.no_free_slot_drops = self.telemetry.no_free_slot_drops.saturating_add(1);
+            self.telemetry.no_free_slot_admission_failures = self
+                .telemetry
+                .no_free_slot_admission_failures
+                .saturating_add(1);
             return Ok(None);
         };
 

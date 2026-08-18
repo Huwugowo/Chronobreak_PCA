@@ -22,6 +22,9 @@ const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SOURCE_WAIT: Duration = Duration::from_millis(250);
 const NATIVE_EVIDENCE_INTERVAL: Duration = Duration::from_millis(250);
 const NATIVE_SOURCE_SNAPSHOT_CAPACITY: u32 = 1;
+const MAX_CATCH_UP_SUBMISSIONS_PER_PASS: u64 = 2;
+const NO_SLOT_RETRY_WAIT: Duration = Duration::from_millis(1);
+const FINAL_CATCH_UP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeSessionTelemetrySnapshot {
@@ -30,8 +33,8 @@ pub struct NativeSessionTelemetrySnapshot {
     pub conversion: NativeNv12TelemetrySnapshot,
     pub encode: NativeNvencTelemetrySnapshot,
     pub mux: NativeMuxTelemetrySnapshot,
-    pub slot_tick_drops: u64,
-    pub unstaged_tick_drops: u64,
+    pub no_slot_admission_failures: u64,
+    pub unstaged_tick_admission_failures: u64,
     pub maximum_catch_up_batch: u64,
     pub injected_worker_stalls: u64,
     pub injected_worker_stall_100ns: u64,
@@ -43,6 +46,12 @@ pub struct NativeSessionTelemetrySnapshot {
 struct InjectedWorkerStall {
     after_ticks: u64,
     duration: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TickAdmission {
+    Submitted,
+    NoSlot,
 }
 
 /// Standalone M5 native recorder session. All WGC, D3D11 conversion and NVENC
@@ -60,9 +69,8 @@ pub struct NativeRecorderSession {
     output: PathBuf,
     snapshot_ready: bool,
     pending_resize: Option<(u32, u32)>,
-    slot_tick_drops: u64,
-    unstaged_tick_drops: u64,
-    current_catch_up_batch: u64,
+    no_slot_admission_failures: u64,
+    unstaged_tick_admission_failures: u64,
     maximum_catch_up_batch: u64,
     injected_worker_stalls: u64,
     injected_worker_stall_100ns: u64,
@@ -95,9 +103,8 @@ impl NativeRecorderSession {
             output: output.to_path_buf(),
             snapshot_ready: false,
             pending_resize: None,
-            slot_tick_drops: 0,
-            unstaged_tick_drops: 0,
-            current_catch_up_batch: 0,
+            no_slot_admission_failures: 0,
+            unstaged_tick_admission_failures: 0,
             maximum_catch_up_batch: 0,
             injected_worker_stalls: 0,
             injected_worker_stall_100ns: 0,
@@ -154,6 +161,9 @@ impl NativeRecorderSession {
             .as_ref()
             .context("native CFR clock was not anchored")?
             .deadline_after(duration)?;
+        let catch_up_deadline = recording_deadline
+            .checked_add(FINAL_CATCH_UP_TIMEOUT)
+            .context("native final catch-up deadline exceeded the monotonic clock range")?;
 
         loop {
             let next_deadline = self
@@ -161,23 +171,32 @@ impl NativeRecorderSession {
                 .as_ref()
                 .context("native CFR clock disappeared")?
                 .next_deadline()?;
-            if next_deadline >= recording_deadline || self.target_closed {
+            if next_deadline >= recording_deadline {
                 break;
+            }
+            if self.target_closed {
+                bail!("native WGC target closed while recording");
             }
 
             let now = Instant::now();
+            if now >= catch_up_deadline {
+                bail!(
+                    "native CFR could not commit every tick before the bounded final catch-up deadline (next_tick={} target_duration={:.3}s)",
+                    self.clock
+                        .as_ref()
+                        .context("native CFR clock disappeared")?
+                        .telemetry()
+                        .scheduled_ticks,
+                    duration.as_secs_f64()
+                );
+            }
             if now >= next_deadline {
-                self.maybe_inject_worker_stall()?;
-                self.stage_pending_source_for_tick()?;
-                let now = Instant::now();
-                let tick = self
-                    .clock
-                    .as_mut()
-                    .context("native CFR clock disappeared")?
-                    .emit_due(now)?
-                    .context("due native CFR deadline did not emit a tick")?;
-                self.submit_tick(tick.qpc_100ns)?;
-                self.observe_catch_up_batch(Instant::now())?;
+                let submitted = self.submit_due_batch(Some(recording_deadline))?;
+                self.receive_source(if submitted == 0 {
+                    NO_SLOT_RETRY_WAIT
+                } else {
+                    Duration::ZERO
+                })?;
                 continue;
             }
 
@@ -216,8 +235,18 @@ impl NativeRecorderSession {
         }
 
         let mut evidence_due = Instant::now();
-        while !stop.load(Ordering::Acquire) {
-            if self.target_closed {
+        let mut stop_at = None;
+        let mut catch_up_deadline = None;
+        loop {
+            if stop_at.is_none() && stop.load(Ordering::Acquire) {
+                let observed_stop = Instant::now();
+                stop_at = Some(observed_stop);
+                catch_up_deadline =
+                    Some(observed_stop.checked_add(FINAL_CATCH_UP_TIMEOUT).context(
+                        "native stop catch-up deadline exceeded the monotonic clock range",
+                    )?);
+            }
+            if self.target_closed && stop_at.is_none() {
                 bail!("native WGC target closed while recording");
             }
             let next_deadline = self
@@ -225,19 +254,22 @@ impl NativeRecorderSession {
                 .as_ref()
                 .context("native CFR clock disappeared")?
                 .next_deadline()?;
+            if stop_at.is_some_and(|deadline| next_deadline >= deadline) {
+                break;
+            }
             let now = Instant::now();
+            if catch_up_deadline.is_some_and(|deadline| now >= deadline) {
+                bail!(
+                    "native CFR could not commit every tick through the requested stop time before the bounded final catch-up deadline"
+                );
+            }
             if now >= next_deadline {
-                self.maybe_inject_worker_stall()?;
-                self.stage_pending_source_for_tick()?;
-                let now = Instant::now();
-                let tick = self
-                    .clock
-                    .as_mut()
-                    .context("native CFR clock disappeared")?
-                    .emit_due(now)?
-                    .context("due native CFR deadline did not emit a tick")?;
-                self.submit_tick(tick.qpc_100ns)?;
-                self.observe_catch_up_batch(Instant::now())?;
+                let submitted = self.submit_due_batch(stop_at)?;
+                self.receive_source(if submitted == 0 {
+                    NO_SLOT_RETRY_WAIT
+                } else {
+                    Duration::ZERO
+                })?;
             } else {
                 self.receive_source(
                     next_deadline
@@ -287,6 +319,31 @@ impl NativeRecorderSession {
                     mux.encoded_frames
                 );
                 ensure!(
+                    cfr.scheduled_ticks == encode.submitted_frames
+                        && encode.submitted_frames == encode.completed_frames,
+                    "native transactional tick accounting differs: committed={} submitted={} completed={}",
+                    cfr.scheduled_ticks,
+                    encode.submitted_frames,
+                    encode.completed_frames
+                );
+                ensure!(
+                    self.unstaged_tick_admission_failures == 0,
+                    "native CFR encountered {} unstaged admission failures",
+                    self.unstaged_tick_admission_failures
+                );
+                ensure!(
+                    conversion.no_free_slot_admission_failures <= self.no_slot_admission_failures,
+                    "native no-slot accounting differs: converter={} session={}",
+                    conversion.no_free_slot_admission_failures,
+                    self.no_slot_admission_failures
+                );
+                ensure!(
+                    self.maximum_catch_up_batch <= MAX_CATCH_UP_SUBMISSIONS_PER_PASS,
+                    "native CFR catch-up batch exceeded its bound: {} > {}",
+                    self.maximum_catch_up_batch,
+                    MAX_CATCH_UP_SUBMISSIONS_PER_PASS
+                );
+                ensure!(
                     capture.pending_frame_high_water_mark <= 1,
                     "native WGC pending-frame bound exceeded: {} > 1",
                     capture.pending_frame_high_water_mark
@@ -321,8 +378,8 @@ impl NativeRecorderSession {
                     conversion,
                     encode,
                     mux,
-                    slot_tick_drops: self.slot_tick_drops,
-                    unstaged_tick_drops: self.unstaged_tick_drops,
+                    no_slot_admission_failures: self.no_slot_admission_failures,
+                    unstaged_tick_admission_failures: self.unstaged_tick_admission_failures,
                     maximum_catch_up_batch: self.maximum_catch_up_batch,
                     injected_worker_stalls: self.injected_worker_stalls,
                     injected_worker_stall_100ns: self.injected_worker_stall_100ns,
@@ -538,7 +595,69 @@ impl NativeRecorderSession {
         Ok(())
     }
 
-    fn submit_tick(&mut self, qpc_100ns: i64) -> Result<()> {
+    fn submit_due_batch(&mut self, stop_before: Option<Instant>) -> Result<u64> {
+        self.maybe_inject_worker_stall()?;
+        let mut submissions = 0_u64;
+        let mut catch_up = false;
+
+        while submissions < MAX_CATCH_UP_SUBMISSIONS_PER_PASS {
+            let next_deadline = self
+                .clock
+                .as_ref()
+                .context("native CFR clock disappeared")?
+                .next_deadline()?;
+            if stop_before.is_some_and(|deadline| next_deadline >= deadline)
+                || Instant::now() < next_deadline
+            {
+                break;
+            }
+            if !self.converter.has_free_slot() {
+                self.no_slot_admission_failures = self.no_slot_admission_failures.saturating_add(1);
+                break;
+            }
+
+            self.stage_pending_source_for_tick()?;
+            let now = Instant::now();
+            let tick = self
+                .clock
+                .as_ref()
+                .context("native CFR clock disappeared")?
+                .peek_due(now)?
+                .context("due native CFR deadline did not expose a tick")?;
+            match self.submit_tick(tick.qpc_100ns)? {
+                TickAdmission::Submitted => {
+                    let committed_at = Instant::now();
+                    self.clock
+                        .as_mut()
+                        .context("native CFR clock disappeared")?
+                        .commit(tick, committed_at)?;
+                    submissions = submissions.saturating_add(1);
+                    let another_deadline = self
+                        .clock
+                        .as_ref()
+                        .context("native CFR clock disappeared")?
+                        .next_deadline()?;
+                    let another_target_tick =
+                        stop_before.is_none_or(|deadline| another_deadline < deadline);
+                    if another_target_tick && another_deadline <= Instant::now() {
+                        catch_up = true;
+                    }
+                }
+                TickAdmission::NoSlot => break,
+            }
+        }
+
+        ensure!(
+            submissions <= MAX_CATCH_UP_SUBMISSIONS_PER_PASS,
+            "native CFR exceeded the bounded catch-up batch"
+        );
+        if catch_up {
+            self.maximum_catch_up_batch = self.maximum_catch_up_batch.max(submissions);
+        }
+        Ok(submissions)
+    }
+
+    fn submit_tick(&mut self, qpc_100ns: i64) -> Result<TickAdmission> {
         #[cfg(feature = "native-failure-injection")]
         if self
             .injected_nvenc_failure_after_ticks
@@ -549,42 +668,26 @@ impl NativeRecorderSession {
             })
         {
             self.injected_nvenc_failure_after_ticks = None;
-            return self
-                .encoder
+            self.encoder
                 .as_mut()
                 .context("native NVENC encoder is closed")?
-                .inject_terminal_failure_for_fixture();
+                .inject_terminal_failure_for_fixture()?;
+            unreachable!("native NVENC failure fixture unexpectedly returned success");
         }
         if !self.snapshot_ready {
-            self.unstaged_tick_drops = self.unstaged_tick_drops.saturating_add(1);
-            return Ok(());
+            self.unstaged_tick_admission_failures =
+                self.unstaged_tick_admission_failures.saturating_add(1);
+            bail!("native CFR tick reached admission without a staged source snapshot");
         }
         let Some(converted) = self.converter.convert_staged(qpc_100ns)? else {
-            self.slot_tick_drops = self.slot_tick_drops.saturating_add(1);
-            return Ok(());
+            self.no_slot_admission_failures = self.no_slot_admission_failures.saturating_add(1);
+            return Ok(TickAdmission::NoSlot);
         };
         self.encoder
             .as_mut()
             .context("native NVENC encoder is closed")?
-            .submit(converted)
-    }
-
-    fn observe_catch_up_batch(&mut self, now: Instant) -> Result<()> {
-        let another_tick_due = self
-            .clock
-            .as_ref()
-            .context("native CFR clock disappeared")?
-            .next_deadline()?
-            <= now;
-        if self.current_catch_up_batch > 0 || another_tick_due {
-            self.current_catch_up_batch = self.current_catch_up_batch.saturating_add(1);
-            self.maximum_catch_up_batch =
-                self.maximum_catch_up_batch.max(self.current_catch_up_batch);
-            if !another_tick_due {
-                self.current_catch_up_batch = 0;
-            }
-        }
-        Ok(())
+            .submit(converted)?;
+        Ok(TickAdmission::Submitted)
     }
 
     #[cfg(feature = "native-failure-injection")]

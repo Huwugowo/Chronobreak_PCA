@@ -114,16 +114,15 @@ impl NativeCfrClock {
             .context("native CFR recording deadline exceeded the monotonic clock range")
     }
 
-    /// Produce one scheduled tick only when its monotonic deadline is due.
-    pub fn emit_due(&mut self, now: Instant) -> Result<Option<NativeCfrTick>> {
+    /// Inspect the next scheduled tick without advancing the media clock.
+    ///
+    /// Callers must commit the returned tick only after the downstream encoder
+    /// has accepted the corresponding frame. A temporarily full surface ring
+    /// therefore leaves the same media tick due for the next scheduler pass.
+    pub fn peek_due(&self, now: Instant) -> Result<Option<NativeCfrTick>> {
         let deadline = self.next_deadline()?;
         if now < deadline {
             return Ok(None);
-        }
-        let lateness_100ns = duration_100ns(now.saturating_duration_since(deadline));
-        if lateness_100ns > 0 {
-            self.late_ticks = self.late_ticks.saturating_add(1);
-            self.maximum_lateness_100ns = self.maximum_lateness_100ns.max(lateness_100ns);
         }
         let index = self.next_tick_index;
         let qpc_offset = tick_qpc_offset(index, self.frames_per_second)?;
@@ -131,13 +130,37 @@ impl NativeCfrClock {
             .checked_add(i128::from(qpc_offset))
             .and_then(|value| i64::try_from(value).ok())
             .context("native CFR QPC timestamp overflowed")?;
-        let source_age_100ns = qpc_100ns
+        let duplicate = !self.source_pending;
+        Ok(Some(NativeCfrTick {
+            index,
+            qpc_100ns,
+            deadline,
+            duplicate,
+        }))
+    }
+
+    /// Commit a tick after its frame has been accepted by the encoder.
+    pub fn commit(&mut self, tick: NativeCfrTick, committed_at: Instant) -> Result<()> {
+        let expected = self
+            .peek_due(committed_at)?
+            .context("native CFR tick was committed before its deadline")?;
+        ensure!(
+            tick == expected,
+            "native CFR commit did not match the current due tick"
+        );
+
+        let lateness_100ns = duration_100ns(committed_at.saturating_duration_since(tick.deadline));
+        if lateness_100ns > 0 {
+            self.late_ticks = self.late_ticks.saturating_add(1);
+            self.maximum_lateness_100ns = self.maximum_lateness_100ns.max(lateness_100ns);
+        }
+        let source_age_100ns = tick
+            .qpc_100ns
             .saturating_sub(self.latest_source_qpc_100ns)
             .max(0) as u64;
         self.latest_source_age_100ns = source_age_100ns;
         self.maximum_source_age_100ns = self.maximum_source_age_100ns.max(source_age_100ns);
-        let duplicate = !self.source_pending;
-        if duplicate {
+        if tick.duplicate {
             self.duplicate_ticks = self.duplicate_ticks.saturating_add(1);
         }
         self.source_pending = false;
@@ -145,15 +168,19 @@ impl NativeCfrClock {
             .next_tick_index
             .checked_add(1)
             .context("native CFR tick index overflowed")?;
-        if self.next_deadline()? <= now {
+        if self.next_deadline()? <= committed_at {
             self.catch_up_ticks = self.catch_up_ticks.saturating_add(1);
         }
-        Ok(Some(NativeCfrTick {
-            index,
-            qpc_100ns,
-            deadline,
-            duplicate,
-        }))
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn emit_due(&mut self, now: Instant) -> Result<Option<NativeCfrTick>> {
+        let Some(tick) = self.peek_due(now)? else {
+            return Ok(None);
+        };
+        self.commit(tick, now)?;
+        Ok(Some(tick))
     }
 
     pub fn telemetry(&self) -> NativeCfrTelemetrySnapshot {
@@ -267,6 +294,37 @@ mod tests {
         assert_eq!(telemetry.late_ticks, 1);
         assert_eq!(telemetry.catch_up_ticks, 1);
         assert_eq!(telemetry.maximum_lateness_100ns, 500_000);
+    }
+
+    #[test]
+    fn peeking_a_due_tick_does_not_advance_or_record_lateness() {
+        let anchor = Instant::now();
+        let mut clock = NativeCfrClock::start(60, 1_000_000, anchor).unwrap();
+        let now = anchor + tick_duration(3, 60).unwrap();
+
+        let first = clock.peek_due(now).unwrap().unwrap();
+        let second = clock.peek_due(now).unwrap().unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.index, 0);
+        assert_eq!(clock.telemetry().scheduled_ticks, 0);
+        assert_eq!(clock.telemetry().late_ticks, 0);
+        assert_eq!(clock.next_deadline().unwrap(), anchor);
+
+        clock.commit(first, now).unwrap();
+        assert_eq!(clock.telemetry().scheduled_ticks, 1);
+        assert_eq!(clock.telemetry().late_ticks, 1);
+    }
+
+    #[test]
+    fn stale_or_mismatched_ticks_cannot_be_committed() {
+        let anchor = Instant::now();
+        let mut clock = NativeCfrClock::start(60, 1_000_000, anchor).unwrap();
+        let tick = clock.peek_due(anchor).unwrap().unwrap();
+        clock.commit(tick, anchor).unwrap();
+
+        assert!(clock.commit(tick, anchor).is_err());
+        assert_eq!(clock.telemetry().scheduled_ticks, 1);
     }
 
     #[test]

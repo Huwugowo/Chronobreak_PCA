@@ -152,12 +152,12 @@ mod windows_probe {
         }
 
         println!(
-            "CHRONOBREAK_NATIVE_NVENC_PASS submitted={} completed={} bytes={} max_in_flight={} slot_drops={} input_view_creations={} input_view_replacements={} capture_arrivals={} capture_handoff_drops={} callback_errors={} output={}",
+            "CHRONOBREAK_NATIVE_NVENC_PASS submitted={} completed={} bytes={} max_in_flight={} no_free_slot_admission_failures={} input_view_creations={} input_view_replacements={} capture_arrivals={} capture_handoff_drops={} callback_errors={} output={}",
             submitted,
             encode.completed_frames,
             encode.output_bytes,
             encode.max_in_flight,
-            conversion.no_free_slot_drops,
+            conversion.no_free_slot_admission_failures,
             conversion.input_view_creations,
             conversion.input_view_replacements,
             capture.arrivals,
