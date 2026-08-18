@@ -123,8 +123,10 @@ preserves the 14,477-frame regression case.
 
 ## Remaining authority gates
 
-- Re-run against the pinned r5 FFmpeg/ffprobe pair; the PC-B media runtime has
-  source/lock contents but not those binaries.
+- The r5 runtime gap described when this evidence was recorded is superseded by
+  the staged, locked r6 runtime and its preliminary A/B validation. This M7
+  fixture remains historical FFmpeg 9 evidence; it is not a League acceptance
+  result.
 - Rebase against the exact fresh PC-A repository state before further native
   edits when that repository/ZIP is supplied.
 - Record one real automatic League lifecycle and perform audited M8 controlled
