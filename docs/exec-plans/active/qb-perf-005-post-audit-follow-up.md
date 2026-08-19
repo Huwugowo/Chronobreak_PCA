@@ -1,6 +1,6 @@
 # QB-PERF-005 post-audit follow-up
 
-Status: active; Package 9 is complete and Package 10 is next.
+Status: active; Packages 9 and 10 are complete and the Package 11 gate is next.
 
 Date: 2026-08-19
 
@@ -240,7 +240,7 @@ support, hard driver-hang containment, or permission to remove a backend.
 ## Progress
 
 - [x] Package 9: native output backpressure observability.
-- [ ] Package 10: cooperative lifecycle/drop audit.
+- [x] Package 10: cooperative lifecycle/drop audit.
 - [ ] Package 11: normal-arm gate and conditional implementation.
 - [ ] Sol checkpoint and evidence refresh.
 - [ ] Package 12: redundant poller event request removal.

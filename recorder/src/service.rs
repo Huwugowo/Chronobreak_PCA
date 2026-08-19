@@ -61,6 +61,13 @@ struct StartingRecording {
     process: LeagueProcess,
     cancellation: watch::Sender<bool>,
     task: JoinHandle<RecordingStartupResult<ActiveRecording>>,
+    timeout_action: StartupCancellationTimeoutAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupCancellationTimeoutAction {
+    AbortTask,
+    AwaitNativeCleanup,
 }
 
 struct RecordingStartup {
@@ -836,24 +843,51 @@ fn log_control_telemetry(
 fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     let (cancellation, receiver) = watch::channel(false);
     let process = startup.process;
+    #[cfg(target_os = "windows")]
+    let timeout_action = match startup.windows_backend {
+        WindowsRecorderBackend::Ffmpeg => StartupCancellationTimeoutAction::AbortTask,
+        WindowsRecorderBackend::Native => StartupCancellationTimeoutAction::AwaitNativeCleanup,
+    };
+    #[cfg(not(target_os = "windows"))]
+    let timeout_action = StartupCancellationTimeoutAction::AbortTask;
     let task = tokio::spawn(async move { start_recording(startup, receiver).await });
     StartingRecording {
         process,
         cancellation,
         task,
+        timeout_action,
     }
 }
 
 async fn cancel_starting(starting: Option<StartingRecording>, events: &EventSink) {
+    cancel_starting_with_timeout(starting, events, STARTUP_CANCELLATION_TIMEOUT).await;
+}
+
+async fn cancel_starting_with_timeout(
+    starting: Option<StartingRecording>,
+    events: &EventSink,
+    timeout: Duration,
+) {
     let Some(mut starting) = starting else {
         return;
     };
     let _ = starting.cancellation.send(true);
-    match tokio::time::timeout(STARTUP_CANCELLATION_TIMEOUT, &mut starting.task).await {
+    match tokio::time::timeout(timeout, &mut starting.task).await {
         Ok(Ok(Ok(recording))) => {
             stop_recording(recording, events).await;
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) => {}
+        Err(_)
+            if starting.timeout_action == StartupCancellationTimeoutAction::AwaitNativeCleanup =>
+        {
+            warn!(
+                pid = starting.process.pid,
+                "native recording startup cancellation exceeded its deadline; waiting for the offloaded worker join because abort cannot contain a hung driver call"
+            );
+            if let Ok(Ok(recording)) = starting.task.await {
+                stop_recording(recording, events).await;
+            }
+        }
         Err(_) => {
             warn!(
                 pid = starting.process.pid,
@@ -1610,6 +1644,36 @@ mod tests {
         assert_eq!(action.retry_at, None);
         assert!(!action.notify_user);
         assert!(retry.permits(process, now + Duration::from_secs(1)));
+    }
+
+    #[tokio::test]
+    async fn native_startup_timeout_waits_for_offloaded_cleanup_instead_of_aborting() {
+        let (cancellation, mut receiver) = watch::channel(false);
+        let cleanup_completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_cleanup_completed = Arc::clone(&cleanup_completed);
+        let task = tokio::spawn(async move {
+            receiver
+                .changed()
+                .await
+                .expect("fixture cancellation sender remains alive");
+            assert!(*receiver.borrow());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            task_cleanup_completed.store(true, std::sync::atomic::Ordering::Release);
+            Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+                "fixture native startup cancelled"
+            )))
+        });
+        let starting = StartingRecording {
+            process: LeagueProcess { pid: 42 },
+            cancellation,
+            task,
+            timeout_action: StartupCancellationTimeoutAction::AwaitNativeCleanup,
+        };
+        let events: EventSink = Arc::new(|_| {});
+
+        cancel_starting_with_timeout(Some(starting), &events, Duration::from_millis(1)).await;
+
+        assert!(cleanup_completed.load(std::sync::atomic::Ordering::Acquire));
     }
 
     #[test]

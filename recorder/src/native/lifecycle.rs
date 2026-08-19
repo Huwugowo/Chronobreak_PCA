@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
@@ -18,9 +20,36 @@ const STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 struct NativeWorker {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<NativeSessionTelemetrySnapshot>>>,
+    #[cfg(test)]
+    cleanup_observer: Option<Arc<NativeWorkerCleanupObserver>>,
 }
 
 impl NativeWorker {
+    fn new(
+        stop: Arc<AtomicBool>,
+        thread: JoinHandle<Result<NativeSessionTelemetrySnapshot>>,
+    ) -> Self {
+        Self {
+            stop,
+            thread: Some(thread),
+            #[cfg(test)]
+            cleanup_observer: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_cleanup_observer(
+        stop: Arc<AtomicBool>,
+        thread: JoinHandle<Result<NativeSessionTelemetrySnapshot>>,
+        observer: Arc<NativeWorkerCleanupObserver>,
+    ) -> Self {
+        Self {
+            stop,
+            thread: Some(thread),
+            cleanup_observer: Some(observer),
+        }
+    }
+
     fn request_stop(&self) {
         self.stop.store(true, Ordering::Release);
     }
@@ -35,6 +64,10 @@ impl NativeWorker {
             .thread
             .take()
             .context("native recorder worker was already joined")?;
+        #[cfg(test)]
+        if let Some(observer) = &self.cleanup_observer {
+            observer.explicit_joins.fetch_add(1, Ordering::Relaxed);
+        }
         tokio::task::spawn_blocking(move || thread.join())
             .await
             .context("native recorder join task panicked")?
@@ -46,9 +79,20 @@ impl Drop for NativeWorker {
     fn drop(&mut self) {
         self.request_stop();
         if let Some(thread) = self.thread.take() {
+            #[cfg(test)]
+            if let Some(observer) = &self.cleanup_observer {
+                observer.live_handle_drops.fetch_add(1, Ordering::Relaxed);
+            }
             let _ = thread.join();
         }
     }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct NativeWorkerCleanupObserver {
+    explicit_joins: AtomicU64,
+    live_handle_drops: AtomicU64,
 }
 
 /// Automatic-recorder owner for the thread-affine native WGC/D3D11/NVENC
@@ -121,7 +165,7 @@ impl NativeRecordingSession {
         target: CaptureTarget,
         ffmpeg: PathBuf,
         audio: AudioSource,
-        mut cancellation: watch::Receiver<bool>,
+        cancellation: watch::Receiver<bool>,
         startup_timeout: Duration,
     ) -> NativeRecordingStartupResult<Self> {
         validate_capture_target(&target).map_err(|error| {
@@ -133,7 +177,7 @@ impl NativeRecordingSession {
         let worker_output = output.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
-        let (evidence_sender, mut evidence) = watch::channel(RecordingEvidence::default());
+        let (evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
         let thread = thread::Builder::new()
             .name("queueback-native-gpu".to_owned())
             .spawn(move || {
@@ -148,10 +192,26 @@ impl NativeRecordingSession {
             })
             .context("failed to start native recorder GPU worker")
             .map_err(NativeRecordingStartupFailure::terminal)?;
-        let worker = NativeWorker {
-            stop,
-            thread: Some(thread),
-        };
+        let worker = NativeWorker::new(stop, thread);
+        Self::await_startup(
+            directory,
+            output,
+            worker,
+            evidence,
+            cancellation,
+            startup_timeout,
+        )
+        .await
+    }
+
+    async fn await_startup(
+        directory: PathBuf,
+        output: PathBuf,
+        worker: NativeWorker,
+        mut evidence: watch::Receiver<RecordingEvidence>,
+        mut cancellation: watch::Receiver<bool>,
+        startup_timeout: Duration,
+    ) -> NativeRecordingStartupResult<Self> {
         let deadline = Instant::now() + startup_timeout;
 
         loop {
@@ -498,20 +558,50 @@ mod tests {
         NativeRecordingSession {
             directory: directory.to_path_buf(),
             output,
-            worker: NativeWorker {
-                stop,
-                thread: Some(thread),
-            },
+            worker: NativeWorker::new(stop, thread),
             evidence,
             video_started_at: Instant::now(),
             recorded_at: SystemTime::now(),
         }
     }
 
+    fn waiting_worker(observer: Arc<NativeWorkerCleanupObserver>) -> NativeWorker {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            while !worker_stop.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(telemetry())
+        });
+        NativeWorker::with_cleanup_observer(stop, thread, observer)
+    }
+
+    fn assert_explicit_cleanup(observer: &NativeWorkerCleanupObserver) {
+        assert_eq!(observer.explicit_joins.load(Ordering::Relaxed), 1);
+        assert_eq!(observer.live_handle_drops.load(Ordering::Relaxed), 0);
+    }
+
+    async fn expect_startup_failure(
+        result: NativeRecordingStartupResult<NativeRecordingSession>,
+    ) -> NativeRecordingStartupFailure {
+        match result {
+            Err(error) => error,
+            Ok(session) => {
+                let _ = session
+                    .stop_with_failure("fixture expected startup failure".to_owned())
+                    .await;
+                panic!("native startup fixture unexpectedly became ready");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn successful_native_lifecycle_publishes_only_after_worker_join() {
         let directory = tempfile::tempdir().unwrap();
-        let session = fake_session(directory.path(), telemetry());
+        let mut session = fake_session(directory.path(), telemetry());
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        session.worker.cleanup_observer = Some(Arc::clone(&observer));
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(VIDEO_MP4).exists());
 
@@ -519,12 +609,15 @@ mod tests {
         assert_eq!(published, directory.path());
         assert!(directory.path().join(VIDEO_MP4).is_file());
         assert!(!directory.path().join(VIDEO_PARTIAL_MP4).exists());
+        assert_explicit_cleanup(&observer);
     }
 
     #[tokio::test]
     async fn failed_native_lifecycle_preserves_explicit_partial_output() {
         let directory = tempfile::tempdir().unwrap();
-        let session = fake_session(directory.path(), telemetry());
+        let mut session = fake_session(directory.path(), telemetry());
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        session.worker.cleanup_observer = Some(Arc::clone(&observer));
 
         let error = session
             .stop_with_failure("fixture watchdog failure".to_owned())
@@ -533,6 +626,168 @@ mod tests {
         assert!(error.to_string().contains("fixture watchdog failure"));
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(VIDEO_MP4).exists());
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn startup_cancellation_uses_explicit_async_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let worker = waiting_worker(Arc::clone(&observer));
+        let (_evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
+        let (cancel, cancellation) = watch::channel(false);
+        cancel.send(true).unwrap();
+
+        let error = expect_startup_failure(
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                Duration::from_secs(1),
+            )
+            .await,
+        )
+        .await;
+
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Cancelled
+        );
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn first_frame_timeout_uses_explicit_async_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let worker = waiting_worker(Arc::clone(&observer));
+        let (_evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
+        let (_cancel, cancellation) = watch::channel(false);
+
+        let error = expect_startup_failure(
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                Duration::from_millis(5),
+            )
+            .await,
+        )
+        .await;
+
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Retryable
+        );
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn protocol_anchor_target_and_injected_failures_use_explicit_cleanup() {
+        for protocol_error in [
+            "fixture protocol failure",
+            "fixture target closed",
+            "fixture injected NVENC failure",
+            "fixture injected mux failure",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let observer = Arc::new(NativeWorkerCleanupObserver::default());
+            let worker = waiting_worker(Arc::clone(&observer));
+            let evidence = RecordingEvidence {
+                protocol_error: Some(protocol_error.to_owned()),
+                ..RecordingEvidence::default()
+            };
+            let (_evidence_sender, evidence) = watch::channel(evidence);
+            let (_cancel, cancellation) = watch::channel(false);
+
+            let error = expect_startup_failure(
+                NativeRecordingSession::await_startup(
+                    directory.path().to_path_buf(),
+                    directory.path().join(VIDEO_PARTIAL_MP4),
+                    worker,
+                    evidence,
+                    cancellation,
+                    Duration::from_secs(1),
+                )
+                .await,
+            )
+            .await;
+
+            assert_eq!(
+                error.disposition(),
+                NativeRecordingStartupFailureDisposition::Terminal,
+                "{protocol_error}"
+            );
+            assert_explicit_cleanup(&observer);
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let worker = waiting_worker(Arc::clone(&observer));
+        let mut evidence = telemetry().recording_evidence();
+        evidence.first_qpc = Some(i64::MAX);
+        let (_evidence_sender, evidence) = watch::channel(evidence);
+        let (_cancel, cancellation) = watch::channel(false);
+        let error = expect_startup_failure(
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                Duration::from_secs(1),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Terminal
+        );
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn worker_exit_before_readiness_uses_explicit_async_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = thread::spawn(|| bail!("fixture worker exited before readiness"));
+        let worker = NativeWorker::with_cleanup_observer(stop, thread, Arc::clone(&observer));
+        let (_evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
+        let (_cancel, cancellation) = watch::channel(false);
+
+        let error = expect_startup_failure(
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                Duration::from_secs(1),
+            )
+            .await,
+        )
+        .await;
+
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Terminal
+        );
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[test]
+    fn cleanup_observer_distinguishes_the_invariant_drop_fallback() {
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        drop(waiting_worker(Arc::clone(&observer)));
+
+        assert_eq!(observer.explicit_joins.load(Ordering::Relaxed), 0);
+        assert_eq!(observer.live_handle_drops.load(Ordering::Relaxed), 1);
     }
 
     #[cfg(target_os = "windows")]
