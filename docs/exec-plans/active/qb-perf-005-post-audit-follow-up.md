@@ -1,6 +1,6 @@
 # QB-PERF-005 post-audit follow-up
 
-Status: active; Packages 9 and 10 are complete and the Package 11 gate is next.
+Status: active; the Sol packages are complete and Package 12 is next.
 
 Date: 2026-08-19
 
@@ -241,7 +241,7 @@ support, hard driver-hang containment, or permission to remove a backend.
 
 - [x] Package 9: native output backpressure observability.
 - [x] Package 10: cooperative lifecycle/drop audit.
-- [ ] Package 11: normal-arm gate and conditional implementation.
-- [ ] Sol checkpoint and evidence refresh.
+- [x] Package 11: normal-arm gate; not triggered, no production change.
+- [x] Sol checkpoint and evidence refresh.
 - [ ] Package 12: redundant poller event request removal.
 - [ ] Canonical full-repository reconciliation and external League gates.

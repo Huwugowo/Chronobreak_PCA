@@ -21,10 +21,11 @@ changes. Detailed proof belongs in the evidence reports.
 - The original recorder remediation is implemented and evidenced through
   Package 8 at commit `21ffa82`. The active successor plan is
   `docs/exec-plans/active/qb-perf-005-post-audit-follow-up.md`.
-- Packages 9 and 10 are implemented and evidenced. The Package 11 normal-arm
-  gate is next; its event-driven full-ring change remains conditional. Inspect
-  `git status` and `git diff` before editing so every package remains
-  independently attributable and existing work is never discarded.
+- Sol Packages 9 and 10 are implemented and evidenced. Package 11 closed as
+  `not triggered`, with no production synchronization change. Package 12's
+  local redundant poller request removal is next. Inspect `git status` and
+  `git diff` before editing so every package remains independently attributable
+  and existing work is never discarded.
 - The active plan and fresh Git state determine the exact next implementation
   package. This summary is not a second task backlog.
 
