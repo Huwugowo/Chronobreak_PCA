@@ -18,11 +18,12 @@ changes. Detailed proof belongs in the evidence reports.
 - M1-M6 and the non-League portion of M7 are provisionally complete.
 - The preliminary synthetic backend A/B passed in both orders and favors native
   on CPU and memory. It is not the M8 League decision.
-- The active recorder remediation plan is
-  `docs/exec-plans/active/qb-perf-005-recorder-review-remediation.md`.
-- Recorder remediation is implemented and evidenced through Package 8. Inspect
-  `git status` and `git diff` before editing so any newer package remains
-  independently attributable and existing work is never discarded.
+- The original recorder remediation is implemented and evidenced through
+  Package 8 at commit `21ffa82`. The active successor plan is
+  `docs/exec-plans/active/qb-perf-005-post-audit-follow-up.md`.
+- Package 9 observability is the next implementation unit. Inspect `git status`
+  and `git diff` before editing so every package remains independently
+  attributable and existing work is never discarded.
 - The active plan and fresh Git state determine the exact next implementation
   package. This summary is not a second task backlog.
 
