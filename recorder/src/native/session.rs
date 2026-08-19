@@ -151,6 +151,18 @@ impl NativeRecorderSession {
         Ok(())
     }
 
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_mux_writer_stall_after_writes(
+        &self,
+        write_index: u64,
+        duration: Duration,
+    ) -> Result<()> {
+        self.mux
+            .as_ref()
+            .context("native mux was not available for writer stall injection")?
+            .inject_writer_stall_after_writes(write_index, duration)
+    }
+
     /// Record exactly `duration * 60` scheduled output ticks after the first
     /// source-frame anchor. Source polling never waits beyond the next tick.
     pub fn run_for(&mut self, duration: Duration) -> Result<()> {

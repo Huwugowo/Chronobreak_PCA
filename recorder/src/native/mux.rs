@@ -164,6 +164,15 @@ pub struct NativeMuxTelemetrySnapshot {
     pub muxed_bytes: u64,
     pub output_time_us: Option<i64>,
     pub output_file_bytes: u64,
+    pub video_writer_calls: u64,
+    pub video_writer_duration_100ns: u64,
+    pub maximum_video_writer_duration_100ns: u64,
+    pub slow_video_writer_calls: u64,
+    pub explicit_flush_calls: u64,
+    pub explicit_flush_duration_100ns: u64,
+    pub maximum_explicit_flush_duration_100ns: u64,
+    pub injected_mux_writer_stalls: u64,
+    pub injected_mux_writer_stall_100ns: u64,
     pub progress_end: bool,
     pub reader_errors: u64,
 }
@@ -176,6 +185,22 @@ struct NativeMuxTelemetry {
     progress_end: AtomicBool,
     progress_pipe_closed: AtomicBool,
     reader_errors: AtomicU64,
+    video_writer_calls: AtomicU64,
+    video_writer_duration_100ns: AtomicU64,
+    maximum_video_writer_duration_100ns: AtomicU64,
+    slow_video_writer_calls: AtomicU64,
+    explicit_flush_calls: AtomicU64,
+    explicit_flush_duration_100ns: AtomicU64,
+    maximum_explicit_flush_duration_100ns: AtomicU64,
+    injected_mux_writer_stalls: AtomicU64,
+    injected_mux_writer_stall_100ns: AtomicU64,
+    writer_timing_published: AtomicBool,
+    #[cfg(feature = "native-failure-injection")]
+    injected_stall_after_write: AtomicU64,
+    #[cfg(feature = "native-failure-injection")]
+    injected_stall_duration_ns: AtomicU64,
+    #[cfg(feature = "native-failure-injection")]
+    injected_stall_fired: AtomicBool,
     stderr_tail: Mutex<VecDeque<String>>,
 }
 
@@ -190,6 +215,22 @@ impl NativeMuxTelemetry {
             progress_end: AtomicBool::new(false),
             progress_pipe_closed: AtomicBool::new(false),
             reader_errors: AtomicU64::new(0),
+            video_writer_calls: AtomicU64::new(0),
+            video_writer_duration_100ns: AtomicU64::new(0),
+            maximum_video_writer_duration_100ns: AtomicU64::new(0),
+            slow_video_writer_calls: AtomicU64::new(0),
+            explicit_flush_calls: AtomicU64::new(0),
+            explicit_flush_duration_100ns: AtomicU64::new(0),
+            maximum_explicit_flush_duration_100ns: AtomicU64::new(0),
+            injected_mux_writer_stalls: AtomicU64::new(0),
+            injected_mux_writer_stall_100ns: AtomicU64::new(0),
+            writer_timing_published: AtomicBool::new(false),
+            #[cfg(feature = "native-failure-injection")]
+            injected_stall_after_write: AtomicU64::new(0),
+            #[cfg(feature = "native-failure-injection")]
+            injected_stall_duration_ns: AtomicU64::new(0),
+            #[cfg(feature = "native-failure-injection")]
+            injected_stall_fired: AtomicBool::new(false),
             stderr_tail: Mutex::new(VecDeque::with_capacity(MAX_STDERR_TAIL_LINES)),
         }
     }
@@ -213,6 +254,14 @@ impl NativeMuxTelemetry {
             .into_iter()
             .chain(cfr_output_time_us)
             .max();
+        let writer_timing_published = self.writer_timing_published.load(Ordering::Acquire);
+        let published = |counter: &AtomicU64| {
+            if writer_timing_published {
+                counter.load(Ordering::Relaxed)
+            } else {
+                0
+            }
+        };
         NativeMuxTelemetrySnapshot {
             encoded_frames,
             muxed_bytes,
@@ -221,6 +270,19 @@ impl NativeMuxTelemetry {
             // the best nonblocking live estimate; finish() replaces it with
             // authoritative filesystem metadata after the child exits.
             output_file_bytes: muxed_bytes,
+            video_writer_calls: published(&self.video_writer_calls),
+            video_writer_duration_100ns: published(&self.video_writer_duration_100ns),
+            maximum_video_writer_duration_100ns: published(
+                &self.maximum_video_writer_duration_100ns,
+            ),
+            slow_video_writer_calls: published(&self.slow_video_writer_calls),
+            explicit_flush_calls: published(&self.explicit_flush_calls),
+            explicit_flush_duration_100ns: published(&self.explicit_flush_duration_100ns),
+            maximum_explicit_flush_duration_100ns: published(
+                &self.maximum_explicit_flush_duration_100ns,
+            ),
+            injected_mux_writer_stalls: published(&self.injected_mux_writer_stalls),
+            injected_mux_writer_stall_100ns: published(&self.injected_mux_writer_stall_100ns),
             progress_end: self.progress_end.load(Ordering::Acquire),
             reader_errors: self.reader_errors.load(Ordering::Relaxed),
         }
@@ -235,6 +297,71 @@ impl NativeMuxTelemetry {
 
     fn reader_error(&self) {
         self.reader_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn publish_writer_timing(&self, timing: NativeMuxWriterTiming) {
+        self.video_writer_calls
+            .store(timing.video_writer_calls, Ordering::Relaxed);
+        self.video_writer_duration_100ns
+            .store(timing.video_writer_duration_100ns, Ordering::Relaxed);
+        self.maximum_video_writer_duration_100ns.store(
+            timing.maximum_video_writer_duration_100ns,
+            Ordering::Relaxed,
+        );
+        self.slow_video_writer_calls
+            .store(timing.slow_video_writer_calls, Ordering::Relaxed);
+        self.explicit_flush_calls
+            .store(timing.explicit_flush_calls, Ordering::Relaxed);
+        self.explicit_flush_duration_100ns
+            .store(timing.explicit_flush_duration_100ns, Ordering::Relaxed);
+        self.maximum_explicit_flush_duration_100ns.store(
+            timing.maximum_explicit_flush_duration_100ns,
+            Ordering::Relaxed,
+        );
+        self.injected_mux_writer_stalls
+            .store(timing.injected_mux_writer_stalls, Ordering::Relaxed);
+        self.injected_mux_writer_stall_100ns
+            .store(timing.injected_mux_writer_stall_100ns, Ordering::Relaxed);
+        self.writer_timing_published.store(true, Ordering::Release);
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    fn configure_writer_stall(&self, write_index: u64, duration: Duration) -> Result<()> {
+        ensure!(
+            write_index > 0,
+            "injected mux writer stall index must be positive"
+        );
+        ensure!(
+            !duration.is_zero() && duration <= Duration::from_secs(5),
+            "injected mux writer stall duration must be in 1 ns..=5 s"
+        );
+        let duration_ns = u64::try_from(duration.as_nanos())
+            .context("injected mux writer stall duration exceeded u64 nanoseconds")?;
+        ensure!(
+            self.injected_stall_after_write.load(Ordering::Acquire) == 0,
+            "injected mux writer stall was already configured"
+        );
+        self.injected_stall_fired.store(false, Ordering::Relaxed);
+        self.injected_stall_duration_ns
+            .store(duration_ns, Ordering::Relaxed);
+        self.injected_stall_after_write
+            .store(write_index, Ordering::Release);
+        Ok(())
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    fn take_writer_stall(&self, write_index: u64) -> Option<Duration> {
+        if self.injected_stall_after_write.load(Ordering::Acquire) != write_index
+            || self
+                .injected_stall_fired
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return None;
+        }
+        Some(Duration::from_nanos(
+            self.injected_stall_duration_ns.load(Ordering::Relaxed),
+        ))
     }
 
     fn remember_stderr(&self, line: &str) {
@@ -268,36 +395,117 @@ impl NativeMuxTelemetry {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct NativeMuxWriterTiming {
+    video_writer_calls: u64,
+    video_writer_duration_100ns: u64,
+    maximum_video_writer_duration_100ns: u64,
+    slow_video_writer_calls: u64,
+    explicit_flush_calls: u64,
+    explicit_flush_duration_100ns: u64,
+    maximum_explicit_flush_duration_100ns: u64,
+    injected_mux_writer_stalls: u64,
+    injected_mux_writer_stall_100ns: u64,
+}
+
+impl NativeMuxWriterTiming {
+    fn record_write(&mut self, duration: Duration, frames_per_second: u32) {
+        let duration_100ns = duration_100ns(duration);
+        self.video_writer_calls = self.video_writer_calls.saturating_add(1);
+        self.video_writer_duration_100ns = self
+            .video_writer_duration_100ns
+            .saturating_add(duration_100ns);
+        self.maximum_video_writer_duration_100ns =
+            self.maximum_video_writer_duration_100ns.max(duration_100ns);
+        if duration
+            .as_nanos()
+            .saturating_mul(u128::from(frames_per_second))
+            >= Duration::from_secs(1).as_nanos()
+        {
+            self.slow_video_writer_calls = self.slow_video_writer_calls.saturating_add(1);
+        }
+    }
+
+    fn record_explicit_flush(&mut self, duration: Duration) {
+        let duration_100ns = duration_100ns(duration);
+        self.explicit_flush_calls = self.explicit_flush_calls.saturating_add(1);
+        self.explicit_flush_duration_100ns = self
+            .explicit_flush_duration_100ns
+            .saturating_add(duration_100ns);
+        self.maximum_explicit_flush_duration_100ns = self
+            .maximum_explicit_flush_duration_100ns
+            .max(duration_100ns);
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    fn record_injected_stall(&mut self, duration: Duration) {
+        self.injected_mux_writer_stalls = self.injected_mux_writer_stalls.saturating_add(1);
+        self.injected_mux_writer_stall_100ns = self
+            .injected_mux_writer_stall_100ns
+            .saturating_add(duration_100ns(duration));
+    }
+}
+
 /// Buffered Annex-B writer that keeps the large syscall-saving buffer while
 /// observing FFmpeg process loss on every NVENC output frame.
 pub struct NativeMuxVideoWriter {
     writer: BufWriter<ChildStdin>,
     telemetry: Arc<NativeMuxTelemetry>,
+    timing: NativeMuxWriterTiming,
     unflushed_bytes: usize,
     last_flush: Instant,
 }
 
 impl Write for NativeMuxVideoWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        self.telemetry.ensure_video_sink_open()?;
-        let written = self.writer.write(buffer)?;
-        self.unflushed_bytes = self.unflushed_bytes.saturating_add(written);
-        if self.unflushed_bytes >= NATIVE_PIPE_FLUSH_BYTES
-            || self.last_flush.elapsed() >= NATIVE_PIPE_FLUSH_INTERVAL
-        {
-            self.writer.flush()?;
-            self.unflushed_bytes = 0;
-            self.last_flush = Instant::now();
-        }
-        Ok(written)
+        let started = Instant::now();
+        let result = (|| {
+            self.telemetry.ensure_video_sink_open()?;
+            #[cfg(feature = "native-failure-injection")]
+            if let Some(duration) = self
+                .telemetry
+                .take_writer_stall(self.timing.video_writer_calls.saturating_add(1))
+            {
+                let stall_started = Instant::now();
+                thread::sleep(duration);
+                self.timing.record_injected_stall(stall_started.elapsed());
+            }
+            let written = self.writer.write(buffer)?;
+            self.unflushed_bytes = self.unflushed_bytes.saturating_add(written);
+            if self.unflushed_bytes >= NATIVE_PIPE_FLUSH_BYTES
+                || self.last_flush.elapsed() >= NATIVE_PIPE_FLUSH_INTERVAL
+            {
+                self.writer.flush()?;
+                self.unflushed_bytes = 0;
+                self.last_flush = Instant::now();
+            }
+            Ok(written)
+        })();
+        self.timing
+            .record_write(started.elapsed(), self.telemetry.frames_per_second);
+        result
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.telemetry.ensure_video_sink_open()?;
-        self.writer.flush()?;
-        self.unflushed_bytes = 0;
-        self.last_flush = Instant::now();
-        Ok(())
+        let started = Instant::now();
+        let result = (|| {
+            self.telemetry.ensure_video_sink_open()?;
+            self.writer.flush()?;
+            self.unflushed_bytes = 0;
+            self.last_flush = Instant::now();
+            Ok(())
+        })();
+        self.timing.record_explicit_flush(started.elapsed());
+        result
+    }
+}
+
+impl Drop for NativeMuxVideoWriter {
+    fn drop(&mut self) {
+        // The completion thread performs its explicit final flush before this
+        // concrete writer is dropped. One relaxed publication here keeps all
+        // per-packet accounting local to that output thread.
+        self.telemetry.publish_writer_timing(self.timing);
     }
 }
 
@@ -395,9 +603,19 @@ impl NativeMuxProcess {
         Ok(NativeMuxVideoWriter {
             writer: BufWriter::with_capacity(NATIVE_PIPE_BUFFER_BYTES, stdin),
             telemetry: Arc::clone(&self.telemetry),
+            timing: NativeMuxWriterTiming::default(),
             unflushed_bytes: 0,
             last_flush: Instant::now(),
         })
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_writer_stall_after_writes(
+        &self,
+        write_index: u64,
+        duration: Duration,
+    ) -> Result<()> {
+        self.telemetry.configure_writer_stall(write_index, duration)
     }
 
     pub fn telemetry(&self) -> NativeMuxTelemetrySnapshot {
@@ -593,6 +811,10 @@ fn require_pair(arguments: &[OsString], option: &str, value: &str) -> Result<()>
         .with_context(|| format!("native mux plan is missing {option} {value}"))
 }
 
+fn duration_100ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos() / 100).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,6 +885,81 @@ mod tests {
     }
 
     #[test]
+    fn writer_timing_is_local_until_exact_terminal_publication() {
+        let telemetry = NativeMuxTelemetry::new(60);
+        let mut timing = NativeMuxWriterTiming::default();
+        timing.record_write(Duration::from_micros(10), 60);
+        timing.record_write(Duration::from_millis(20), 60);
+        timing.record_explicit_flush(Duration::from_micros(5));
+        timing.record_explicit_flush(Duration::from_micros(15));
+
+        let live = telemetry.snapshot();
+        assert_eq!(live.video_writer_calls, 0);
+        assert_eq!(live.explicit_flush_calls, 0);
+
+        telemetry.publish_writer_timing(timing);
+        let terminal = telemetry.snapshot();
+        assert_eq!(terminal.video_writer_calls, 2);
+        assert_eq!(terminal.video_writer_duration_100ns, 200_100);
+        assert_eq!(terminal.maximum_video_writer_duration_100ns, 200_000);
+        assert_eq!(terminal.slow_video_writer_calls, 1);
+        assert_eq!(terminal.explicit_flush_calls, 2);
+        assert_eq!(terminal.explicit_flush_duration_100ns, 200);
+        assert_eq!(terminal.maximum_explicit_flush_duration_100ns, 150);
+        assert_eq!(terminal.injected_mux_writer_stalls, 0);
+        assert_eq!(terminal.injected_mux_writer_stall_100ns, 0);
+    }
+
+    #[test]
+    fn slow_writer_threshold_uses_the_exact_rational_frame_interval() {
+        let mut timing = NativeMuxWriterTiming::default();
+        timing.record_write(Duration::from_nanos(16_666_666), 60);
+        assert_eq!(timing.slow_video_writer_calls, 0);
+
+        timing.record_write(Duration::from_nanos(16_666_667), 60);
+        assert_eq!(timing.slow_video_writer_calls, 1);
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    #[test]
+    fn writer_stall_configuration_is_bounded_and_fires_once() {
+        let telemetry = NativeMuxTelemetry::new(60);
+        assert!(
+            telemetry
+                .configure_writer_stall(0, Duration::from_millis(1))
+                .is_err()
+        );
+        assert!(telemetry.configure_writer_stall(1, Duration::ZERO).is_err());
+        assert!(
+            telemetry
+                .configure_writer_stall(1, Duration::from_secs(5) + Duration::from_nanos(1))
+                .is_err()
+        );
+
+        telemetry
+            .configure_writer_stall(3, Duration::from_millis(500))
+            .expect("valid one-shot writer stall");
+        assert!(
+            telemetry
+                .configure_writer_stall(4, Duration::from_millis(1))
+                .is_err()
+        );
+        assert_eq!(telemetry.take_writer_stall(2), None);
+        assert_eq!(
+            telemetry.take_writer_stall(3),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(telemetry.take_writer_stall(3), None);
+
+        let mut timing = NativeMuxWriterTiming::default();
+        timing.record_injected_stall(Duration::from_millis(500));
+        telemetry.publish_writer_timing(timing);
+        let snapshot = telemetry.snapshot();
+        assert_eq!(snapshot.injected_mux_writer_stalls, 1);
+        assert_eq!(snapshot.injected_mux_writer_stall_100ns, 5_000_000);
+    }
+
+    #[test]
     fn native_progress_evidence_is_monotonic_and_terminal() {
         let telemetry = NativeMuxTelemetry::new(60);
         for line in [
@@ -684,6 +981,15 @@ mod tests {
                 muxed_bytes: 8192,
                 output_time_us: Some(33333),
                 output_file_bytes: 9000,
+                video_writer_calls: 0,
+                video_writer_duration_100ns: 0,
+                maximum_video_writer_duration_100ns: 0,
+                slow_video_writer_calls: 0,
+                explicit_flush_calls: 0,
+                explicit_flush_duration_100ns: 0,
+                maximum_explicit_flush_duration_100ns: 0,
+                injected_mux_writer_stalls: 0,
+                injected_mux_writer_stall_100ns: 0,
                 progress_end: true,
                 reader_errors: 0,
             }

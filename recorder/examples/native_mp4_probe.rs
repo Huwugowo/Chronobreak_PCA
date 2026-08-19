@@ -17,6 +17,8 @@ mod windows_probe {
         let mut fail_nvenc_after_ticks = None;
         let mut stall_worker_after_ticks = None;
         let mut stall_worker_ms = None;
+        let mut stall_mux_after_writes = None;
+        let mut stall_mux_ms = None;
         let mut max_no_slot_admission_failures = 0_u64;
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -69,6 +71,22 @@ mod windows_probe {
                             .context("--stall-worker-ms must be an integer")?,
                     );
                 }
+                "--stall-mux-after-writes" => {
+                    stall_mux_after_writes = Some(
+                        args.next()
+                            .context("--stall-mux-after-writes requires a value")?
+                            .parse::<u64>()
+                            .context("--stall-mux-after-writes must be an integer")?,
+                    );
+                }
+                "--stall-mux-ms" => {
+                    stall_mux_ms = Some(
+                        args.next()
+                            .context("--stall-mux-ms requires a value")?
+                            .parse::<u64>()
+                            .context("--stall-mux-ms must be an integer")?,
+                    );
+                }
                 "--max-no-slot-admission-failures" | "--max-slot-tick-drops" => {
                     max_no_slot_admission_failures = args
                         .next()
@@ -107,6 +125,20 @@ mod windows_probe {
                 bail!("--stall-worker-after-ticks and --stall-worker-ms must be provided together")
             }
         }
+        #[cfg(feature = "native-failure-injection")]
+        match (stall_mux_after_writes, stall_mux_ms) {
+            (Some(write_index), Some(milliseconds)) => {
+                session.inject_mux_writer_stall_after_writes(
+                    write_index,
+                    Duration::from_millis(milliseconds),
+                )?;
+                println!(
+                    "CHRONOBREAK_NATIVE_FAILURE_INJECTION mux_stall_after_writes={write_index} mux_stall_ms={milliseconds}"
+                );
+            }
+            (None, None) => {}
+            _ => bail!("--stall-mux-after-writes and --stall-mux-ms must be provided together"),
+        }
         #[cfg(not(feature = "native-failure-injection"))]
         {
             ensure!(
@@ -116,6 +148,10 @@ mod windows_probe {
             ensure!(
                 stall_worker_after_ticks.is_none() && stall_worker_ms.is_none(),
                 "worker stall injection requires the native-failure-injection Cargo feature"
+            );
+            ensure!(
+                stall_mux_after_writes.is_none() && stall_mux_ms.is_none(),
+                "mux writer stall injection requires the native-failure-injection Cargo feature"
             );
         }
         println!(
@@ -223,7 +259,7 @@ mod windows_probe {
         );
 
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} max_in_flight={} no_slot_admission_failures={} unstaged_tick_admission_failures={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} video_writer_calls={} video_writer_duration_100ns={} maximum_video_writer_duration_100ns={} slow_video_writer_calls={} explicit_flush_calls={} explicit_flush_duration_100ns={} maximum_explicit_flush_duration_100ns={} injected_mux_writer_stalls={} injected_mux_writer_stall_100ns={} max_in_flight={} no_slot_admission_failures={} unstaged_tick_admission_failures={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
             telemetry.cfr.scheduled_ticks,
             telemetry.cfr.media_time_base_numerator,
             telemetry.cfr.media_time_base_denominator,
@@ -245,6 +281,15 @@ mod windows_probe {
             telemetry.mux.muxed_bytes,
             telemetry.mux.output_file_bytes,
             telemetry.mux.output_time_us.unwrap_or_default(),
+            telemetry.mux.video_writer_calls,
+            telemetry.mux.video_writer_duration_100ns,
+            telemetry.mux.maximum_video_writer_duration_100ns,
+            telemetry.mux.slow_video_writer_calls,
+            telemetry.mux.explicit_flush_calls,
+            telemetry.mux.explicit_flush_duration_100ns,
+            telemetry.mux.maximum_explicit_flush_duration_100ns,
+            telemetry.mux.injected_mux_writer_stalls,
+            telemetry.mux.injected_mux_writer_stall_100ns,
             telemetry.encode.max_in_flight,
             telemetry.no_slot_admission_failures,
             telemetry.unstaged_tick_admission_failures,
