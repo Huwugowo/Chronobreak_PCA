@@ -1,6 +1,6 @@
 # QB-PERF-005 recorder review remediation addendum
 
-Status: implementation in progress; Packages 0-4 complete.
+Status: implementation complete through Package 8; external gates remain.
 
 Date: 2026-08-18
 
@@ -403,6 +403,54 @@ The final non-League acceptance report must state per package:
 - any regression, uncertainty, or external gate;
 - whether the package was kept, redesigned, reverted, or not triggered.
 
+### Package 8: Immediate native-backend audit follow-up
+
+The post-acceptance native-only review found four avoidable mechanisms that can
+be removed without changing the media format, queue capacities, pinned runtime,
+reference backend, or match/session model:
+
+1. periodic native evidence reads partial-file metadata synchronously on the
+   D3D11/NVENC worker;
+2. callback quiescence locks and broadcasts whenever the active callback count
+   returns to zero, even while no resize or shutdown waiter can exist;
+3. native encoder startup creates a temporary NVENC session for capability
+   checks and then creates the real session immediately afterward; and
+4. the low-rate async control plane uses Tokio's logical-processor-sized default
+   worker pool.
+
+Implement these as one independently reviewable follow-up while preserving all
+hard invariants above. Specifically:
+
+- periodic mux evidence must use already-published atomic progress; finalization
+  remains the only place that requires authoritative filesystem size;
+- quiescence notifications may be suppressed only when neither reconfiguration
+  nor shutdown can be waiting; resize/shutdown lost-wakeup protection and its
+  tests remain mandatory;
+- H.264/1080p60/async capability checks must run against the same live NVENC
+  session that is subsequently initialized, with identical error detail and
+  cleanup ownership;
+- tray and headless service runtimes use exactly two named Tokio workers;
+  one-shot diagnostics use a current-thread runtime. Blocking GPU-thread joins
+  remain on Tokio's blocking pool.
+
+Exit criteria:
+
+- no `std::fs` operation is reachable from periodic native evidence;
+- normal callback exit performs no mutex acquisition or condition-variable
+  notification, while resize and shutdown quiescence tests still pass;
+- native encoder startup opens exactly one NVENC session;
+- production service runtimes declare exactly two async workers;
+- native tests, the available all-target suite, formatting, check, strict
+  Clippy, release build, and `git diff --check` pass, continuing to skip only
+  the absent empirical R11 fixture.
+
+Active-session restart remains governed by the segment-contract gate below.
+Dropping FFprobe or changing runtime validation remains prohibited while the
+pinned r6/reference-backend contract is retained. Hard containment of a driver
+call that never returns requires a separately planned supervised process; an
+in-process timeout cannot safely terminate a Rust thread or reclaim its FFI
+resources.
+
 ## Work explicitly outside this addendum
 
 ### Runtime recording restart
@@ -509,6 +557,13 @@ review findings.
   and matched preliminary A/B in both orders. Keep all remediation packages
   and both backends. R11, real League impact, canonical-repository integration,
   segment/rebind design, and M8/M9 remain external gates.
+- 2026-08-18: Package 8 removes synchronous live file metadata, normal-path
+  callback mutex/condition-variable work, the duplicate production NVENC
+  session, and oversized default Tokio control pools. The exact final source
+  passed the complete available static suite, optimized builds, and a six-second
+  360-frame native hardware/mux/decode arm. Keep all four changes. Runtime
+  segmentation, runtime replacement, and hard driver-hang containment remain
+  separately gated designs.
 
 ## Progress
 
@@ -531,6 +586,9 @@ review findings.
   `docs/PACKAGE6_POLLER_PERSISTENCE_EVIDENCE.md`.
 - [x] Package 7: full non-League evidence refresh. Evidence:
   `docs/PACKAGE7_FINAL_NON_LEAGUE_ACCEPTANCE.md`.
+- [x] Package 8: immediate native-backend audit follow-up. Evidence:
+  `docs/PACKAGE8_NATIVE_AUDIT_FOLLOWUP_EVIDENCE.md` and
+  `docs/PACKAGE8_QUICK_REVISION_AB.md`.
 - [ ] Reconcile into the canonical full repository and complete external League
   gates before M8/M9.
 

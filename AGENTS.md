@@ -161,3 +161,4 @@ For planned features:
 - a plan path — that ExecPlan is the authoritative implementation guide.
 
 Keep `progress.md` only as a short restart pointer, never as a second backlog.
+

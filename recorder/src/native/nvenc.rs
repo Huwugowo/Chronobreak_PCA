@@ -246,9 +246,7 @@ impl NvencDriverProbe {
         self.version
     }
 
-    /// Open a temporary NVENC session on the exact D3D11 device owned by the
-    /// native WGC source and prove the H.264/1080p60 asynchronous prerequisites.
-    pub fn probe_h264_on_source(&self, source: &NativeWgcSource) -> Result<NvencH264Capability> {
+    pub(super) fn ensure_required_api(&self) -> Result<()> {
         let required = NvencApiVersion {
             major: NVENC_API_MAJOR_VERSION,
             minor: NVENC_API_MINOR_VERSION,
@@ -262,6 +260,16 @@ impl NvencDriverProbe {
                 required.minor
             );
         }
+        Ok(())
+    }
+
+    /// Open a temporary NVENC session on the exact D3D11 device owned by the
+    /// native WGC source and prove the H.264/1080p60 asynchronous prerequisites.
+    /// Production encoding validates the same capability contract on its real
+    /// session instead; this temporary path exists for the standalone source
+    /// diagnostic probe.
+    pub fn probe_h264_on_source(&self, source: &NativeWgcSource) -> Result<NvencH264Capability> {
+        self.ensure_required_api()?;
 
         let functions = self.create_function_list()?;
         let open_session = functions.open_encode_session_ex()?;
@@ -282,67 +290,9 @@ impl NvencDriverProbe {
             encoder: Some(encoder),
             destroy_encoder,
         };
-
-        let codecs = supported_codec_guids(&functions, session.handle())?;
-        if !codecs.contains(&H264_GUID) {
-            bail!("same-device NVENC session does not advertise H.264 encoding");
-        }
-
-        let max_width = query_u32_cap(
-            &functions,
-            session.handle(),
-            NVENC_CAPS_WIDTH_MAX,
-            "maximum H.264 width",
-        )?;
-        let max_height = query_u32_cap(
-            &functions,
-            session.handle(),
-            NVENC_CAPS_HEIGHT_MAX,
-            "maximum H.264 height",
-        )?;
-        let max_macroblocks_per_frame = query_u32_cap(
-            &functions,
-            session.handle(),
-            NVENC_CAPS_MB_NUM_MAX,
-            "maximum H.264 macroblocks per frame",
-        )?;
-        let max_macroblocks_per_second = query_u32_cap(
-            &functions,
-            session.handle(),
-            NVENC_CAPS_MB_PER_SEC_MAX,
-            "maximum H.264 macroblocks per second",
-        )?;
-        let async_encode_supported = query_u32_cap(
-            &functions,
-            session.handle(),
-            NVENC_CAPS_ASYNC_ENCODE_SUPPORT,
-            "asynchronous H.264 encode support",
-        )? != 0;
-
-        if max_width < REQUIRED_WIDTH
-            || max_height < REQUIRED_HEIGHT
-            || max_macroblocks_per_frame < REQUIRED_MACROBLOCKS_PER_FRAME
-            || max_macroblocks_per_second < REQUIRED_MACROBLOCKS_PER_SECOND
-            || !async_encode_supported
-        {
-            bail!(
-                "same-device NVENC H.264 capability is below 1920x1080@60 async requirements: max={}x{}, macroblocks/frame={}, macroblocks/s={}, async={}",
-                max_width,
-                max_height,
-                max_macroblocks_per_frame,
-                max_macroblocks_per_second,
-                async_encode_supported
-            );
-        }
-
+        let capability = validate_h264_session(&functions, session.handle())?;
         session.close()?;
-        Ok(NvencH264Capability {
-            max_width,
-            max_height,
-            max_macroblocks_per_frame,
-            max_macroblocks_per_second,
-            async_encode_supported,
-        })
+        Ok(capability)
     }
 
     pub(super) fn create_function_list(&self) -> Result<NvencFunctionList> {
@@ -361,6 +311,71 @@ impl NvencDriverProbe {
         nvenc_status(status, "NvEncodeAPICreateInstance")?;
         Ok(functions)
     }
+}
+
+pub(super) fn validate_h264_session(
+    functions: &NvencFunctionList,
+    encoder: *mut c_void,
+) -> Result<NvencH264Capability> {
+    let codecs = supported_codec_guids(functions, encoder)?;
+    if !codecs.contains(&H264_GUID) {
+        bail!("same-device NVENC session does not advertise H.264 encoding");
+    }
+
+    let max_width = query_u32_cap(
+        functions,
+        encoder,
+        NVENC_CAPS_WIDTH_MAX,
+        "maximum H.264 width",
+    )?;
+    let max_height = query_u32_cap(
+        functions,
+        encoder,
+        NVENC_CAPS_HEIGHT_MAX,
+        "maximum H.264 height",
+    )?;
+    let max_macroblocks_per_frame = query_u32_cap(
+        functions,
+        encoder,
+        NVENC_CAPS_MB_NUM_MAX,
+        "maximum H.264 macroblocks per frame",
+    )?;
+    let max_macroblocks_per_second = query_u32_cap(
+        functions,
+        encoder,
+        NVENC_CAPS_MB_PER_SEC_MAX,
+        "maximum H.264 macroblocks per second",
+    )?;
+    let async_encode_supported = query_u32_cap(
+        functions,
+        encoder,
+        NVENC_CAPS_ASYNC_ENCODE_SUPPORT,
+        "asynchronous H.264 encode support",
+    )? != 0;
+
+    if max_width < REQUIRED_WIDTH
+        || max_height < REQUIRED_HEIGHT
+        || max_macroblocks_per_frame < REQUIRED_MACROBLOCKS_PER_FRAME
+        || max_macroblocks_per_second < REQUIRED_MACROBLOCKS_PER_SECOND
+        || !async_encode_supported
+    {
+        bail!(
+            "same-device NVENC H.264 capability is below 1920x1080@60 async requirements: max={}x{}, macroblocks/frame={}, macroblocks/s={}, async={}",
+            max_width,
+            max_height,
+            max_macroblocks_per_frame,
+            max_macroblocks_per_second,
+            async_encode_supported
+        );
+    }
+
+    Ok(NvencH264Capability {
+        max_width,
+        max_height,
+        max_macroblocks_per_frame,
+        max_macroblocks_per_second,
+        async_encode_supported,
+    })
 }
 
 struct NvencProbeSession {

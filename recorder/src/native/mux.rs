@@ -194,8 +194,9 @@ impl NativeMuxTelemetry {
         }
     }
 
-    fn snapshot(&self, output_file_bytes: u64) -> NativeMuxTelemetrySnapshot {
+    fn snapshot(&self) -> NativeMuxTelemetrySnapshot {
         let encoded_frames = self.encoded_frames.load(Ordering::Relaxed);
+        let muxed_bytes = self.muxed_bytes.load(Ordering::Relaxed);
         let reported_output_time_us = self.output_time_us.load(Ordering::Relaxed);
         // FFmpeg's stream-copy progress can report an audio-biased out_time_us
         // that stalls near startup even while video frames and mux bytes keep
@@ -214,11 +215,21 @@ impl NativeMuxTelemetry {
             .max();
         NativeMuxTelemetrySnapshot {
             encoded_frames,
-            muxed_bytes: self.muxed_bytes.load(Ordering::Relaxed),
+            muxed_bytes,
             output_time_us,
-            output_file_bytes,
+            // FFmpeg publishes `total_size` through the progress pipe. It is
+            // the best nonblocking live estimate; finish() replaces it with
+            // authoritative filesystem metadata after the child exits.
+            output_file_bytes: muxed_bytes,
             progress_end: self.progress_end.load(Ordering::Acquire),
             reader_errors: self.reader_errors.load(Ordering::Relaxed),
+        }
+    }
+
+    fn final_snapshot(&self, output_file_bytes: u64) -> NativeMuxTelemetrySnapshot {
+        NativeMuxTelemetrySnapshot {
+            output_file_bytes,
+            ..self.snapshot()
         }
     }
 
@@ -390,9 +401,7 @@ impl NativeMuxProcess {
     }
 
     pub fn telemetry(&self) -> NativeMuxTelemetrySnapshot {
-        let output_file_bytes =
-            std::fs::metadata(&self.output).map_or(0, |metadata| metadata.len());
-        self.telemetry.snapshot(output_file_bytes)
+        self.telemetry.snapshot()
     }
 
     pub fn finish(mut self) -> Result<NativeMuxTelemetrySnapshot> {
@@ -432,7 +441,7 @@ impl NativeMuxProcess {
                 )
             })?
             .len();
-        let snapshot = self.telemetry.snapshot(output_file_bytes);
+        let snapshot = self.telemetry.final_snapshot(output_file_bytes);
         let stderr = self.telemetry.stderr_summary();
 
         ensure!(
@@ -667,8 +676,9 @@ mod tests {
         ] {
             ingest_progress_line(line, &telemetry);
         }
+        assert_eq!(telemetry.snapshot().output_file_bytes, 8192);
         assert_eq!(
-            telemetry.snapshot(9000),
+            telemetry.final_snapshot(9000),
             NativeMuxTelemetrySnapshot {
                 encoded_frames: 2,
                 muxed_bytes: 8192,
@@ -695,7 +705,7 @@ mod tests {
             ingest_progress_line(line, &telemetry);
         }
 
-        let snapshot = telemetry.snapshot(2_556_429);
+        let snapshot = telemetry.final_snapshot(2_556_429);
         assert_eq!(snapshot.output_time_us, Some(241_283_333));
         assert_eq!(snapshot.encoded_frames, 14_477);
         assert_eq!(snapshot.muxed_bytes, 2_556_429);

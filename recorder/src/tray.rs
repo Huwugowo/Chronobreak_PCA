@@ -79,10 +79,7 @@ fn spawn_worker(
             });
             let service_sink = std::sync::Arc::clone(&sink);
             let result = (|| {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .context("failed to create recorder runtime")?;
+                let runtime = crate::build_service_runtime()?;
                 runtime.block_on(async move {
                     let smoke_task = smoke_test_timeout.map(|timeout| {
                         tokio::spawn(async move {

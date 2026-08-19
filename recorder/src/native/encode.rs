@@ -27,7 +27,7 @@ use super::NATIVE_ENCODER_SLOT_COUNT;
 use super::convert::{ConvertedNv12Frame, NativeNv12Converter, NativeNv12SlotStates};
 use super::nvenc::{
     H264_GUID, NvencDriverProbe, NvencFunctionList, NvencOpenSessionParams, nvenc_status,
-    nvenc_struct_version,
+    nvenc_struct_version, validate_h264_session,
 };
 use super::source::NativeWgcSource;
 
@@ -1022,11 +1022,15 @@ impl NativeNvencEncoder {
         );
 
         let driver = NvencDriverProbe::load()?;
-        driver.probe_h264_on_source(source)?;
+        driver.ensure_required_api()?;
         let functions = driver.create_function_list()?;
         let (open, api, completion_seed) = SubmissionApi::load(&functions)?;
         let mut session = open_session(open, api.destroy_encoder, source)?;
         let encoder = session.handle();
+        if let Err(error) = validate_h264_session(&functions, encoder.as_ptr()) {
+            let session_error = session.close().err();
+            return Err(combine_initialization_errors(error, None, session_error));
+        }
         let mut config = match preset_h264_config(api, encoder) {
             Ok(config) => config,
             Err(error) => {

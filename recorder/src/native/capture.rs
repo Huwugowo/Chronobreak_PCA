@@ -223,14 +223,30 @@ struct FrameCallbackState {
     owners: AtomicU64,
     reconfiguring: AtomicBool,
     stopping: AtomicBool,
+    waiter_registered: AtomicBool,
     wait_lock: Mutex<()>,
     idle: Condvar,
+    #[cfg(test)]
+    notifications: AtomicU64,
+}
+
+struct FrameCallbackWaitRegistration<'state> {
+    state: &'state FrameCallbackState,
+}
+
+impl Drop for FrameCallbackWaitRegistration<'_> {
+    fn drop(&mut self) {
+        // This protocol spans the waiter flag and the active/owner counters.
+        // Sequential consistency prevents the waiter and final callback/owner
+        // from each observing the other's pre-registration state.
+        self.state.waiter_registered.store(false, Ordering::SeqCst);
+    }
 }
 
 impl FrameCallbackState {
     fn enter(&self) -> Option<FrameCallbackActivity<'_>> {
-        self.active.fetch_add(1, Ordering::AcqRel);
-        if self.reconfiguring.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) {
+        self.active.fetch_add(1, Ordering::SeqCst);
+        if self.reconfiguring.load(Ordering::SeqCst) || self.stopping.load(Ordering::SeqCst) {
             self.leave();
             None
         } else {
@@ -251,10 +267,17 @@ impl FrameCallbackState {
         let Ok(mut guard) = self.wait_lock.lock() else {
             return false;
         };
+        if self
+            .waiter_registered
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        let _registration = FrameCallbackWaitRegistration { state: self };
         loop {
-            let idle = self.active.load(Ordering::Acquire) == 0;
-            let owners_released =
-                !require_owner_release || self.owners.load(Ordering::Acquire) == 0;
+            let idle = self.active.load(Ordering::SeqCst) == 0;
+            let owners_released = !require_owner_release || self.owners.load(Ordering::SeqCst) == 0;
             if idle && owners_released {
                 return true;
             }
@@ -267,29 +290,34 @@ impl FrameCallbackState {
             };
             guard = next_guard;
             if wait.timed_out() {
-                return self.active.load(Ordering::Acquire) == 0
-                    && (!require_owner_release || self.owners.load(Ordering::Acquire) == 0);
+                return self.active.load(Ordering::SeqCst) == 0
+                    && (!require_owner_release || self.owners.load(Ordering::SeqCst) == 0);
             }
         }
     }
 
     fn leave(&self) {
-        if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.active.fetch_sub(1, Ordering::SeqCst) == 1 {
             self.notify_waiters();
         }
     }
 
     fn add_owner(&self) {
-        self.owners.fetch_add(1, Ordering::Release);
+        self.owners.fetch_add(1, Ordering::SeqCst);
     }
 
     fn remove_owner(&self) {
-        if self.owners.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.owners.fetch_sub(1, Ordering::SeqCst) == 1 {
             self.notify_waiters();
         }
     }
 
     fn notify_waiters(&self) {
+        if !self.waiter_registered.load(Ordering::SeqCst) {
+            return;
+        }
+        #[cfg(test)]
+        self.notifications.fetch_add(1, Ordering::Relaxed);
         // Taking the same mutex as the waiter prevents a last-callback
         // notification from being lost between predicate check and wait.
         if let Ok(_guard) = self.wait_lock.lock() {
@@ -333,7 +361,7 @@ struct FrameAdmissionPause {
 
 impl FrameAdmissionPause {
     fn begin(state: &Arc<FrameCallbackState>) -> Self {
-        state.reconfiguring.store(true, Ordering::Release);
+        state.reconfiguring.store(true, Ordering::SeqCst);
         Self {
             state: state.clone(),
         }
@@ -342,7 +370,7 @@ impl FrameAdmissionPause {
 
 impl Drop for FrameAdmissionPause {
     fn drop(&mut self) {
-        self.state.reconfiguring.store(false, Ordering::Release);
+        self.state.reconfiguring.store(false, Ordering::SeqCst);
     }
 }
 
@@ -643,7 +671,7 @@ impl NativeWgcCapture {
         }
 
         let mut first_error = None;
-        self.callback_state.stopping.store(true, Ordering::Release);
+        self.callback_state.stopping.store(true, Ordering::SeqCst);
         if let Some(token) = self.frame_arrived_token.take()
             && let Err(error) = self.frame_pool.RemoveFrameArrived(token)
         {
@@ -957,6 +985,16 @@ mod tests {
     }
 
     #[test]
+    fn normal_callback_exit_does_not_notify_quiescence() {
+        let state = FrameCallbackState::default();
+        let activity = state.enter().expect("callback should enter");
+
+        drop(activity);
+
+        assert_eq!(state.notifications.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn callback_quiescence_is_notified_without_polling() {
         let state = Arc::new(FrameCallbackState::default());
         let worker_state = Arc::clone(&state);
@@ -967,6 +1005,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         });
         started_receiver.recv().unwrap();
+        let _pause = FrameAdmissionPause::begin(&state);
         assert!(state.wait_until_idle(Duration::from_secs(1)));
         worker.join().unwrap();
     }
@@ -979,6 +1018,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
             drop(owner);
         });
+        state.stopping.store(true, Ordering::SeqCst);
         assert!(state.wait_until_released(Duration::from_secs(1)));
         worker.join().unwrap();
     }
