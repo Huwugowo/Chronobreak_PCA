@@ -3,6 +3,19 @@ use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureSource {
+    WindowsGraphicsCapture {
+        pid: u32,
+        generation: u64,
+        hwnd: u64,
+        width: u32,
+        height: u32,
+        dpi: u32,
+        window_title: Option<String>,
+        adapter_index: u32,
+        adapter_luid: u64,
+        adapter_name: String,
+        output_name: String,
+    },
     DesktopRegion {
         x: i32,
         y: i32,
@@ -23,6 +36,21 @@ pub struct CaptureTarget {
 impl CaptureTarget {
     pub fn description(&self) -> String {
         match &self.source {
+            CaptureSource::WindowsGraphicsCapture {
+                pid,
+                generation,
+                hwnd,
+                width,
+                height,
+                dpi,
+                window_title,
+                adapter_index,
+                adapter_luid,
+                adapter_name,
+                output_name,
+            } => format!(
+                "PID {pid} generation {generation} window {window_title:?} HWND 0x{hwnd:x}, size {width}x{height} at {dpi} DPI, DXGI adapter {adapter_index} {adapter_name:?} LUID {adapter_luid:016x}, output {output_name:?}"
+            ),
             CaptureSource::DesktopRegion {
                 x,
                 y,
@@ -44,17 +72,54 @@ impl CaptureTarget {
     pub fn is_window_region(&self) -> bool {
         matches!(
             self.source,
-            CaptureSource::DesktopRegion {
-                window_title: Some(_),
-                ..
-            }
+            CaptureSource::WindowsGraphicsCapture { .. }
+                | CaptureSource::DesktopRegion {
+                    window_title: Some(_),
+                    ..
+                }
         )
     }
 
     pub fn dimensions(&self) -> Option<(u32, u32)> {
         match self.source {
+            CaptureSource::WindowsGraphicsCapture { width, height, .. } => Some((width, height)),
             CaptureSource::DesktopRegion { width, height, .. } => Some((width, height)),
             CaptureSource::AvFoundation { .. } => None,
+        }
+    }
+
+    pub fn windows_hwnd(&self) -> Option<u64> {
+        match self.source {
+            CaptureSource::WindowsGraphicsCapture { hwnd, .. } => Some(hwnd),
+            _ => None,
+        }
+    }
+
+    pub fn windows_adapter_index(&self) -> Option<u32> {
+        match self.source {
+            CaptureSource::WindowsGraphicsCapture { adapter_index, .. } => Some(adapter_index),
+            _ => None,
+        }
+    }
+
+    pub fn windows_adapter_luid(&self) -> Option<u64> {
+        match self.source {
+            CaptureSource::WindowsGraphicsCapture { adapter_luid, .. } => Some(adapter_luid),
+            _ => None,
+        }
+    }
+
+    pub fn windows_adapter_name(&self) -> Option<&str> {
+        match &self.source {
+            CaptureSource::WindowsGraphicsCapture { adapter_name, .. } => Some(adapter_name),
+            _ => None,
+        }
+    }
+
+    pub fn windows_output_name(&self) -> Option<&str> {
+        match &self.source {
+            CaptureSource::WindowsGraphicsCapture { output_name, .. } => Some(output_name),
+            _ => None,
         }
     }
 }
@@ -63,7 +128,25 @@ impl CaptureTarget {
 mod windows;
 
 #[cfg(target_os = "windows")]
-pub use windows::{capture_target_for_process, fallback_capture_target};
+pub use windows::{
+    capture_target_for_process, fallback_capture_target, instant_from_qpc_100ns,
+    validate_capture_target, validate_capture_target_identity,
+};
+
+#[cfg(not(target_os = "windows"))]
+pub fn validate_capture_target(_target: &CaptureTarget) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn validate_capture_target_identity(_target: &CaptureTarget) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn instant_from_qpc_100ns(_timestamp: i64) -> anyhow::Result<std::time::Instant> {
+    Ok(std::time::Instant::now())
+}
 
 #[cfg(target_os = "macos")]
 pub fn capture_target_for_process(_pid: u32) -> Result<CaptureTarget> {

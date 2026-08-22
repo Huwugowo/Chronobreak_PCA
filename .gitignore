@@ -1,5 +1,9 @@
 # Build output
 /recorder/target/
+/build/perf/
+/build/media-runtime/
+/build/release/
+/media-runtime/target/
 
 # Python
 __pycache__/

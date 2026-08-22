@@ -1,0 +1,3 @@
+Application,ProcessID,SwapChainAddress,CPUStartTime,DisplayedTime
+League of Legends.exe,4242,0xprimary,0,5
+League of Legends.exe,not-a-pid,0xprimary,179000,5

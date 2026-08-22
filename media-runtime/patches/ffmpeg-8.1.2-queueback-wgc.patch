@@ -1,0 +1,194 @@
+diff --git a/libavfilter/vf_scale_d3d11.c b/libavfilter/vf_scale_d3d11.c
+index c301f4a..e7d62bb 100644
+--- a/libavfilter/vf_scale_d3d11.c
++++ b/libavfilter/vf_scale_d3d11.c
+@@ -379,10 +379,14 @@ static int scale_d3d11_config_props(AVFilterLink *outlink)
+     frames_ctx->sw_format = s->format;
+     frames_ctx->width = s->width;
+     frames_ctx->height = s->height;
+-    frames_ctx->initial_pool_size = 10;
+-
+-    if (ctx->extra_hw_frames > 0)
+-        frames_ctx->initial_pool_size += ctx->extra_hw_frames;
++    /*
++     * Video-processor output views are non-stereo here, so D3D11 requires
++     * every backing texture to have exactly one array element.  A non-zero
++     * initial_pool_size makes hwcontext_d3d11va allocate one texture array,
++     * which drivers may reject for this output path.  Let the AVBufferPool
++     * allocate and recycle individual ArraySize=1 textures instead.
++     */
++    frames_ctx->initial_pool_size = 0;
+ 
+     AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
+     frames_hwctx->MiscFlags = 0;
+diff --git a/libavfilter/vsrc_gfxcapture_winrt.cpp b/libavfilter/vsrc_gfxcapture_winrt.cpp
+index 9cc3834..c8c1fd7 100644
+--- a/libavfilter/vsrc_gfxcapture_winrt.cpp
++++ b/libavfilter/vsrc_gfxcapture_winrt.cpp
+@@ -71,6 +71,7 @@ using ABI::Windows::Graphics::DirectX::DirectXPixelFormat;
+ #define TIMESPAN_RES64 INT64_C(10000000)
+ 
+ #define CAPTURE_POOL_SIZE 2
++#define OUTPUT_POOL_SIZE 8
+ 
+ enum {
+     WM_WGC_THREAD_SHUTDOWN = WM_APP + 1
+@@ -164,6 +165,11 @@ struct GfxCaptureContextCpp {
+ 
+     int64_t first_pts { 0 };
+     int64_t last_pts { 0 };
++    uint64_t source_frames_surfaced { 0 };
++    uint64_t source_frames_superseded { 0 };
++    uint64_t pool_recreations { 0 };
++    int64_t first_qpc { 0 };
++    int64_t latest_qpc { 0 };
+ };
+ 
+ template <typename T>
+@@ -195,11 +201,15 @@ static HRESULT get_activation_factory(GfxCaptureContextCpp *ctx, PCWSTR clsid, T
+  * All wgc_* functions must run only on WGC thread! *
+  ****************************************************/
+ 
+-static void wgc_frame_arrived_handler(const std::unique_ptr<GfxCaptureContextWgc> &wgctx) {
++static void wgc_frame_arrived_handler(AVFilterContext *avctx,
++                                      const std::unique_ptr<GfxCaptureContextWgc> &wgctx) {
++    uint64_t frame_seq;
+     {
+         std::lock_guard lock(wgctx->frame_arrived_mutex);
+-        wgctx->frame_seq += 1;
++        frame_seq = ++wgctx->frame_seq;
+     }
++    if (frame_seq % 120 == 0)
++        av_log(avctx, AV_LOG_INFO, "queueback_wgc event=frame_arrived frames=%" PRIu64 "\n", frame_seq);
+     wgctx->frame_arrived_cond.notify_one();
+ }
+ 
+@@ -395,7 +405,7 @@ static int wgc_setup_gfxcapture_session(AVFilterContext *avctx)
+         create_cb_handler<ITypedEventHandler<Direct3D11CaptureFramePool*,IInspectable*>, IDirect3D11CaptureFramePool*, IInspectable*>(
+             [avctx, ctx](auto, auto) {
+                 av_log(avctx, AV_LOG_TRACE, "Frame arrived\n");
+-                wgc_frame_arrived_handler(ctx->wgc);
++                wgc_frame_arrived_handler(avctx, ctx->wgc);
+                 return S_OK;
+             }).Get(), &wgctx->frame_arrived_token));
+ 
+@@ -442,7 +448,9 @@ static int wgc_setup_gfxcapture_capture(AVFilterContext *avctx)
+     return 0;
+ }
+ 
+-static int wgc_try_get_next_frame(AVFilterContext *avctx, ComPtr<IDirect3D11CaptureFrame> &capture_frame)
++static int wgc_try_get_next_frame(AVFilterContext *avctx,
++                                  ComPtr<IDirect3D11CaptureFrame> &capture_frame,
++                                  uint64_t *superseded)
+ {
+     GfxCaptureContext *cctx = CCTX(avctx->priv);
+     GfxCaptureContextCpp *ctx = cctx->ctx;
+@@ -453,7 +461,8 @@ static int wgc_try_get_next_frame(AVFilterContext *avctx, ComPtr<IDirect3D11Capt
+     ComPtr<ID3D11Texture2D> frame_texture;
+     SizeInt32 frame_size = { 0, 0 };
+ 
+     CHECK_HR_RET(wgctx->frame_pool->TryGetNextFrame(&capture_frame));
++    *superseded = 0;
+     if (!capture_frame)
+         return AVERROR(EAGAIN);
+ 
+@@ -467,6 +476,7 @@ static int wgc_try_get_next_frame(AVFilterContext *avctx, ComPtr<IDirect3D11Capt
+ 
+         CHECK_HR_RET(wgctx->frame_pool->Recreate(wgctx->d3d_device.Get(), fmt, CAPTURE_POOL_SIZE, frame_size));
+         wgctx->cap_size = frame_size;
++        ctx->pool_recreations += 1;
+ 
+         int ret = wgc_calculate_client_area(avctx);
+         if (ret < 0)
+@@ -977,6 +995,13 @@ static av_cold void gfxcapture_uninit(AVFilterContext *avctx)
+ 
+     stop_wgc_thread(avctx);
+ 
++    av_log(avctx, AV_LOG_INFO,
++           "queueback_capture abi=1 event=terminal source_frames_surfaced=%" PRIu64
++           " source_frames_superseded=%" PRIu64 " pool_recreations=%" PRIu64
++           " first_qpc=%" PRId64 " latest_qpc=%" PRId64 "\n",
++           ctx->source_frames_surfaced, ctx->source_frames_superseded,
++           ctx->pool_recreations, ctx->first_qpc, ctx->latest_qpc);
++
+     ctx->d3d.reset();
+ 
+     av_buffer_unref(&ctx->frames_ref);
+@@ -1080,8 +1105,7 @@ static int init_hwframes_ctx(AVFilterContext *avctx)
+     ctx->frames_ctx->width     = cctx->canvas_width;
+     ctx->frames_ctx->height    = cctx->canvas_height;
+     ctx->frames_ctx->sw_format = (AVPixelFormat)cctx->out_fmt;
+-    if (avctx->extra_hw_frames > 0)
+-        ctx->frames_ctx->initial_pool_size = 8 + avctx->extra_hw_frames;
++    ctx->frames_ctx->initial_pool_size = OUTPUT_POOL_SIZE + FFMAX(avctx->extra_hw_frames, 0);
+ 
+     ctx->frames_hwctx->BindFlags = D3D11_BIND_RENDER_TARGET;
+ 
+@@ -1242,6 +1266,10 @@ static int gfxcapture_config_props(AVFilterLink *outlink)
+         return ret;
+     }
+ 
++    av_log(avctx, AV_LOG_INFO,
++           "queueback_capture abi=1 event=ready frame_pool_capacity=%d output_pool_capacity=%d\n",
++           CAPTURE_POOL_SIZE, OUTPUT_POOL_SIZE);
++
+     ret = init_hwframes_ctx(avctx);
+     if (ret < 0)
+         return ret;
+@@ -1408,8 +1436,9 @@ static int process_frame_if_exists(AVFilterLink *outlink)
+         ComPtr<IDirect3DDxgiInterfaceAccess> dxgi_interface_access;
+         ComPtr<ID3D11Texture2D> frame_texture;
+         TimeSpan frame_time = { 0 };
++        uint64_t superseded = 0;
+ 
+-        int res = wgc_try_get_next_frame(avctx, capture_frame);
++        int res = wgc_try_get_next_frame(avctx, capture_frame, &superseded);
+         if (res < 0)
+             return res;
+ 
+@@ -1428,7 +1457,31 @@ static int process_frame_if_exists(AVFilterLink *outlink)
+ 
+         frame->pts = frame_time.Duration;
+ 
+-        return render_capture_to_frame(avctx, frame, frame_texture);
++        res = render_capture_to_frame(avctx, frame, frame_texture);
++        if (res < 0)
++            return res;
++
++        ctx->source_frames_surfaced += 1;
++        ctx->source_frames_superseded += superseded;
++        ctx->latest_qpc = frame_time.Duration;
++        if (!ctx->first_qpc) {
++            ctx->first_qpc = frame_time.Duration;
++            av_log(avctx, AV_LOG_INFO,
++                   "queueback_capture abi=1 event=first_frame source_frames_surfaced=%" PRIu64
++                   " source_frames_superseded=%" PRIu64 " first_qpc=%" PRId64
++                   " latest_qpc=%" PRId64 "\n",
++                   ctx->source_frames_surfaced, ctx->source_frames_superseded,
++                   ctx->first_qpc, ctx->latest_qpc);
++        } else if (ctx->source_frames_surfaced % 120 == 0) {
++            av_log(avctx, AV_LOG_INFO,
++                   "queueback_capture abi=1 event=progress source_frames_surfaced=%" PRIu64
++                   " source_frames_superseded=%" PRIu64 " pool_recreations=%" PRIu64
++                   " first_qpc=%" PRId64 " latest_qpc=%" PRId64 "\n",
++                   ctx->source_frames_surfaced, ctx->source_frames_superseded,
++                   ctx->pool_recreations, ctx->first_qpc, ctx->latest_qpc);
++        }
++
++        return 0;
+     });
+     if (ret < 0)
+         return ret;
+@@ -1475,7 +1524,11 @@ static int gfxcapture_activate(AVFilterContext *avctx)
+         return FFERROR_NOT_READY;
+ 
+     for (;;) {
+-        uint64_t last_seq = wgctx->frame_seq;
++        uint64_t last_seq;
++        {
++            std::lock_guard frame_lock(wgctx->frame_arrived_mutex);
++            last_seq = wgctx->frame_seq;
++        }
+ 
+         int ret = process_frame_if_exists(outlink);
+         if (ret != AVERROR(EAGAIN))

@@ -354,7 +354,11 @@ pub fn playback_probe(
     })
 }
 
-pub fn list_clips(output_directory: &Path, origin: &str) -> Result<Vec<ClipSummary>> {
+pub fn list_clips(
+    output_directory: &Path,
+    origin: &str,
+    ffprobe: Option<&Path>,
+) -> Result<Vec<ClipSummary>> {
     let clips_directory = output_directory.join("clips");
     if !clips_directory.exists() {
         return Ok(Vec::new());
@@ -388,7 +392,9 @@ pub fn list_clips(output_directory: &Path, origin: &str) -> Result<Vec<ClipSumma
             filename: filename.to_owned(),
             game_timestamp: game_timestamp.to_owned(),
             clip_timestamp: clip_timestamp.to_owned(),
-            duration_ms: probe_duration_ms(&path).unwrap_or(0),
+            duration_ms: ffprobe
+                .and_then(|tool| probe_duration_ms(tool, &path))
+                .unwrap_or(0),
             file_size_bytes: entry.metadata().map(|metadata| metadata.len()).unwrap_or(0),
             thumbnail_path: thumbnail
                 .exists()
@@ -789,8 +795,8 @@ pub(crate) fn valid_clip_asset(filename: &str) -> bool {
     matches!(extension, "mp4" | "jpg") && parse_clip_filename(stem).is_some()
 }
 
-fn probe_duration_ms(path: &Path) -> Option<u64> {
-    let mut command = Command::new("ffprobe");
+fn probe_duration_ms(ffprobe: &Path, path: &Path) -> Option<u64> {
+    let mut command = Command::new(ffprobe);
     command.args([
         "-v",
         "error",

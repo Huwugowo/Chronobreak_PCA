@@ -2,50 +2,51 @@
 
 ## Startup and steady state
 
-`recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production mode creates a winit/tray event loop; the service itself runs on Tokio.
+`recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production tray mode runs the UI event loop while the recording service runs on Tokio.
 
-`recorder/src/service.rs` creates the output `games/` directory, resolves ffmpeg, selects one concrete hardware encoder/codec/profile plan, detects an audio source, and then enters idle state. Encoder selection happens before League appears so setup cost and errors do not occur on the gameplay hot path.
+The service resolves the immutable packaged media runtime and detects audio once. It then checks League process presence every two seconds. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
 
-`recorder/src/watcher.rs` refreshes the process table every two seconds. League process presence is the sole recording lifecycle authority:
+League process presence remains the automatic lifecycle authority:
 
-1. appearance creates a unique timestamped game directory and starts ffmpeg;
-2. PID replacement finalizes the old session and starts a new one;
-3. disappearance finalizes the active recording;
-4. shutdown finalizes an active session before the service exits.
+1. appearance makes the process eligible while its visible capture HWND is discovered;
+2. an owned cancellable startup task tries each eligible same-adapter encoder once inside one 15-second deadline;
+3. PID replacement cancels/reaps startup or finalizes the old session before a new generation can start;
+4. disappearance gracefully finalizes an active recording;
+5. application shutdown cancels startup and finalizes an active recording before emitting completion.
 
-Live Client API readiness and `GameEnd` are deliberately not start/stop signals.
+Live Client readiness and `GameEnd` are not start/stop signals. A process with no ready window is retried on the next watcher tick, but an actual graph-start failure or unexpected FFmpeg exit suppresses runaway retries for that process generation.
 
 ## Capture and finalization
 
-`recorder/src/encoder.rs` resolves ffmpeg from `LEAGUE_REPLAY_FFMPEG`, a packaged-resource candidate, or `PATH`. It prefers a League window capture target and retries the primary-display fallback when window-region startup fails. Recording is hardware encoded to fragmented MP4 with an audio source or silent stereo fallback.
+On Windows, the production video path is exact-HWND Windows Graphics Capture on an explicit D3D11 adapter, D3D11 resize/BGRA-to-NV12 conversion, and same-adapter NVENC/AMF/QSV submission. It has no automatic GDI, primary-display, software, or cross-adapter fallback. See [windows-capture.md](windows-capture.md) for the complete frame/resource contract.
 
-Startup checks whether ffmpeg survives its initial launch period. During recording, the service checks whether the child exited on each watcher tick. An unexpected exit is surfaced as an error and the partial bundle is preserved. This is process-liveness detection, not proof that frames or bytes continue to advance; output-progress health monitoring remains separate roadmap work.
+`RecordingSession` exclusively owns one FFmpeg child, stdin, both continuously drained output pipes, one bounded diagnostics receiver, and one private output candidate. Startup is announced only after a real first WGC frame and advancing encode/mux evidence. Cancellation explicitly kills/reaps the child and joins or aborts pipe drains under finite deadlines; dropping the child is only a last safety net.
 
-Normal stop writes `q` to ffmpeg, waits up to ten seconds, then kills it if necessary. There is no end-of-game full-file copy or remux. Fragmentation limits interruption loss to the last incomplete fragment when the container behaves as intended, but finalized media is not currently post-validated automatically.
+The service validates the captured HWND/PID/adapter identity while active. A closed or replaced HWND while the League process is still present produces a failed/partial outcome. Focus loss, occlusion, and temporary minimize do not change identity; WGC may pause while minimized and resume after restore.
+
+Normal stop sends `q` through bounded stdin delivery, waits up to ten seconds, then force-terminates under a second bound if needed. stdout and stderr continue draining concurrently and are joined after process exit. A clean result requires zero exit status, an intentional stop boundary, terminal WGC evidence, terminal FFmpeg progress, and a nonempty output. The successful private candidate is then renamed to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixture output remains recoverable.
 
 ## Live Client synchronization
 
-`recorder/src/poller.rs` starts after ffmpeg so every stored event can use the recording clock. Calibration probes `/gamestats` until it observes five strictly advancing, clock-consistent samples and derives `game_start_video_offset_ms` from monotonic receive time and ffmpeg start time.
+`PollerSession` starts only after video readiness. Its monotonic epoch is the first Windows Graphics Capture `SystemRelativeTime`/QPC frame, mapped into the Rust clock, rather than FFmpeg spawn time. Calibration probes `/gamestats` until it observes five strictly advancing, clock-consistent samples and derives `game_start_video_offset_ms` from monotonic receive time and the video epoch.
 
 After calibration, independent loops:
 
 - poll cumulative `/eventdata` every second, deduplicate by event ID, normalize fields, sort chronologically, and precompute `video_time_ms`;
-- poll game, active-player, player-list, and event recovery data every ten seconds, storing snapshots and deriving item/level changes.
+- poll game, active-player, player-list, and event-recovery data every ten seconds, storing snapshots and deriving item/level changes.
 
-Requests are concurrent within a snapshot. Three consecutive failures stop only the affected polling task; successful requests reset the failure count. API loss never stops video. Poller cancellation and ffmpeg shutdown begin together so metadata work does not hold video finalization open.
+Requests are concurrent within a snapshot. Three consecutive failures stop only the affected polling task; successful requests reset the failure count. API loss never stops video. Poller cancellation and FFmpeg shutdown begin together, and diagnostic/benchmark evidence attributes their CPU and errors separately. This isolation is why the accepted pre-change data identified GDI acquisition/conversion—not polling—as the primary performance issue.
 
-## Persistence and failure behavior
+## Persistence and compatibility
 
-`game_log.json` is rewritten atomically during capture via a temporary sibling and rename. Final `metadata.json` records the selected recording details, duration, local player, clock offset, and saved state. A polling startup failure causes the just-started capture to be stopped and reports recording startup failure rather than silently creating a video-only healthy session.
+`game_log.json` is rewritten atomically during capture through a temporary sibling and rename. After stop, release-era `metadata.json` is still the canonical library metadata; no recording-state authority or strict Unknown-state UI was reintroduced. Existing recordings are not rewritten.
 
-Current recoverability boundaries:
+New recordings add backward-compatible flat path fields and an optional nested `capture` object containing backend/ABI, adapter identities, direct interop, GPU stages, finite bounds, runtime ID, first/latest QPC values, final counters, and terminal evidence. Older app readers ignore these additive fields and continue to browse/play valid `metadata.json` plus `video.mp4` bundles.
 
-- ffmpeg startup failure is visible and the service can retry on a later process transition;
-- unexpected ffmpeg exit is visible and partial media is retained;
-- Live Client loss is recorded in diagnostics while video continues;
-- interrupted fragmented MP4 and the last atomically written game log are intended to survive;
-- there is no automatic repair, content-progress watchdog, storage preflight, or post-recording integrity scan yet.
+Live Client poller degradation does not invalidate otherwise healthy video. Encoder/capture failure remains an explicit recorder error while the fragmented partial output and latest atomically written game log stay recoverable. The app does not infer clean completion from the new diagnostics object.
 
 ## Performance constraints
 
-The watcher interval is two seconds; event polling is one second; snapshots are ten seconds. Tokio missed ticks use delay semantics to avoid burst catch-up. JSON writes are incremental and no full video pass occurs at match end. These choices reduce expected game impact, but no accepted baseline-versus-capture FPS/frametime budget exists yet; see `QB-PERF-001`.
+Watcher cadence is two seconds; event polling is one second; snapshots are ten seconds. Tokio missed ticks use delay semantics to avoid burst catch-up. Capture diagnostics are aggregate first/progress/terminal messages, not per-frame logs. Video remains in a bounded GPU-resident graph, and no full-video pass occurs at match end.
+
+`QB-PERF-002` applies the common benchmark budget: capped average-FPS loss <=2%, 1%-low loss <=5%, p95 increase <=5%, p99 increase <=8%, additional non-displayed rate <=0.1 percentage point, plus CPU/GPU saturation and memory/output/lifecycle safety gates. Physical validation is per adapter/encoder even though the implementation contract is vendor-neutral.

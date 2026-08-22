@@ -17,6 +17,7 @@ The processes communicate through ordinary files and shared configuration rather
 - the configured output root contains `games/` and `clips/`;
 - one game directory contains `video.mp4`, `game_log.json`, and `metadata.json`;
 - app and recorder share one TOML schema for output location, retention, recording profile/codec, autostart intent, and HEVC playback capability; the recorder reads it at startup while the app atomically preserves/writes the shared document;
+- app and recorder share the exact packaged FFmpeg/ffprobe pair described in [media-runtime.md](media-runtime.md); PATH and single-tool overrides are not production discovery paths;
 - the app scans filesystem bundles each time it lists the library;
 - clip filenames encode the source game identifier used by the current clip library contract; the paired JPEG is presentation-only.
 

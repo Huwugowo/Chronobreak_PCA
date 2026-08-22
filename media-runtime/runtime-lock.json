@@ -1,0 +1,128 @@
+{
+  "contract_version": 3,
+  "runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r5",
+  "platform": {
+    "os": "windows",
+    "arch": "x86_64"
+  },
+  "ffmpeg": {
+    "version_banner": "8.1.2-queueback-5-captureabi1-nvcodec12.2-amf1.4.36",
+    "compiler": "gcc 14.2.0 (Rev2, Built by MSYS2 project)",
+    "upstream_tag": "n8.1.2",
+    "source_commit": "38b88335f99e76ed89ff3c93f877fdefce736c13",
+    "required_configure_flags": [
+      "--enable-gpl",
+      "--enable-version3",
+      "--enable-static",
+      "--disable-shared",
+      "--disable-ffplay",
+      "--disable-autodetect",
+      "--enable-libx264",
+      "--enable-amf",
+      "--enable-d3d11va",
+      "--enable-libvpl",
+      "--enable-nvenc",
+      "--enable-filter=gfxcapture",
+      "--enable-filter=scale_d3d11",
+      "--disable-filter=amf_capture"
+    ]
+  },
+  "sources": [
+    {
+      "name": "ffmpeg",
+      "url": "https://github.com/FFmpeg/FFmpeg.git",
+      "tag": "n8.1.2",
+      "commit": "38b88335f99e76ed89ff3c93f877fdefce736c13"
+    },
+    {
+      "name": "nv-codec-headers",
+      "url": "https://github.com/FFmpeg/nv-codec-headers.git",
+      "tag": "n12.2.72.0",
+      "commit": "c69278340ab1d5559c7d7bf0edf615dc33ddbba7"
+    },
+    {
+      "name": "amf",
+      "url": "https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git",
+      "tag": "v1.4.36",
+      "commit": "16f7d73e0b45c473e903e46981ed0b91efc4c091"
+    }
+  ],
+  "patches": [
+    {
+      "path": "media-runtime/patches/ffmpeg-8.1.2-queueback-wgc.patch",
+      "applies_to": "ffmpeg",
+      "sha256": "9de18bcfa2a72feaf2f98b3d815f1a4c7fc6f01aac8933534b1a89fbec95e3f6"
+    }
+  ],
+  "toolchain": [
+    { "package": "mingw-w64-ucrt-x86_64-gcc", "version": "14.2.0-2" },
+    { "package": "mingw-w64-ucrt-x86_64-binutils", "version": "2.43.1-1" },
+    { "package": "mingw-w64-ucrt-x86_64-nasm", "version": "2.16.03-1" },
+    { "package": "mingw-w64-ucrt-x86_64-x264", "version": "0.164.r3161.a354f11-3" },
+    { "package": "mingw-w64-ucrt-x86_64-libvpl", "version": "2.13.0-1" },
+    { "package": "mingw-w64-ucrt-x86_64-pkgconf", "version": "1~2.3.0-1" },
+    { "package": "msys2-runtime", "version": "3.5.4-8" },
+    { "package": "make", "version": "4.4.1-2" }
+  ],
+  "capabilities": {
+    "filters": [
+      "gfxcapture",
+      "scale_d3d11"
+    ],
+    "hwaccels": [
+      "d3d11va"
+    ],
+    "encoders": [
+      "libx264",
+      "h264_nvenc",
+      "hevc_nvenc",
+      "h264_amf",
+      "hevc_amf",
+      "h264_qsv",
+      "hevc_qsv"
+    ],
+    "diagnostic_abi": "queueback-5-captureabi1"
+  },
+  "files": [
+    {
+      "path": "bin/ffmpeg.exe",
+      "size": 33894400,
+      "sha256": "c20ab66db85233df888cdd0e052a94dc400c4a75b4a0f1413b62dbc67f811c1c"
+    },
+    {
+      "path": "bin/ffprobe.exe",
+      "size": 33683456,
+      "sha256": "dbeea88abea47cb812d4c75f109073fadfa4214136cd9a9bdbce8ee3160ab162"
+    },
+    {
+      "path": "licenses/COPYING.GPLv3.txt",
+      "size": 35821,
+      "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b"
+    },
+    {
+      "path": "licenses/NVCODEC_LICENSE.txt",
+      "size": 1067,
+      "sha256": "e4dae7d5b4a0c2ae84e8200bd9b10b2650ac98e63e7dbc012c60c77bb06922f3"
+    },
+    {
+      "path": "licenses/AMF_LICENSE.txt",
+      "size": 1434,
+      "sha256": "22c29dae014ba2203ca07d191e545b1d58ae513b59cc0c1936552e86a4784c67"
+    },
+    {
+      "path": "licenses/LIBVPL_LICENSE.txt",
+      "size": 1074,
+      "sha256": "bf1cfac2e2792b6e1e995ce103d70796aecaf2ec7e4c5fe5474f7acec7b4a677"
+    },
+    {
+      "path": "licenses/THIRD_PARTY_NOTICES.md",
+      "size": 1490,
+      "sha256": "4ee2e82f74abd2eb260699e4016a902f898429e0d4f22a490a80fabf3197edab"
+    },
+    {
+      "path": "licenses/SOURCE_AND_BUILD.md",
+      "size": 3806,
+      "sha256": "7099181d31db0a36a29d5c0ce811c2feb3aa693ea60ee1d01c96b6348f15eb6d"
+    }
+  ]
+}

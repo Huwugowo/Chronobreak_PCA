@@ -1,0 +1,8 @@
+Application,ProcessID,SwapChainAddress,CPUStartQPCTime,MsBetweenPresents,DisplayedTime
+League of Legends.exe,4242,0xprimary,0,0,5
+League of Legends.exe,4242,0xprimary,5,5,5
+League of Legends.exe,4242,0xprimary,15,10,10
+League of Legends.exe,4242,0xprimary,30,15,NA
+League of Legends.exe,4242,0xprimary,50,20,20
+League of Legends.exe,4242,0xsecondary,51,0,4
+Other.exe,7,0xother,52,0,1

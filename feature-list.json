@@ -77,7 +77,7 @@
       "id": "QB-CAP-002",
       "kind": "feature",
       "name": "Recording Health Monitoring",
-      "description": "Detect whether active recording output is actually progressing rather than assuming a running recorder process means healthy capture.",
+      "description": "Supervise every active recording with low-overhead video-frame, mux/file-growth, process, and finalization evidence so QueueBack detects a live-but-stalled or failed recorder within a bounded time, preserves later footage after recovery, and keeps a truthful actionable state in the tray and filesystem library instead of treating process liveness or parseable metadata as success.",
       "priority": "P0",
       "area": "capture",
       "status": "not-started",
@@ -85,29 +85,84 @@
       "dependencies": [
         "QB-CAP-001"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-08-12 repository inspection established that the release-era recorder proves startup mainly by child survival and does not yet provide comprehensive stalled-frame/output supervision.",
+        "2026-08-12 product correction: an attempted broad health-state implementation made a valid completed Practice Tool recording appear Unknown/non-playable and distracted from the requested capture-performance work. The recorder supervisor, recording-state authority, strict app classification, status UI, and associated tests were rolled back to the pre-feature behavior; recorder tests returned to 31+1 and app tests to 30 passing. This feature is therefore not implemented or complete.",
+        "2026-08-12 dependency decision: QB-PERF-002 no longer depends on this feature. Performance work may add only the minimal first-frame/progress evidence needed to prove its new capture graph, without reintroducing recording-state/library policy."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
       },
       "acceptance_criteria": [
-        "Chronobreak can distinguish healthy progressing output from a stalled/failed capture condition.",
-        "A detected unhealthy state is surfaced clearly and is not silently reported as success.",
-        "Healthy recordings do not generate unacceptable false failure indications."
+        "A documented backend-neutral recording-health model distinguishes `starting`, internally `suspect`, `recording/healthy`, `recording/stalled`, `recording/recovered-after-incident`, `finalizing`, `finalized`, `finalized-degraded`, `failed-partial`, and `failed-no-output`; current health and the latched session verdict are separate so resumed progress preserves later footage without erasing a known gap.",
+        "Every production ffmpeg recording uses `-progress pipe:1`, `-stats_period 1`, and `-nostats`; stdout progress and stderr diagnostics are drained concurrently without blocking, unknown progress keys are forward-compatible, bounded parser state cannot grow per frame, and loss/malformed output cannot leave the session silently healthy forever.",
+        "Startup is not announced as healthy merely because ffmpeg is alive: within 15 seconds it must observe an advancing encoded-video `frame` counter and a positive durable `video.mp4` size, or it stops the failed startup attempt, preserves any partial bytes, persists a stable failure reason, and surfaces an actionable error.",
+        "During recording, encoded-video frame advancement and actual output-file byte growth are independent required signals; advancing audio timestamps/bytes alone cannot hide a video-frame stall, and frame advancement without durable file growth cannot hide a mux/storage stall. Output time remains diagnostic rather than sufficient health proof.",
+        "A required signal silent for five continuous seconds enters a non-user-facing suspect state; silence reaching exactly 15 seconds is a confirmed incident no later than the next one-second observation. Progress before 15 seconds returns to healthy without an incident, while progress after a confirmed incident becomes recovered-after-incident and leaves the session verdict degraded.",
+        "Any session whose required frame and file-growth signals each advance at least once in every interval shorter than 15 seconds, with valid process/observer state, cannot transition to a user-visible unhealthy state. A detected recorder scheduling/suspend gap rearms one bounded confirmation window and increments an observer-gap diagnostic instead of immediately blaming ffmpeg.",
+        "Unexpected child exit regardless of exit code, nonzero exit, stop timeout/forced kill, progress-channel closure while the child is live, counter regression, output truncation/replacement, confirmed output disappearance, repeated process-inspection failure, and terminal progress-protocol failure map to stable machine reason codes and cannot be finalized as clean success.",
+        "A confirmed stall does not automatically kill or endlessly restart a still-live ffmpeg child: QueueBack continues bounded observation so later footage can be preserved, emits transition-only warnings, and records aggregate incident count/duration/longest-stall data. Repair/remux, automatic live restart, and destructive mutation remain outside this feature.",
+        "The health reducer accepts declared required/optional signal capabilities rather than GDI, GPU vendor, or encoder names. The current backend requires encoded-frame plus output-byte progress; QB-PERF-002 can add source-frame, queue, device, and surface signals to the same model without creating a second health state machine.",
+        "Each new bundle receives an atomically written versioned `recording-state.json` before capture startup. It is the sole durable authority for recording lifecycle, current health, latched verdict, stable reason, bounded incident aggregates, last proven progress, observer gaps, and finalization result; no per-second/per-frame state-file rewrite, root status database, or duplicate health authority is introduced.",
+        "Finalization ordering is crash-conservative: persist finalizing; stop poller and ffmpeg; evaluate the structured child/progress/output result; fsync graceful clean/degraded metadata under a noncanonical pending name; atomically publish canonical `metadata.json`; then atomically persist terminal state. A metadata or terminal-state failure leaves the lifecycle authority non-success and never a clean finalized claim; the app additionally requires coherent terminal state plus canonical metadata, so forced kill, unknown exit, or unhealthy video can never be classified as clean success.",
+        "Recorder service events carry structured lifecycle/health snapshots with bundle identity and stable reason codes. Tray/headless projections show starting, recording, recovered/stalled, finalizing, and failure states; a failure or degraded terminal result is not immediately overwritten by Idle, while a later explicit new recording may replace the live tray display without erasing the prior bundle state.",
+        "The Tauri library reads the versioned state contract conservatively: a valid legacy metadata-only bundle retains its existing behavior; active/finalizing, failed, corrupt-state, and unknown-schema bundles are visibly non-complete, protected from auto-delete and active deletion, and not playback-eligible; a gracefully finalized degraded bundle is playback-eligible only under existing metadata checks and carries a clear interruption warning.",
+        "Library summaries and UI expose a typed recording status, stable problem message, physical video availability, and playback eligibility instead of calling every partial item a recovered bundle. Safe game identifiers accept the recorder's existing `digits` or `digits-suffix` collision format while continuing to reject traversal and malformed identifiers, so health state remains discoverable for every recorder-created bundle.",
+        "Live Client polling/calibration remains independent descriptive-data health: its failure never refreshes video progress, creates a video stall, or turns stalled video healthy. No active-path ffprobe, full decode, content hashing, full-file read/remux, or high-frequency frontend polling is added.",
+        "Deterministic unit and fake-child tests cover progress parsing; exact 5/15-second boundaries; startup; short-pause recovery; repeated/latched incidents; separate frame/file stalls; audio-only advancement; observer gaps; malformed/closed progress; counter/file regression; unexpected zero/nonzero exit; output missing/empty; process inspection errors; graceful stop; ignored `q`/forced kill; shutdown races; poller independence; sticky event ordering; atomic state transitions; and legacy/current/future-unknown app classification using only temporary libraries.",
+        "A real-ffmpeg changing `testsrc2` plus audio fixture proves normal startup/progress/finalization and safe forced interruption, while a 30-minute run produces zero false unhealthy transitions, bounded monitor memory/state, advancing frame and output evidence, and a truthful terminal bundle in a sentinel-marked temporary library.",
+        "A representative 25-minute-or-longer League recording verifies healthy tray state, no false alert during normal focus/Alt-Tab behavior, truthful normal finalization, app-compatible library classification, and no regression to automatic match lifecycle or Live Client synchronization. Forced interruption behavior is proved by deterministic Windows exit-probe/service tests and the real-FFmpeg forced-interruption fixture rather than a second manual League session.",
+        "Applicable recorder, Tauri, frontend, feature-list, and project-wide verification passes; recorder lifecycle/media-library architecture, operator health-state behavior, thresholds, reason codes, and explicit boundaries with QB-CAP-003, QB-CAP-004, QB-CAP-005, QB-DIST-001, and QB-PERF-002 are durably documented with concrete evidence before completion."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Inject or simulate stalled/failing output conditions where feasible.",
+          "description": "Run recorder unit and integration tests for the pure health reducer, ffmpeg progress parser/supervisor, startup, stalls/recovery, child/output/finalization failures, state persistence, service ordering, and temporary-library fake children.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml"
+        },
+        {
+          "type": "automated",
+          "description": "Require formatted, warning-free recorder code after the concurrency/process/persistence changes.",
+          "command": "cargo fmt --manifest-path recorder/Cargo.toml -- --check; cargo clippy --manifest-path recorder/Cargo.toml --all-targets -- -D warnings"
+        },
+        {
+          "type": "automated",
+          "description": "Run Tauri library/status/backward-compatibility/playback/protection tests plus formatting and strict static analysis.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check; cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings"
+        },
+        {
+          "type": "automated",
+          "description": "Type-check/test the frontend contract and build the production UI with recording-status badges and playback policy.",
+          "command": "npm run check --prefix app; npm run build --prefix app"
+        },
+        {
+          "type": "automated",
+          "description": "Run the opt-in real-ffmpeg changing-source health integration fixture against a sentinel-marked temporary library; validate normal stop and forced-interruption state without touching user media.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml --test recording_health_ffmpeg -- --ignored --nocapture"
+        },
+        {
+          "type": "benchmark",
+          "description": "Run the changing-source health fixture for 1,800 seconds and verify zero false unhealthy transitions, bounded diagnostics/memory, continual frame/file progress, and truthful finalization.",
+          "command": "$env:QUEUEBACK_HEALTH_SOAK_SECONDS='1800'; cargo test --manifest-path recorder/Cargo.toml --test recording_health_ffmpeg health_soak -- --ignored --exact --nocapture; Remove-Item Env:QUEUEBACK_HEALTH_SOAK_SECONDS"
+        },
+        {
+          "type": "manual",
+          "description": "Record a 25+ minute League session, exercise ordinary focus/Alt-Tab and normal end, and inspect tray transitions, state/metadata files, app classification/playback policy, and Live Client synchronization. Use deterministic Windows process/service tests and the real-FFmpeg fixture for forced interruption.",
           "command": null
         },
         {
           "type": "inspection",
-          "description": "Verify the health signal is based on meaningful output progress/encoder state.",
+          "description": "Trace production health evidence from ffmpeg progress and file bytes through the pure reducer, state persistence, finalization result, service/tray projection, and app classification; confirm bounded/latest-value behavior, stable reason codes, legacy compatibility, and no polling/ffprobe/content-scan hot path.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Run every applicable project-wide command from docs/development/VERIFICATION.md, canonical feature-list schema/invariant/plan checks, and diff hygiene before completion.",
           "command": null
         }
       ],
-      "notes": "Current code checks ffmpeg process liveness only; this feature must define and test meaningful output-progress signals and false-positive bounds.",
+      "notes": "The attempted 2026-08-12 implementation was explicitly rolled back after it regressed the real library/client experience and did not improve capture performance. If this item is revisited, it requires a new plan grounded in the stable release UX. It is not a dependency of QB-PERF-002.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,
@@ -123,7 +178,8 @@
       "status": "not-started",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
-        "QB-CAP-001"
+        "QB-CAP-001",
+        "QB-CAP-002"
       ],
       "evidence": [],
       "execution": {
@@ -163,7 +219,8 @@
       "status": "not-started",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
-        "QB-CAP-001"
+        "QB-CAP-001",
+        "QB-CAP-002"
       ],
       "evidence": [],
       "execution": {
@@ -235,10 +292,12 @@
       "description": "Make automatic Chronobreak capture cheap enough that competitive League players can leave it enabled by default.",
       "priority": "P0",
       "area": "capture-performance",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": null,
       "dependencies": [],
-      "evidence": [],
+      "evidence": [
+        "QB-PERF-001 established the benchmark protocol and produced an initial invalid-but-diagnostic NVENC matrix that strongly implicates the Windows system-memory capture path; QB-PERF-002 defines a GPU-vendor-agnostic Windows capture correction without treating that invalid matrix as a passed formal gate."
+      ],
       "success_criteria": [
         "A reproducible benchmark protocol and performance budget exist.",
         "Capture performance is measured using metrics relevant to game responsiveness, not only average resource usage.",
@@ -257,38 +316,329 @@
       "description": "Define and automate/reproduce the benchmark used to measure Chronobreak capture overhead and the budget required before performance claims can be made.",
       "priority": "P0",
       "area": "capture-performance",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-CAP-PERF",
       "dependencies": [
         "QB-CAP-001"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-08-11: implemented the guided isolated PowerShell collector/finalizer, deterministic Python analyzer, durable protocol, sanitized JSON/Markdown reporting, ignored raw-result layout, and active ExecPlan for QB-PERF-001.",
+        "2026-08-11: `python -m unittest discover -s tools/capture_benchmark/tests -v` passed 56 tests; Python compilation, PowerShell AST parsing, analyzer `--help`, missing-PresentMon actionable preflight coverage, deterministic/sanitized report fixtures, and `git diff --check` passed.",
+        "2026-08-11: applicable project checks passed on the current tree: recorder tests/fmt/strict clippy, Tauri tests/fmt/strict clippy, frontend check/build, recorder release build, and canonical feature-list validation (47 items). The frontend build required an approved unsandboxed retry after sandboxed esbuild process creation returned EPERM.",
+        "2026-08-11: operator run from an interactive shell passed collector preflight with PresentMon 2.5.1 and raw CPU/process/GPU counter checks (`QB-PERF-PREFLIGHT-OK`).",
+        "2026-08-12: the operator completed and finalized all eight Ryzen 5 5600X/RTX 4060 NVENC runs. All four 1920x1080 60-FPS HEVC captures passed ffprobe, full decode, output-progress, bounded-memory, process-liveness, encoder-error, and poller-error checks. The official report is invalid because capped baseline run 3, capped capture run 1, and uncapped capture run 1 each contain one 5-6 second telemetry gap; capped baseline runs 1/3 and capped capture run 1 also show focus-contaminated frame variability. Completion remains blocked on a clean matrix; AMF and QSV remain unvalidated.",
+        "2026-08-12: exploratory analysis of the uncontaminated capped baseline run 2 against the median of near-identical capture runs 2/3 found average-FPS loss 0.92%, but 1%-low loss 21.44%, p95/p99 frametime increases 28.80%/27.02%, and an additional 0.565 percentage point of non-displayed presents. Median system CPU rose 19.91 points while GPU 3D remained unsaturated; ffmpeg used about 5.94% total-machine CPU, about 529 MiB private memory, about 13% GPU 3D, and about 18.19% Video Encode, while the recorder process itself was effectively idle. The uncapped diagnostic moved from 625.33 to 231.58 FPS. These invalid-dataset diagnostics strongly implicate the synchronous `gdigrab` system-memory capture/conversion/upload path, not recorder orchestration or NVENC capacity, but do not satisfy the formal performance gate.",
+        "2026-08-12 explicit product decision: the operator had one display and necessarily Alt-Tabbed to inspect step completion, causing the recorded focus variability/telemetry invalidations. The product owner accepts the completed eight-run diagnostic matrix and its clear bottleneck attribution as sufficient pre-change benchmark characterization, waives a clean repeat for QB-PERF-001 only, and directs work to QB-PERF-002. The report remains truthfully labeled INVALID and does not establish a negligible-impact claim or waive QB-PERF-002's valid post-change matrix.",
+        "Accepted diagnostic artifacts remain under build/perf/qb-perf-001-20260812-032909, including qb-perf-001-nvenc.json/.md and all eight raw run bundles; all four capture files passed ffprobe/full decode and resource-safety finalization. QB-PERF-002 is the canonical planned optimization disposition, with QB-PERF-003/QB-PERF-004 retaining AMD/Intel physical validation.",
+        "2026-08-12 completion-state verification: `python -m unittest discover -s tools/capture_benchmark/tests -v` passed all 57 tests in 55.521 seconds; feature-list schema/invariants, dependency acyclicity, completed plan existence, stale active/rerun-reference inspection, and `git diff --check` passed."
+      ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/completed/qb-perf-001-capture-benchmark-budget.md"
       },
       "acceptance_criteria": [
-        "The benchmark scenario is documented and repeatable.",
-        "The benchmark records the project-selected FPS/frametime and system/encoder metrics.",
-        "A baseline without Chronobreak capture and a Chronobreak-enabled run can be compared.",
-        "An explicit acceptable performance budget is documented before optimization features are declared complete."
+        "A durable protocol specifies League Practice Tool on Summoner's Rift with default-skin Garen, a fixed mid-lane camera, no measurement input, a preserved/fingerprinted 1920x1080 borderless VSync-off configuration, a 60-second warmup, and a 180-second measurement.",
+        "The complete matrix interleaves three 144-FPS baseline/capture pairs and includes one additional uncapped diagnostic baseline/capture pair, using only a sentinel-marked dedicated benchmark recording library.",
+        "The guided collector records versioned manifests plus PresentMon frame data, normalized and raw process CPU, system/process RAM, whole-adapter and where-available per-process 3D/Video Encode activity, adapter/process GPU memory, process I/O, output growth, recorder/poller/error diagnostics, concrete capture metadata, and media-validation artifacts without launching, terminating, or reconfiguring League.",
+        "The deterministic analyzer retains every run, aggregates capped conditions by the median of three, reports variability and all required frame/resource metrics, emits sanitized JSON and Markdown without absolute user paths, and labels results pass, fail, invalid, or diagnostic.",
+        "The capped frame budget is average-FPS loss <=2%, 1%-low FPS loss <=5%, p95 frametime increase <=5%, p99 frametime increase <=8%, and additional dropped frames <=0.1 percentage point; CPU >=90% and GPU 3D >=95% sample-proportion increases must each be <=5 percentage points, with Video Encode separate.",
+        "Malformed, short, wrong-process/wrong-cap, counter-incomplete, fingerprint-inconsistent, media-invalid, or excessively variable datasets are invalid; output stalls, encoder or poller lifecycle/final-flush errors, process disappearance, or sustained recorder/ffmpeg memory growth fail resource safety when the dataset is otherwise valid.",
+        "Automated fixtures cover calculations, CPU normalization, GPU-engine aggregation, saturation duration, exact gate and variability boundaries, missing/malformed/short data, resource-safety failures, sanitization/determinism, and uncapped diagnostic semantics.",
+        "A finalized report from the current Ryzen 5 5600X, RTX 4060, 1920x1080 NVENC configuration retains the completed capped and uncapped matrix, truthfully labels the focus/telemetry-contaminated dataset invalid, confirms every capture passes ffprobe and full decode, and records the product owner's explicit acceptance of this diagnostic evidence instead of a clean pre-change rerun; AMF and QSV are explicitly listed as unvalidated.",
+        "If any valid gate fails or an explicitly accepted diagnostic matrix exposes a substantial performance/resource bottleneck, a concrete planned child under EPIC-CAP-PERF is added and linked before this feature is completed; every substantial non-gating diagnostic finding receives a canonical disposition and any required targeted child; capture tuning is not performed within QB-PERF-001."
       ],
       "verification": [
         {
+          "type": "automated",
+          "description": "Run deterministic analyzer fixtures and integration tests.",
+          "command": "python -m unittest discover -s tools/capture_benchmark/tests -v"
+        },
+        {
+          "type": "inspection",
+          "description": "Exercise collector preflight without League and verify actionable prerequisite/live-check reporting.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/capture_benchmark/collect.ps1 -PresentMonPath <PresentMon-2.x.exe> -Condition baseline -FrameMode capped -RunNumber 1 -ResultRoot build/perf/preflight -PreflightOnly"
+        },
+        {
           "type": "benchmark",
-          "description": "Run the documented baseline and Chronobreak capture benchmark.",
+          "description": "Run and analyze the documented B1/C1, B2/C2, B3/C3 capped matrix and uncapped diagnostic pair on the target NVENC system.",
+          "command": "python tools/capture_benchmark/analyze.py --input build/perf/qb-perf-001 --output-json docs/performance/results/qb-perf-001-nvenc.json --output-markdown docs/performance/results/qb-perf-001-nvenc.md"
+        },
+        {
+          "type": "manual",
+          "description": "Finalize every capture run and verify the observed recording with ffprobe plus full ffmpeg decode before analysis.",
           "command": null
         },
         {
           "type": "inspection",
-          "description": "Verify methodology and result storage are reproducible.",
+          "description": "Run applicable project-wide checks from docs/development/VERIFICATION.md, validate canonical feature state, and inspect sanitized report/path safety.",
           "command": null
         }
       ],
-      "notes": "Recorder diagnostics has a short synthetic encoder-selection benchmark, but the required baseline-versus-capture League FPS/frametime protocol and budget do not exist.",
+      "notes": "Recorder diagnostics has a short synthetic encoder-selection benchmark, but it is not a substitute for this completed League baseline-versus-capture matrix. The analyzer's INVALID label, formulas, counter rules, and validity thresholds remain unchanged. On 2026-08-12 the product owner explicitly accepted the full single-monitor matrix as sufficient diagnostic pre-change characterization and waived only the clean QB-PERF-001 rerun; this requirement change does not turn the report into a formal pass, support a negligible-impact claim, validate AMF/QSV, or weaken the valid post-change matrix required by QB-PERF-002.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-PERF-002",
+      "kind": "feature",
+      "name": "GPU-Agnostic Low-Overhead Windows Capture",
+      "description": "Replace the recorder's synchronous Windows `gdigrab` system-memory capture, pixel-conversion, and GPU-upload path with asynchronous vendor-neutral GPU frame acquisition plus capability-selected NVIDIA, AMD, and Intel hardware-encoder adapters so 1920x1080 60-FPS automatic capture can meet one common League frame-pacing and resource contract without regressing recording reliability or tying the design to the validation machine.",
+      "priority": "P0",
+      "area": "capture-performance",
+      "status": "in-progress",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-DIST-001",
+        "QB-PERF-001"
+      ],
+      "evidence": [
+        "2026-08-12 QB-PERF-001 exploratory evidence: the clean capped baseline run versus the median of two near-identical clean NVENC capture runs showed only 0.92% average-FPS loss but 21.44% 1%-low loss, 28.80%/27.02% p95/p99 frametime increases, and 0.565 percentage point more non-displayed presents; the uncapped diagnostic fell from 625.33 to 231.58 FPS. The complete dataset was formally invalid because of operator-focus contamination and three telemetry gaps, so these figures identify direction but are not completion evidence.",
+        "2026-08-12 process attribution: median system CPU increased 19.91 percentage points during the clean capture comparison while the recorder process was effectively idle; ffmpeg used about 5.94% total-machine CPU, about 529 MiB private memory, about 13% GPU 3D, and about 18.19% Video Encode. Total GPU 3D and NVENC were not saturated, which points to acquisition/copy/conversion synchronization rather than encoder capacity or Live Client polling.",
+        "recorder/src/encoder.rs currently selects Windows `gdigrab` for a desktop region, requests CPU-visible `yuv420p`, and then invokes NVENC/AMF/QSV encoding. The current recording command has no vendor-neutral GPU-native Windows frame-acquisition abstraction or explicit zero/low-copy hardware-frame transport shared by the NVIDIA, AMD, and Intel encoder backends.",
+        "2026-08-12 recorder-path inspection found that recorder/src/poller.rs performs isolated asynchronous Live Client requests at roughly one-second event and ten-second snapshot intervals, while the video path is a long-lived ffmpeg child with a 1024-packet GDI video queue; this reinforces that capture acquisition/conversion is the primary optimization target and polling remains a separately monitored non-bottleneck.",
+        "2026-08-12 primary-source review found that official FFmpeg 8.1.2 includes exact-HWND `gfxcapture`, D3D11 GPU scaling/conversion, direct D3D11 inputs for NVENC and AMF, and D3D11-derived direct QSV mapping; Windows Graphics Capture supplies D3D11 frames and QueryPerformanceCounter-relative timestamps on Windows 10 version 1903 and later. The locally resolved FFmpeg 6.1 lacks `gfxcapture` and `scale_d3d11`, proving that an audited packaged runtime and capability check are required.",
+        "2026-08-12 architecture and risk review selected one external ffmpeg child, an exact-League-HWND Windows Graphics Capture/D3D11 core, same-adapter capability planning, GPU-resident resize/NV12 conversion, vendor-boundary NVENC/AMF/QSV adapters, finite pools, first-frame QPC clocking, structured flow diagnostics, explicit legacy/unsupported labels, and hardware-specific validation claims. The implementation guide is docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md.",
+        "2026-08-12 planning verification passed feature-list.schema.json plus unique-ID, parent, dependency, epic-stage, ready-feature, done-evidence, cycle, and linked-plan invariants for all 50 canonical roadmap items; `git diff --check` reported no whitespace errors. This planning pass changed canonical planning/documentation only and did not implement recorder product code.",
+        "2026-08-12 product decision closed QB-PERF-001 using the completed single-monitor matrix as accepted diagnostic pre-change evidence while preserving its INVALID label. QB-PERF-002 no longer requires a clean pre-change rerun, but its own post-change comparison remains required to be formally valid and pass every unchanged common gate.",
+        "2026-08-12 product correction removed QB-CAP-002 from this feature's dependency gate and rolled its experimental client/recording-state changes back. The performance implementation starts from the stable release-era recording/library behavior and may not make valid metadata/video bundles Unknown or unplayable.",
+        "2026-08-12 dependency gate opened: QB-DIST-001 completed the exact QueueBack FFmpeg 8.1.2 source build, paired shared resolver, packaged release layout, sanitized-PATH smoke, and real NVENC diagnostic on the installed 566.03 driver. QB-PERF-002 implementation is now active on that runtime.",
+        "2026-08-12 explicit product requirement change: post-change performance proof uses one controlled capped baseline/capture pair and one independent uncapped baseline/capture pair (four total runs), not three capped repetitions. Every run still has the same warmup, measurement, focus, telemetry, media, identity, and resource-safety validity requirements and the capped pair keeps every existing performance threshold. A noisy, contradictory, or invalid pair is rerun as a fresh immutable pair instead of being hidden by a median or mandatory repetition."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md"
+      },
+      "acceptance_criteria": [
+        "A durable design documents the selected Windows capture API and frame path from League's borderless window through pixel-format handling and hardware encoding, including ownership, synchronization, adapter selection, supported Windows versions, occlusion/minimize/focus behavior, and why rejected alternatives do not meet performance, reliability, packaging, GPU-vendor-independence, or anti-cheat-safety requirements.",
+        "The automatic optimized Windows path uses Windows Graphics Capture against League's exact HWND on Windows 10 version 1903 or later, accepts the operating-system capture indicator when suppression is unavailable, and never depends on restricted border-removal permission, Desktop Duplication whole-output capture, primary-display retry, game injection, or GDI fallback to report optimized success.",
+        "Windows frame acquisition and the core capture-buffer model use vendor-neutral Windows graphics interfaces and types. NVIDIA-, AMD-, and Intel-specific behavior is confined to capability/interop adapters at the encoder boundary; the core capture lifecycle, buffering, frame timing, and diagnostics do not branch on marketing GPU names, PCI vendor IDs, or the developer's RTX 4060.",
+        "On every encoder combination declared implemented, steady-state video acquisition and encoder submission keep full frames GPU-resident without a per-frame full-surface GPU-to-system-memory readback or CPU pixel conversion. Where zero-copy sharing is impossible, any GPU-to-GPU copy or conversion is explicit, bounded, measured, and backend-specific; inspection, diagnostics, or trace evidence proves the actual runtime path rather than inferring it solely from the configured encoder name.",
+        "The production runtime is an audited, exactly compatible packaged FFmpeg build initially pinned to 8.1.2; startup verifies version/build identity, `gfxcapture`, `scale_d3d11`, D3D11 device support, the selected encoder, and a versioned QueueBack capture-diagnostics ABI. An arbitrary PATH binary, including the current FFmpeg 6.1, cannot be accepted or trigger a silent legacy fallback when any required capability is absent.",
+        "Runtime backend selection is capability-driven and binds capture plus encoding to the correct physical adapter. NVIDIA/NVENC, AMD/AMF, and Intel/QSV capability combinations—including multiple adapters, an integrated-plus-discrete system, unsupported interop, and encoder absence—produce deterministic selections or explicit unsupported states without routing an unrecognized vendor through a hidden high-cost path.",
+        "Frame acquisition and encoding are asynchronous with respect to League and use explicitly bounded queues/resources. When capture or encoding falls behind, the recorder applies a documented recorder-frame drop/backpressure policy, exposes dropped/backlogged capture diagnostics, and cannot grow memory without bound or synchronously stall the game-facing graphics path.",
+        "Machine-readable diagnostics separately expose source frames surfaced, source frames superseded by the bounded latest-frame policy, CFR discards, CFR duplications, encoded frames, pool/size recreations, current bounded depth, first/latest Windows Graphics Capture QPC timestamps, progress, and terminal errors; counters are monotonic, their owned-flow accounting invariant is tested, and compositor frames never surfaced by Windows are explicitly outside the claim.",
+        "Recording and Live Client timestamps are anchored to the first Windows Graphics Capture SystemRelativeTime/QPC video frame rather than ffmpeg process-spawn time, and startup is not declared healthy until the exact selected capture/conversion/encoder/mux graph reports a real first frame plus advancing output progress.",
+        "Every implemented GPU/encoder combination records the intended League window/region at the configured 1920x1080 and 60 FPS without game-process injection, graphics hooks inside League, input interception, anti-cheat-sensitive behavior, or automatic modification of League settings.",
+        "The optimized path preserves the existing automatic match lifecycle, fragmented-MP4 interruption tolerance, selected HEVC/H.264 codec and profile semantics, audio-track behavior, match association, metadata, Live Client polling, graceful finalization, and recoverable partial-output behavior; source recordings are never destructively rewritten by migration or verification.",
+        "Loss of the capture surface, adapter reset, League window replacement, focus/visibility transitions, encoder failure, and unsupported capture capability produce deterministic lifecycle behavior and actionable diagnostics without a deadlock, runaway retry loop, resource leak, silently frozen-success state, or corrupted finalized-success claim.",
+        "No GPU vendor or implemented encoder combination silently falls back to the existing `gdigrab`/system-memory path. Any retained compatibility fallback is an explicit separately named mode in diagnostics and metadata, is exercised separately, and is excluded from GPU-native, GPU-agnostic-performance, and negligible-impact claims.",
+        "A canonical support matrix distinguishes `implemented`, `automated-tested`, `hardware-validated`, `unsupported`, and `unvalidated` for Windows versions, capture capabilities, NVIDIA/NVENC, AMD/AMF, Intel/QSV, codecs, and relevant multi-adapter combinations. Absence of available AMD or Intel test hardware is represented as `unvalidated`, never silently converted into either support proof or implementation exemption.",
+        "Automated tests cover vendor-neutral capture behavior plus NVIDIA, AMD, and Intel capability matrices; adapter matching; integrated/discrete multi-adapter selection; supported/unsupported interop; bounded-buffer behavior; deterministic frame-drop/backpressure accounting; resource release; capture-surface loss/recreation; encoder failure; shutdown/finalization ordering; fallback disclosure; and preservation of recording metadata semantics using fakes or dedicated fixtures where real GPU behavior cannot be deterministic.",
+        "The Windows build compiles and packages the complete capability-selection and encoder-adapter surface without requiring a developer-installed vendor SDK or hardware from each vendor. Optional runtime components and failure messages are documented, and lack of one vendor's encoder does not disable another vendor's valid path.",
+        "The capture collector/analyzer contract is versioned and generalized to record capture backend, diagnostics ABI, adapter identity, interop, runtime build, support label, and target encoder; historical schema-v1 evidence remains readable, schema-v2 requires one capped baseline/capture pair plus one uncapped baseline/capture pair, one-recorder/one-ffmpeg topology and every per-run validity/resource gate remain intact, and AMF/QSV parameters change identity expectations rather than performance thresholds.",
+        "A controlled Windows integration test on available hardware proves that the vendor-neutral backend acquires and encodes a changing 1920x1080 60-FPS fixture for at least the defined test duration, keeps buffer/resource counts bounded, reports the selected capture and encoder-interoperability paths separately, produces expected audio/video streams, and yields a file that passes ffprobe plus full ffmpeg decode.",
+        "A valid post-change Ryzen 5 5600X/RTX 4060/1920x1080 NVENC League comparison consisting of one capped baseline/capture pair and one uncapped baseline/capture pair passes every capped frame gate: average-FPS loss <=2%, 1%-low FPS loss <=5%, p95 frametime increase <=5%, p99 frametime increase <=8%, and additional dropped-frame rate <=0.1 percentage point. If the pair is noisy, contradictory, or invalid, it is replaced by a fresh complete pair rather than averaged with mandatory repetitions.",
+        "The same valid NVENC comparison passes every QB-PERF-001 resource-safety gate, shows no sustained recorder/ffmpeg memory growth, output stall, process disappearance, encoder/poller lifecycle error, media-integrity failure, CPU >=90% saturation regression, or GPU 3D >=95% saturation regression, and reduces median system/League CPU deltas below the protocol's 2-percentage-point substantial-finding threshold or records a reviewed evidence-backed disposition that does not contradict negligible game impact.",
+        "The QB-PERF-001 capped frame and resource-safety budgets are the common performance contract for every GPU/encoder combination declared supported, not NVENC-only requirements. Hardware not available during this feature remains explicitly performance-unvalidated and receives a concrete canonical validation follow-up; QueueBack does not claim vendor-wide negligible impact until that vendor's complete matrix passes.",
+        "The uncapped diagnostic pair is retained and analyzed independently. It does not gate capped completion, but every substantial uncapped frame/resource finding has a concrete canonical disposition and no result is hidden by aggregate reporting.",
+        "The finalized benchmark report records the exact vendor-neutral backend, capture API, copy/conversion path, physical adapter, vendor-specific encoder adapter, codec, profile, resolution, FPS, binary/config revisions, all four individual runs, media validation, diagnostics, and remaining limitations; it validates the available NVENC target only and links the canonical AMF/QSV hardware-validation follow-ups without presenting untested vendors as failed or validated.",
+        "Applicable recorder and project-wide verification passes on the completed tree, relevant capture architecture and operator documentation is updated, and concrete benchmark/integration evidence is recorded in this feature before it can be marked done."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run recorder unit and integration tests covering vendor-neutral capture, NVIDIA/AMD/Intel capability and adapter matrices, bounded capture flow, failure/lifecycle handling, metadata preservation, and dedicated media fixtures.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml"
+        },
+        {
+          "type": "automated",
+          "description": "Verify recorder formatting and require a warning-free strict static analysis pass for the new unsafe/graphics/concurrency-sensitive code.",
+          "command": "cargo fmt --manifest-path recorder/Cargo.toml -- --check; cargo clippy --manifest-path recorder/Cargo.toml --all-targets -- -D warnings"
+        },
+        {
+          "type": "automated",
+          "description": "Run deterministic capture-benchmark schema-v1/v2, target-encoder, adapter/path identity, diagnostics-counter, validity, budget, and sanitization fixtures.",
+          "command": "python -m unittest discover -s tools/capture_benchmark/tests -v"
+        },
+        {
+          "type": "inspection",
+          "description": "Verify the packaged FFmpeg version/build/hash, required WGC/D3D11 filters and devices, selected vendor encoders, QueueBack diagnostics ABI, source/patch provenance, configure flags, binary hashes, and applicable license/notices; verify an incompatible PATH FFmpeg is rejected without legacy fallback.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Trace the production Windows path from capture-surface acquisition through each NVIDIA/AMD/Intel encoder adapter and prove vendor-neutral core behavior, physical-adapter identity, GPU residency, synchronization, bounded ownership, pixel-format conversion location, fallback disclosure, and absence of League injection/hooks or steady-state full-frame CPU readback.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "On supported Windows/NVENC hardware, record a controlled changing 1920x1080 fixture and exercise focus loss, occlusion/minimize behavior, capture-surface loss/recreation where safely feasible, normal stop, League/window replacement, and forced interruption; verify truthful diagnostics, bounded resources, finalization, and recoverable partial output.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Run the optimized available-hardware path against the dedicated changing-window fixture for at least 30 minutes; prove continually advancing/non-frozen media, finite texture/queue/encoder depths, no sustained process or GPU-memory growth, no output stall, and consistent final counter accounting.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Validate representative normal and interrupted dedicated-fixture output structurally and by full decode; never corrupt or truncate a real user recording for this check.",
+          "command": "ffprobe -v error -show_entries format=duration:stream=index,codec_type,codec_name,avg_frame_rate -of json <dedicated-fixture-media>; ffmpeg -v error -i <dedicated-fixture-media> -f null NUL"
+        },
+        {
+          "type": "benchmark",
+          "description": "Run one controlled capped baseline/capture pair and one independent uncapped baseline/capture pair on the target NVENC system, finalize both captures, and generate a sanitized post-change report; completion requires all four runs to be valid and every capped frame/resource-safety gate to pass, with a fresh pair rerun if evidence is noisy or doubtful.",
+          "command": "python tools/capture_benchmark/analyze.py --input build/perf/qb-perf-002 --output-json docs/performance/results/qb-perf-002-nvenc.json --output-markdown docs/performance/results/qb-perf-002-nvenc.md"
+        },
+        {
+          "type": "inspection",
+          "description": "Compare the valid post-change run deltas with their own interleaved baselines and use the accepted-invalid QB-PERF-001 diagnostic only for directional pre-change context; confirm all substantial capped/uncapped findings have canonical dispositions, report path sanitization holds, and conclusions do not rely only on average FPS or encoder utilization.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Review the GPU/encoder support matrix, automated NVIDIA/AMD/Intel capability cases, packaged runtime dependencies, and canonical hardware-validation follow-ups; confirm that only hardware actually benchmarked is labeled performance-validated and that unvalidated vendors still use the same performance contract.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Run every applicable project-wide command from docs/development/VERIFICATION.md and validate feature-list schema/invariants before completion.",
+          "command": null
+        }
+      ],
+      "notes": "Implementation is active. Planning selected exact-HWND Windows Graphics Capture on D3D11, GPU-resident resize/NV12 conversion, and capability-selected NVENC/AMF/QSV encoding. This is not a polling or NVIDIA-preset optimization. The client and recorder must retain stable release-era bundle behavior; the rejected QB-CAP-002 state/classification machinery is outside this implementation. GDI, Desktop Duplication, primary-display retry, and cross-adapter transfer are never silent optimized fallbacks. Physical performance claims remain hardware-specific: the current RTX 4060 can validate NVENC, while QB-PERF-003/QB-PERF-004 own AMD/Intel matrices under the same budgets.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 5,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-PERF-003",
+      "kind": "feature",
+      "name": "AMD AMF Hardware Performance Validation",
+      "description": "Validate QueueBack's completed vendor-neutral Windows Graphics Capture/D3D11-to-AMF path on a physical supported AMD adapter using the same 1920x1080 60-FPS League protocol, frame-pacing budgets, resource-safety gates, media-integrity checks, and support-label rules as NVENC.",
+      "priority": "P1",
+      "area": "capture-performance",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [
+        "QB-PERF-002"
+      ],
+      "evidence": [
+        "Created during QB-PERF-002 planning because the current Ryzen 5 5600X/RTX 4060 machine cannot provide physical AMD/AMF performance evidence; automated AMF capability coverage is necessary but cannot substitute for the complete League hardware matrix."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A dedicated Windows system with a supported physical AMD GPU and available AMF encoder records an exact hardware fingerprint: CPU, GPU model, adapter topology/LUID, display attachment, Windows build, AMD driver, codec/profile, packaged FFmpeg version/build/hash, QueueBack revision, capture backend, diagnostics ABI, and D3D11-to-AMF interop path.",
+        "Preflight proves that exact-HWND Windows Graphics Capture, GPU-resident D3D11 resize/NV12 conversion, and AMF encoding use the intended same physical adapter with no full-frame host readback, CPU pixel conversion, cross-adapter transfer, `gdigrab`, Desktop Duplication, primary-display fallback, or legacy mode.",
+        "The dedicated changing-window integration fixture records continually changing 1920x1080 60-FPS video on AMF, reports bounded source/CFR/encoder counters and resources, contains the expected audio/video streams, and passes ffprobe, full decode, and decoded-frame-change validation before League benchmarking.",
+        "A complete valid League matrix interleaves three capped baseline/AMF-capture pairs and includes one independent uncapped diagnostic pair under the unchanged QB-PERF-001/QB-PERF-002 protocol; every run is retained, finalized, media-validated, fingerprint-consistent, counter-complete, and free of focus or telemetry-gap invalidation.",
+        "The capped AMF matrix passes the common frame contract without vendor-specific thresholds: average-FPS loss <=2%, 1%-low FPS loss <=5%, p95 frametime increase <=5%, p99 frametime increase <=8%, and additional dropped/non-displayed frames <=0.1 percentage point.",
+        "The capped AMF matrix passes the common resource-safety contract: CPU >=90% and GPU 3D >=95% sample-proportion increases are each <=5 percentage points, and there is no sustained recorder/ffmpeg memory growth, output stall, process disappearance, source/encoder backlog violation, poller/encoder/finalization error, media-integrity failure, or silently frozen-success interval.",
+        "Every substantial capped or uncapped frame, CPU, GPU, memory, capture-drop, CFR, encoder, lifecycle, or media finding receives an evidence-backed canonical disposition; a failed gate creates a focused planned AMF optimization feature rather than weakening thresholds or tuning this validation item opportunistically.",
+        "The sanitized JSON and Markdown report preserve individual runs and variability, contain no absolute user paths, identify the exact tested hardware/path and limitations, and update only that combination from `optimized-unvalidated` to `optimized-validated`; untested AMD devices, codecs, drivers, topologies, and cross-adapter combinations remain unvalidated or unsupported.",
+        "Applicable benchmark-tool and project-wide verification passes, durable Windows capture/support documentation is updated, and concrete commands, results, report paths, media checks, and support-label evidence are recorded in this item before it can be marked done."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run the generalized collector/analyzer tests, including AMF target identity, common gate boundaries, counter validity, determinism, and report sanitization.",
+          "command": "python -m unittest discover -s tools/capture_benchmark/tests -v"
+        },
+        {
+          "type": "inspection",
+          "description": "On the AMD test system, verify the hardware fingerprint, packaged runtime, exact capture/encoder adapter LUID match, GPU-resident D3D11-to-AMF path, finite limits, and absence of legacy/cross-adapter/host-readback behavior before collecting League evidence.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Run and media-validate the dedicated changing-window AMF fixture, including normal stop, focus/occlusion, resize, minimize/restore, and a safe forced-interruption copy in a sentinel-marked temporary library.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Collect the complete three-pair capped plus one-pair uncapped League matrix on physical AMD/AMF hardware and generate the finalized sanitized report.",
+          "command": "python tools/capture_benchmark/analyze.py --input build/perf/qb-perf-003 --target-encoder amf --output-json docs/performance/results/qb-perf-003-amf.json --output-markdown docs/performance/results/qb-perf-003-amf.md"
+        },
+        {
+          "type": "inspection",
+          "description": "Validate every AMF capture with ffprobe, full decode, and decoded-frame-change checks; review all common gates, variability, diagnostics, substantial findings, and exact-combination support labels.",
+          "command": "ffprobe -v error -show_entries format=duration:stream=index,codec_type,codec_name,avg_frame_rate -of json <dedicated-amf-media>; ffmpeg -v error -i <dedicated-amf-media> -f null NUL"
+        },
+        {
+          "type": "automated",
+          "description": "Run all applicable project-wide checks and canonical feature-list schema/invariant validation before completion.",
+          "command": null
+        }
+      ],
+      "notes": "This is measurement and support-label work, not an AMF tuning pass. It must use the GPU-agnostic implementation delivered by QB-PERF-002 and the exact common budgets; changing capture quality, FPS, League settings, thresholds, or validity rules to obtain a pass is forbidden. If suitable AMD hardware is unavailable when this becomes dependency-ready, mark it blocked rather than treating automated tests or NVENC evidence as AMF validation. Never use a real user recording library for interruption or corruption checks.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-PERF-004",
+      "kind": "feature",
+      "name": "Intel QSV Hardware Performance Validation",
+      "description": "Validate QueueBack's completed vendor-neutral Windows Graphics Capture/D3D11-to-QSV path on a physical supported Intel adapter using the same 1920x1080 60-FPS League protocol, frame-pacing budgets, resource-safety gates, media-integrity checks, and support-label rules as NVENC.",
+      "priority": "P1",
+      "area": "capture-performance",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [
+        "QB-PERF-002"
+      ],
+      "evidence": [
+        "Created during QB-PERF-002 planning because the current Ryzen 5 5600X/RTX 4060 machine cannot provide physical Intel/QSV performance evidence; automated QSV capability and direct-map coverage is necessary but cannot substitute for the complete League hardware matrix."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A dedicated Windows system with a supported physical Intel GPU and available QSV encoder records an exact hardware fingerprint: CPU, GPU model, adapter topology/LUID, display attachment, Windows build, Intel driver, codec/profile, packaged FFmpeg version/build/hash, QueueBack revision, capture backend, diagnostics ABI, and D3D11-derived QSV direct-map path.",
+        "Preflight proves that exact-HWND Windows Graphics Capture, GPU-resident D3D11 resize/NV12 conversion, and QSV encoding use the intended same physical adapter and a direct hardware map with no full-frame host readback, CPU pixel conversion, cross-adapter transfer, `gdigrab`, Desktop Duplication, primary-display fallback, or legacy mode; a map that cannot remain direct fails closed.",
+        "The dedicated changing-window integration fixture records continually changing 1920x1080 60-FPS video on QSV, reports bounded source/CFR/encoder counters and resources, contains the expected audio/video streams, and passes ffprobe, full decode, and decoded-frame-change validation before League benchmarking.",
+        "A complete valid League matrix interleaves three capped baseline/QSV-capture pairs and includes one independent uncapped diagnostic pair under the unchanged QB-PERF-001/QB-PERF-002 protocol; every run is retained, finalized, media-validated, fingerprint-consistent, counter-complete, and free of focus or telemetry-gap invalidation.",
+        "The capped QSV matrix passes the common frame contract without vendor-specific thresholds: average-FPS loss <=2%, 1%-low FPS loss <=5%, p95 frametime increase <=5%, p99 frametime increase <=8%, and additional dropped/non-displayed frames <=0.1 percentage point.",
+        "The capped QSV matrix passes the common resource-safety contract: CPU >=90% and GPU 3D >=95% sample-proportion increases are each <=5 percentage points, and there is no sustained recorder/ffmpeg memory growth, output stall, process disappearance, source/encoder backlog violation, poller/encoder/finalization error, media-integrity failure, or silently frozen-success interval.",
+        "Every substantial capped or uncapped frame, CPU, GPU, memory, capture-drop, CFR, encoder, lifecycle, or media finding receives an evidence-backed canonical disposition; a failed gate creates a focused planned QSV optimization feature rather than weakening thresholds or tuning this validation item opportunistically.",
+        "The sanitized JSON and Markdown report preserve individual runs and variability, contain no absolute user paths, identify the exact tested hardware/path and limitations, and update only that combination from `optimized-unvalidated` to `optimized-validated`; untested Intel devices, codecs, drivers, topologies, and cross-adapter combinations remain unvalidated or unsupported.",
+        "Applicable benchmark-tool and project-wide verification passes, durable Windows capture/support documentation is updated, and concrete commands, results, report paths, media checks, and support-label evidence are recorded in this item before it can be marked done."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run the generalized collector/analyzer tests, including QSV target identity/direct-map requirements, common gate boundaries, counter validity, determinism, and report sanitization.",
+          "command": "python -m unittest discover -s tools/capture_benchmark/tests -v"
+        },
+        {
+          "type": "inspection",
+          "description": "On the Intel test system, verify the hardware fingerprint, packaged runtime, exact capture/encoder adapter LUID match, direct D3D11-to-QSV mapping, finite limits, and absence of legacy/cross-adapter/host-readback behavior before collecting League evidence.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Run and media-validate the dedicated changing-window QSV fixture, including normal stop, focus/occlusion, resize, minimize/restore, and a safe forced-interruption copy in a sentinel-marked temporary library.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Collect the complete three-pair capped plus one-pair uncapped League matrix on physical Intel/QSV hardware and generate the finalized sanitized report.",
+          "command": "python tools/capture_benchmark/analyze.py --input build/perf/qb-perf-004 --target-encoder qsv --output-json docs/performance/results/qb-perf-004-qsv.json --output-markdown docs/performance/results/qb-perf-004-qsv.md"
+        },
+        {
+          "type": "inspection",
+          "description": "Validate every QSV capture with ffprobe, full decode, and decoded-frame-change checks; review all common gates, variability, diagnostics, substantial findings, and exact-combination support labels.",
+          "command": "ffprobe -v error -show_entries format=duration:stream=index,codec_type,codec_name,avg_frame_rate -of json <dedicated-qsv-media>; ffmpeg -v error -i <dedicated-qsv-media> -f null NUL"
+        },
+        {
+          "type": "automated",
+          "description": "Run all applicable project-wide checks and canonical feature-list schema/invariant validation before completion.",
+          "command": null
+        }
+      ],
+      "notes": "This is measurement and support-label work, not a QSV tuning pass. It must use the GPU-agnostic implementation delivered by QB-PERF-002 and the exact common budgets; changing capture quality, FPS, League settings, thresholds, or validity rules to obtain a pass is forbidden. Integrated/discrete systems must prove the capture-output adapter and QSV adapter are the same and that the hardware map is direct. If suitable Intel hardware is unavailable when this becomes dependency-ready, mark it blocked rather than treating automated tests or NVENC evidence as QSV validation. Never use a real user recording library for interruption or corruption checks.",
+      "user_value": 5,
+      "differentiation": 5,
+      "difficulty": 3,
       "stage": "ready"
     },
     {
@@ -1505,43 +1855,77 @@
       "description": "Bundle ffmpeg and ffprobe as Windows application resources and give recorder diagnostics, capture, probing, thumbnailing, and clip export one explicit installed-tool discovery contract.",
       "priority": "P1",
       "area": "distribution",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-DIST",
       "dependencies": [
         "QB-CAP-001",
         "QB-CLIP-007"
       ],
       "evidence": [
-        "Current recorder development discovery supports an adjacent resources/ffmpeg candidate, while app export and library probing still invoke ffmpeg/ffprobe from PATH."
+        "2026-08-12 repository inspection: recorder/src/encoder.rs resolves an optional LEAGUE_REPLAY_FFMPEG path, an adjacent resources/ffmpeg/ffmpeg.exe, and then ffmpeg.exe from PATH, validating only that `-version` exits successfully. app/src-tauri/src/clip_export.rs and library.rs invoke bare ffmpeg/ffprobe names, while app/src-tauri/tauri.conf.json packages no media resources, so the two processes can silently use different or incompatible tools.",
+        "2026-08-12 runtime inspection: the developer-machine PATH resolves Anaconda FFmpeg 6.1, which lacks the gfxcapture and scale_d3d11 filters required by QB-PERF-002. Official FFmpeg 8.1.2 source contains exact-HWND gfxcapture with D3D11 hardware frames and scale_d3d11; Gyan's FFmpeg-project-linked Windows essentials build contains ffmpeg, ffprobe, all Windows internal components, libx264, and compiled AMF/NVENC/QSV support, and is distributed as a Windows-10-or-later static GPLv3 build.",
+        "2026-08-12 planning selected one versioned media-runtime directory and shared Rust resolver, an embedded exact runtime lock, explicit offline staging, Windows Tauri resource mapping, atomic ffmpeg/ffprobe pairing, no production PATH fallback, bounded identity/capability checks, and operation-scoped app degradation. The plan intentionally excludes installer/login work, GDI recording, the QueueBack FFmpeg diagnostics patch, and performance claims so it directly unlocks QB-PERF-002 without another product detour.",
+        "2026-08-12 planning gate: docs/exec-plans/active/qb-dist-001-packaged-media-tool-contract.md is self-contained and linked; feature-list.schema.json plus unique-ID, parent/dependency, epic-stage, ready-feature, done-evidence, cycle, and linked-plan invariants passed for all 50 items; `git diff --check` passed with line-ending notices only. Per the planned-work contract, implementation starts from a fresh context.",
+        "2026-08-12 runtime compatibility finding: Gyan FFmpeg 8.1.2 advertised every required backend but its nv-codec headers require NVENC API 13.1 / NVIDIA driver 610 or newer; real H.264/HEVC probes failed on the supported RTX 4060 machine's 566.03 driver. Requiring a driver upgrade or accepting an advertised-only encoder would contradict the distribution and portability goals, so the generic binary was rejected.",
+        "2026-08-12 custom runtime implementation: tools/media_runtime/build_ffmpeg.ps1 now pins FFmpeg n8.1.2 commit 38b88335f99e76ed89ff3c93f877fdefce736c13, nv-codec-headers n12.2.72.0 commit c69278340ab1d5559c7d7bf0edf615dc33ddbba7, AMD AMF v1.4.36 commit 16f7d73e0b45c473e903e46981ed0b91efc4c091, and exact MSYS2 UCRT64 package versions. The static GPLv3 build contains gfxcapture, scale_d3d11, D3D11, libx264, and H.264/HEVC NVENC/AMF/QSV, omits ffplay, imports only Windows/UCRT system DLLs, and both NVENC codecs encode successfully on driver 566.03.",
+        "2026-08-12 shared contract implementation: media-runtime contract v2 embeds exact source/build/file identity and finite typed validation; recorder diagnostics/capture and app probe/export/thumbnail operations receive only the paired packaged tools, reject PATH and the former LEAGUE_REPLAY_FFMPEG escape hatch, and keep missing-runtime failure operation-scoped so valid recordings remain browseable/playable rather than becoming Unknown.",
+        "2026-08-12 focused verification: runtime unit tests passed 9/9 plus the real-runtime contract; prepare corruption/atomicity and verifier scripts passed; sanitized-PATH generated encode/probe/clip/thumbnail/full-decode smoke passed at build/media-runtime/smoke-20260812-132214-27a0cfdb; recorder diagnostics reported runtime queueback-ffmpeg-8.1.2-windows-x86_64-r1 and selected working h264_nvenc on the existing driver. The CAP-era state/client changes were separately rolled back, with recorder 31+1 and app 30 tests passing.",
+        "2026-08-12 completion gate: all three Rust crates passed formatting and strict Clippy; recorder and Tauri release executables plus the production frontend built; the portable release verified the exact resource inventory; its recorder resolved only resources/media-runtime under a PATH with no ffmpeg/ffprobe and passed H.264 NVENC diagnostics on driver 566.03; an isolated missing-runtime fixture failed actionably before capture; 57 benchmark-tool regressions, the 50-item feature schema/invariants, and diff hygiene passed. ffmpeg.exe is 33,892,864 bytes/SHA-256 3bda8a8ec9517b872a9478efe9fe9b7d2bf165c823412db036cfc43f2bc990fd; ffprobe.exe is 33,681,920 bytes/SHA-256 2b3c43c7757236c1152a70d8f37966fcef03b6829c06c6e854c88aa34ae84f4e."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/completed/qb-dist-001-packaged-media-tool-contract.md"
       },
       "acceptance_criteria": [
-        "The Windows package contains the required ffmpeg and ffprobe executables and applicable notices/licenses.",
-        "Recorder diagnostics/capture and app probing/export resolve the same packaged tool location in an installed build.",
-        "The installed workflow succeeds when no system ffmpeg or ffprobe is on PATH.",
-        "Missing, blocked, or incompatible packaged tools produce concise actionable errors."
+        "A checked-in Windows-x86_64 media-runtime lock pins one reproducible QueueBack FFmpeg 8.1.2 build by exact FFmpeg, nv-codec-header, and AMF tags/40-character commits, exact toolchain package versions, build identity/configuration, and individual ffmpeg/ffprobe hashes. Floating latest sources, a self-asserted adjacent manifest, and executable-name-only discovery are not trusted runtime identities.",
+        "One shared Rust contract resolves ffmpeg and ffprobe as an indivisible pair from a complete media-runtime directory. On Windows, recorder and app production paths use the packaged resource root; an explicit QUEUEBACK_MEDIA_RUNTIME_DIR development override must satisfy the same lock, while PATH, LEAGUE_REPLAY_FFMPEG, mixed directories, and a partial pair cannot silently satisfy the contract.",
+        "The version-two runtime layout contains runtime-manifest.json, bin/ffmpeg.exe, bin/ffprobe.exe, applicable FFmpeg/x264/NVIDIA/AMD/Intel licenses and notices, exact source/build provenance, and no unrelated ffplay binary. Relative manifest paths are traversal-safe, every required file is a regular file inside the runtime root, and on-disk identity is checked against the lock embedded in both QueueBack binaries.",
+        "Runtime validation is finite and distinguishes missing/incomplete files, invalid manifest or path, hash/integrity mismatch, wrong architecture/version/build, ffmpeg/ffprobe pair mismatch, blocked execution, probe timeout, and missing capability. The baseline capability report proves gfxcapture, scale_d3d11, D3D11 hardware support, libx264, and compiled NVENC, AMF, and QSV H.264/HEVC encoders without misrepresenting compiled support as hardware availability or measured vendor performance.",
+        "Runtime acquisition/build is an explicit maintainer action: the checked-in script clones only the pinned tagged commits when `-Acquire` is explicitly supplied, rejects commit or toolchain-version drift, builds in the ignored workspace tree, and stages only locked files through a temporary directory. Ordinary tests, Cargo/npm builds, application startup, and recording never download, rebuild, update, or mutate the packaged runtime, and generated sources/binaries remain outside source control.",
+        "The Windows Tauri resource configuration maps the staged directory to one stable resources/media-runtime location, and the standalone recorder resolves that same location relative to its installed executable. A release-layout verifier proves the exact required file set and hashes; QB-DIST-004 remains responsible for the final installer and clean-machine upgrade/uninstall workflow.",
+        "Recorder diagnostics, encoder discovery/benchmarking, and recording child creation receive ffmpeg only from the resolved MediaTools value. The path is resolved and validated once before recording startup, is logged/reported explicitly, and adds no per-frame or periodic active-recording work.",
+        "App probing, thumbnail generation, and clip export receive ffprobe/ffmpeg only from the same resolved MediaTools value. A missing or invalid runtime does not make an otherwise valid recording Unknown or prevent library browsing/playback; only media-tool-dependent operations are unavailable and return the stable actionable runtime error.",
+        "A staged Windows release-layout check with a sanitized PATH proves recorder diagnostics plus dedicated temporary-fixture encode/probe/thumbnail/export operations use the packaged pair successfully. It does not start the legacy GDI recorder, alter a user recording, require a real League session, or stand in for QB-PERF-002's capture and performance proof.",
+        "The contract has one explicit extension point for QB-PERF-002 to apply its minimal audited capture-diagnostics patch to this same QueueBack 8.1.2 source build and require the diagnostics ABI without adding another resolver or accepting PATH fallback. Applicable shared-contract, recorder, Tauri, frontend, packaging, feature-list, and project-wide checks pass with concrete evidence before completion."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Test shared tool-path resolution and missing/incompatible-tool errors with controlled resource layouts.",
+          "description": "Run shared media-runtime contract tests for exact lock/manifest parsing, safe paired resolution, hashes, bounded probes, capability reports, explicit override behavior, PATH rejection, and every stable failure class using controlled temporary layouts and injected probes.",
+          "command": "cargo test --manifest-path media-runtime/Cargo.toml"
+        },
+        {
+          "type": "automated",
+          "description": "Run recorder and Tauri integration suites proving every production media-tool call site uses the shared pair and that app library/playback remains available when the pair is unavailable.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml; cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "automated",
+          "description": "Require formatted, warning-free Rust code and the existing frontend production checks after cross-crate integration.",
+          "command": "cargo fmt --manifest-path media-runtime/Cargo.toml -- --check; cargo clippy --manifest-path media-runtime/Cargo.toml --all-targets -- -D warnings; cargo fmt --manifest-path recorder/Cargo.toml -- --check; cargo clippy --manifest-path recorder/Cargo.toml --all-targets -- -D warnings; cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check; cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings; npm run check --prefix app; npm run build --prefix app"
+        },
+        {
+          "type": "automated",
+          "description": "Acquire/build only through the explicit maintainer script, stage the already-built exact binaries offline, then run the runtime and Windows release-layout verifiers without consulting PATH.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/media_runtime/build_ffmpeg.ps1 -Acquire; powershell -NoProfile -ExecutionPolicy Bypass -File tools/media_runtime/prepare.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File tools/media_runtime/verify.ps1 -RuntimeRoot build/media-runtime/windows-x86_64 -ReleaseRoot build/release/queueback"
+        },
+        {
+          "type": "inspection",
+          "description": "Compare pinned source commits, toolchain versions, and staged tool hashes with the checked-in lock; inspect ffmpeg/ffprobe version/build output, filters, hardware accelerators, encoders, imports, exact packaged paths, source/build provenance, GPLv3 text, and third-party notices. Confirm the package omits ffplay and ordinary verification performs no download/build.",
           "command": null
         },
         {
           "type": "manual",
-          "description": "Run diagnostics, record, probe, and export from an installed build on Windows without system media tools.",
+          "description": "From the staged Windows release layout with a PATH containing no ffmpeg or ffprobe, run recorder diagnostics and the dedicated temporary-media probe/thumbnail/export smoke. Verify reported executable paths stay under resources/media-runtime and that a deliberately missing/blocked copy yields the documented error without damaging library browsing.",
           "command": null
         },
         {
-          "type": "inspection",
-          "description": "Verify packaged binaries and third-party notices are included in the release artifact.",
+          "type": "automated",
+          "description": "Run every applicable project-wide command from docs/development/VERIFICATION.md and validate the canonical feature list/schema/invariants before completion.",
           "command": null
         }
       ],
-      "notes": "Cross-process packaging and media integrity make this planned work.",
+      "notes": "This is the smallest distribution prerequisite needed by QB-PERF-002: one audited, offline, paired media-runtime contract shared by recorder and app. The planned generic binary was explicitly rejected after real probes proved it incompatible with the supported machine's existing NVIDIA driver; the replacement is a reproducible QueueBack FFmpeg 8.1.2 build pinned to compatible NVIDIA headers plus current AMD/Intel interfaces. QB-PERF-002 owns only the minimal diagnostics patch, GPU-native graph, adapter selection, and performance proof, updating this same lock rather than creating a parallel resolver. QB-DIST-002 owns supervision/login startup and QB-DIST-004 owns installer/clean-machine workflow. No real League recording, GDI capture, background updater, ffplay, driver update, signing, or broad settings work belongs here.",
       "user_value": 5,
       "differentiation": 2,
       "difficulty": 4,

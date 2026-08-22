@@ -27,6 +27,10 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(10);
 const CALIBRATION_SAMPLE_COUNT: usize = 5;
 const MAX_CONSECUTIVE_API_FAILURES: u8 = 3;
+const POLLER_STARTUP_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const POLLER_TASK_STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const POLLER_ABORT_REAP_TIMEOUT: Duration = Duration::from_secs(1);
+const POLLER_FINALIZATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct GameLog {
@@ -140,16 +144,78 @@ pub struct RecordingMetadata {
     pub recording_profile: String,
     pub recording_resolution: String,
     pub recording_fps: u32,
+    pub capture_backend: String,
+    pub capture_adapter_luid: Option<String>,
+    pub capture_adapter_name: Option<String>,
+    pub capture_output: Option<String>,
+    pub encoder_interop: Option<String>,
+    pub media_runtime_id: String,
+    pub capture_support_label: String,
+    pub source_frames_surfaced: u64,
+    pub source_frames_superseded: u64,
+    pub cfr_duplicates: u64,
+    pub cfr_discards: u64,
+    pub pool_recreations: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureMetadata>,
     pub saved: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CaptureMetadata {
+    pub schema_version: u32,
+    pub backend: String,
+    pub diagnostics_abi: u32,
+    pub support_label: String,
+    pub capture_adapter_luid: String,
+    pub encoder_adapter_luid: String,
+    pub capture_adapter_name: String,
+    pub capture_output: String,
+    pub encoder_backend: String,
+    pub encoder_interop: String,
+    pub media_runtime_id: String,
+    pub source_format: String,
+    pub converted_format: String,
+    pub host_readback: bool,
+    pub gpu_stages: Vec<String>,
+    pub frame_pool_capacity: u32,
+    pub capture_output_pool_capacity: u32,
+    pub filter_buffered_frame_limit: u32,
+    pub encoder_depth: u32,
+    pub progress_stall_timeout_seconds: u32,
+    pub maximum_texture_bytes: u64,
+    pub source_frames_surfaced: u64,
+    pub source_frames_superseded: u64,
+    pub encoded_frames: u64,
+    pub muxed_bytes: u64,
+    pub cfr_duplicates: u64,
+    pub cfr_discards: u64,
+    pub pool_recreations: u64,
+    pub first_qpc_100ns: i64,
+    pub latest_qpc_100ns: i64,
+    pub terminal_progress: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingDetails {
     pub encoder_used: String,
     pub codec: String,
     pub profile: String,
     pub resolution: String,
     pub fps: u32,
+    pub capture_backend: String,
+    pub capture_adapter_luid: Option<String>,
+    pub capture_adapter_name: Option<String>,
+    pub capture_output: Option<String>,
+    pub encoder_interop: Option<String>,
+    pub media_runtime_id: String,
+    pub capture_support_label: String,
+    pub source_frames_surfaced: u64,
+    pub source_frames_superseded: u64,
+    pub cfr_duplicates: u64,
+    pub cfr_discards: u64,
+    pub pool_recreations: u64,
+    pub capture: Option<CaptureMetadata>,
 }
 
 impl RecordingMetadata {
@@ -177,6 +243,19 @@ impl RecordingMetadata {
             recording_profile: recording.profile,
             recording_resolution: recording.resolution,
             recording_fps: recording.fps,
+            capture_backend: recording.capture_backend,
+            capture_adapter_luid: recording.capture_adapter_luid,
+            capture_adapter_name: recording.capture_adapter_name,
+            capture_output: recording.capture_output,
+            encoder_interop: recording.encoder_interop,
+            media_runtime_id: recording.media_runtime_id,
+            capture_support_label: recording.capture_support_label,
+            source_frames_surfaced: recording.source_frames_surfaced,
+            source_frames_superseded: recording.source_frames_superseded,
+            cfr_duplicates: recording.cfr_duplicates,
+            cfr_discards: recording.cfr_discards,
+            pool_recreations: recording.pool_recreations,
+            capture: recording.capture,
             saved: false,
         })
     }
@@ -193,7 +272,12 @@ impl PollerSession {
     pub async fn start(directory: &Path, video_started_at: Instant) -> Result<Self> {
         let output = directory.join(GAME_LOG_JSON);
         let state = Arc::new(Mutex::new(PollerState::default()));
-        write_json_atomic(&output, &GameLog::default()).await?;
+        tokio::time::timeout(
+            POLLER_STARTUP_WRITE_TIMEOUT,
+            write_json_atomic(&output, &GameLog::default()),
+        )
+        .await
+        .context("initial game log write timed out")??;
 
         let client = LiveClient::new(LIVE_CLIENT_BASE_URL)?;
         let (cancellation, receiver) = watch::channel(false);
@@ -211,47 +295,83 @@ impl PollerSession {
         })
     }
 
-    pub async fn stop(self) -> PollerSummary {
+    pub async fn stop(mut self) -> PollerSummary {
         let _ = self.cancellation.send(true);
-        match self.task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => error!(%error, "Live Client poller stopped with an error"),
-            Err(error) => error!(%error, "Live Client poller task panicked"),
+        match tokio::time::timeout(POLLER_TASK_STOP_TIMEOUT, &mut self.task).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(error))) => error!(%error, "Live Client poller stopped with an error"),
+            Ok(Err(error)) => error!(%error, "Live Client poller task panicked"),
+            Err(_) => {
+                error!(
+                    timeout_ms = POLLER_TASK_STOP_TIMEOUT.as_millis(),
+                    "Live Client poller stopped with an error: shutdown timed out"
+                );
+                self.task.abort();
+                match tokio::time::timeout(POLLER_ABORT_REAP_TIMEOUT, &mut self.task).await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) if error.is_cancelled() => {}
+                    Ok(Err(error)) => {
+                        error!(%error, "Live Client poller task panicked while being reaped")
+                    }
+                    Err(_) => error!(
+                        timeout_ms = POLLER_ABORT_REAP_TIMEOUT.as_millis(),
+                        "Live Client poller task could not be reaped within its deadline"
+                    ),
+                }
+            }
         }
 
-        let mut state = self.state.lock().await;
-        if let Err(error) = write_game_log(&mut state, &self.output).await {
-            error!(%error, "could not perform final game log flush");
+        let finalization = async {
+            let mut state = self.state.lock().await;
+            if let Err(error) = write_game_log(&mut state, &self.output).await {
+                error!(%error, "could not perform final game log flush");
+            }
+            let game_log_bytes = tokio::fs::metadata(&self.output)
+                .await
+                .map(|metadata| metadata.len())
+                .unwrap_or_default();
+            log_poller_diagnostics(&state, game_log_bytes);
+            state.summary.clone()
+        };
+
+        match tokio::time::timeout(POLLER_FINALIZATION_TIMEOUT, finalization).await {
+            Ok(summary) => summary,
+            Err(_) => {
+                error!(
+                    timeout_ms = POLLER_FINALIZATION_TIMEOUT.as_millis(),
+                    "could not perform final game log flush: finalization timed out"
+                );
+                log_poller_diagnostics(&PollerState::default(), 0);
+                PollerSummary::default()
+            }
         }
-        let game_log_bytes = tokio::fs::metadata(&self.output)
-            .await
-            .map(|metadata| metadata.len())
-            .unwrap_or_default();
-        let diagnostics = &state.diagnostics;
-        info!(
-            calibration_requests = diagnostics.calibration_requests,
-            event_requests = diagnostics.event_requests,
-            snapshot_requests = diagnostics.snapshot_requests,
-            successful_responses = diagnostics.successful_responses,
-            average_response_latency_ms = diagnostics.average_response_latency_ms(),
-            maximum_response_latency_ms = duration_ms_f64(diagnostics.maximum_response_latency),
-            captured_events = state.game_log.events.len(),
-            captured_snapshots = state.game_log.snapshots.len(),
-            game_log_bytes,
-            json_writes = diagnostics.json_writes,
-            slowest_json_write_ms = duration_ms_f64(diagnostics.slowest_json_write),
-            event_failure_reason = diagnostics
-                .event_failure_reason
-                .as_deref()
-                .unwrap_or("none"),
-            snapshot_failure_reason = diagnostics
-                .snapshot_failure_reason
-                .as_deref()
-                .unwrap_or("none"),
-            "Live Client poller diagnostics"
-        );
-        state.summary.clone()
     }
+}
+
+fn log_poller_diagnostics(state: &PollerState, game_log_bytes: u64) {
+    let diagnostics = &state.diagnostics;
+    info!(
+        calibration_requests = diagnostics.calibration_requests,
+        event_requests = diagnostics.event_requests,
+        snapshot_requests = diagnostics.snapshot_requests,
+        successful_responses = diagnostics.successful_responses,
+        average_response_latency_ms = diagnostics.average_response_latency_ms(),
+        maximum_response_latency_ms = duration_ms_f64(diagnostics.maximum_response_latency),
+        captured_events = state.game_log.events.len(),
+        captured_snapshots = state.game_log.snapshots.len(),
+        game_log_bytes,
+        json_writes = diagnostics.json_writes,
+        slowest_json_write_ms = duration_ms_f64(diagnostics.slowest_json_write),
+        event_failure_reason = diagnostics
+            .event_failure_reason
+            .as_deref()
+            .unwrap_or("none"),
+        snapshot_failure_reason = diagnostics
+            .snapshot_failure_reason
+            .as_deref()
+            .unwrap_or("none"),
+        "Live Client poller diagnostics"
+    );
 }
 
 #[derive(Debug, Default)]
@@ -1328,6 +1448,32 @@ mod tests {
         snapshot_data_from_aggregate_sample(&data)
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn poller_stop_aborts_an_unresponsive_task_within_its_deadline() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join(GAME_LOG_JSON);
+        let state = Arc::new(Mutex::new(PollerState::default()));
+        let (cancellation, _receiver) = watch::channel(false);
+        let task = tokio::spawn(std::future::pending::<Result<()>>());
+        let session = PollerSession {
+            cancellation,
+            task,
+            state,
+            output: output.clone(),
+        };
+
+        let maximum_duration = POLLER_TASK_STOP_TIMEOUT
+            + POLLER_ABORT_REAP_TIMEOUT
+            + POLLER_FINALIZATION_TIMEOUT
+            + Duration::from_secs(1);
+        let summary = tokio::time::timeout(maximum_duration, session.stop())
+            .await
+            .expect("poller shutdown exceeded its complete deadline");
+
+        assert_eq!(summary, PollerSummary::default());
+        assert!(output.is_file());
+    }
+
     #[test]
     fn snapshot_uses_private_stats_only_for_the_active_player() {
         let raw = sample_snapshot_data();
@@ -1558,6 +1704,7 @@ mod tests {
                 profile: "high".to_owned(),
                 resolution: "1920x1080".to_owned(),
                 fps: 60,
+                ..RecordingDetails::default()
             },
         )
         .unwrap();

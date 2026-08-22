@@ -17,6 +17,7 @@ use ddragon::DdragonStatus;
 use library::{AutoDeleteResult, ClipSummary, GameSummary, PlaybackProbe, StorageUsage};
 use music::BuiltInMusicTrack;
 use playback_server::{MediaRoots, PlaybackMetrics, ServerMetrics};
+use queueback_media_runtime::{MediaTools, RuntimeError};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
@@ -33,6 +34,29 @@ struct AppState {
     ddragon_cache: PathBuf,
     ddragon_status: Arc<RwLock<DdragonStatus>>,
     music_directory: PathBuf,
+    media_runtime: MediaRuntimeState,
+}
+
+#[derive(Clone)]
+enum MediaRuntimeState {
+    Available(Arc<MediaTools>),
+    Unavailable(Arc<RuntimeError>),
+}
+
+impl MediaRuntimeState {
+    fn available(&self) -> Option<&MediaTools> {
+        match self {
+            Self::Available(tools) => Some(tools),
+            Self::Unavailable(_) => None,
+        }
+    }
+
+    fn require(&self) -> Result<Arc<MediaTools>, String> {
+        match self {
+            Self::Available(tools) => Ok(Arc::clone(tools)),
+            Self::Unavailable(error) => Err(error.to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -55,8 +79,12 @@ fn list_games(state: State<'_, AppState>) -> Result<Vec<GameSummary>, String> {
 
 #[tauri::command(async)]
 fn list_clips(state: State<'_, AppState>) -> Result<Vec<ClipSummary>, String> {
-    library::list_clips(&state.roots.output_directory(), &state.playback_origin)
-        .map_err(error_string)
+    library::list_clips(
+        &state.roots.output_directory(),
+        &state.playback_origin,
+        state.media_runtime.available().map(MediaTools::ffprobe),
+    )
+    .map_err(error_string)
 }
 
 #[tauri::command(async)]
@@ -115,9 +143,16 @@ async fn export_clip(
 ) -> Result<ClipExportResult, String> {
     let output_directory = state.roots.output_directory();
     let music_directory = state.music_directory.clone();
-    clip_export::export(&output_directory, &music_directory, request, progress)
-        .await
-        .map_err(error_string)
+    let media_tools = state.media_runtime.require()?;
+    clip_export::export(
+        &output_directory,
+        &music_directory,
+        media_tools.ffmpeg(),
+        request,
+        progress,
+    )
+    .await
+    .map_err(error_string)
 }
 
 #[tauri::command(async)]
@@ -326,6 +361,29 @@ pub fn run() {
                 .path()
                 .app_local_data_dir()
                 .context("could not resolve the app data directory")?;
+            let resource_directory = app
+                .path()
+                .resource_dir()
+                .context("could not resolve the app resource directory")?;
+            let packaged_runtime = resource_directory
+                .join("resources")
+                .join(queueback_media_runtime::RUNTIME_DIRECTORY_NAME);
+            let media_runtime = match tauri::async_runtime::block_on(
+                queueback_media_runtime::resolve(&packaged_runtime),
+            ) {
+                Ok(tools) => {
+                    eprintln!(
+                        "League Replay: media runtime {} at {}",
+                        tools.runtime_id(),
+                        tools.root().display()
+                    );
+                    MediaRuntimeState::Available(Arc::new(tools))
+                }
+                Err(error) => {
+                    eprintln!("League Replay: {error}");
+                    MediaRuntimeState::Unavailable(Arc::new(error))
+                }
+            };
             let music_directory = music::install(&app_data)?;
             let ddragon_cache = app_data.join("ddragon");
             let roots = Arc::new(MediaRoots::new(output_directory.clone()));
@@ -360,6 +418,7 @@ pub fn run() {
                 ddragon_cache,
                 ddragon_status,
                 music_directory,
+                media_runtime,
             });
             Ok(())
         })
@@ -399,5 +458,16 @@ mod tests {
         let path = directory.path().join("probe.json");
         fs::write(&path, br#"{"version":99,"supported":true}"#).unwrap();
         assert_eq!(read_hevc_marker(&path), None);
+    }
+
+    #[tokio::test]
+    async fn unavailable_media_runtime_is_operation_scoped() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = queueback_media_runtime::resolve_root(&directory.path().join("missing"))
+            .await
+            .unwrap_err();
+        let state = MediaRuntimeState::Unavailable(Arc::new(error));
+        assert!(state.available().is_none());
+        assert!(state.require().unwrap_err().contains("Repair or reinstall"));
     }
 }

@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../../build/media-runtime/windows-x86_64/": "resources/media-runtime/"
+    }
+  }
+}

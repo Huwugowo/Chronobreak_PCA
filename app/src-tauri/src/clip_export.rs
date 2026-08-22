@@ -114,6 +114,14 @@ struct ExportPaths {
     partial_thumbnail: PathBuf,
 }
 
+struct EncodingContext<'a> {
+    ffmpeg: &'a Path,
+    source_video: &'a Path,
+    music_path: Option<&'a Path>,
+    request: &'a ClipExportRequest,
+    encoders: &'a [H264Encoder],
+}
+
 struct BatchProgress<'a> {
     channel: &'a Channel<ClipExportProgress>,
     preset: ClipExportPreset,
@@ -154,6 +162,7 @@ impl BatchProgress<'_> {
 pub async fn export(
     output_directory: &Path,
     music_directory: &Path,
+    ffmpeg: &Path,
     request: ClipExportRequest,
     progress: Channel<ClipExportProgress>,
 ) -> Result<ClipExportResult> {
@@ -180,6 +189,13 @@ pub async fn export(
         .with_context(|| format!("failed to create {}", clips_directory.display()))?;
     let source_fps = metadata.recording_fps.clamp(24, 60);
     let encoders = encoder_candidates(&metadata.encoder_used);
+    let encoding = EncodingContext {
+        ffmpeg,
+        source_video: &source_video,
+        music_path: music_path.as_deref(),
+        request: &request,
+        encoders: &encoders,
+    };
     let total_outputs = request.presets.len();
     let mut next_clip_timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -201,17 +217,8 @@ pub async fn export(
             last_percent: ((output_index * 100) / total_outputs) as u8,
             last_stage: None,
         };
-        if let Err(error) = encode_output(
-            &source_video,
-            music_path.as_deref(),
-            &request,
-            preset,
-            source_fps,
-            &encoders,
-            &paths,
-            &mut reporter,
-        )
-        .await
+        if let Err(error) =
+            encode_output(&encoding, preset, source_fps, &paths, &mut reporter).await
         {
             cleanup_export_paths(&paths, false);
             for (_, staged_paths) in &staged {
@@ -268,28 +275,15 @@ pub async fn export(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn encode_output(
-    source_video: &Path,
-    music_path: Option<&Path>,
-    request: &ClipExportRequest,
+    encoding: &EncodingContext<'_>,
     preset: ClipExportPreset,
     source_fps: u32,
-    encoders: &[H264Encoder],
     paths: &ExportPaths,
     progress: &mut BatchProgress<'_>,
 ) -> Result<()> {
-    let mut profile = export_profile(request, preset, source_fps, None)?;
-    encode_with_fallback(
-        source_video,
-        music_path,
-        request,
-        &profile,
-        encoders,
-        &paths.partial_video,
-        progress,
-    )
-    .await?;
+    let mut profile = export_profile(encoding.request, preset, source_fps, None)?;
+    encode_with_fallback(encoding, &profile, &paths.partial_video, progress).await?;
 
     if preset == ClipExportPreset::Discord {
         let first_size = fs::metadata(&paths.partial_video)
@@ -301,17 +295,8 @@ async fn encode_output(
                 * 0.94)
                 .floor()
                 .max(250.0) as u64;
-            profile = export_profile(request, preset, source_fps, Some(adjusted))?;
-            encode_with_fallback(
-                source_video,
-                music_path,
-                request,
-                &profile,
-                encoders,
-                &paths.partial_video,
-                progress,
-            )
-            .await?;
+            profile = export_profile(encoding.request, preset, source_fps, Some(adjusted))?;
+            encode_with_fallback(encoding, &profile, &paths.partial_video, progress).await?;
         }
         let final_size = fs::metadata(&paths.partial_video)
             .context("failed to inspect exported clip")?
@@ -322,7 +307,12 @@ async fn encode_output(
     }
 
     progress.send(ExportStage::Thumbnail, 96);
-    generate_thumbnail(&paths.partial_video, &paths.partial_thumbnail).await?;
+    generate_thumbnail(
+        encoding.ffmpeg,
+        &paths.partial_video,
+        &paths.partial_thumbnail,
+    )
+    .await?;
     // Keep 100% reserved for the atomically published batch result.
     progress.send(ExportStage::Thumbnail, 99);
     Ok(())
@@ -496,22 +486,26 @@ fn encoder_candidates(recording_encoder: &str) -> Vec<H264Encoder> {
 }
 
 async fn encode_with_fallback(
-    source_video: &Path,
-    music_path: Option<&Path>,
-    request: &ClipExportRequest,
+    encoding: &EncodingContext<'_>,
     profile: &ExportProfile,
-    encoders: &[H264Encoder],
     output: &Path,
     progress: &mut BatchProgress<'_>,
 ) -> Result<()> {
     let mut errors = Vec::new();
-    for encoder in encoders {
+    for encoder in encoding.encoders {
         fs::remove_file(output).ok();
-        let arguments =
-            ffmpeg_arguments(source_video, music_path, request, profile, *encoder, output);
+        let arguments = ffmpeg_arguments(
+            encoding.source_video,
+            encoding.music_path,
+            encoding.request,
+            profile,
+            *encoder,
+            output,
+        );
         match run_ffmpeg(
+            encoding.ffmpeg,
             arguments,
-            request.clip_end_ms - request.clip_start_ms,
+            encoding.request.clip_end_ms - encoding.request.clip_start_ms,
             progress,
         )
         .await
@@ -666,11 +660,12 @@ fn encoder_name(encoder: H264Encoder) -> &'static str {
 }
 
 async fn run_ffmpeg(
+    ffmpeg: &Path,
     arguments: Vec<OsString>,
     duration_ms: u64,
     progress: &mut BatchProgress<'_>,
 ) -> Result<()> {
-    let mut command = Command::new("ffmpeg");
+    let mut command = Command::new(ffmpeg);
     command
         .args(arguments)
         .stdout(Stdio::piped())
@@ -719,8 +714,8 @@ async fn run_ffmpeg(
     Ok(())
 }
 
-async fn generate_thumbnail(video: &Path, output: &Path) -> Result<()> {
-    let mut command = Command::new("ffmpeg");
+async fn generate_thumbnail(ffmpeg: &Path, video: &Path, output: &Path) -> Result<()> {
+    let mut command = Command::new(ffmpeg);
     command
         .args(strings(&[
             "-hide_banner",

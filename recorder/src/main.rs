@@ -53,6 +53,7 @@ fn run_diagnostics(config: &Config) -> Result<()> {
     println!("  config:  {}", report.config_path.display());
     println!("  output:  {}", report.output_path.display());
     println!("  ffmpeg:  {}", report.ffmpeg_path.display());
+    println!("  runtime: {}", report.media_runtime_id);
     println!(
         "  encoder: {} ({})",
         report.plan.encoder.label(),

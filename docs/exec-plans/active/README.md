@@ -2,4 +2,6 @@
 
 This directory contains only implementation plans for currently active planned features. Canonical feature state and plan paths remain in `feature-list.json`.
 
-There is no active ExecPlan after SETUP-001.
+Active:
+
+- `QB-PERF-002` (implementation active; stable release-era bundle behavior is preserved): `qb-perf-002-gpu-agnostic-windows-capture.md`
