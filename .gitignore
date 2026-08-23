@@ -4,6 +4,8 @@
 /build/media-runtime/
 /build/release/
 /media-runtime/target/
+/build/
+/media-runtime.zip
 
 # Python
 __pycache__/
