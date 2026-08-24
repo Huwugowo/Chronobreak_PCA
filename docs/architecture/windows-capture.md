@@ -11,7 +11,7 @@ The in-process native backend is the Windows default. At process startup, `QUEUE
 | unset, empty, or `native` | `native-wgc-d3d11-nvenc` |
 | `ffmpeg` or `ffmpeg-wgc` | `ffmpeg-wgc` |
 
-An invalid value is a startup error. A native startup failure never silently switches to FFmpeg: operators must select the fallback explicitly so diagnostics and performance claims remain truthful.
+An invalid value is a startup error. A native startup failure never silently switches to FFmpeg: operators must select the alternative explicitly so diagnostics and performance claims remain truthful.
 
 The native backend currently supports H.264, the high 1920x1080 60-FPS plan, and NVIDIA NVENC. The external FFmpeg backend remains the compatibility path for HEVC, other recording profiles, AMD/AMF, and Intel/QSV.
 
@@ -35,7 +35,7 @@ Full video frames remain GPU-resident through acquisition, resize/color conversi
 
 FFmpeg remains one supervised child, but on the native path it does not capture or encode video. It receives the native H.264 bitstream, captures the selected loopback or silent audio source, encodes AAC, and owns fragmented-MP4 muxing. Pipe-write and explicit-flush latency are measured separately, including deterministic test-only stall injection.
 
-## Explicit FFmpeg fallback
+## Explicit FFmpeg alternative
 
 The retained `ffmpeg-wgc` backend keeps the vendor-neutral graph:
 
@@ -71,6 +71,10 @@ Capture diagnostics separately expose surfaced and superseded source frames, CFR
 - Focus loss and ordinary occlusion continue exact-window capture.
 - Minimize can pause WGC. The progress watchdog pauses its stall deadline while the target is hidden and resets deadlines after restore.
 - Same-HWND size changes recreate the bounded WGC pool while retaining the configured output canvas.
+- Target discovery and visibility/bounds queries temporarily use per-monitor-v2
+  thread DPI awareness, then restore the caller's prior context. Window sizes
+  therefore remain physical pixels even when the app or fixture process was
+  initialized under a DPI-virtualized context.
 - A closed or replaced HWND is detected and finalized as failed/partial rather than frozen success.
 - Normal League process disappearance remains the automatic match-end signal and requests graceful finalization.
 - Startup retry uses the bounded 2, 5, 10, and 30-second schedule only after the previous attempt has cleaned up. Terminal incompatibility blocks retries for that process generation.
@@ -82,11 +86,11 @@ WGC may show an operating-system capture indicator. QueueBack requests cursor ex
 
 | Combination | Production path | State | Physical performance claim |
 | --- | --- | --- | --- |
-| Windows 10 1903+ / exact HWND / D3D11 | native default and FFmpeg fallback | implemented with synthetic lifecycle/media fixtures | measured adapter/backend only |
-| NVIDIA / NVENC / H.264 high 1080p60 | native default | implemented and non-League fixture-validated on RTX 4060 | pending valid QB-PERF-002 League matrix |
-| NVIDIA / HEVC or non-high profile | explicit FFmpeg fallback | implemented | pending selected configuration evidence |
-| AMD / AMF / same adapter | explicit FFmpeg fallback | implemented planner/runtime path | optimized-unvalidated; QB-PERF-003 owns hardware validation |
-| Intel / QSV / same adapter | explicit FFmpeg fallback | implemented planner/runtime path | optimized-unvalidated; QB-PERF-004 owns hardware validation |
+| Windows 10 1903+ / exact HWND / D3D11 | native default and FFmpeg alternative | implemented with synthetic lifecycle/media fixtures | measured adapter/backend only |
+| NVIDIA / NVENC / H.264 high 1080p60 | native default | implemented and non-League fixture-validated on RTX 3050 Ti Laptop GPU | pending valid QB-PERF-002 League matrix on the target RTX 4060 system |
+| NVIDIA / HEVC or non-high profile | explicit FFmpeg alternative | implemented | pending selected configuration evidence |
+| AMD / AMF / same adapter | explicit FFmpeg alternative | implemented planner/runtime path | optimized-unvalidated; QB-PERF-003 owns hardware validation |
+| Intel / QSV / same adapter | explicit FFmpeg alternative | implemented planner/runtime path | optimized-unvalidated; QB-PERF-004 owns hardware validation |
 | Cross-adapter encoder | neither backend selects it | deliberately unsupported | cross-adapter-unvalidated |
 | Missing WGC/runtime/direct interop | neither backend succeeds | unsupported with diagnostics | unsupported |
 

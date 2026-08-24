@@ -10,6 +10,6 @@ Most recent completed prerequisite:
 
 Active performance work:
 
-- `QB-PERF-002`: canonical reconciliation is active at `docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md`. The whole-app chassis now contains the recorder-development native WGC/D3D11/NVENC series, with native selected by default and the external FFmpeg WGC backend retained as an explicit fallback. Finish integration verification, record exact evidence, then run the still-required valid post-change League matrix before any completion or negligible-impact claim.
+- `QB-PERF-002`: canonical reconciliation is active at `docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md`. Native WGC/D3D11/NVENC is the Windows default and external FFmpeg WGC is an explicit alternative, never an automatic fallback. The packaged r6/release gates, matched 240-second A/B, native steady/resize/minimize/occlusion/target-close/NVENC-failure matrix, and product-owner-accepted 30-minute native run are recorded. The valid post-change League matrix remains unavailable and mandatory before completion or a negligible-impact claim.
 
 `QB-PERF-003` and `QB-PERF-004` retain the physical AMD/AMF and Intel/QSV validation work after the GPU-agnostic implementation exists. The current RTX 4060 can validate only the common capture layer plus NVENC.

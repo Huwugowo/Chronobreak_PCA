@@ -6,7 +6,10 @@ use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIFactory1};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, EnumDisplayMonitors, HDC, HMONITOR};
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
+    SetThreadDpiAwarenessContext,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClientRect, GetSystemMetrics, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SM_CXSCREEN, SM_CYSCREEN,
@@ -49,7 +52,35 @@ struct MonitorSearchContext {
     best: Option<(u64, HMONITOR)>,
 }
 
+struct ThreadDpiAwarenessGuard {
+    previous: DPI_AWARENESS_CONTEXT,
+}
+
+impl ThreadDpiAwarenessGuard {
+    fn per_monitor_v2() -> Result<Self> {
+        // SAFETY: the call changes only the current thread's DPI virtualization
+        // context and returns the previous opaque context for restoration.
+        let previous =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        if previous.0.is_null() {
+            anyhow::bail!("could not enable per-monitor DPI awareness for capture discovery");
+        }
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for ThreadDpiAwarenessGuard {
+    fn drop(&mut self) {
+        // SAFETY: `previous` was returned by the successful context switch on
+        // this same thread, and the guard cannot move across an await point.
+        unsafe {
+            SetThreadDpiAwarenessContext(self.previous);
+        }
+    }
+}
+
 pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
     if let Some(candidate) = find_largest_window(pid)? {
         let monitor = monitor_with_largest_intersection(candidate.screen_rect)?;
         let adapter = adapter_for_monitor(monitor)?;
@@ -80,6 +111,7 @@ pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
 }
 
 pub fn fallback_capture_target() -> Result<CaptureTarget> {
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
     // SAFETY: GetSystemMetrics takes value-only metric identifiers and does not
     // read caller-provided memory or transfer ownership.
     let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
@@ -137,6 +169,7 @@ pub fn query_capture_target_state(
     target: &CaptureTarget,
     cache: &mut CaptureTargetStateCache,
 ) -> Result<CaptureTargetState> {
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
     let CaptureSource::WindowsGraphicsCapture {
         pid,
         hwnd,

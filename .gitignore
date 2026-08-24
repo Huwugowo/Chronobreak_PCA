@@ -5,6 +5,7 @@
 /build/release/
 /media-runtime/target/
 /build/
+/evidence/
 /media-runtime.zip
 
 # Python

@@ -6,12 +6,12 @@ This ExecPlan is the authoritative implementation guide for QB-PERF-002. It must
 
 ## 2026-08-24 canonical-reconciliation amendment
 
-Repository inspection materially contradicts the stale "current architecture" and unimplemented-milestone descriptions below. The whole-app repository at `0c0f274` already contains the external FFmpeg 8.1.2 `gfxcapture`/D3D11 implementation, while the recorder-development repository is an intentionally isolated continuation rooted at `6e6e276` from the same recorder baseline. Its 37 post-baseline commits (`d6fcc97` through `c86bc6f`) implement and harden an in-process Windows Graphics Capture, D3D11/NV12, and direct NVENC video path while retaining one FFmpeg child for system audio, fragmented-MP4 muxing, and the explicit external-backend fallback. The reconciliation report at `docs/reconciliation/2026-08-24-canonical-repository-reconciliation.md` records the complete comparison.
+Repository inspection materially contradicts the stale "current architecture" and unimplemented-milestone descriptions below. The whole-app repository at `0c0f274` already contains the external FFmpeg 8.1.2 `gfxcapture`/D3D11 implementation, while the recorder-development repository is an intentionally isolated continuation rooted at `6e6e276` from the same recorder baseline. Its 37 post-baseline commits (`d6fcc97` through `c86bc6f`) implement and harden an in-process Windows Graphics Capture, D3D11/NV12, and direct NVENC video path while retaining one FFmpeg child for system audio, fragmented-MP4 muxing, and the explicit external-backend alternative. The reconciliation report at `docs/reconciliation/2026-08-24-canonical-repository-reconciliation.md` records the complete comparison.
 
 This amendment supersedes conflicting topology and delivery choices later in this document for the current implementation pass:
 
 - replay the recorder-development commits semantically onto the whole-app repository; do not replace the Tauri/Solid application, its playback/export stack, distribution tooling, benchmark tooling, or canonical planning state;
-- make `native-wgc-d3d11-nvenc` the default Windows recorder backend by explicit product-owner decision, while retaining `QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` (and the `ffmpeg-wgc` alias) as an explicit fallback;
+- make `native-wgc-d3d11-nvenc` the default Windows recorder backend by explicit product-owner decision, while retaining `QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` (and the `ffmpeg-wgc` alias) as an explicit alternative;
 - keep the native backend's claim narrow: NVIDIA NVENC/H.264 on the implemented path. AMD/AMF and Intel/QSV continue through the external FFmpeg WGC/D3D11 backend and remain subject to the existing capability/support and hardware-validation requirements;
 - retain bounded asynchronous capture, failure-safe finalization, capture diagnostics, target visibility handling, and startup cleanup from the recorder-development branch;
 - integrate the pinned r6 media-runtime contract and the whole-app build/staging tools needed to produce it, without accepting PATH FFmpeg or deleting the external backend;
@@ -411,11 +411,47 @@ In addition:
 - [x] Roll back the rejected QB-CAP-002 implementation and remove it from this feature's dependency gate; QB-CAP-001 and QB-PERF-001 remain complete.
 - [x] Complete the QB-DIST-001 packaged-runtime dependency gate.
 - [x] Reconcile the whole-app and recorder-development histories and identify `6e6e276` as the recorder-development baseline plus `d6fcc97..c86bc6f` as the integrable native-recorder series.
-- [x] Integrate the native recorder series, make native the Windows default, retain the explicit FFmpeg fallback, and align the packaged r6 runtime/tooling.
+- [x] Integrate the native recorder series, make native the Windows default, retain the explicit FFmpeg alternative, and align the packaged r6 runtime/tooling.
 - [x] Fix the collision-suffixed recording-bundle discovery contract, remove redundant steady-state `eventdata`, and pass focused plus broad whole-app compatibility verification.
 - [x] Stage and verify the audited r6 runtime, build both optimized executables, assemble the portable release, and pass sanitized-PATH recorder diagnostics plus isolated app startup smoke.
-- [ ] Reconcile remaining Milestones 1 through 6 requirements against concrete integrated evidence; keep unsupported or unvalidated vendor claims explicit.
+- [x] Run the matched 240-second native/external-alternative A/B and validate both generated recordings.
+- [x] Add and run the canonical native steady/resize/minimize/occlusion/target-close/NVENC-failure fixture matrix; preserve exact normal and failed-partial media evidence.
+- [x] Run the 1,800-second native generated-window arm and record the product owner's explicit acceptance of its exact recorder/media counters and live resource observations without fabricating the wrapper's lost formal sample series.
+- [x] Reconcile remaining Milestones 1 through 6 requirements against concrete integrated evidence; keep unsupported or unvalidated vendor claims explicit.
+- [ ] Reproduce and disposition the external FFmpeg alternative's current-host minimize/restore surface-pool termination before broad alternative-backend reliability is claimed.
 - [ ] Run Milestone 7 and satisfy the global completion gate.
+
+### 2026-08-24 canonical non-League evidence
+
+- Matched 240-second native-then-FFmpeg A/B:
+  `evidence/preliminary-backend-ab/20260824-113718`. Both H.264/AAC files
+  passed ffprobe and full decode. Native used 0.144873% machine CPU and
+  157.980 MiB maximum combined private memory; the external alternative used
+  0.396960% and 235.867 MiB. This is generated-window direction only, not a
+  League performance result or backend-removal decision.
+- Native lifecycle roots under ignored
+  `build/perf/qb-perf-002-native-fixture`: steady
+  `20260824-120516-steady-none-fc04987f`, resize
+  `20260824-120608-resize-none-b8863dca`, minimize/restore
+  `20260824-120632-minimize_restore-none-1b86740b`, occlusion
+  `20260824-120657-occlusion-none-92d636b2`, target close
+  `20260824-120722-close_window-none-9de0f6af`, and injected NVENC failure
+  `20260824-120744-steady-nvenc_failure-60ecb1d4`. Normal arms produced exact
+  600-frame/10.000-second 1920x1080 60-FPS H.264/AAC files and passed full
+  decode/hash checks; target close preserved a decodable 397-frame partial and
+  NVENC failure preserved a decodable 120-frame partial with exact errors.
+- Accepted native 1,800-second root:
+  `build/perf/qb-perf-002-native-fixture/20260824-120801-steady-none-1d73e07c`.
+  It produced 108,000 exact scheduled/submitted/completed/muxed frames,
+  192,284,689 bytes, zero slot/unstaged failures, maximum encoder in-flight 2,
+  maximum catch-up batch 2, handoff high-water mark 1, and exact 1,800-second
+  video/audio. Live checkpoints stayed near 132.21-133.00 MiB private memory;
+  handles fell from 414 to 402 and threads from 22 to 19 while output advanced
+  to its final size. Formal resource samples were lost by the wrapper defect
+  described below and are not claimed.
+- Current-tree verification passed recorder format, 125 library tests plus 3
+  binary tests, all examples, strict all-target/all-feature Clippy, both
+  fixture-script parsers, and diff hygiene.
 
 ## Deviations and surprises
 
@@ -427,6 +463,8 @@ In addition:
 - GPU-agnostic implementation and GPU-wide measured performance are different claims. Automated capability coverage can be complete on the current machine, while physical AMF/QSV performance remains explicitly unvalidated.
 - The attempted QB-CAP-002 implementation regressed real completed-bundle visibility and did not improve capture performance. It was rolled back. PERF-002 starts from the stable release-era app/recorder behavior and owns no recording-state/library-policy redesign.
 - The 2026-08-24 repository comparison found that this plan's implementation-state description was stale: the whole-app repository already implemented the external FFmpeg WGC/D3D11 path, and the recorder-development repository contained an isolated native-NVENC continuation rooted from the same recorder baseline. The histories are unrelated at Git-root level, so only post-baseline recorder commits are eligible for replay; the standalone root and its copied canonical files are not.
+- The first canonical lifecycle attempt used the external-alternative runner instead of the native-default runner. It correctly exposed an external `gfxcapture` minimize/restore termination (`Static surface pool size exceeded`), but it did not indicate a native regression. No FFmpeg runtime patch was made. `tools/native_backend/run_native_fixture.ps1` now makes the native/default scope explicit and `docs/development/VERIFICATION.md` separates the two runners.
+- The canonical 1,800-second native arm completed and reconciled 108,000 scheduled/submitted/completed/muxed frames, but the first version of its new wrapper used a fixed 60-second `ffprobe -count_frames` deadline and kept resource samples only in memory. The post-capture probe timed out and discarded that formal sample series. The product owner explicitly accepted the completed run and declined a second 30-minute arm. The retained evidence therefore includes exact native telemetry, exact 1,800-second ffprobe structure, advancing output and live checkpoints, and passing strict decode windows at 0, 870, and 1,740 seconds; it does not claim a persisted full-run resource series or a successful full-file decode. The wrapper now persists samples before media validation, avoids the process-exit sampling race, uses structural ffprobe, and uses single-thread strict decode/hash to prevent the observed multi-thread decoder-buffer exhaustion.
 
 ## Decision log
 
@@ -442,8 +480,9 @@ In addition:
 - 2026-08-12: Accept the completed QB-PERF-001 diagnostic as the pre-change direction by explicit product decision. Preserve its INVALID label and require QB-PERF-002's post-change matrix to satisfy all original validity rules and budgets.
 - 2026-08-12: Remove QB-CAP-002 from the dependency gate and preserve the stable release-era bundle contract. Use only minimal session-local first-frame/output evidence for the new graph; do not reintroduce the rolled-back recording-state or strict client-classification machinery.
 - 2026-08-12: By explicit product requirement, schema-v2 performance proof uses four runs total: one capped baseline/capture pair and one uncapped baseline/capture pair. Preserve schema-v1 historical parsing, remove schema-v2 three-run variability gating, and rerun a doubtful pair instead of aggregating mandatory repetitions.
-- 2026-08-24: By explicit product-owner decision, select the in-process native WGC/D3D11/NVENC path by default on Windows. Retain the external FFmpeg WGC/D3D11 backend as the explicit `ffmpeg`/`ffmpeg-wgc` fallback and as the current AMD/Intel-capable path; do not silently fall back after a native startup failure.
+- 2026-08-24: By explicit product-owner decision, select the in-process native WGC/D3D11/NVENC path by default on Windows. Retain the external FFmpeg WGC/D3D11 backend as the explicit `ffmpeg`/`ffmpeg-wgc` alternative and as the current AMD/Intel-capable path; do not silently switch after a native startup failure.
 - 2026-08-24: Treat recorder-development commit `6e6e276` as provenance-only baseline and replay only `d6fcc97..c86bc6f` onto the whole-app chassis. Preserve whole-app-only app, distribution, benchmark, and fixture work, and resolve the few baseline file differences semantically.
+- 2026-08-24: Accept the completed 1,800-second native generated-window run without repetition. This explicit product decision waives only the lost persisted resource-sample series/full-file decode for that local arm; it does not convert the unavailable League matrix into a pass, validate AMD/Intel hardware, or permit a negligible-impact claim.
 
 ## Completion
 

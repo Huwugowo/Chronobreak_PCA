@@ -163,7 +163,7 @@ cargo run --manifest-path recorder/Cargo.toml -- --headless
 
 The native WGC/D3D11/NVENC backend is the Windows default. Set
 `QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` only when intentionally validating the
-retained external backend; never describe an automatic cross-backend fallback.
+retained external alternative; there is no automatic cross-backend fallback.
 
 Native probes require the staged r6 runtime and a dedicated target/evidence root.
 They never target League or a user recording. Run the matched-backend preflight
@@ -191,23 +191,39 @@ ffmpeg -v error -i <media-file> -f null NUL
 
 For exported clips, also verify H.264/AAC compatibility and the requested duration/size constraints. Discord outputs must remain strictly below 10,000,000 bytes. Tests that deliberately truncate or corrupt media must copy fixtures into a temporary directory first.
 
-For the optimized Windows graph, run the sentinel-owned exact-HWND fixture. These commands target only QueueBack's generated window and write under ignored `build/perf`:
+For the default native Windows graph, run the sentinel-owned exact-HWND fixture.
+These commands target only QueueBack's generated window and write under ignored
+`build/perf`:
+
+```powershell
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario resize -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario minimize_restore -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario occlusion -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario close_window -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -Interruption nvenc_failure -DurationSeconds 10
+```
+
+Each run verifies packaged-runtime identity, a physical 1920x1080 target/output,
+H.264/AAC streams, exact 60-FPS native accounting, strict single-thread full
+decode, changing frame hashes, and finite source/handoff/encoder ownership.
+Normal cases require exact scheduled/submitted/completed/muxed reconciliation.
+Target closure and injected NVENC failure must return the exact failure while
+leaving a recoverable dedicated partial recording.
+
+The retained external FFmpeg alternative has its own runner and evidence. Use
+it only when that backend is intentionally in scope:
 
 ```powershell
 & .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -DurationSeconds 10
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario resize -DurationSeconds 9
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario minimize_restore -DurationSeconds 9
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario occlusion -DurationSeconds 9
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario close_window -DurationSeconds 10
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -Interruption kill_encoder -DurationSeconds 10
 ```
 
-Each run verifies packaged-runtime identity, 1920x1080 target/output, audio/video streams, 60-FPS media, full decode, changing frame hashes, ABI-1 counters, and finite WGC/output pools. Normal cases require terminal source/mux evidence. Target closure and encoder termination must return failure while leaving a recoverable dedicated partial recording.
+Do not use the external-alternative runner as evidence for the native default.
 
 The bounded-resource acceptance soak is:
 
 ```powershell
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -DurationSeconds 1800 -CollectResources -KeepTargetVisible -ResourceSampleSeconds 5
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -DurationSeconds 1800 -CollectResources -KeepTargetVisible -ResourceSampleSeconds 5
 ```
 
 `-KeepTargetVisible` makes the generated GDI surface always-on-top and requests Windows' display/system-required execution state for the resource soak. The runner restores the normal execution state in `finally`. This is necessary because Windows may stop WGC when an idle monitor powers down, and may stop compositing a fully hidden GDI test window even though a real actively rendering game continues presenting. It occupies the display for the run. Occlusion/focus behavior is tested separately by the dedicated transition scenario above. Retain the soak's `result.json` and `resource-samples.json`. Review initial/peak/final private memory, GPU dedicated/shared memory, declared texture budget, in-process mux-byte progress, frame/counter advancement, media decode, and terminal evidence. Sampled open-file length is diagnostic on Windows because it can remain unchanged while FFmpeg owns a buffered fragmented MP4. A shorter rehearsal cannot substitute for this 1,800-second run.
