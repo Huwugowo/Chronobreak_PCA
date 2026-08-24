@@ -319,8 +319,8 @@ async fn encode_output(
 }
 
 fn validate_request(request: &ClipExportRequest) -> Result<()> {
-    if !library::valid_timestamp(&request.game_timestamp) {
-        bail!("invalid game timestamp")
+    if !library::valid_game_id(&request.game_timestamp) {
+        bail!("invalid game identifier")
     }
     if request.clip_end_ms <= request.clip_start_ms
         || request.clip_end_ms - request.clip_start_ms < MINIMUM_CLIP_MS
@@ -803,6 +803,16 @@ mod tests {
         let mut duplicate = request(ClipExportPreset::Horizontal, 10_000);
         duplicate.presets.push(ClipExportPreset::Horizontal);
         assert!(validate_request(&duplicate).is_err());
+    }
+
+    #[test]
+    fn accepts_collision_suffixed_game_ids_for_export() {
+        let mut collision = request(ClipExportPreset::Horizontal, 10_000);
+        collision.game_timestamp = "1786000000-1".to_owned();
+        assert!(validate_request(&collision).is_ok());
+
+        collision.game_timestamp = "../1786000000-1".to_owned();
+        assert!(validate_request(&collision).is_err());
     }
 
     #[test]

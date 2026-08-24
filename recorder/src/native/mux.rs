@@ -1033,4 +1033,3 @@ mod tests {
         telemetry.ensure_video_sink_open().unwrap();
     }
 }
-

@@ -13,7 +13,7 @@ It contains the original plans, copied repository snapshots, scratch trees,
 raw history, and historical evidence. Consult it only when auditing an old
 decision or reconstructing provenance. Do not use it as an alternate working
 repository and do not treat its instructions as newer than user requests or
-the canonical state in `docs/WORKTREE_STATE.md`.
+the canonical state in `docs/reconciliation/2026-08-24-canonical-repository-reconciliation.md`.
 
 For current work, read:
 

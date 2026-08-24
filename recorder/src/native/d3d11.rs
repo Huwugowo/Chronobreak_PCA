@@ -232,4 +232,3 @@ mod tests {
         assert_eq!(luid_value(0x89ab_cdef, -2), 0xffff_fffe_89ab_cdef);
     }
 }
-

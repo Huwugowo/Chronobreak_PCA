@@ -168,10 +168,11 @@ $installMsys = ConvertTo-MsysPath $installRoot
 
 $configureArguments = @(
     "--prefix=$installMsys",
-    "--extra-version=queueback-5-captureabi1-nvcodec12.2-amf1.4.36",
+    "--extra-version=queueback-6-captureabi1-nvcodec12.2-amf1.4.36",
     "--pkg-config-flags=--static",
     "--extra-cflags=-I$prefixMsys/include",
     "--extra-ldflags=-static",
+    "--extra-libs=-lstdc++",
     "--enable-gpl", "--enable-version3", "--enable-static", "--disable-shared",
     "--disable-debug", "--disable-doc", "--disable-ffplay", "--disable-autodetect",
     "--enable-libx264", "--enable-libvpl", "--enable-amf",

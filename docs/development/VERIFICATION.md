@@ -16,9 +16,10 @@ This is the authoritative entry point for project-wide verification. Run command
 Run these for changes in the corresponding component. Run the complete group for cross-cutting changes and before claiming project-wide completion.
 
 ```powershell
-cargo test --manifest-path recorder/Cargo.toml
+cargo check --manifest-path recorder/Cargo.toml --all-targets --all-features
+cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features
 cargo fmt --manifest-path recorder/Cargo.toml -- --check
-cargo clippy --manifest-path recorder/Cargo.toml --all-targets -- -D warnings
+cargo clippy --manifest-path recorder/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path app/src-tauri/Cargo.toml
 cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings
@@ -157,6 +158,27 @@ For controlled headless lifecycle testing, set `LEAGUE_REPLAY_PROCESS_NAME` to a
 ```powershell
 cargo run --manifest-path recorder/Cargo.toml -- --headless
 ```
+
+### Native Windows backend
+
+The native WGC/D3D11/NVENC backend is the Windows default. Set
+`QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` only when intentionally validating the
+retained external backend; never describe an automatic cross-backend fallback.
+
+Native probes require the staged r6 runtime and a dedicated target/evidence root.
+They never target League or a user recording. Run the matched-backend preflight
+before a timed A/B pair:
+
+```powershell
+$runtime = (Resolve-Path 'build/media-runtime/windows-x86_64').Path
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_wgc_source_probe.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_preliminary_backend_ab.ps1 -MediaRuntimeRoot $runtime -PreflightOnly
+```
+
+Continue to a timed pair only after the preflight prints
+`CHRONOBREAK_PRELIMINARY_AB_PREFLIGHT=PASS`. Every run uses a fresh ignored evidence
+root. Non-League fixture evidence validates bounded lifecycle/media behavior, not
+League performance, hard driver-hang containment, or AMD/Intel hardware support.
 
 ## Media integrity checks
 

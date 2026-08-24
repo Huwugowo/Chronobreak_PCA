@@ -142,7 +142,7 @@ aggregate sampled CPU time was exactly unchanged across two 60-second arms per
 revision; memory was within 0.326 MiB (0.20%). This confirms no measurable
 whole-recorder native resource regression, but it does **not** establish a
 whole-recorder CPU speedup. The FFmpeg-reference change is also inconclusive
-at this sample size. See `docs/PACKAGE7_END_TO_END_REVISION_AB.md` for the
+at this sample size. See `docs/archive/pc-b-recorder-development/PACKAGE7_END_TO_END_REVISION_AB.md` for the
 method, raw roots, baseline R11-build accommodation, and full interpretation.
 
 ## Package disposition

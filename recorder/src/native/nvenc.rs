@@ -517,4 +517,3 @@ mod tests {
         assert_eq!(NVENC_CAPS_PARAM_VERSION, 0x7201_000c);
     }
 }
-

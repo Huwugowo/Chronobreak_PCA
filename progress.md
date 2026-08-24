@@ -10,6 +10,6 @@ Most recent completed prerequisite:
 
 Active performance work:
 
-- `QB-PERF-002`: implementation is active at `docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md`, starting from stable release-era recording/library behavior. Implement exact-HWND WGC/D3D11 capture and validate it on a dedicated changing-window fixture before any League run; its post-change matrix must be formally valid.
+- `QB-PERF-002`: canonical reconciliation is active at `docs/exec-plans/active/qb-perf-002-gpu-agnostic-windows-capture.md`. The whole-app chassis now contains the recorder-development native WGC/D3D11/NVENC series, with native selected by default and the external FFmpeg WGC backend retained as an explicit fallback. Finish integration verification, record exact evidence, then run the still-required valid post-change League matrix before any completion or negligible-impact claim.
 
 `QB-PERF-003` and `QB-PERF-004` retain the physical AMD/AMF and Intel/QSV validation work after the GPU-agnostic implementation exists. The current RTX 4060 can validate only the common capture layer plus NVENC.

@@ -10,10 +10,10 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $cargo = Join-Path $repo "recorder\Cargo.toml"
 $fixture = Join-Path $repo "recorder\target\debug\examples\wgc_fixture.exe"
 $probe = Join-Path $repo "recorder\target\debug\examples\native_wgc_source_probe.exe"
-$outRoot = Join-Path $repo "build\perf\qb-perf-005-native-source"
+$outRoot = Join-Path $repo "build\perf\queueback-native-source"
 New-Item -ItemType Directory -Force $outRoot | Out-Null
 
-Write-Host "=== QB-PERF-005 native source probe ==="
+Write-Host "=== QueueBack native source probe ==="
 & cargo build --manifest-path $cargo --example wgc_fixture --example native_wgc_source_probe
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
@@ -52,7 +52,7 @@ try {
     if (-not $pass) { throw "native source probe exited without PASS evidence" }
 
     Write-Host ""
-    Write-Host "QB_PERF_005_NATIVE_SOURCE=PASS"
+    Write-Host "QUEUEBACK_NATIVE_SOURCE=PASS"
     Write-Host "EVIDENCE=$run"
 }
 finally {
@@ -60,4 +60,3 @@ finally {
         Stop-Process -Id $fixtureProcess.Id -Force -ErrorAction SilentlyContinue
     }
 }
-

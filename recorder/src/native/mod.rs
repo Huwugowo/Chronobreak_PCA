@@ -1,4 +1,4 @@
-//! Native Windows recorder engine under QB-PERF-005.
+//! Native Windows WGC/D3D11/NVENC recorder engine.
 //!
 //! The production service can select this developer-gated backend while the
 //! FFmpeg reference path remains available. It keeps capture, conversion,
@@ -39,4 +39,3 @@ pub const NATIVE_WGC_HANDOFF_CAPACITY: usize = 1;
 
 /// Milestone 3/4 reserves exactly four encoder-facing NV12/NVENC slots.
 pub const NATIVE_ENCODER_SLOT_COUNT: usize = 4;
-

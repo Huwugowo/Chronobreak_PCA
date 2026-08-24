@@ -119,4 +119,3 @@ impl NativeWgcSource {
         Ok(self.capture.telemetry())
     }
 }
-

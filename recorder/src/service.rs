@@ -318,7 +318,8 @@ impl WindowsRecorderBackend {
 
     fn parse(value: Option<&str>) -> Result<Self> {
         match value.map(str::trim).filter(|value| !value.is_empty()) {
-            None | Some("ffmpeg") | Some("ffmpeg-wgc") => Ok(Self::Ffmpeg),
+            None => Ok(Self::Native),
+            Some("ffmpeg") | Some("ffmpeg-wgc") => Ok(Self::Ffmpeg),
             Some("native") => Ok(Self::Native),
             Some(value) => bail!(
                 "unsupported {WINDOWS_RECORDER_BACKEND_ENV} value {value:?}; expected ffmpeg or native"
@@ -489,7 +490,7 @@ pub async fn run(
     info!(
         backend = windows_backend.label(),
         selector = WINDOWS_RECORDER_BACKEND_ENV,
-        "selected developer Windows recorder backend"
+        "selected Windows recorder backend"
     );
     info!(
         ffmpeg = %ffmpeg.path().display(),
@@ -1105,7 +1106,7 @@ async fn start_recording(
                     encoder_depth: NVENC_SURFACE_LIMIT,
                     filter_buffered_frame_limit: 0,
                     backend: "native_windows_graphics_capture_d3d11",
-                    support_label: "native-provisional",
+                    support_label: "optimized-unvalidated",
                 },
             )
         }
@@ -1356,15 +1357,13 @@ async fn start_recording(
 #[cfg(target_os = "windows")]
 fn native_recording_plan(recording: &RecordingConfig) -> Result<RecordingPlan> {
     if recording.codec == CodecPreference::Hevc {
-        bail!("the provisional native recorder currently supports H.264 only");
+        bail!("the native recorder currently supports H.264 only");
     }
     if !matches!(
         recording.profile,
         RecordingProfile::Auto | RecordingProfile::High
     ) {
-        bail!(
-            "the provisional native recorder currently requires the auto or high 1080p60 profile"
-        );
+        bail!("the native recorder currently requires the auto or high 1080p60 profile");
     }
     RecordingPlan::new(EncoderKind::Nvenc, VideoCodec::H264, RecordingProfile::High)
         .context("could not select the fixed native 1080p60 H.264 plan")
@@ -1525,9 +1524,17 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn windows_recorder_backend_is_explicit_and_defaults_to_ffmpeg() {
+    fn windows_recorder_backend_defaults_to_native_with_explicit_ffmpeg_fallback() {
         assert_eq!(
             WindowsRecorderBackend::parse(None).unwrap(),
+            WindowsRecorderBackend::Native
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("")).unwrap(),
+            WindowsRecorderBackend::Native
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("ffmpeg")).unwrap(),
             WindowsRecorderBackend::Ffmpeg
         );
         assert_eq!(
@@ -1543,7 +1550,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn provisional_native_plan_is_fixed_to_high_h264() {
+    fn native_plan_is_fixed_to_high_h264() {
         let mut recording = RecordingConfig::default();
         let plan = native_recording_plan(&recording).unwrap();
         assert_eq!(plan.encoder(), EncoderKind::Nvenc);

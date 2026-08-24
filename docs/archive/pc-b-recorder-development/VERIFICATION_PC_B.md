@@ -45,7 +45,7 @@ $runtime = (Resolve-Path 'build\media-runtime\windows-x86_64').Path
 
 Only continue to a 240-second pair after the preflight prints
 `CHRONOBREAK_PRELIMINARY_AB_PREFLIGHT=PASS`. The detailed A/B procedure and
-results are in `docs/PRELIMINARY_BACKEND_AB.md`.
+results are in `docs/archive/pc-b-recorder-development/PRELIMINARY_BACKEND_AB.md`.
 
 ## External gates
 
@@ -57,7 +57,7 @@ as passed:
 - actual League lifecycle acceptance and the M8 backend comparison;
 - the R11 empirical `live-client-capture-20260730-110603.json` fixture.
 
-The diagnostic detail is retained in `docs/PC_B_NON_LEAGUE_VERIFICATION.md`.
+The diagnostic detail is retained in `docs/archive/pc-b-recorder-development/PC_B_NON_LEAGUE_VERIFICATION.md`.
 
 ## Evidence policy
 

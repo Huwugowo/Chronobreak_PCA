@@ -174,4 +174,3 @@ fn main() -> anyhow::Result<()> {
 fn main() {
     eprintln!("native_wgc_source_probe is Windows-only");
 }
-

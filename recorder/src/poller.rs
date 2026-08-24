@@ -645,7 +645,7 @@ impl LiveClient {
         self.get("eventdata").await
     }
 
-    async fn snapshot_data(&self) -> Result<Received<RawSnapshotData>> {
+    async fn initial_snapshot_data(&self) -> Result<Received<RawSnapshotData>> {
         let (game_data, active_player, all_players, events) = tokio::join!(
             self.game_stats(),
             self.active_player(),
@@ -671,6 +671,29 @@ impl LiveClient {
                 all_players: all_players.value,
                 game_data: game_data.value,
                 events,
+            },
+            received_at: game_data.received_at,
+            latency,
+        })
+    }
+
+    async fn snapshot_data(&self) -> Result<Received<RawSnapshotData>> {
+        let (game_data, active_player, all_players) =
+            tokio::join!(self.game_stats(), self.active_player(), self.player_list(),);
+        let game_data = game_data.context("snapshot game stats unavailable")?;
+        let active_player = active_player.context("snapshot active player unavailable")?;
+        let all_players = all_players.context("snapshot player list unavailable")?;
+        let latency = game_data
+            .latency
+            .max(active_player.latency)
+            .max(all_players.latency);
+
+        Ok(Received {
+            value: RawSnapshotData {
+                active_player: active_player.value,
+                all_players: all_players.value,
+                game_data: game_data.value,
+                events: RawEventData::default(),
             },
             received_at: game_data.received_at,
             latency,
@@ -918,7 +941,7 @@ async fn fetch_initial_snapshot(
         record_request(state, RequestKind::Snapshot).await;
         let response = tokio::select! {
             _ = cancelled(cancellation) => return None,
-            response = client.snapshot_data() => response,
+            response = client.initial_snapshot_data() => response,
         };
         if let Ok(received) = response {
             state
@@ -1712,6 +1735,86 @@ mod tests {
       "gameData": {"gameMode": "CLASSIC", "gameTime": 220.125}
     }
     "#;
+
+    async fn fetch_snapshot_from_recording_server(initial: bool) -> (RawSnapshotData, Vec<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server_paths = Arc::clone(&paths);
+        let done = Arc::new(AtomicBool::new(false));
+        let server_done = Arc::clone(&done);
+        let server = std::thread::spawn(move || {
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(1)))
+                            .unwrap();
+                        let mut request = [0_u8; 4096];
+                        let read = stream.read(&mut request).unwrap();
+                        let request = String::from_utf8_lossy(&request[..read]);
+                        let path = request
+                            .lines()
+                            .next()
+                            .and_then(|line| line.split_whitespace().nth(1))
+                            .expect("HTTP request path")
+                            .to_owned();
+                        server_paths.lock().unwrap().push(path.clone());
+                        let body = match path.as_str() {
+                            "/gamestats" => r#"{"gameTime": 42.0, "gameMode": "CLASSIC"}"#,
+                            "/activeplayer" => "{}",
+                            "/playerlist" => "[]",
+                            "/eventdata" => {
+                                r#"{"Events":[{"EventID":1,"EventName":"GameStart","EventTime":0.0}]}"#
+                            }
+                            other => panic!("unexpected Live Client endpoint {other}"),
+                        };
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes()).unwrap();
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if server_done.load(Ordering::Acquire) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("snapshot test server failed: {error}"),
+                }
+            }
+        });
+
+        let client = LiveClient::new(&format!("http://{address}")).unwrap();
+        let received = if initial {
+            client.initial_snapshot_data().await
+        } else {
+            client.snapshot_data().await
+        };
+        done.store(true, Ordering::Release);
+        server.join().unwrap();
+        let paths = Arc::try_unwrap(paths).unwrap().into_inner().unwrap();
+        (received.unwrap().value, paths)
+    }
+
+    #[tokio::test]
+    async fn initial_snapshot_seeds_events_but_steady_snapshot_does_not_request_them() {
+        let (initial, initial_paths) = fetch_snapshot_from_recording_server(true).await;
+        assert_eq!(initial.events.events.len(), 1);
+        assert!(initial_paths.iter().any(|path| path == "/eventdata"));
+
+        let (steady, mut steady_paths) = fetch_snapshot_from_recording_server(false).await;
+        assert!(steady.events.events.is_empty());
+        steady_paths.sort();
+        assert_eq!(steady_paths, ["/activeplayer", "/gamestats", "/playerlist"]);
+    }
 
     #[tokio::test]
     async fn game_log_write_records_revision_and_atomic_io_costs() {

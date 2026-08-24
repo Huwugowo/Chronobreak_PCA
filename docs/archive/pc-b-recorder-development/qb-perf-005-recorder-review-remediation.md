@@ -571,24 +571,24 @@ review findings.
 - [x] Reconcile them with the audited QB-PERF-005 timing and resource contract.
 - [x] Define package order, invariants, decision gates, and verification.
 - [x] Package 0: baseline and observability. Evidence:
-  `docs/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE0_RECORDER_OBSERVABILITY_EVIDENCE.md`.
 - [x] Package 1: invariant D3D11 state. Evidence:
-  `docs/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE1_D3D11_PROCESSOR_STATE_EVIDENCE.md`.
 - [x] Package 2: control-plane polling. Evidence:
-  `docs/PACKAGE2_CONTROL_PLANE_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE2_CONTROL_PLANE_EVIDENCE.md`.
 - [x] Package 3: retryable startup recovery. Evidence:
-  `docs/PACKAGE3_STARTUP_RECOVERY_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE3_STARTUP_RECOVERY_EVIDENCE.md`.
 - [x] Package 4: WGC source coalescing. Evidence:
-  `docs/PACKAGE4_WGC_SOURCE_COALESCING_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE4_WGC_SOURCE_COALESCING_EVIDENCE.md`.
 - [x] Package 5: transactional late-tick recovery. Evidence:
-  `docs/PACKAGE5_TRANSACTIONAL_TICK_RECOVERY_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE5_TRANSACTIONAL_TICK_RECOVERY_EVIDENCE.md`.
 - [x] Package 6: profile-gated poller persistence (gate triggered). Evidence:
-  `docs/PACKAGE6_POLLER_PERSISTENCE_EVIDENCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE6_POLLER_PERSISTENCE_EVIDENCE.md`.
 - [x] Package 7: full non-League evidence refresh. Evidence:
-  `docs/PACKAGE7_FINAL_NON_LEAGUE_ACCEPTANCE.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE7_FINAL_NON_LEAGUE_ACCEPTANCE.md`.
 - [x] Package 8: immediate native-backend audit follow-up. Evidence:
-  `docs/PACKAGE8_NATIVE_AUDIT_FOLLOWUP_EVIDENCE.md` and
-  `docs/PACKAGE8_QUICK_REVISION_AB.md`.
+  `docs/archive/pc-b-recorder-development/PACKAGE8_NATIVE_AUDIT_FOLLOWUP_EVIDENCE.md` and
+  `docs/archive/pc-b-recorder-development/PACKAGE8_QUICK_REVISION_AB.md`.
 - [ ] Reconcile into the canonical full repository and complete external League
   gates before M8/M9.
 

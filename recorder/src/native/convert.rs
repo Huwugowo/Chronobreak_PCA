@@ -1115,4 +1115,3 @@ mod tests {
         assert_eq!(input_cache_insertion(2, 1), (1, 0, true));
     }
 }
-

@@ -94,7 +94,7 @@ deterministic reductions and checked for short-run regression:
   win.
 
 Method, raw roots, executable hashes, results, and interpretation:
-`docs/PACKAGE8_QUICK_REVISION_AB.md`.
+`docs/archive/pc-b-recorder-development/PACKAGE8_QUICK_REVISION_AB.md`.
 
 ## Deferred boundaries
 

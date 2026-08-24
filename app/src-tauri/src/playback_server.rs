@@ -23,7 +23,7 @@ use tokio::net::TcpListener;
 use tokio_util::io::ReaderStream;
 
 use crate::ddragon;
-use crate::library::{valid_clip_asset, valid_timestamp};
+use crate::library::{valid_clip_asset, valid_game_id};
 use crate::music;
 
 const HEVC_PROBE: &[u8] = include_bytes!("../resources/hevc-probe.mp4");
@@ -218,7 +218,7 @@ async fn game_video(
     AxumPath(timestamp): AxumPath<String>,
     request: Request<Body>,
 ) -> Response<Body> {
-    if !valid_timestamp(&timestamp) {
+    if !valid_game_id(&timestamp) {
         return empty_response(StatusCode::NOT_FOUND, "video/mp4");
     }
     let path = state
@@ -526,6 +526,37 @@ mod tests {
         assert_ne!(first_token, second_token);
         assert_eq!(roots.imported_music_preview(&first_token), None);
         assert_eq!(roots.imported_music_preview(&second_token), Some(second));
+    }
+
+    #[tokio::test]
+    async fn serves_collision_suffixed_game_ids_without_relaxing_path_validation() {
+        let directory = tempfile::tempdir().unwrap();
+        let game_directory = directory.path().join("games").join("1786000000-1");
+        std::fs::create_dir_all(&game_directory).unwrap();
+        std::fs::write(game_directory.join("video.mp4"), b"video").unwrap();
+        let state = PlaybackState {
+            roots: Arc::new(MediaRoots::new(directory.path().to_path_buf())),
+            metrics: Arc::new(PlaybackMetrics::default()),
+            ddragon_cache: directory.path().join("ddragon"),
+            ddragon_client: reqwest::Client::new(),
+        };
+        let request = || Request::builder().body(Body::empty()).unwrap();
+
+        let response = game_video(
+            State(state.clone()),
+            AxumPath("1786000000-1".to_owned()),
+            request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = game_video(
+            State(state),
+            AxumPath("../1786000000-1".to_owned()),
+            request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

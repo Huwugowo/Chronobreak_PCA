@@ -39,6 +39,6 @@ resynchronization. No League process is needed for that static preflight.
 
 M1-M6 and the non-League portion of M7 are implemented and verified in this
 worktree. The strongest current lifecycle/performance evidence is documented in
-`docs/M7_NATIVE_LIFECYCLE_EVIDENCE.md`. Actual League lifecycle acceptance and
+`docs/archive/pc-b-recorder-development/M7_NATIVE_LIFECYCLE_EVIDENCE.md`. Actual League lifecycle acceptance and
 M8 comparison remain external gates; this PC-B evidence does not substitute for
 them.

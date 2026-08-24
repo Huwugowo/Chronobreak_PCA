@@ -2,7 +2,7 @@
 
 Date: 2026-08-24
 
-Status: point-in-time audit and integration plan; not a competing backlog
+Status: reconciliation record and implementation outcome; not a competing backlog
 
 Canonical work state after reconciliation remains `feature-list.json`.
 
@@ -18,17 +18,19 @@ The three inputs resolve as follows:
 | Recorder development | `Huwugowo/Chronobreak`, `pc-b/qb-perf-005-native` at local `c86bc6f`, five commits ahead of its remote | Source of recorder changes and non-League evidence to transplant or adapt, not a whole-product replacement |
 | Replay/review handoff | `chronobreak-replay-canonical-codex-handoff-final-v2.md`, dated 2026-08-21 | Latest replay/review requirements, decisions, defaults, experiments, deferrals, and explicitly open specifications |
 
-The intended first reconciled baseline is:
+The implemented first reconciled baseline is:
 
 1. the current whole application and its stable filesystem/app behavior;
-2. the existing optimized FFmpeg/WGC path retained as the default, vendor-neutral reference path;
-3. the provisional native WGC/D3D11/direct-NVENC path integrated behind the developer selector;
+2. the native WGC/D3D11/direct-NVENC H.264 path selected by default on Windows by explicit product-owner decision;
+3. the optimized external FFmpeg/WGC path retained as the explicit `ffmpeg`/`ffmpeg-wgc` fallback and current AMF/QSV path, with no silent backend switching;
 4. the r6 media runtime contract integrated through the existing shared runtime mechanism;
-5. both recorder backends retained until valid League evidence supports a backend decision;
+5. both recorder backends retained while native support and negligible-impact claims remain gated by valid League evidence;
 6. replay evolution kept WebView-first and driven by real-media measurements;
 7. active documentation rewritten to describe Chronobreak without PC-A/PC-B language or stale QueueBack/League Replay prose.
 
-No broad implementation should begin from the current repository state. The tree first needs a controlled recorder integration and state/documentation reconciliation. In particular, current code, active plans, feature state, and architecture prose disagree materially:
+The controlled integration replayed the recorder-development series semantically onto the whole-app chassis instead of copying either standalone tree. It preserved the Tauri/Solid application and its playback/export stack, integrated the native recorder modules and hardening history, aligned the shared runtime to r6, implemented the Package 12 polling split, fixed collision-suffixed bundle IDs through browsing/playback/mutation/export, and archived standalone PC-B evidence outside active plans. `QB-PERF-002` remains `in-progress`: the staged r6 media gates, longer lifecycle/soak work, vendor validation, and formal League matrix still govern its completion.
+
+The audit began with these material disagreements, which explain the integration choices below:
 
 - whole-app code already implements most of the optimized WGC/FFmpeg milestones, but the active `QB-PERF-002` ExecPlan still marks Milestones 1-6 unimplemented;
 - the whole-app runtime lock is r5, active architecture prose says r3, and recorder development uses r6;
@@ -137,14 +139,14 @@ Important current properties:
 
 The current local synchronization model is internally coherent but incomplete as a cross-system specification. After five advancing, clock-consistent `/gamestats` samples, the poller derives `game_start_video_offset_ms`. Events receive precomputed `video_time_ms`; replay snapshots use `game_start_video_offset_ms + game_time_ms`. This answers today’s app navigation needs, but it does not formally map encoded PTS, replay-index time, WebView time, and export time.
 
-### A.4 Recorder in the intended reconciled baseline
+### A.4 Recorder in the reconciled baseline
 
-The intended baseline adds a second implementation behind the same service/storage/poller contract:
+The reconciled baseline carries both implementations behind the same service/storage/poller contract:
 
 | Path | Scope | Baseline disposition |
 | --- | --- | --- |
-| FFmpeg/WGC/D3D11 | Vendor-neutral external FFmpeg path with NVENC/AMF/QSV capability planning | Keep; default and reference path until valid comparison |
-| Native WGC/D3D11/NVENC | In-process WGC, conversion, and direct NVENC; FFmpeg retained for audio encoding and fragmented-MP4 muxing | Integrate as provisional, developer-selectable NVIDIA path |
+| FFmpeg/WGC/D3D11 | Vendor-neutral external FFmpeg path with NVENC/AMF/QSV capability planning | Explicit fallback and current AMF/QSV path |
+| Native WGC/D3D11/NVENC | In-process WGC, conversion, and direct NVENC; FFmpeg retained for audio encoding and fragmented-MP4 muxing | Default Windows path with narrow NVIDIA/H.264 scope |
 
 The native path is not GPU-agnostic. It is currently fixed to High/H.264, 1920x1080, 60 fps, direct NVENC. AMD/AMF, Intel/QSV, and native HEVC are not implemented by it. The whole-app FFmpeg path therefore remains required even apart from the missing League decision.
 
@@ -248,14 +250,14 @@ capture -> clock -> convert -> encode -> mux
 lifecycle / session / source / d3d11 / nvenc / winrt
 ```
 
-It also contains five focused probe examples, native-backend runners, NVENC ABI layout probes, and a developer selector:
+It also contains five focused probe examples, native-backend runners, NVENC ABI layout probes, and an explicit backend selector:
 
 ```text
-QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg  (default)
 QUEUEBACK_WINDOWS_RECORDER_BACKEND=native
+QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg  (explicit fallback)
 ```
 
-The selector is deliberately developer-only, with FFmpeg as the default until the real gate is passed.
+Unset or empty selection now chooses native. Unsupported native configurations fail explicitly and direct operators to the external FFmpeg fallback; startup never silently changes backends.
 
 Native bounded-flow invariants are explicit:
 
@@ -276,9 +278,9 @@ The callback never waits for the worker, encoder, mux, disk, or async runtime. T
 | Component/change | Disposition | Required adaptation or protection |
 | --- | --- | --- |
 | Whole-app process watcher, config, tray, storage, metadata, app compatibility | Preserve as canonical integration behavior | Merge recorder changes into these contracts; do not overwrite the directory wholesale; fix the suffixed-bundle-ID reader mismatch |
-| Whole-app FFmpeg/WGC path | Preserve | Remains default, vendor-neutral reference and AMF/QSV implementation |
+| Whole-app FFmpeg/WGC path | Preserve | Remains the explicit fallback and current AMF/QSV implementation |
 | Native `capture/clock/convert/d3d11/encode/lifecycle/mux/nvenc/session/source/winrt` | Transplant and adapt | Put behind the shared service/session interface; retain exact bounds and failure semantics |
-| Developer backend selector | Transplant | Default to FFmpeg; no automatic winner selection and no user-facing support claim yet |
+| Backend selector | Transplant and adapt | Default to native by product-owner decision; retain explicit FFmpeg selection and narrow support claims |
 | Package 0 observability | Keep | Reconcile counters with existing `RecordingEvidence` and additive capture metadata |
 | Package 1 invariant D3D11 state | Keep | Preserve GPU-only conversion and validate against whole-app device ownership |
 | Package 2 control-plane caching | Keep | Semantically merge with current HWND/PID/adapter validation rather than duplicating it |
@@ -595,7 +597,7 @@ Before deleting any historical material:
 | ---: | --- | --- | --- |
 | 1 | Preserve the recorder divergence at full `c86bc6f`; create a canonical integration feature and self-contained ExecPlan | Durable backup exists; exact source revisions and scope are recorded | Confirm no unpushed work can be lost and no broad replay work is mixed in |
 | 2 | Reconcile current canonical state before code merge: update plan assumptions, runtime r3/r5/r6 truth, bundle-ID grammar, and exact shared contracts | Integration plan reflects current code rather than stale Milestones 1-6 | Challenge merge boundaries, especially service/storage/poller/runtime |
-| 3 | Semantically integrate r6 and native modules behind a developer selector while retaining FFmpeg default | Both paths compile through the same canonical lifecycle, metadata, audio, storage, and poller interfaces | Independent implementation review for ownership, cancellation, hard hangs, bounds, unsafe/NVENC ABI, and backward compatibility |
+| 3 | Semantically integrate r6 and native modules, select native by default, and retain explicit FFmpeg fallback | Both paths compile through the same canonical lifecycle, metadata, audio, storage, and poller interfaces | Independent implementation review for ownership, cancellation, hard hangs, bounds, unsafe/NVENC ABI, and backward compatibility |
 | 4 | Merge Packages 0-10 and the Package 11 evidence decision; implement Package 12 locally; use the real R11 fixture | Focused and broad poller/recorder tests pass; no duplicate event authority or changed final JSON semantics | Review concurrency, durability, failure classification, and runtime integration |
 | 5 | Run project-wide static/unit/integration verification from `docs/development/VERIFICATION.md` | Format, Clippy, Cargo tests, frontend type/build, media-runtime tests, benchmark-tool tests, feature schema/invariants all pass | Stop on any app compatibility regression; do not weaken gates |
 | 6 | Run canonical non-League media/lifecycle/failure/soak and both-backend A/B fixtures on fresh outputs | Both backends produce valid, changing, app-playable media with exact identity/evidence; current format is inspected | Decide whether implementation is ready for League, not which backend wins |
@@ -639,7 +641,6 @@ At minimum, use these checkpoints:
 Do not include these in the first integration unless a newly discovered correctness dependency makes one unavoidable:
 
 - removing either recorder backend;
-- presenting native as the user default;
 - native AMF/QSV/HEVC support;
 - active-session backend/device restart or segmented recording;
 - hard GPU-driver-call containment redesign;
@@ -666,4 +667,4 @@ Repository reconciliation is complete only when a new engineer can clone one rep
 - what still requires a current real recording, League, different hardware, or macOS;
 - why historical archives/specifications are no longer required.
 
-Until then, the whole-app repository is the chassis, not yet the fully reconciled canonical baseline.
+The code and active state now form the first reconciled canonical baseline. `QB-PERF-002` deliberately remains open until its staged-runtime, media/lifecycle, hardware, and League completion gates pass.

@@ -226,7 +226,7 @@ durability or media interaction outside this local request split.
 
 ## Verification and evidence
 
-Use `docs/VERIFICATION.md` and the pinned r6 runtime. Every runtime run writes
+Use `docs/development/VERIFICATION.md` and the pinned r6 runtime. Every runtime run writes
 a new ignored timestamped evidence root. Never overwrite prior roots.
 
 The available full test suite may continue to filter only

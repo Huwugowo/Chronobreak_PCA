@@ -411,8 +411,8 @@ In addition:
 - [x] Roll back the rejected QB-CAP-002 implementation and remove it from this feature's dependency gate; QB-CAP-001 and QB-PERF-001 remain complete.
 - [x] Complete the QB-DIST-001 packaged-runtime dependency gate.
 - [x] Reconcile the whole-app and recorder-development histories and identify `6e6e276` as the recorder-development baseline plus `d6fcc97..c86bc6f` as the integrable native-recorder series.
-- [ ] Integrate the native recorder series, make native the Windows default, retain the explicit FFmpeg fallback, and align the packaged r6 runtime/tooling.
-- [ ] Fix the collision-suffixed recording-bundle discovery contract and complete focused whole-app compatibility verification.
+- [x] Integrate the native recorder series, make native the Windows default, retain the explicit FFmpeg fallback, and align the packaged r6 runtime/tooling.
+- [x] Fix the collision-suffixed recording-bundle discovery contract, remove redundant steady-state `eventdata`, and pass focused plus broad whole-app compatibility verification.
 - [ ] Reconcile remaining Milestones 1 through 6 requirements against concrete integrated evidence; keep unsupported or unvalidated vendor claims explicit.
 - [ ] Run Milestone 7 and satisfy the global completion gate.
 

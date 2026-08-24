@@ -54,7 +54,7 @@ enum TickAdmission {
     NoSlot,
 }
 
-/// Standalone M5 native recorder session. All WGC, D3D11 conversion and NVENC
+/// Native recorder session. All WGC, D3D11 conversion and NVENC
 /// submission calls remain on the constructing GPU worker. FFmpeg receives
 /// only completed Annex-B bytes on its stdin and performs audio + MP4 muxing.
 ///

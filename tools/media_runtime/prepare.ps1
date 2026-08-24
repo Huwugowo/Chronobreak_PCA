@@ -92,7 +92,8 @@ try {
             "queueback-ffmpeg-8.1.2-windows-x86_64-r2",
             "queueback-ffmpeg-8.1.2-windows-x86_64-r3",
             "queueback-ffmpeg-8.1.2-windows-x86_64-r4",
-            "queueback-ffmpeg-8.1.2-windows-x86_64-r5"
+            "queueback-ffmpeg-8.1.2-windows-x86_64-r5",
+            "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
         )
         if ($recognizedIds -notcontains [string]$existingManifest.runtime_id) {
             throw "Refusing to replace unrecognized runtime $($existingManifest.runtime_id) at $resolvedRuntime."
