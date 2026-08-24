@@ -413,6 +413,7 @@ In addition:
 - [x] Reconcile the whole-app and recorder-development histories and identify `6e6e276` as the recorder-development baseline plus `d6fcc97..c86bc6f` as the integrable native-recorder series.
 - [x] Integrate the native recorder series, make native the Windows default, retain the explicit FFmpeg fallback, and align the packaged r6 runtime/tooling.
 - [x] Fix the collision-suffixed recording-bundle discovery contract, remove redundant steady-state `eventdata`, and pass focused plus broad whole-app compatibility verification.
+- [x] Stage and verify the audited r6 runtime, build both optimized executables, assemble the portable release, and pass sanitized-PATH recorder diagnostics plus isolated app startup smoke.
 - [ ] Reconcile remaining Milestones 1 through 6 requirements against concrete integrated evidence; keep unsupported or unvalidated vendor claims explicit.
 - [ ] Run Milestone 7 and satisfy the global completion gate.
 
