@@ -33,7 +33,7 @@ const PROFILE_BENCHMARK_DURATION: Duration = Duration::from_secs(3);
 const FFMPEG_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const FFMPEG_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
-const FRAGMENTED_MP4_FLAGS: &str = "+frag_keyframe+empty_moov+default_base_moof";
+pub(crate) const FRAGMENTED_MP4_FLAGS: &str = "+frag_keyframe+empty_moov+default_base_moof";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -1227,7 +1227,7 @@ fn build_recording_arguments(
     Ok(arguments)
 }
 
-fn append_windows_audio_arguments(arguments: &mut Vec<OsString>, audio: &AudioSource) {
+pub(crate) fn append_windows_audio_arguments(arguments: &mut Vec<OsString>, audio: &AudioSource) {
     match audio {
         AudioSource::DirectShow(device) => {
             push_args(
@@ -1319,7 +1319,7 @@ fn even_dimension(value: u32) -> u32 {
     value.saturating_sub(value % 2).max(2)
 }
 
-fn push_args(target: &mut Vec<OsString>, values: &[&str]) {
+pub(crate) fn push_args(target: &mut Vec<OsString>, values: &[&str]) {
     target.extend(values.iter().map(OsString::from));
 }
 

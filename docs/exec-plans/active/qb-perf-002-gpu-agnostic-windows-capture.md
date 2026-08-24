@@ -4,6 +4,22 @@ Status: implementation active. All canonical dependencies are complete. QB-PERF-
 
 This ExecPlan is the authoritative implementation guide for QB-PERF-002. It must be read together with feature-list.json, PLANS.md, docs/product/PRODUCT.md, docs/architecture/recorder-lifecycle.md, docs/development/VERIFICATION.md, and the completed outputs of every dependency. Implementation starts from a fresh context after the dependencies are complete. Product code must not be changed as part of the planning pass that created this file.
 
+## 2026-08-24 canonical-reconciliation amendment
+
+Repository inspection materially contradicts the stale "current architecture" and unimplemented-milestone descriptions below. The whole-app repository at `0c0f274` already contains the external FFmpeg 8.1.2 `gfxcapture`/D3D11 implementation, while the recorder-development repository is an intentionally isolated continuation rooted at `6e6e276` from the same recorder baseline. Its 37 post-baseline commits (`d6fcc97` through `c86bc6f`) implement and harden an in-process Windows Graphics Capture, D3D11/NV12, and direct NVENC video path while retaining one FFmpeg child for system audio, fragmented-MP4 muxing, and the explicit external-backend fallback. The reconciliation report at `docs/reconciliation/2026-08-24-canonical-repository-reconciliation.md` records the complete comparison.
+
+This amendment supersedes conflicting topology and delivery choices later in this document for the current implementation pass:
+
+- replay the recorder-development commits semantically onto the whole-app repository; do not replace the Tauri/Solid application, its playback/export stack, distribution tooling, benchmark tooling, or canonical planning state;
+- make `native-wgc-d3d11-nvenc` the default Windows recorder backend by explicit product-owner decision, while retaining `QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` (and the `ffmpeg-wgc` alias) as an explicit fallback;
+- keep the native backend's claim narrow: NVIDIA NVENC/H.264 on the implemented path. AMD/AMF and Intel/QSV continue through the external FFmpeg WGC/D3D11 backend and remain subject to the existing capability/support and hardware-validation requirements;
+- retain bounded asynchronous capture, failure-safe finalization, capture diagnostics, target visibility handling, and startup cleanup from the recorder-development branch;
+- integrate the pinned r6 media-runtime contract and the whole-app build/staging tools needed to produce it, without accepting PATH FFmpeg or deleting the external backend;
+- close cross-repository application contracts found during reconciliation, including discovery of collision-suffixed recording bundle IDs; and
+- do not mark QB-PERF-002 done during reconciliation. The valid post-change League matrix, vendor support claims, and the remaining acceptance criteria still gate completion.
+
+The older design and milestones remain below as historical rationale and unmet cross-vendor completion requirements. Where they say that the optimized implementation does not exist or that all video must remain inside FFmpeg, this amendment is authoritative.
+
 ## Purpose
 
 QueueBack currently captures a desktop rectangle through Windows GDI, converts frames in system memory, and uploads them to a hardware encoder. The first QB-PERF-001 dataset is formally invalid, but its clean diagnostic subset shows severe frame-pacing damage while the recorder process and Live Client poller are effectively idle. The work at stake is therefore capture acquisition, conversion, transfer, and scheduling rather than the low-frequency HTTP polling path.
@@ -394,7 +410,10 @@ In addition:
 - [x] Select the external-FFmpeg WGC/D3D11 architecture and write this ExecPlan.
 - [x] Roll back the rejected QB-CAP-002 implementation and remove it from this feature's dependency gate; QB-CAP-001 and QB-PERF-001 remain complete.
 - [x] Complete the QB-DIST-001 packaged-runtime dependency gate.
-- [ ] Implement Milestones 1 through 6 from a fresh context.
+- [x] Reconcile the whole-app and recorder-development histories and identify `6e6e276` as the recorder-development baseline plus `d6fcc97..c86bc6f` as the integrable native-recorder series.
+- [ ] Integrate the native recorder series, make native the Windows default, retain the explicit FFmpeg fallback, and align the packaged r6 runtime/tooling.
+- [ ] Fix the collision-suffixed recording-bundle discovery contract and complete focused whole-app compatibility verification.
+- [ ] Reconcile remaining Milestones 1 through 6 requirements against concrete integrated evidence; keep unsupported or unvalidated vendor claims explicit.
 - [ ] Run Milestone 7 and satisfy the global completion gate.
 
 ## Deviations and surprises
@@ -406,6 +425,7 @@ In addition:
 - Keeping video inside one FFmpeg child avoids a custom Rust texture IPC or libav integration, but stock gfxcapture lacks the first-frame QPC and bounded-flow counters required for reliable clocking and observability. The chosen response is a small audited patch with a strict ABI, not an in-process capture rewrite.
 - GPU-agnostic implementation and GPU-wide measured performance are different claims. Automated capability coverage can be complete on the current machine, while physical AMF/QSV performance remains explicitly unvalidated.
 - The attempted QB-CAP-002 implementation regressed real completed-bundle visibility and did not improve capture performance. It was rolled back. PERF-002 starts from the stable release-era app/recorder behavior and owns no recording-state/library-policy redesign.
+- The 2026-08-24 repository comparison found that this plan's implementation-state description was stale: the whole-app repository already implemented the external FFmpeg WGC/D3D11 path, and the recorder-development repository contained an isolated native-NVENC continuation rooted from the same recorder baseline. The histories are unrelated at Git-root level, so only post-baseline recorder commits are eligible for replay; the standalone root and its copied canonical files are not.
 
 ## Decision log
 
@@ -421,6 +441,8 @@ In addition:
 - 2026-08-12: Accept the completed QB-PERF-001 diagnostic as the pre-change direction by explicit product decision. Preserve its INVALID label and require QB-PERF-002's post-change matrix to satisfy all original validity rules and budgets.
 - 2026-08-12: Remove QB-CAP-002 from the dependency gate and preserve the stable release-era bundle contract. Use only minimal session-local first-frame/output evidence for the new graph; do not reintroduce the rolled-back recording-state or strict client-classification machinery.
 - 2026-08-12: By explicit product requirement, schema-v2 performance proof uses four runs total: one capped baseline/capture pair and one uncapped baseline/capture pair. Preserve schema-v1 historical parsing, remove schema-v2 three-run variability gating, and rerun a doubtful pair instead of aggregating mandatory repetitions.
+- 2026-08-24: By explicit product-owner decision, select the in-process native WGC/D3D11/NVENC path by default on Windows. Retain the external FFmpeg WGC/D3D11 backend as the explicit `ffmpeg`/`ffmpeg-wgc` fallback and as the current AMD/Intel-capable path; do not silently fall back after a native startup failure.
+- 2026-08-24: Treat recorder-development commit `6e6e276` as provenance-only baseline and replay only `d6fcc97..c86bc6f` onto the whole-app chassis. Preserve whole-app-only app, distribution, benchmark, and fixture work, and resolve the few baseline file differences semantically.
 
 ## Completion
 

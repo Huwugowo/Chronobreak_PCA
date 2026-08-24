@@ -1,5 +1,7 @@
 pub mod config;
 pub mod encoder;
+#[cfg(target_os = "windows")]
+pub mod native;
 pub mod platform;
 pub mod poller;
 pub mod service;
