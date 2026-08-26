@@ -50,10 +50,10 @@ was changed. The baseline summaries therefore truthfully report
 
 | Sequence position | Revision | Evidence root |
 | --- | --- | --- |
-| 1 | Baseline | `C:\Users\Hugo\Documents\perso\chrnbrk\chronobreak-recorder-pc-b-baseline-f885aba\evidence\preliminary-backend-ab\20260818-160600` |
+| 1 | Baseline | `<baseline-evidence-root>\preliminary-backend-ab\20260818-160600` |
 | 2 | Current | `evidence/preliminary-backend-ab/20260818-160847` |
 | 3 | Current | `evidence/preliminary-backend-ab/20260818-161133` |
-| 4 | Baseline | `C:\Users\Hugo\Documents\perso\chrnbrk\chronobreak-recorder-pc-b-baseline-f885aba\evidence\preliminary-backend-ab\20260818-161421` |
+| 4 | Baseline | `<baseline-evidence-root>\preliminary-backend-ab\20260818-161421` |
 
 All four paired runs reported `CHRONOBREAK_PRELIMINARY_BACKEND_AB=PASS`.
 Earlier interrupted/diagnostic roots are excluded from every calculation.

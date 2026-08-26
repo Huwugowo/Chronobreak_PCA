@@ -10,7 +10,7 @@ Run from the repository root. Use the explicit Cargo path if `cargo` is not on
 PATH:
 
 ```powershell
-$cargo = 'C:\Users\Hugo\.cargo\bin\cargo.exe'
+$cargo = '<absolute-path-to-cargo.exe>'
 & $cargo fmt --manifest-path recorder\Cargo.toml -- --check
 & $cargo check --manifest-path recorder\Cargo.toml --all-targets --all-features
 & $cargo clippy --manifest-path recorder\Cargo.toml --all-targets --all-features -- -D warnings

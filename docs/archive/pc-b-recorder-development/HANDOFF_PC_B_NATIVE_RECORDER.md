@@ -6,7 +6,7 @@ coding read path.
 The original session handoff pack is outside this repository at:
 
 ```text
-C:\Users\Hugo\Documents\perso\chrnbrk\chronobreak-coding-handoff-2026-08-17
+<archived-handoff-worktree>
 ```
 
 It contains the original plans, copied repository snapshots, scratch trees,

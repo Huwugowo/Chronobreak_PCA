@@ -24,7 +24,7 @@ The added evidence covers:
 ## Static verification
 
 Commands were run from the repository root with
-`C:\Users\Hugo\.cargo\bin\cargo.exe`:
+`<absolute-path-to-cargo.exe>`:
 
 ```text
 cargo fmt --manifest-path recorder/Cargo.toml --all
