@@ -127,7 +127,7 @@ When spawning a subagent:
 
 Parallelize only genuinely independent work. If tasks depend on each other's findings or touch the same code, run them sequentially or keep them in the main agent.
 
-While subagents run, the main agent should perform useful non-overlapping work rather than duplicate their investigation or repeatedly poll them.
+While subagents run, perform useful non-overlapping work when available. When no useful independent work remains, call `wait_agent` once with a long timeout and rely on its event-driven wakeup. Do not poll with repeated short `wait_agent` or `list_agents` calls; subagent messages and completions wake an active wait immediately.
 
 ### Context inheritance
 
