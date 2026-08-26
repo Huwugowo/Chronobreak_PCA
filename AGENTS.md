@@ -13,15 +13,6 @@ Prioritize:
 
 Chronobreak is not a coaching platform. Descriptive game data may help users find, navigate, understand, or clip recordings. Prescriptive gameplay judgment, coaching, build/matchup advice, decision grading, and "what you should have done" features are out of scope unless the user explicitly changes the product direction.
 
-## Delegation
-
-You are explicitly authorized to proactively use subagents without the user
-requesting delegation on each task.
-
-Use subagents when they materially improve parallelism, context efficiency,
-or result quality. Use your judgment and Codex's built-in delegation
-guidelines; do not delegate merely for the sake of delegation.
-
 ## Sources of truth
 
 Use repository state, not chat memory, for durable project facts.
@@ -104,21 +95,82 @@ If `execution.plan` is `null`, this pass is planning only:
 
 Implementation of planned work starts from a fresh context.
 
-If `execution.plan` already contains a path, read that ExecPlan and implement it. Do not repeat broad exploration unless the repository materially contradicts the plan.
+If `execution.plan` already contains a path, treat that ExecPlan as the implementation map: read it, inspect only what the next implementation step requires, and implement it. Do not repeat broad architecture or subsystem mapping unless a concrete repository contradiction or missing fact blocks the plan. In this state, subagents should handle bounded implementation slices, targeted uncertainties, review, or verification — not generic remapping of the system.
 
-## Subagents
+## Delegation and subagents
 
-Subagents are a tool used mainly inside planned work when they reduce context pollution or parallelize independent read-heavy investigation.
+You are explicitly authorized to proactively use subagents without the user requesting delegation on each task. The main agent decides when delegation is worthwhile and owns orchestration, synthesis, integration, canonical state, verification, completion, and subagent lifecycle.
 
-Good uses:
-- mapping separate subsystems;
-- unfamiliar API investigation;
-- test/log/benchmark analysis;
-- independent plan or implementation review.
+Use subagents only when they materially improve parallelism, context efficiency, or result quality. Do not delegate for ceremony and do not fill available concurrency slots merely because they exist.
 
-Do not create subagents for ceremony or parallel overlapping edits.
+### Good uses
 
-The main agent owns synthesis, user-facing decisions, canonical state, integration, verification, and completion.
+- During planning without an authoritative ExecPlan, mapping genuinely independent subsystems.
+- Targeted investigation of an unfamiliar API or concrete uncertainty.
+- Isolated test, log, fixture, or benchmark analysis.
+- A disjoint implementation slice with a clear write scope.
+- Independent review of a plan, implementation, or specific risk.
+
+Do not create subagents for overlapping edits, duplicated investigation, or work the main agent is simultaneously doing itself.
+
+### Assignment discipline
+
+Treat each subagent as a **bounded, single-assignment worker**, not as persistent memory for the project.
+
+When spawning a subagent:
+
+- give it one concrete objective with a clear deliverable;
+- name the relevant paths or subsystem and important constraints;
+- state whether it may edit files or is read-only;
+- keep its scope disjoint from other active agents;
+- by default, tell it not to spawn further subagents; allow descendants only when the main agent explicitly decides that a second level of independent decomposition is useful.
+
+Parallelize only genuinely independent work. If tasks depend on each other's findings or touch the same code, run them sequentially or keep them in the main agent.
+
+While subagents run, the main agent should perform useful non-overlapping work rather than duplicate their investigation or repeatedly poll them.
+
+### Context inheritance
+
+Minimize inherited conversational context.
+
+- Prefer `fork_turns: none` when the assignment can be made self-contained in its spawn message.
+- Otherwise pass the smallest recent-turn slice that contains information the worker genuinely needs, typically a small positive `fork_turns` value.
+- Use `fork_turns: all` only when the full parent conversation is genuinely necessary to complete that specific assignment.
+
+Do not use full-history forks merely for convenience. Repository files, an authoritative ExecPlan, and a precise task prompt should carry durable context whenever possible.
+
+### Model routing
+
+When model overrides are available, use the lowest-capability model that is comfortably sufficient for the bounded assignment:
+
+- use Luna for narrow, mechanical, high-volume work such as focused searches, enumeration, simple transformations, and straightforward test/log triage;
+- use Terra for substantive bounded exploration, implementation, debugging, or review;
+- use Sol for a subagent only when that delegated task itself genuinely requires frontier-level reasoning or architectural synthesis.
+
+Do not accidentally inherit the main agent's Sol/max configuration for routine workers when a cheaper model is appropriate. Choose reasoning effort proportionally to the assignment rather than inheriting maximum effort by default.
+
+### Agent lifecycle
+
+A completed assignment ends that worker's lifecycle.
+
+- Use `followup_task` only to clarify, correct, or finish the **same assignment** while its existing context is directly useful.
+- Do not reuse a completed mapping/research/review worker for implementation, a new phase, or a different task. Spawn a fresh worker with a concise task instead.
+- Do not keep a large-context worker alive because it "already knows the codebase"; preserve useful knowledge in its concise handoff, code changes, tests, or durable repository artifacts.
+- After consuming a worker's final result, close it with `close_agent` when that tool is available.
+- If the current Codex runtime does not expose `close_agent`, treat the completed worker as retired and never reactivate it for later phases.
+
+A subagent's final response should be a concise handoff: findings or changes, evidence/tests, remaining uncertainty, and paths touched. Do not return large raw command output when a summary or relevant excerpt is sufficient.
+
+## Context economy
+
+Context is a working resource. These rules apply to the main agent and all subagents.
+
+- Inspect narrowly before reading broadly. Prefer targeted `rg` queries and relevant file ranges over raw dumps of large files or directories.
+- Keep terminal output bounded. Filter verbose commands, request only relevant ranges, or redirect large output to a temporary file and inspect the useful excerpts.
+- Prefer one bounded command that answers a coherent small question over many tiny tool -> model round trips, but do not batch unrelated reads into a huge output dump.
+- Do not repeatedly reread unchanged files or rediscover facts already established by the authoritative ExecPlan, repository state, or a concise subagent handoff.
+- For verbose tests or benchmarks, preserve the full output when useful but feed only the summary and relevant failures/evidence back into model context.
+- If exploration discovers durable information needed later, record it in the appropriate plan, architecture document, feature evidence, or code rather than relying on a long conversational context to remember it.
 
 ## Scope
 
