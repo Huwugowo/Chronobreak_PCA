@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "run_id": "baseline-20260824-001",
+  "sentinel_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark",
+  "library_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\library",
+  "config_path": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\config\\config.toml",
+  "app_data_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\app-data",
+  "result_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\results\\baseline-20260824-001",
+  "scratch_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\scratch",
+  "observer_profile": "full",
+  "ddragon": {
+    "mode": "offline",
+    "cache_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\app-data\\ddragon",
+    "cache_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "fixtures": [
+    {
+      "id": "short-h264",
+      "alias": "short-h264",
+      "game_timestamp": "1700000000",
+      "kind": "recording_bundle",
+      "relative_path": "games\\1700000000",
+      "backend": "native",
+      "codec": "h264",
+      "negative": false,
+      "files": [
+        {
+          "relative_path": "games\\1700000000\\video.mp4",
+          "size_bytes": 123456789,
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "last_write_utc": "2026-08-24T12:00:00.0000000Z"
+        }
+      ],
+      "media_validation": [
+        {
+          "relative_path": "games\\1700000000\\video.mp4",
+          "ffprobe": {
+            "format": { "duration": "180.000000" },
+            "streams": [{ "codec_type": "video", "codec_name": "h264" }]
+          },
+          "decode_ok": true,
+          "decode_stderr": ""
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "short-seek",
+      "kind": "seek",
+      "fixture_ids": ["short-h264"],
+      "trial_id": "1",
+      "seek_reason": "benchmark",
+      "seed": 20260824,
+      "warmup_seconds": 5,
+      "target_times_ms": [10000, 30000, 90000],
+      "distance_classes": ["near", "far", "forward", "backward"],
+      "observer_control": true
+    }
+  ],
+  "app_binary": "C:\\QueueBack\\release\\league-replay-app.exe",
+  "analyzer_path": "C:\\QueueBack\\source\\tools\\replay_benchmark\\analyze.py",
+  "python_path": "python",
+  "timeout_seconds": 3600,
+  "prepared_utc": "2026-08-24T12:00:00.0000000Z",
+  "preparation_receipt": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\manifests\\baseline-20260824-001.preparation.json",
+  "media_tools": {
+    "runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+    "ffmpeg": {
+      "path": "C:\\QueueBack\\media-runtime\\bin\\ffmpeg.exe",
+      "size_bytes": 123456,
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "version_line": "ffmpeg version 8.1.2-queueback-6"
+    },
+    "ffprobe": {
+      "path": "C:\\QueueBack\\media-runtime\\bin\\ffprobe.exe",
+      "size_bytes": 123456,
+      "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "version_line": "ffprobe version 8.1.2-queueback-6"
+    }
+  }
+}

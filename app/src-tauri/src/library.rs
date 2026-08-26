@@ -218,7 +218,7 @@ pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
             continue;
         }
         let timestamp = entry.file_name().to_string_lossy().into_owned();
-        if !valid_timestamp(&timestamp) {
+        if !valid_game_id(&timestamp) {
             continue;
         }
         games.push(read_game_summary(&path, timestamp));
@@ -233,8 +233,8 @@ pub fn playback_probe(
     origin: &str,
     timestamp: &str,
 ) -> Result<PlaybackProbe> {
-    if !valid_timestamp(timestamp) {
-        bail!("invalid game timestamp");
+    if !valid_game_id(timestamp) {
+        bail!("invalid game identifier");
     }
     let game_directory = output_directory.join("games").join(timestamp);
     let game = read_game_summary(&game_directory, timestamp.to_owned());
@@ -441,8 +441,8 @@ pub fn storage_usage(output_directory: &Path) -> Result<StorageUsage> {
 }
 
 pub fn save_game(output_directory: &Path, timestamp: &str, saved: bool) -> Result<()> {
-    if !valid_timestamp(timestamp) {
-        bail!("invalid game timestamp");
+    if !valid_game_id(timestamp) {
+        bail!("invalid game identifier");
     }
     let metadata_path = output_directory
         .join("games")
@@ -462,8 +462,8 @@ pub fn save_game(output_directory: &Path, timestamp: &str, saved: bool) -> Resul
 }
 
 pub fn delete_game(output_directory: &Path, timestamp: &str) -> Result<()> {
-    if !valid_timestamp(timestamp) {
-        bail!("invalid game timestamp");
+    if !valid_game_id(timestamp) {
+        bail!("invalid game identifier");
     }
     let game_directory = output_directory.join("games").join(timestamp);
     if !game_directory.is_dir() {
@@ -780,8 +780,20 @@ fn compare_games(left: &GameSummary, right: &GameSummary) -> Ordering {
 
 fn parse_clip_filename(filename: &str) -> Option<(&str, &str)> {
     let (game_timestamp, clip_timestamp) = filename.split_once('_')?;
-    (valid_timestamp(game_timestamp) && valid_timestamp(clip_timestamp))
+    (valid_game_id(game_timestamp) && valid_timestamp(clip_timestamp))
         .then_some((game_timestamp, clip_timestamp))
+}
+
+pub(crate) fn valid_game_id(game_id: &str) -> bool {
+    let Some((timestamp, suffix)) = game_id.split_once('-') else {
+        return valid_timestamp(game_id);
+    };
+    if !valid_timestamp(timestamp) || !valid_timestamp(suffix) || suffix.contains('-') {
+        return false;
+    }
+    suffix
+        .parse::<u32>()
+        .is_ok_and(|value| (1..1000).contains(&value) && value.to_string() == suffix)
 }
 
 pub(crate) fn valid_timestamp(timestamp: &str) -> bool {
@@ -928,6 +940,28 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn collision_suffixed_recording_bundle_is_browsable_playable_and_mutable() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "1786000000-1", "2026-08-05T10:00:00Z", false);
+
+        let games = list_games(root.path()).unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].timestamp, "1786000000-1");
+        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000-1").unwrap();
+        assert_eq!(
+            probe.video_url,
+            "http://127.0.0.1:9000/games/1786000000-1/video.mp4"
+        );
+
+        save_game(root.path(), "1786000000-1", true).unwrap();
+        let metadata: serde_json::Value = read_json(&game.join(METADATA_JSON)).unwrap();
+        assert_eq!(metadata["saved"], true);
+        save_game(root.path(), "1786000000-1", false).unwrap();
+        delete_game(root.path(), "1786000000-1").unwrap();
+        assert!(!game.exists());
     }
 
     #[test]
@@ -1090,7 +1124,20 @@ mod tests {
     fn validates_clip_asset_names() {
         assert!(valid_clip_asset("1786000000_1786000100.mp4"));
         assert!(valid_clip_asset("1786000000_1786000100.jpg"));
+        assert!(valid_clip_asset("1786000000-1_1786000100.mp4"));
         assert!(!valid_clip_asset("../video.mp4"));
         assert!(!valid_clip_asset("1786000000_notes.mp4"));
+    }
+
+    #[test]
+    fn accepts_only_canonical_recorder_collision_suffixes_as_game_ids() {
+        assert!(valid_game_id("1786000000"));
+        assert!(valid_game_id("1786000000-1"));
+        assert!(valid_game_id("1786000000-999"));
+        assert!(!valid_game_id("1786000000-0"));
+        assert!(!valid_game_id("1786000000-01"));
+        assert!(!valid_game_id("1786000000-1000"));
+        assert!(!valid_game_id("1786000000-1-2"));
+        assert!(!valid_game_id("../1786000000-1"));
     }
 }

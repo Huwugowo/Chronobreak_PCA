@@ -33,6 +33,44 @@ pub struct CaptureTarget {
     pub source: CaptureSource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureTargetVisibility {
+    Visible,
+    PausedByWindowVisibility,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureTargetState {
+    pub visibility: CaptureTargetVisibility,
+    pub adapter_validated: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CaptureTargetStateCache {
+    #[cfg(target_os = "windows")]
+    last_visible_bounds: Option<WindowsVisibleBounds>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WindowsVisibleBounds {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(target_os = "windows")]
+impl CaptureTargetStateCache {
+    fn adapter_validation_required(&self, bounds: WindowsVisibleBounds) -> bool {
+        self.last_visible_bounds != Some(bounds)
+    }
+
+    fn observe_validated_bounds(&mut self, bounds: WindowsVisibleBounds) {
+        self.last_visible_bounds = Some(bounds);
+    }
+}
+
 impl CaptureTarget {
     pub fn description(&self) -> String {
         match &self.source {
@@ -129,8 +167,9 @@ mod windows;
 
 #[cfg(target_os = "windows")]
 pub use windows::{
-    capture_target_for_process, fallback_capture_target, instant_from_qpc_100ns,
-    validate_capture_target, validate_capture_target_identity,
+    capture_target_for_process, capture_target_visibility, fallback_capture_target,
+    instant_from_qpc_100ns, query_capture_target_state, validate_capture_target,
+    validate_capture_target_identity,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -141,6 +180,24 @@ pub fn validate_capture_target(_target: &CaptureTarget) -> anyhow::Result<()> {
 #[cfg(not(target_os = "windows"))]
 pub fn validate_capture_target_identity(_target: &CaptureTarget) -> anyhow::Result<()> {
     Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn capture_target_visibility(
+    _target: &CaptureTarget,
+) -> anyhow::Result<CaptureTargetVisibility> {
+    Ok(CaptureTargetVisibility::Visible)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn query_capture_target_state(
+    _target: &CaptureTarget,
+    _cache: &mut CaptureTargetStateCache,
+) -> anyhow::Result<CaptureTargetState> {
+    Ok(CaptureTargetState {
+        visibility: CaptureTargetVisibility::Visible,
+        adapter_validated: false,
+    })
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -23,6 +23,8 @@ mod windows_fixture {
 
     const TITLE: &str = "QueueBack WGC Changing-Window Fixture";
     const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+    const INITIAL_WIDTH: u32 = 1920;
+    const INITIAL_HEIGHT: u32 = 1080;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Scenario {
@@ -254,11 +256,19 @@ mod windows_fixture {
         }
 
         fn report_target_once(&mut self) {
-            if self.target_reported || self.window.is_none() {
+            if self.target_reported {
+                return;
+            }
+            let Some(window) = self.window.as_ref() else {
+                return;
+            };
+            let expected_size = PhysicalSize::new(INITIAL_WIDTH, INITIAL_HEIGHT);
+            if window.inner_size() != expected_size {
+                let _ = window.request_inner_size(expected_size);
                 return;
             }
             match league_replay_recorder::platform::capture_target_for_process(std::process::id()) {
-                Ok(target) => {
+                Ok(target) if target.dimensions() == Some((INITIAL_WIDTH, INITIAL_HEIGHT)) => {
                     println!(
                         "QUEUEBACK_WGC_TARGET hwnd={} adapter_index={} adapter_luid={:016x} width={} height={}",
                         target.windows_hwnd().unwrap_or_default(),
@@ -269,6 +279,9 @@ mod windows_fixture {
                     );
                     io::stdout().flush().ok();
                     self.target_reported = true;
+                }
+                Ok(_) => {
+                    let _ = window.request_inner_size(expected_size);
                 }
                 Err(error) => eprintln!("QUEUEBACK_WGC_TARGET_ERROR {error:#}"),
             }
@@ -295,7 +308,8 @@ mod windows_fixture {
             }
             let mut attributes = WindowAttributes::default()
                 .with_title(TITLE)
-                .with_inner_size(PhysicalSize::new(1920, 1080))
+                .with_inner_size(PhysicalSize::new(INITIAL_WIDTH, INITIAL_HEIGHT))
+                .with_position(PhysicalPosition::new(0, 0))
                 .with_decorations(false)
                 .with_resizable(true);
             if self.always_on_top {

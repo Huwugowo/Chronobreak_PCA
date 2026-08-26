@@ -16,9 +16,10 @@ This is the authoritative entry point for project-wide verification. Run command
 Run these for changes in the corresponding component. Run the complete group for cross-cutting changes and before claiming project-wide completion.
 
 ```powershell
-cargo test --manifest-path recorder/Cargo.toml
+cargo check --manifest-path recorder/Cargo.toml --all-targets --all-features
+cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features
 cargo fmt --manifest-path recorder/Cargo.toml -- --check
-cargo clippy --manifest-path recorder/Cargo.toml --all-targets -- -D warnings
+cargo clippy --manifest-path recorder/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path app/src-tauri/Cargo.toml
 cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings
@@ -158,6 +159,27 @@ For controlled headless lifecycle testing, set `LEAGUE_REPLAY_PROCESS_NAME` to a
 cargo run --manifest-path recorder/Cargo.toml -- --headless
 ```
 
+### Native Windows backend
+
+The native WGC/D3D11/NVENC backend is the Windows default. Set
+`QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` only when intentionally validating the
+retained external alternative; there is no automatic cross-backend fallback.
+
+Native probes require the staged r6 runtime and a dedicated target/evidence root.
+They never target League or a user recording. Run the matched-backend preflight
+before a timed A/B pair:
+
+```powershell
+$runtime = (Resolve-Path 'build/media-runtime/windows-x86_64').Path
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_wgc_source_probe.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_preliminary_backend_ab.ps1 -MediaRuntimeRoot $runtime -PreflightOnly
+```
+
+Continue to a timed pair only after the preflight prints
+`CHRONOBREAK_PRELIMINARY_AB_PREFLIGHT=PASS`. Every run uses a fresh ignored evidence
+root. Non-League fixture evidence validates bounded lifecycle/media behavior, not
+League performance, hard driver-hang containment, or AMD/Intel hardware support.
+
 ## Media integrity checks
 
 Use `ffprobe` against fixture output or a recording the user explicitly selected for non-destructive inspection. Verify that expected audio/video streams exist, duration and frame rate are sensible, and decoding reports no error:
@@ -169,23 +191,39 @@ ffmpeg -v error -i <media-file> -f null NUL
 
 For exported clips, also verify H.264/AAC compatibility and the requested duration/size constraints. Discord outputs must remain strictly below 10,000,000 bytes. Tests that deliberately truncate or corrupt media must copy fixtures into a temporary directory first.
 
-For the optimized Windows graph, run the sentinel-owned exact-HWND fixture. These commands target only QueueBack's generated window and write under ignored `build/perf`:
+For the default native Windows graph, run the sentinel-owned exact-HWND fixture.
+These commands target only QueueBack's generated window and write under ignored
+`build/perf`:
+
+```powershell
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario resize -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario minimize_restore -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario occlusion -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario close_window -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -Interruption nvenc_failure -DurationSeconds 10
+```
+
+Each run verifies packaged-runtime identity, a physical 1920x1080 target/output,
+H.264/AAC streams, exact 60-FPS native accounting, strict single-thread full
+decode, changing frame hashes, and finite source/handoff/encoder ownership.
+Normal cases require exact scheduled/submitted/completed/muxed reconciliation.
+Target closure and injected NVENC failure must return the exact failure while
+leaving a recoverable dedicated partial recording.
+
+The retained external FFmpeg alternative has its own runner and evidence. Use
+it only when that backend is intentionally in scope:
 
 ```powershell
 & .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -DurationSeconds 10
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario resize -DurationSeconds 9
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario minimize_restore -DurationSeconds 9
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario occlusion -DurationSeconds 9
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario close_window -DurationSeconds 10
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -Interruption kill_encoder -DurationSeconds 10
 ```
 
-Each run verifies packaged-runtime identity, 1920x1080 target/output, audio/video streams, 60-FPS media, full decode, changing frame hashes, ABI-1 counters, and finite WGC/output pools. Normal cases require terminal source/mux evidence. Target closure and encoder termination must return failure while leaving a recoverable dedicated partial recording.
+Do not use the external-alternative runner as evidence for the native default.
 
 The bounded-resource acceptance soak is:
 
 ```powershell
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -DurationSeconds 1800 -CollectResources -KeepTargetVisible -ResourceSampleSeconds 5
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -DurationSeconds 1800 -CollectResources -KeepTargetVisible -ResourceSampleSeconds 5
 ```
 
 `-KeepTargetVisible` makes the generated GDI surface always-on-top and requests Windows' display/system-required execution state for the resource soak. The runner restores the normal execution state in `finally`. This is necessary because Windows may stop WGC when an idle monitor powers down, and may stop compositing a fully hidden GDI test window even though a real actively rendering game continues presenting. It occupies the display for the run. Occlusion/focus behavior is tested separately by the dedicated transition scenario above. Retain the soak's `result.json` and `resource-samples.json`. Review initial/peak/final private memory, GPU dedicated/shared memory, declared texture budget, in-process mux-byte progress, frame/counter advancement, media decode, and terminal evidence. Sampled open-file length is diagnostic on Windows because it can remain unchanged while FFmpeg owns a buffered fragmented MP4. A shorter rehearsal cannot substitute for this 1,800-second run.
@@ -211,11 +249,14 @@ Two different checks exist and are not interchangeable:
 
 - `--diagnose` contains a short synthetic encoder/profile selection benchmark.
 - The [capture benchmark protocol](../performance/capture-benchmark.md) defines the reproducible League baseline-versus-recording matrices, performance budget, raw counter semantics, collector/finalizer commands, and sanitized schema-v1/schema-v2 report workflow.
+- The [replay benchmark protocol](../performance/replay-benchmark.md) defines the sentinel-owned production Tauri/WebView replay, application, loopback-server, process-tree, and current-export baseline. It is a characterization/disposition gate, not a product performance budget.
 
 Run the deterministic analyzer/collector fixtures with:
 
 ```powershell
 python -m unittest discover -s tools/capture_benchmark/tests -v
+python -m unittest discover -s tools/replay_benchmark/tests -v
+npm run test --prefix app
 ```
 
 Exercise static collector preflight with an operator-supplied PresentMon 2.x console executable:

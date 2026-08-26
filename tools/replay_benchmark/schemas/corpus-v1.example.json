@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "corpus_id": "generated-current-tree-20260825",
+  "sentinel_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark",
+  "output_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\sources\\generated-current-tree-20260825",
+  "fixtures": [
+    {
+      "id": "short-native-h264",
+      "alias": "short-native-h264",
+      "game_timestamp": "1787600000",
+      "source_video": "C:\\QueueBack\\generated-sources\\native-short.mp4",
+      "transform": "copy",
+      "backend": "native",
+      "expected_video_codec": "h264",
+      "expected_audio_codec": "aac",
+      "minimum_duration_seconds": 120,
+      "event_interval_seconds": 5,
+      "snapshot_interval_seconds": 30
+    }
+  ]
+}

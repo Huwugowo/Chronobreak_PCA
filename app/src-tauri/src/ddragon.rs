@@ -33,6 +33,24 @@ impl DdragonStatus {
             error: None,
         }
     }
+
+    pub fn offline(cache_directory: &Path) -> Self {
+        match newest_cached_status(cache_directory) {
+            Ok(Some(mut cached)) => {
+                cached.error = Some("benchmark mode: fixed offline cache".to_owned());
+                cached
+            }
+            _ => Self {
+                state: "offline".to_owned(),
+                version: None,
+                asset_base_url: None,
+                item_count: 0,
+                champion_count: 0,
+                cache_directory: cache_directory.to_string_lossy().into_owned(),
+                error: Some("benchmark mode: Data Dragon network access disabled".to_owned()),
+            },
+        }
+    }
 }
 
 pub async fn initialize(cache_directory: PathBuf, status: Arc<RwLock<DdragonStatus>>) {
@@ -83,6 +101,7 @@ pub async fn ensure_asset(
     version: &str,
     kind: &str,
     asset: &str,
+    allow_network: bool,
 ) -> Result<PathBuf> {
     if !valid_version(version) {
         bail!("invalid Data Dragon version");
@@ -95,6 +114,9 @@ pub async fn ensure_asset(
         .join(format!("{cache_key}.png"));
     if path.is_file() {
         return Ok(path);
+    }
+    if !allow_network {
+        bail!("Data Dragon network access is disabled");
     }
 
     let remote_url = asset_remote_url(cache_directory, version, kind, asset)?;

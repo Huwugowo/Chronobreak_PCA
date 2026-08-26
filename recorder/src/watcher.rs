@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -20,6 +20,21 @@ pub struct LeagueProcess {
 pub struct ProcessWatcher {
     system: System,
     target_name: String,
+    refreshes: u64,
+    refreshed_process_records: u64,
+    total_refresh_100ns: u64,
+    maximum_refresh_100ns: u64,
+    maximum_known_processes: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProcessWatcherTelemetry {
+    pub refreshes: u64,
+    pub refreshed_process_records: u64,
+    pub total_refresh_100ns: u64,
+    pub maximum_refresh_100ns: u64,
+    pub known_processes: usize,
+    pub maximum_known_processes: usize,
 }
 
 impl ProcessWatcher {
@@ -27,11 +42,31 @@ impl ProcessWatcher {
         Self {
             system: System::new(),
             target_name: target_name.into(),
+            refreshes: 0,
+            refreshed_process_records: 0,
+            total_refresh_100ns: 0,
+            maximum_refresh_100ns: 0,
+            maximum_known_processes: 0,
         }
     }
 
     pub fn refresh(&mut self) -> Option<LeagueProcess> {
-        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let started_at = Instant::now();
+        let refreshed = self.system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            minimal_process_refresh_kind(),
+        );
+        let elapsed_100ns = duration_100ns(started_at.elapsed());
+        self.refreshes = self.refreshes.saturating_add(1);
+        self.refreshed_process_records = self
+            .refreshed_process_records
+            .saturating_add(refreshed as u64);
+        self.total_refresh_100ns = self.total_refresh_100ns.saturating_add(elapsed_100ns);
+        self.maximum_refresh_100ns = self.maximum_refresh_100ns.max(elapsed_100ns);
+        self.maximum_known_processes = self
+            .maximum_known_processes
+            .max(self.system.processes().len());
         self.system
             .processes()
             .iter()
@@ -40,10 +75,29 @@ impl ProcessWatcher {
             .map(|(pid, _)| LeagueProcess { pid: pid.as_u32() })
     }
 
+    pub fn telemetry(&self) -> ProcessWatcherTelemetry {
+        ProcessWatcherTelemetry {
+            refreshes: self.refreshes,
+            refreshed_process_records: self.refreshed_process_records,
+            total_refresh_100ns: self.total_refresh_100ns,
+            maximum_refresh_100ns: self.maximum_refresh_100ns,
+            known_processes: self.system.processes().len(),
+            maximum_known_processes: self.maximum_known_processes,
+        }
+    }
+
     #[cfg(test)]
     pub fn target_name(&self) -> &str {
         &self.target_name
     }
+}
+
+fn minimal_process_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::nothing().without_tasks()
+}
+
+fn duration_100ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos() / 100).unwrap_or(u64::MAX)
 }
 
 pub fn process_name_matches(actual: &OsStr, expected: &str) -> bool {
@@ -117,5 +171,28 @@ mod tests {
     fn watcher_keeps_configured_name() {
         let watcher = ProcessWatcher::new("custom.exe");
         assert_eq!(watcher.target_name(), "custom.exe");
+        assert_eq!(watcher.telemetry(), ProcessWatcherTelemetry::default());
+    }
+
+    #[test]
+    fn watcher_refresh_requests_only_identity_fields() {
+        let refresh = minimal_process_refresh_kind();
+        assert!(!refresh.cpu());
+        assert!(!refresh.memory());
+        assert!(!refresh.disk_usage());
+        assert!(!refresh.tasks());
+    }
+
+    #[test]
+    fn watcher_refresh_is_accounted() {
+        let mut watcher = ProcessWatcher::new("process-that-does-not-exist.exe");
+
+        assert_eq!(watcher.refresh(), None);
+
+        let telemetry = watcher.telemetry();
+        assert_eq!(telemetry.refreshes, 1);
+        assert!(telemetry.refreshed_process_records >= telemetry.known_processes as u64);
+        assert!(telemetry.maximum_known_processes >= telemetry.known_processes);
+        assert!(telemetry.total_refresh_100ns >= telemetry.maximum_refresh_100ns);
     }
 }

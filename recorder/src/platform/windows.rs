@@ -1,20 +1,28 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIFactory1};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, EnumDisplayMonitors, HDC, HMONITOR};
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
+    SetThreadDpiAwarenessContext,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClientRect, GetSystemMetrics, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SM_CXSCREEN, SM_CYSCREEN,
 };
 use windows::core::BOOL;
 
-use super::{CaptureSource, CaptureTarget};
+use super::{
+    CaptureSource, CaptureTarget, CaptureTargetState, CaptureTargetStateCache,
+    CaptureTargetVisibility, WindowsVisibleBounds,
+};
 
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(1);
+const MAX_WGC_FUTURE_QPC_SKEW_100NS: i128 = 1_000_000; // 100 ms.
 
 #[derive(Debug)]
 struct WindowCandidate {
@@ -44,10 +52,40 @@ struct MonitorSearchContext {
     best: Option<(u64, HMONITOR)>,
 }
 
+struct ThreadDpiAwarenessGuard {
+    previous: DPI_AWARENESS_CONTEXT,
+}
+
+impl ThreadDpiAwarenessGuard {
+    fn per_monitor_v2() -> Result<Self> {
+        // SAFETY: the call changes only the current thread's DPI virtualization
+        // context and returns the previous opaque context for restoration.
+        let previous =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        if previous.0.is_null() {
+            anyhow::bail!("could not enable per-monitor DPI awareness for capture discovery");
+        }
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for ThreadDpiAwarenessGuard {
+    fn drop(&mut self) {
+        // SAFETY: `previous` was returned by the successful context switch on
+        // this same thread, and the guard cannot move across an await point.
+        unsafe {
+            SetThreadDpiAwarenessContext(self.previous);
+        }
+    }
+}
+
 pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
     if let Some(candidate) = find_largest_window(pid)? {
         let monitor = monitor_with_largest_intersection(candidate.screen_rect)?;
         let adapter = adapter_for_monitor(monitor)?;
+        // SAFETY: `candidate.hwnd` is an opaque handle supplied by the current
+        // synchronous EnumWindows pass; this query neither owns nor closes it.
         let dpi = unsafe { GetDpiForWindow(candidate.hwnd) };
         if dpi == 0 {
             anyhow::bail!("could not determine League window DPI");
@@ -73,8 +111,10 @@ pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
 }
 
 pub fn fallback_capture_target() -> Result<CaptureTarget> {
-    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
+    // SAFETY: GetSystemMetrics takes value-only metric identifiers and does not
+    // read caller-provided memory or transfer ownership.
+    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
     if width <= 0 || height <= 0 {
         anyhow::bail!("could not determine a primary display capture size");
     }
@@ -91,18 +131,45 @@ pub fn fallback_capture_target() -> Result<CaptureTarget> {
 }
 
 pub fn validate_capture_target(target: &CaptureTarget) -> Result<()> {
-    validate_capture_target_identity(target)?;
-    let CaptureSource::WindowsGraphicsCapture { hwnd, .. } = &target.source else {
-        return Ok(());
-    };
-    let hwnd = HWND(*hwnd as usize as *mut _);
-    if !unsafe { IsWindowVisible(hwnd).as_bool() } || unsafe { IsIconic(hwnd).as_bool() } {
+    let state = query_capture_target_state(target, &mut CaptureTargetStateCache::default())?;
+    if state.visibility == CaptureTargetVisibility::PausedByWindowVisibility {
         anyhow::bail!("the selected League HWND is hidden or minimized");
     }
     Ok(())
 }
 
+pub fn capture_target_visibility(target: &CaptureTarget) -> Result<CaptureTargetVisibility> {
+    let CaptureSource::WindowsGraphicsCapture { hwnd, .. } = &target.source else {
+        return Ok(CaptureTargetVisibility::Visible);
+    };
+    let hwnd = HWND(*hwnd as usize as *mut _);
+    // SAFETY: `hwnd` is used only as an opaque Win32 handle. These predicates
+    // do not dereference application memory or retain the handle.
+    let (exists, minimized, visible) = unsafe {
+        (
+            IsWindow(Some(hwnd)).as_bool(),
+            IsIconic(hwnd).as_bool(),
+            IsWindowVisible(hwnd).as_bool(),
+        )
+    };
+    if !exists {
+        anyhow::bail!("the selected League HWND was closed");
+    }
+    if minimized || !visible {
+        return Ok(CaptureTargetVisibility::PausedByWindowVisibility);
+    }
+    Ok(CaptureTargetVisibility::Visible)
+}
+
 pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
+    query_capture_target_state(target, &mut CaptureTargetStateCache::default()).map(|_| ())
+}
+
+pub fn query_capture_target_state(
+    target: &CaptureTarget,
+    cache: &mut CaptureTargetStateCache,
+) -> Result<CaptureTargetState> {
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
     let CaptureSource::WindowsGraphicsCapture {
         pid,
         hwnd,
@@ -110,15 +177,30 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
         ..
     } = &target.source
     else {
-        return Ok(());
+        return Ok(CaptureTargetState {
+            visibility: CaptureTargetVisibility::Visible,
+            adapter_validated: false,
+        });
     };
     let hwnd = HWND(*hwnd as usize as *mut _);
-    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
-        anyhow::bail!("the selected League HWND was closed");
-    }
     let mut current_pid = 0_u32;
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+    // SAFETY: `hwnd` is an opaque, non-owned handle. The predicates do not
+    // retain it, and `current_pid` is live writable storage for the ownership
+    // query. Combining these checks avoids the service issuing a second
+    // visibility query for the same tick.
+    let (exists, minimized, visible) = unsafe {
+        let exists = IsWindow(Some(hwnd)).as_bool();
+        if exists {
+            GetWindowThreadProcessId(hwnd, Some(&mut current_pid));
+        }
+        (
+            exists,
+            IsIconic(hwnd).as_bool(),
+            IsWindowVisible(hwnd).as_bool(),
+        )
+    };
+    if !exists {
+        anyhow::bail!("the selected League HWND was closed");
     }
     if current_pid != *pid {
         anyhow::bail!("the selected League HWND now belongs to a different process");
@@ -126,10 +208,25 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
     // A minimized/temporarily hidden exact window remains the same capture
     // identity. WGC may pause frames and resume after restore, so defer bounds
     // and monitor checks until the HWND is visible again.
-    if unsafe { IsIconic(hwnd).as_bool() } || !unsafe { IsWindowVisible(hwnd).as_bool() } {
-        return Ok(());
+    if minimized || !visible {
+        return Ok(CaptureTargetState {
+            visibility: CaptureTargetVisibility::PausedByWindowVisibility,
+            adapter_validated: false,
+        });
     }
     let (x, y, width, height) = client_bounds(hwnd).context("League HWND has no client area")?;
+    let visible_bounds = WindowsVisibleBounds {
+        x,
+        y,
+        width,
+        height,
+    };
+    if !cache.adapter_validation_required(visible_bounds) {
+        return Ok(CaptureTargetState {
+            visibility: CaptureTargetVisibility::Visible,
+            adapter_validated: false,
+        });
+    }
     let current_monitor = monitor_with_largest_intersection(RECT {
         left: x,
         top: y,
@@ -143,15 +240,21 @@ pub fn validate_capture_target_identity(target: &CaptureTarget) -> Result<()> {
             current_adapter.luid
         );
     }
-    Ok(())
+    cache.observe_validated_bounds(visible_bounds);
+    Ok(CaptureTargetState {
+        visibility: CaptureTargetVisibility::Visible,
+        adapter_validated: true,
+    })
 }
 
-pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<std::time::Instant> {
+pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<Instant> {
     if timestamp <= 0 {
         anyhow::bail!("WGC first-frame QPC timestamp is not positive");
     }
     let mut counter = 0_i64;
     let mut frequency = 0_i64;
+    // SAFETY: both output pointers refer to distinct, live, aligned i64 values
+    // that remain valid for the complete duration of each synchronous call.
     unsafe {
         QueryPerformanceCounter(&mut counter)
             .context("could not read QueryPerformanceCounter for the WGC clock anchor")?;
@@ -165,26 +268,46 @@ pub fn instant_from_qpc_100ns(timestamp: i64) -> Result<std::time::Instant> {
         .checked_mul(10_000_000)
         .and_then(|value| value.checked_div(i128::from(frequency)))
         .context("WGC performance-counter conversion overflowed")?;
+    instant_from_qpc_sample(timestamp, now_100ns, Instant::now())
+}
+
+fn instant_from_qpc_sample(timestamp: i64, now_100ns: i128, now: Instant) -> Result<Instant> {
     let delta_100ns = now_100ns
         .checked_sub(i128::from(timestamp))
-        .context("WGC first-frame timestamp is ahead of the local QPC clock")?;
-    if delta_100ns < 0 {
-        anyhow::bail!("WGC first-frame timestamp is ahead of the local QPC clock");
+        .context("WGC first-frame timestamp delta overflowed")?;
+    if delta_100ns >= 0 {
+        let elapsed = duration_from_100ns(delta_100ns)?;
+        return now
+            .checked_sub(elapsed)
+            .context("WGC first-frame timestamp predates the process monotonic clock");
     }
-    let delta_100ns =
-        u64::try_from(delta_100ns).context("WGC first-frame timestamp delta is too large")?;
-    let elapsed = std::time::Duration::from_nanos(
-        delta_100ns
+
+    let future_100ns = delta_100ns
+        .checked_neg()
+        .context("WGC future timestamp delta overflowed")?;
+    if future_100ns > MAX_WGC_FUTURE_QPC_SKEW_100NS {
+        anyhow::bail!(
+            "WGC first-frame timestamp is implausibly ahead of the local QPC clock by {future_100ns} 100-ns ticks"
+        );
+    }
+    now.checked_add(duration_from_100ns(future_100ns)?)
+        .context("WGC first-frame timestamp exceeds the process monotonic clock range")
+}
+
+fn duration_from_100ns(ticks: i128) -> Result<Duration> {
+    let ticks = u64::try_from(ticks).context("WGC timestamp delta is too large")?;
+    Ok(Duration::from_nanos(
+        ticks
             .checked_mul(100)
-            .context("WGC first-frame timestamp delta overflowed")?,
-    );
-    std::time::Instant::now()
-        .checked_sub(elapsed)
-        .context("WGC first-frame timestamp predates the process monotonic clock")
+            .context("WGC timestamp delta overflowed")?,
+    ))
 }
 
 fn find_largest_window(pid: u32) -> Result<Option<WindowCandidate>> {
     let mut context = SearchContext { pid, best: None };
+    // SAFETY: EnumWindows invokes `enum_window` synchronously on this thread.
+    // `context` stays live and exclusively borrowed until enumeration returns,
+    // and the callback does not retain its LPARAM pointer.
     unsafe {
         EnumWindows(
             Some(enum_window),
@@ -196,12 +319,20 @@ fn find_largest_window(pid: u32) -> Result<Option<WindowCandidate>> {
 }
 
 unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    // SAFETY: the only caller encodes a live, exclusively borrowed
+    // `SearchContext` in LPARAM for the duration of synchronous enumeration.
     let context = unsafe { &mut *(lparam.0 as *mut SearchContext) };
-    if !unsafe { IsWindowVisible(hwnd).as_bool() } || unsafe { IsIconic(hwnd).as_bool() } {
+    // SAFETY: EnumWindows supplied `hwnd`; both calls are non-owning queries on
+    // that opaque handle and do not retain it.
+    let (visible, minimized) =
+        unsafe { (IsWindowVisible(hwnd).as_bool(), IsIconic(hwnd).as_bool()) };
+    if !visible || minimized {
         return BOOL(1);
     }
 
     let mut window_pid = 0_u32;
+    // SAFETY: `window_pid` is live and aligned for this synchronous output,
+    // while `hwnd` was supplied by the active EnumWindows callback.
     unsafe {
         GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
     }
@@ -243,6 +374,9 @@ unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 fn monitor_with_largest_intersection(target: RECT) -> Result<HMONITOR> {
     let mut context = MonitorSearchContext { target, best: None };
+    // SAFETY: EnumDisplayMonitors calls the callback synchronously. `context`
+    // remains live and exclusively borrowed until it returns, and neither a
+    // device context nor clipping rectangle is supplied by the caller.
     unsafe {
         if !EnumDisplayMonitors(
             None,
@@ -270,7 +404,11 @@ unsafe extern "system" fn enum_monitor_intersection(
     if bounds.is_null() {
         return BOOL(1);
     }
+    // SAFETY: the caller passes a live, exclusively borrowed context through
+    // LPARAM for synchronous enumeration; the callback never retains it.
     let context = unsafe { &mut *(lparam.0 as *mut MonitorSearchContext) };
+    // SAFETY: EnumDisplayMonitors guarantees that non-null `bounds` points to
+    // a readable RECT for the duration of this callback.
     let area = intersection_area(context.target, unsafe { *bounds });
     if area > 0
         && context
@@ -294,24 +432,34 @@ fn intersection_area(left: RECT, right: RECT) -> u64 {
 }
 
 fn adapter_for_monitor(monitor: HMONITOR) -> Result<AdapterSelection> {
+    // SAFETY: the Windows binding initializes and returns an owned, reference-
+    // counted IDXGIFactory1 interface; no raw caller pointer is supplied.
     let factory: IDXGIFactory1 =
         unsafe { CreateDXGIFactory1() }.context("could not create the DXGI adapter factory")?;
     let mut adapter_index = 0_u32;
     loop {
+        // SAFETY: `factory` owns a valid COM interface pointer, and the binding
+        // returns an owned adapter wrapper or an HRESULT for this value index.
         let adapter = match unsafe { factory.EnumAdapters1(adapter_index) } {
             Ok(adapter) => adapter,
             Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
             Err(error) => return Err(error).context("could not enumerate DXGI adapters"),
         };
+        // SAFETY: `adapter` is a live owned COM wrapper and the binding returns
+        // the fixed-size description by value without retaining Rust memory.
         let adapter_description =
             unsafe { adapter.GetDesc1() }.context("could not inspect a DXGI adapter")?;
         let mut output_index = 0_u32;
         loop {
+            // SAFETY: `adapter` remains live for the call, and the binding
+            // returns an owned output wrapper or an HRESULT for the value index.
             let output = match unsafe { adapter.EnumOutputs(output_index) } {
                 Ok(output) => output,
                 Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
                 Err(error) => return Err(error).context("could not enumerate DXGI outputs"),
             };
+            // SAFETY: `output` is a live owned COM wrapper and the binding
+            // writes its fixed-size description into binding-managed storage.
             let output_description =
                 unsafe { output.GetDesc() }.context("could not inspect a DXGI output")?;
             if output_description.Monitor.0 == monitor.0
@@ -349,6 +497,8 @@ fn wide_string(value: &[u16]) -> String {
 
 fn client_bounds(hwnd: HWND) -> Option<(i32, i32, u32, u32)> {
     let mut rect = RECT::default();
+    // SAFETY: `rect` is a live, aligned output value and `hwnd` is queried only
+    // as a non-owned opaque handle for the duration of this synchronous call.
     unsafe { GetClientRect(hwnd, &mut rect) }.ok()?;
 
     let mut top_left = POINT {
@@ -359,9 +509,13 @@ fn client_bounds(hwnd: HWND) -> Option<(i32, i32, u32, u32)> {
         x: rect.right,
         y: rect.bottom,
     };
-    if !unsafe { ClientToScreen(hwnd, &mut top_left).as_bool() }
-        || !unsafe { ClientToScreen(hwnd, &mut bottom_right).as_bool() }
-    {
+    // SAFETY: both POINT values are distinct, live, aligned in/out buffers and
+    // `hwnd` remains a non-owned opaque handle. The calls are synchronous.
+    let converted = unsafe {
+        ClientToScreen(hwnd, &mut top_left).as_bool()
+            && ClientToScreen(hwnd, &mut bottom_right).as_bool()
+    };
+    if !converted {
         return None;
     }
 
@@ -375,11 +529,15 @@ fn client_bounds(hwnd: HWND) -> Option<(i32, i32, u32, u32)> {
 }
 
 fn window_title(hwnd: HWND) -> Option<String> {
+    // SAFETY: this is a non-owning length query on the opaque HWND and does not
+    // read or retain any caller-provided buffer.
     let length = unsafe { GetWindowTextLengthW(hwnd) };
     if length <= 0 {
         return None;
     }
     let mut buffer = vec![0_u16; length as usize + 1];
+    // SAFETY: the Windows slice binding receives the full initialized buffer;
+    // it can write at most its length, and the buffer remains live for the call.
     let copied = unsafe { GetWindowTextW(hwnd, &mut buffer) };
     if copied <= 0 {
         return None;
@@ -405,6 +563,25 @@ mod tests {
     #[test]
     fn combines_signed_dxgi_luid_without_losing_bits() {
         assert_eq!(luid_value(0x89ab_cdef, -2), 0xffff_fffe_89ab_cdef);
+    }
+
+    #[test]
+    fn qpc_anchor_accepts_one_compositor_interval_of_future_skew() {
+        let now = Instant::now();
+        let past = instant_from_qpc_sample(9_900_000, 10_000_000, now).unwrap();
+        assert_eq!(past, now - Duration::from_millis(10));
+
+        let future = instant_from_qpc_sample(10_151_036, 10_000_000, now).unwrap();
+        assert_eq!(future, now + Duration::from_nanos(15_103_600));
+
+        assert!(
+            instant_from_qpc_sample(
+                10_000_000 + MAX_WGC_FUTURE_QPC_SKEW_100NS as i64 + 1,
+                10_000_000,
+                now,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -441,5 +618,28 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn adapter_validation_cache_changes_only_with_visible_bounds() {
+        let first = WindowsVisibleBounds {
+            x: 100,
+            y: 100,
+            width: 1280,
+            height: 720,
+        };
+        let moved = WindowsVisibleBounds { x: 2020, ..first };
+        let resized = WindowsVisibleBounds {
+            width: 1600,
+            height: 900,
+            ..first
+        };
+        let mut cache = CaptureTargetStateCache::default();
+
+        assert!(cache.adapter_validation_required(first));
+        cache.observe_validated_bounds(first);
+        assert!(!cache.adapter_validation_required(first));
+        assert!(cache.adapter_validation_required(moved));
+        assert!(cache.adapter_validation_required(resized));
     }
 }

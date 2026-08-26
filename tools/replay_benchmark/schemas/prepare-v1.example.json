@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "run_id": "baseline-20260824-001",
+  "sentinel_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark",
+  "library_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\library",
+  "config_path": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\config\\config.toml",
+  "app_data_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\app-data",
+  "result_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\results\\baseline-20260824-001",
+  "scratch_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\scratch",
+  "observer_profile": "full",
+  "ddragon": {
+    "mode": "offline",
+    "cache_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\app-data\\ddragon",
+    "cache_fingerprint": null
+  },
+  "fixtures": [
+    {
+      "id": "short-h264",
+      "alias": "short-h264",
+      "game_timestamp": "1700000000",
+      "kind": "recording_bundle",
+      "source_path": "C:\\QueueBack\\fixture-sources\\short-h264",
+      "destination_relative_path": "games\\1700000000",
+      "backend": "native",
+      "codec": "h264",
+      "negative": false
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "short-seek",
+      "kind": "seek",
+      "fixture_ids": ["short-h264"],
+      "trial_id": "1",
+      "seek_reason": "benchmark",
+      "seed": 20260824,
+      "warmup_seconds": 5,
+      "target_times_ms": [10000, 30000, 90000],
+      "distance_classes": ["near", "far", "forward", "backward"],
+      "observer_control": true
+    }
+  ],
+  "app_binary": "C:\\QueueBack\\release\\league-replay-app.exe",
+  "analyzer_path": "C:\\QueueBack\\source\\tools\\replay_benchmark\\analyze.py",
+  "python_path": "python",
+  "timeout_seconds": 3600
+}

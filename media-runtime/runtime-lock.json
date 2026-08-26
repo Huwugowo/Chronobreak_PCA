@@ -1,13 +1,13 @@
 {
   "contract_version": 3,
-  "runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r5",
+  "runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
   "platform": {
     "os": "windows",
     "arch": "x86_64"
   },
   "ffmpeg": {
-    "version_banner": "8.1.2-queueback-5-captureabi1-nvcodec12.2-amf1.4.36",
-    "compiler": "gcc 14.2.0 (Rev2, Built by MSYS2 project)",
+    "version_banner": "n8.1.2-queueback-6-captureabi1-nvcodec12.2-amf1.4.36",
+    "compiler": "gcc 16.1.0 (Rev5, Built by MSYS2 project)",
     "upstream_tag": "n8.1.2",
     "source_commit": "38b88335f99e76ed89ff3c93f877fdefce736c13",
     "required_configure_flags": [
@@ -15,12 +15,14 @@
       "--enable-version3",
       "--enable-static",
       "--disable-shared",
+      "--extra-libs=-lstdc++",
       "--disable-ffplay",
       "--disable-autodetect",
       "--enable-libx264",
       "--enable-amf",
       "--enable-d3d11va",
       "--enable-libvpl",
+      "--enable-ffnvcodec",
       "--enable-nvenc",
       "--enable-filter=gfxcapture",
       "--enable-filter=scale_d3d11",
@@ -55,14 +57,15 @@
     }
   ],
   "toolchain": [
-    { "package": "mingw-w64-ucrt-x86_64-gcc", "version": "14.2.0-2" },
-    { "package": "mingw-w64-ucrt-x86_64-binutils", "version": "2.43.1-1" },
-    { "package": "mingw-w64-ucrt-x86_64-nasm", "version": "2.16.03-1" },
-    { "package": "mingw-w64-ucrt-x86_64-x264", "version": "0.164.r3161.a354f11-3" },
-    { "package": "mingw-w64-ucrt-x86_64-libvpl", "version": "2.13.0-1" },
-    { "package": "mingw-w64-ucrt-x86_64-pkgconf", "version": "1~2.3.0-1" },
-    { "package": "msys2-runtime", "version": "3.5.4-8" },
-    { "package": "make", "version": "4.4.1-2" }
+    { "package": "mingw-w64-ucrt-x86_64-gcc", "version": "16.1.0-5" },
+    { "package": "mingw-w64-ucrt-x86_64-binutils", "version": "2.46-4" },
+    { "package": "mingw-w64-ucrt-x86_64-nasm", "version": "3.01-1" },
+    { "package": "mingw-w64-ucrt-x86_64-libx264", "version": "0.165.r3222.b35605a-2" },
+    { "package": "mingw-w64-ucrt-x86_64-libvpl", "version": "2.16.0-1" },
+    { "package": "mingw-w64-ucrt-x86_64-pkgconf", "version": "1~2.5.1-1" },
+    { "package": "msys2-runtime", "version": "3.6.9-2" },
+    { "package": "make", "version": "4.4.1-3" },
+    { "package": "git", "version": "2.54.0-1" }
   ],
   "capabilities": {
     "filters": [
@@ -81,18 +84,18 @@
       "h264_qsv",
       "hevc_qsv"
     ],
-    "diagnostic_abi": "queueback-5-captureabi1"
+    "diagnostic_abi": "queueback-6-captureabi1"
   },
   "files": [
     {
       "path": "bin/ffmpeg.exe",
-      "size": 33894400,
-      "sha256": "c20ab66db85233df888cdd0e052a94dc400c4a75b4a0f1413b62dbc67f811c1c"
+      "size": 34627072,
+      "sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015"
     },
     {
       "path": "bin/ffprobe.exe",
-      "size": 33683456,
-      "sha256": "dbeea88abea47cb812d4c75f109073fadfa4214136cd9a9bdbce8ee3160ab162"
+      "size": 34416640,
+      "sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e"
     },
     {
       "path": "licenses/COPYING.GPLv3.txt",
@@ -121,8 +124,8 @@
     },
     {
       "path": "licenses/SOURCE_AND_BUILD.md",
-      "size": 3806,
-      "sha256": "7099181d31db0a36a29d5c0ce811c2feb3aa693ea60ee1d01c96b6348f15eb6d"
+      "size": 4671,
+      "sha256": "23e795057cbf4ddc77cbc995de9d5f34aed375527cd41dd8e16ba75e44943cc0"
     }
   ]
 }

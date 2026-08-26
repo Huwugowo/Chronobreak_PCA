@@ -36,23 +36,25 @@ pub struct EncoderCapability {
 }
 
 impl EncoderCapability {
-    pub fn compiled_candidate(encoder: EncoderKind, codec: VideoCodec, adapter_luid: u64) -> Self {
+    pub fn compiled_candidate(
+        encoder: EncoderKind,
+        codec: VideoCodec,
+        adapter_luid: u64,
+    ) -> Option<Self> {
         let (interop, bounded_depth) = match encoder {
             EncoderKind::Nvenc => (DirectInterop::D3d11Nvenc, NVENC_SURFACE_LIMIT),
             EncoderKind::Amf => (DirectInterop::D3d11Amf, AMF_ASYNC_DEPTH_LIMIT),
             EncoderKind::Qsv => (DirectInterop::D3d11Qsv, QSV_ASYNC_DEPTH_LIMIT),
-            EncoderKind::Videotoolbox => {
-                unreachable!("VideoToolbox is not a Windows D3D11 encoder")
-            }
+            EncoderKind::Videotoolbox => return None,
         };
-        Self {
+        Some(Self {
             encoder,
             codec,
             adapter_luid,
             interop,
             bounded_depth: Some(bounded_depth),
             direct_hardware_frames: true,
-        }
+        })
     }
 }
 
@@ -154,12 +156,25 @@ mod tests {
 
     fn capability(encoder: EncoderKind) -> EncoderCapability {
         EncoderCapability::compiled_candidate(encoder, VideoCodec::H264, CAPTURE_LUID)
+            .expect("test encoder must support Windows D3D11 interop")
+    }
+
+    #[test]
+    fn videotoolbox_is_not_a_compiled_windows_candidate() {
+        assert_eq!(
+            EncoderCapability::compiled_candidate(
+                EncoderKind::Videotoolbox,
+                VideoCodec::H264,
+                CAPTURE_LUID,
+            ),
+            None
+        );
     }
 
     #[test]
     fn each_vendor_boundary_uses_the_same_vendor_neutral_planner() {
         for (encoder, interop, depth) in [
-            (EncoderKind::Nvenc, DirectInterop::D3d11Nvenc, 16),
+            (EncoderKind::Nvenc, DirectInterop::D3d11Nvenc, 4),
             (EncoderKind::Amf, DirectInterop::D3d11Amf, 4),
             (EncoderKind::Qsv, DirectInterop::D3d11Qsv, 4),
         ] {

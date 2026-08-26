@@ -73,11 +73,8 @@ mod windows_capture {
 
         let target = capture_target_for_process(pid)?;
         let ffmpeg = Ffmpeg::resolve().await?;
-        let plan = RecordingPlan {
-            encoder,
-            codec: VideoCodec::H264,
-            profile: RecordingProfile::High,
-        };
+        let plan = RecordingPlan::new(encoder, VideoCodec::H264, RecordingProfile::High)
+            .context("fixture recording plan must use a concrete profile")?;
         let session = ffmpeg
             .start_recording(output.clone(), &target, plan, &AudioSource::Silent)
             .await?;

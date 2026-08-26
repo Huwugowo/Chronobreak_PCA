@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![deny(clippy::undocumented_unsafe_blocks)]
 
 mod tray;
 
@@ -14,6 +15,8 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+const SERVICE_RUNTIME_WORKER_THREADS: usize = 2;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -22,6 +25,22 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+pub(crate) fn build_service_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(SERVICE_RUNTIME_WORKER_THREADS)
+        .thread_name("queueback-control")
+        .enable_all()
+        .build()
+        .context("failed to create recorder runtime")
+}
+
+fn build_diagnostic_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to create diagnostic runtime")
 }
 
 fn run() -> Result<()> {
@@ -47,7 +66,7 @@ fn run() -> Result<()> {
 }
 
 fn run_diagnostics(config: &Config) -> Result<()> {
-    let runtime = tokio::runtime::Runtime::new().context("failed to create diagnostic runtime")?;
+    let runtime = build_diagnostic_runtime()?;
     let report = runtime.block_on(service::diagnose(config))?;
     println!("League Replay Recorder diagnostics");
     println!("  config:  {}", report.config_path.display());
@@ -56,17 +75,17 @@ fn run_diagnostics(config: &Config) -> Result<()> {
     println!("  runtime: {}", report.media_runtime_id);
     println!(
         "  encoder: {} ({})",
-        report.plan.encoder.label(),
-        report.plan.encoder.codec_name(report.plan.codec)
+        report.plan.encoder().label(),
+        report.plan.encoder().codec_name(report.plan.codec())
     );
-    println!("  codec:   {}", report.plan.codec.label());
-    println!("  profile: {}", report.plan.profile.label());
+    println!("  codec:   {}", report.plan.codec().label());
+    println!("  profile: {}", report.plan.profile().label());
     println!("  audio:   {}", report.audio.description());
     Ok(())
 }
 
 fn run_headless(config: Config) -> Result<()> {
-    let runtime = tokio::runtime::Runtime::new().context("failed to create recorder runtime")?;
+    let runtime = build_service_runtime()?;
     runtime.block_on(async move {
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let sink = std::sync::Arc::new(|event| match event {
@@ -110,4 +129,24 @@ fn initialize_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
         .try_init()
         .context("failed to initialize logging")?;
     Ok(guard)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_runtime_has_two_control_workers() {
+        let runtime = build_service_runtime().unwrap();
+        assert_eq!(
+            runtime.metrics().num_workers(),
+            SERVICE_RUNTIME_WORKER_THREADS
+        );
+    }
+
+    #[test]
+    fn diagnostic_runtime_is_current_thread() {
+        let runtime = build_diagnostic_runtime().unwrap();
+        assert_eq!(runtime.metrics().num_workers(), 1);
+    }
 }

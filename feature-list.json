@@ -405,7 +405,16 @@
         "2026-08-12 product decision closed QB-PERF-001 using the completed single-monitor matrix as accepted diagnostic pre-change evidence while preserving its INVALID label. QB-PERF-002 no longer requires a clean pre-change rerun, but its own post-change comparison remains required to be formally valid and pass every unchanged common gate.",
         "2026-08-12 product correction removed QB-CAP-002 from this feature's dependency gate and rolled its experimental client/recording-state changes back. The performance implementation starts from the stable release-era recording/library behavior and may not make valid metadata/video bundles Unknown or unplayable.",
         "2026-08-12 dependency gate opened: QB-DIST-001 completed the exact QueueBack FFmpeg 8.1.2 source build, paired shared resolver, packaged release layout, sanitized-PATH smoke, and real NVENC diagnostic on the installed 566.03 driver. QB-PERF-002 implementation is now active on that runtime.",
-        "2026-08-12 explicit product requirement change: post-change performance proof uses one controlled capped baseline/capture pair and one independent uncapped baseline/capture pair (four total runs), not three capped repetitions. Every run still has the same warmup, measurement, focus, telemetry, media, identity, and resource-safety validity requirements and the capped pair keeps every existing performance threshold. A noisy, contradictory, or invalid pair is rerun as a fresh immutable pair instead of being hidden by a median or mandatory repetition."
+        "2026-08-12 explicit product requirement change: post-change performance proof uses one controlled capped baseline/capture pair and one independent uncapped baseline/capture pair (four total runs), not three capped repetitions. Every run still has the same warmup, measurement, focus, telemetry, media, identity, and resource-safety validity requirements and the capped pair keeps every existing performance threshold. A noisy, contradictory, or invalid pair is rerun as a fresh immutable pair instead of being hidden by a median or mandatory repetition.",
+        "2026-08-24 canonical repository reconciliation integrated the recorder-development native series rooted at 6e6e276 and hardened through c86bc6f onto the whole-app chassis without replacing the Tauri/Solid application, playback/export stack, benchmark tools, or canonical planning state. By explicit product-owner decision the in-process exact-HWND WGC/D3D11/NVENC H.264 backend is now the unset/empty Windows default; QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg (or ffmpeg-wgc) retains the external WGC/D3D11 NVENC/AMF/QSV backend as an explicit alternative, and backend failures never silently switch paths. The shared media lock/build/staging contract is aligned to audited r6.",
+        "2026-08-24 integration also removed the redundant steady-state Live Client eventdata request while retaining initial event seeding and the dedicated one-second event loop, and aligned the app with recorder-created collision bundle IDs by accepting only canonical Unix-second IDs with optional -1 through -999 suffixes across browsing, playback, save/delete, clip association, and asset validation.",
+        "2026-08-24 verification on the reconciled Windows tree passed recorder all-target/all-feature tests (125 library tests plus 3 binary tests; 5 explicitly ignored hardware/profile fixtures), strict recorder Clippy, app tests 34/34, strict app Clippy, media-runtime tests 10/10, strict media-runtime Clippy, capture-benchmark tests 60/60, PowerShell parsing for the changed runtime/native scripts, frontend TypeScript checking, and the Vite production build. The initial pass lacked staged r6 binaries, so the real packaged-runtime and portable-release gates were deferred to the subsequent evidence entry; native media/lifecycle fixtures, the hardware soak, and the valid League performance matrix remain required for QB-PERF-002 completion.",
+        "2026-08-24 bounded native-source evidence on an NVIDIA GeForce RTX 3050 Ti Laptop GPU passed the 10-second exact-HWND WGC/D3D11/NV12/NVENC source probe: 588 frames arrived, were admitted, consumed, converted, and encoded; source/consumer drops, pool recreations, and conversion failures were zero; all four bounded NV12 slots were returned. Evidence is under ignored build/perf/queueback-native-source/20260824-110114. This is non-League source-path evidence only and does not replace packaged-r6 mux/audio/media validation, soak/failure fixtures, the RTX 4060 target, or the formal League performance matrix.",
+        "2026-08-24 canonical release verification staged the audited r6 artifact, passed its real packaged-runtime contract test, exact hash/capability verification, corrupt-input/atomic-preparation test, and sanitized-PATH encode/probe/export/full-decode smoke, then built optimized Tauri app and recorder executables and assembled build/release/queueback. The portable layout independently verified both executables and its bundled r6 runtime; sanitized-PATH recorder diagnostics resolved that bundled ffmpeg, selected NVENC/H.264 High, and reported the expected silent-audio fallback because no loopback source was present; an isolated five-second desktop-app startup smoke also passed. Generated evidence remains under ignored build/media-runtime and build/perf. This closes the local runtime/release-layout gate, not native changing-media/lifecycle/soak or League-performance completion.",
+        "2026-08-24 matched generated-window A/B at evidence/preliminary-backend-ab/20260824-113718 completed 240-second native then external-alternative arms against audited r6. Both 1920x1080 H.264/AAC files passed ffprobe and full decode. Native used 0.144873% machine CPU and 157.980 MiB maximum combined private memory; the external alternative used 0.396960% and 235.867 MiB. This is non-League directional evidence and neither a backend-removal decision nor a negligible-impact claim.",
+        "2026-08-24 canonical native lifecycle evidence on the RTX 3050 Ti Laptop GPU passed steady, resize, minimize/restore, and occlusion as exact 600-frame/10.000-second 1920x1080 60-FPS H.264/AAC recordings with full decode and changing hashes. Target close returned the exact failure and preserved a decodable 397-frame/6.616667-second partial; injected NVENC failure returned the exact cause and preserved a decodable 120-frame/2.000-second partial. Physical target discovery required a real DPI correction: fixture readiness and recorder target/state queries now use physical pixels under a restored thread-scoped per-monitor-v2 DPI context. Evidence is under ignored build/perf/qb-perf-002-native-fixture roots dated 20260824-120516 through 20260824-120744.",
+        "2026-08-24 the native generated-window arm at build/perf/qb-perf-002-native-fixture/20260824-120801-steady-none-1d73e07c completed 1,800 seconds with exactly 108,000 scheduled/submitted/completed/muxed frames, 192,284,689 output bytes, exact 1,800-second H.264/AAC streams, zero slot/unstaged failures, maximum encoder in-flight 2, maximum catch-up batch 2, and handoff high-water mark 1. Live checkpoints kept recorder private memory within 132.21-133.00 MiB while handles fell 414 to 402, threads fell 22 to 19, and output advanced. The first new wrapper then timed out its fixed 60-second count-frames probe and discarded its in-memory formal resource series; a multi-thread full-file decode later exhausted decoder buffers, while strict single-thread 60-second windows at 0, 870, and 1,740 seconds passed. By explicit product-owner decision this completed local arm is accepted without repetition. No persisted full-run resource series or successful full-file decode is claimed, and the League gate is not waived. The wrapper now persists samples before validation, avoids post-exit sampling, uses structural ffprobe, and uses single-thread strict decode/hash.",
+        "2026-08-24 current-tree post-fixture verification passed recorder format, 125 library tests plus 3 binary tests, all examples, strict all-target/all-feature Clippy, PowerShell parsing for native and external fixture runners, and diff hygiene. The initially selected external-alternative runner was the wrong scope for native-default lifecycle proof and separately exposed a current-host gfxcapture minimize/restore surface-pool termination; no FFmpeg patch was made, and that alternative-path reliability issue remains open. QB-PERF-002 remains in progress because League validation is unavailable, AMD/Intel hardware is unvalidated, and no negligible-impact or feature-completion claim is justified."
       ],
       "execution": {
         "workflow": "planned",
@@ -424,7 +433,7 @@
         "Every implemented GPU/encoder combination records the intended League window/region at the configured 1920x1080 and 60 FPS without game-process injection, graphics hooks inside League, input interception, anti-cheat-sensitive behavior, or automatic modification of League settings.",
         "The optimized path preserves the existing automatic match lifecycle, fragmented-MP4 interruption tolerance, selected HEVC/H.264 codec and profile semantics, audio-track behavior, match association, metadata, Live Client polling, graceful finalization, and recoverable partial-output behavior; source recordings are never destructively rewritten by migration or verification.",
         "Loss of the capture surface, adapter reset, League window replacement, focus/visibility transitions, encoder failure, and unsupported capture capability produce deterministic lifecycle behavior and actionable diagnostics without a deadlock, runaway retry loop, resource leak, silently frozen-success state, or corrupted finalized-success claim.",
-        "No GPU vendor or implemented encoder combination silently falls back to the existing `gdigrab`/system-memory path. Any retained compatibility fallback is an explicit separately named mode in diagnostics and metadata, is exercised separately, and is excluded from GPU-native, GPU-agnostic-performance, and negligible-impact claims.",
+        "No GPU vendor or implemented encoder combination silently falls back to the existing `gdigrab`/system-memory path. Any retained compatibility alternative is an explicit separately named mode in diagnostics and metadata, is exercised separately, and is excluded from GPU-native, GPU-agnostic-performance, and negligible-impact claims.",
         "A canonical support matrix distinguishes `implemented`, `automated-tested`, `hardware-validated`, `unsupported`, and `unvalidated` for Windows versions, capture capabilities, NVIDIA/NVENC, AMD/AMF, Intel/QSV, codecs, and relevant multi-adapter combinations. Absence of available AMD or Intel test hardware is represented as `unvalidated`, never silently converted into either support proof or implementation exemption.",
         "Automated tests cover vendor-neutral capture behavior plus NVIDIA, AMD, and Intel capability matrices; adapter matching; integrated/discrete multi-adapter selection; supported/unsupported interop; bounded-buffer behavior; deterministic frame-drop/backpressure accounting; resource release; capture-surface loss/recreation; encoder failure; shutdown/finalization ordering; fallback disclosure; and preservation of recording metadata semantics using fakes or dedicated fixtures where real GPU behavior cannot be deterministic.",
         "The Windows build compiles and packages the complete capability-selection and encoder-adapter surface without requiring a developer-installed vendor SDK or hardware from each vendor. Optional runtime components and failure messages are documented, and lack of one vendor's encoder does not disable another vendor's valid path.",
@@ -645,22 +654,26 @@
       "id": "EPIC-REPLAY",
       "kind": "epic",
       "name": "League-native Replay Experience",
-      "description": "Make Chronobreak feel like a playable League match history rather than a generic video player.",
+      "description": "Make Chronobreak feel like a playable League match history rather than a generic video player, with canonical time, descriptive events, exact frame inspection, and hardware-accelerated normal playback on supported machines.",
       "priority": "P0",
       "area": "replay",
       "status": "in-progress",
       "parent_id": null,
       "dependencies": [],
       "evidence": [
-        "Synchronized match data, the primary event timeline, state-at-playhead, byte-range playback, and Data Dragon presentation exist; category lanes, hover thumbnails, and broader navigation remain open."
+        "Synchronized match data, the primary event timeline, state-at-playhead, byte-range playback, and Data Dragon presentation exist; category lanes, hover thumbnails, and broader navigation remain open.",
+        "The 2026-08-24 replay reconciliation found that the current WebView-first path already preserves one video element, presented-frame callbacks, bounded latest-wins seeking, byte-range streaming, and lightweight diagnostics, but lacks a reproducible replay baseline, a narrow playback boundary, the required speed ladder, thumbnail-first scrubbing, staged opening, and a versioned rebuildable ReplayIndex/artifact lifecycle."
       ],
       "success_criteria": [
         "Video, game events, and recorded match state share a reliable timeline.",
         "Important moments are fast to locate and seek.",
         "Replay navigation remains responsive on long/event-heavy matches.",
-        "Replay UI exposes descriptive game context without becoming coaching."
+        "Replay UI exposes descriptive game context without becoming coaching.",
+        "Replay and application performance changes are selected from reproducible measurements rather than an assumed need to replace the WebView backend.",
+        "Derived replay artifacts remain versioned, bounded, disposable, and rebuildable from ordinary user-owned media plus canonical match data.",
+        "Canonical Chronobreak media normally uses the supported hardware video decoder in production; software decoding remains an explicit degraded compatibility fallback."
       ],
-      "notes": "",
+      "notes": "Advance this epic through bounded children, not a replay-engine rewrite. The current order is QB-REPLAY-008 measurement, QB-REPLAY-012 canonical time, QB-REPLAY-009 playback boundary/rates and decoder-path validation, QB-REPLAY-015 frame stepping, measured QB-REPLAY-010 catalog/open work, QB-REPLAY-011 local-media hardening before new routes, QB-REPLAY-003 uniform thumbnail feedback, QB-REPLAY-016 zoom/LOD navigation, then QB-REPLAY-013 staged index/opening and QB-REPLAY-014 recorder-media experiments where evidence warrants them. QB-AUDIO-001 and QB-CLIP-004 remain separately gated. MSE, libmpv, native playback, WebCodecs, custom decoding/frame caches, semantic thumbnail density outside QB-REPLAY-016, and recorder media-policy changes require a measured failure or win before becoming production work.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,
@@ -708,6 +721,34 @@
       "differentiation": 5,
       "difficulty": 4,
       "stage": "ready"
+    },
+    {
+      "id": "QB-DATA-002",
+      "kind": "feature",
+      "name": "Authoritative Match Result Acquisition",
+      "description": "Reliably acquire and persist the authoritative final League match result (Victory/Defeat) from League Client/LCU post-game state so library and search metadata never fabricate an outcome.",
+      "priority": "P1",
+      "area": "match-data",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-DATA-001"],
+      "evidence": [],
+      "execution": {"workflow": "planned", "plan": null},
+      "acceptance_criteria": [
+        "After a game, the recorder/app retrieves the final result from authoritative League Client/LCU post-game or equivalent client state; Live Client Data events alone never determine Victory/Defeat.",
+        "Acquisition reconciles missed or duplicate notifications, delayed client state, reconnect/resubscribe, and process restart through bounded post-game retrieval rather than depending on one ephemeral GameEnd event.",
+        "The result is durably persisted with the match and exposed to library/search consumers; unavailable or ambiguous results remain explicitly unknown.",
+        "Retrieval is scoped to match-result acquisition and does not control League or become general LCU automation."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Exercise deterministic fixtures for missed/delayed events, reconnect/restart, duplicate notifications, successful reconciliation, and unknown/unavailable result.", "command": null},
+        {"type": "manual", "description": "Verify a completed test match becomes searchable with the authoritative result after delayed post-game client state.", "command": null}
+      ],
+      "notes": "The acquisition/reconciliation contract is ready to plan, but exact LCU endpoints and client-version behavior require implementation research. Never infer a result from absence/presence of Live Client Data events.",
+      "user_value": 4.5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
     },
     {
       "id": "QB-REPLAY-001",
@@ -801,44 +842,52 @@
       "id": "QB-REPLAY-003",
       "kind": "feature",
       "name": "Timeline Hover Thumbnails",
-      "description": "Show a preview frame for the timestamp under the cursor while hovering/scrubbing the replay timeline.",
+      "description": "Show immediate thumbnail-first feedback for the timestamp under the cursor or drag position using a uniform, versioned, rebuildable preview cache without driving an authoritative video seek for every pointer update.",
       "priority": "P1",
       "area": "replay",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
       "dependencies": [
         "QB-REPLAY-001",
-        "QB-REPLAY-006"
+        "QB-REPLAY-006",
+        "QB-REPLAY-008",
+        "QB-REPLAY-009",
+        "QB-REPLAY-011"
       ],
-      "evidence": [],
+      "evidence": [
+        "The current windowed and fullscreen rails seek the persistent video element directly and expose no hover/move preview state, atlas, manifest, or derived-artifact cache; the existing clip JPEG is a one-frame export sidecar and is not a replay-preview mechanism."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
       },
       "acceptance_criteria": [
-        "The thumbnail corresponds closely to the hovered timestamp.",
-        "Repeated hover previews are responsive.",
-        "Thumbnail generation/retrieval does not cause unacceptable playback stalls.",
-        "Long recordings do not create uncontrolled cache/storage growth."
+        "Windowed and fullscreen timelines show the nearest uniformly sampled preview for hover and drag positions, label approximation honestly, and commit at most one authoritative video seek for a completed click/drag interaction rather than one seek per pointer update.",
+        "Preview lookup and presentation meet a concrete latency budget derived from QB-REPLAY-008 on the short, representative, and long benchmark recordings, while authoritative seek behavior remains available when previews are missing.",
+        "Preview generation runs after recording finalization or lazily in a bounded cancellable background job through the packaged media runtime; it never runs on the recorder hot path, mutates source media, or creates an unbounded process/task queue.",
+        "Automatic preview generation cannot compete with an active recording unless a tested cross-process priority/eligibility contract exists; absent that contract, generation remains explicitly user-triggered, low-priority, single-flight, and safe to defer or cancel.",
+        "Atlas pages and their manifest are versioned disposable application-cache artifacts bound to a validated source-media identity; missing, stale, corrupt, partial, or generator-incompatible artifacts are ignored and safely rebuilt rather than treated as canonical match data.",
+        "Cache size, per-recording density, concurrent generation, cleanup, and failure behavior are explicitly bounded and tested on long recordings.",
+        "Before/after replay scenarios show no new media errors, seek-recovery loops, sustained resource growth, or disposition-requiring regression under the versioned QB-REPLAY-008 comparison rules while previews generate or are consumed."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Test timestamp-to-thumbnail lookup and cache behavior where feasible.",
-          "command": null
+          "description": "Test timestamp-to-cell mapping, media-identity invalidation, atomic publication, corruption recovery, cancellation, cache limits, route validation, and source preservation.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
         },
         {
           "type": "manual",
-          "description": "Scrub representative short and long recordings.",
+          "description": "Scrub both timeline layouts on representative short and long recordings, including first-use generation, cache hits, missing/corrupt cache fallback, and interrupted generation.",
           "command": null
         },
         {
           "type": "benchmark",
-          "description": "Measure hover/preview latency if infrastructure supports it.",
-          "command": null
+          "description": "Re-run the QB-REPLAY-008 hover/scrub/resource scenarios and compare preview latency, authoritative-seek count, byte ranges/cancellations, settle latency, and resource stability with the accepted baseline.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1 -Manifest <thumbnail-scrub-manifest>"
         }
       ],
-      "notes": "No hover-frame extraction or cache exists. Design must preserve the single-video playback hot path and bound generated cache growth.",
+      "notes": "Use uniform previews as the initial preview artifact and keep preview time distinct from requested seek time and authoritative presented-frame time. Timeline zoom/LOD belongs to QB-REPLAY-016 and must reuse these artifacts rather than create a second thumbnail mechanism. The implementation plan must define the app-cache root, source fingerprint, atlas format/density, job scheduling, active-playback yielding, active-recording eligibility, and cleanup from measured QB-REPLAY-008 evidence; it must not imply a durable ReplayIndex or recorder-format change or reintroduce QB-CAP-002's rejected recording-state/classification design.",
       "user_value": 4.5,
       "differentiation": 3.5,
       "difficulty": 3,
@@ -966,6 +1015,7 @@
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
         "QB-DATA-001",
+        "QB-DATA-002",
         "QB-LIB-008"
       ],
       "evidence": [
@@ -993,7 +1043,7 @@
           "command": null
         }
       ],
-      "notes": "Keep draft until supported filters are reconciled with local-data limits: the current recorder cannot truthfully infer match result, and enemy/participant availability must be defined for incomplete bundles.",
+      "notes": "Keep draft until supported filters are reconciled with local-data limits and incomplete-bundle behavior is defined. Result search depends on QB-DATA-002 and remains explicitly unknown when authoritative client data is unavailable.",
       "user_value": 4.5,
       "differentiation": 5,
       "difficulty": 4,
@@ -1477,7 +1527,8 @@
         "QB-CLIP-007"
       ],
       "evidence": [
-        "The completed preset exporter always creates compatible H.264/AAC output with hardware/software fallback and preserves sources; it does not currently use stream copy/remux when compatible."
+        "The completed preset exporter always creates compatible H.264/AAC output with hardware/software fallback and preserves sources; it does not currently use stream copy/remux when compatible.",
+        "QB-REPLAY-008 accepted current-tree evidence measured the production full-reencode path at 1.767–4.480 seconds for three horizontal requests, 2.542–5.449 seconds for three vertical requests, 3.916–4.850 seconds for two Discord requests, and 13.591 seconds for the near-limit Discord request. Encode time dominated every arm; validation passed, retries were zero, outputs met their size contracts, and source hashes were unchanged. This supports planning a compatibility/copy decision matrix but does not prove that any request is copy-safe."
       ],
       "execution": {
         "workflow": "planned",
@@ -1686,6 +1737,485 @@
       "user_value": 3.5,
       "differentiation": 3,
       "difficulty": 3,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-008",
+      "kind": "feature",
+      "name": "Reproducible Replay Performance Baseline",
+      "description": "Create a safe, versioned benchmark that measures Chronobreak application startup, replay opening, playback rates, seeking, scrubbing, resource stability, and current export behavior in the real Tauri WebView before optimizing or replacing any replay subsystem.",
+      "priority": "P0",
+      "area": "replay-performance",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-006",
+        "QB-LIB-008",
+        "QB-CLIP-007",
+        "QB-DIST-001"
+      ],
+      "evidence": [
+        "Pre-implementation finding: the viewer exposed only live dev counters and one latest dispatch-to-seeked latency; there was no committed scenario/result corpus, process-tree sampler, structured replay event stream, or frontend test/benchmark command.",
+        "Pre-implementation finding: loopback metrics were process-lifetime aggregates shared by game video, clips, music, the HEVC probe, and Data Dragon, so they could not attribute range/byte/cancellation behavior to one replay or scrub scenario.",
+        "The 2026-08-24 replay reconciliation explicitly requires a reproducible baseline before changing the playback backend or recorder media policy.",
+        "2026-08-25 implementation: added the sentinel-only production initialization path, strict schemas/root and fixture identity gates, bounded frontend/Rust event streams, authoritative current-generation frame/action attribution, route/request telemetry, export attempt/stage diagnostics, fixture preparation, a suspended Windows Job Object collector, deterministic matrix planner/verifier, and sanitized analyzer/report generation.",
+        "2026-08-25 automated evidence: 62 replay-benchmark Python tests, 45 Tauri Rust tests, and 12 frontend Vitest tests passed; app Cargo fmt and Clippy, frontend check/build, release desktop build, media-runtime Cargo fmt/test/Clippy, packaged-runtime staged test and verify.ps1, feature-list schema/invariants, git diff checks, and npm audit at high severity also passed.",
+        "2026-08-25 generated-corpus evidence: build_corpus.py created five anonymized sentinel-owned bundles from explicit prior QueueBack outputs—241.34-second short native H.264/AAC, 1800.02-second representative native H.264/AAC, 3600.02-second finite-repeat long H.264/AAC, 240.79-second external H.264/AAC, and 180-second derived HEVC/AAC—totalling about 615.7 MiB. Every positive fixture contains AAC packets, source hashes matched before/after, preparation copied 15 identity-bound files, and packaged ffprobe plus full single-thread decode passed.",
+        "2026-08-25 collector hardening evidence: the runner now requires the exact packaged runtime beside the production binary, uses GetSystemTimes instead of synchronous CPU CIM, proves every Job member through completion-port creation/exit notifications, and explicitly disables optional GPU CIM sampling because a rehearsal query blocked for 5.18 seconds without a runner-enforced deadline. Open-scenario warmup now keeps real playback active before the stable-playback assertion.",
+        "2026-08-25 production-WebView rehearsal evidence: the immutable r6 cold-open launch under build/perf/.chronobreak-replay-benchmark/results/rehearsal-cold-open-r6-001-cold-open-full-rehearsal-6-full passed runner, analyzer, and matrix verify --require-results against the rebuilt release app and packaged runtime. It recorded six complete active samples, WebView2 151.0.4129.101, 18 Job processes and 18 NEW_PROCESS notifications, zero telemetry drops/gaps, valid media, unchanged full-corpus hashes, clean app exit, and analyzer exit 0.",
+        "2026-08-25 observer-control evidence: after a warm-open rehearsal exposed and preserved duplicate component-local action identities across viewer remounts, action/media identities were made session-scoped and regression-tested. The authoritative corrected-binary r18 matrix completed all eight immutable minimal/full launches in declared order and cooldown with unchanged corpus hashes, zero required loss, no focus/visibility interference diagnostics, exact semantic outcomes, and accepted per-run and matrix verification. Its aggregate report passed all eleven predeclared gates: full CPU time was 111250 ms versus 118156.25 ms minimal, maximum private memory was 492806144 versus 495816704 bytes, median seek latency was 300.15 ms in both arms, and full p95 of 461.575 ms remained inside the 10% gate against 442.94 ms minimal.",
+        "2026-08-25 collector-shutdown evidence: after a valid app terminal exposed slow managed process-module enumeration, the runner moved to Toolhelp/direct PInvoke, observes root exit before its final snapshot, and emits collection-result.json. The analyzer now rejects startup/collection timeout, forced termination, mismatched post hashes, incomplete Job accounting, and finalization above 15 seconds. The dedicated long-trial rehearsal completed without forced termination and finalized in 995.18 ms.",
+        "2026-08-26 accepted baseline evidence: docs/performance/evidence/qb-replay-008-baseline-20260826-r1/report.json and report.md aggregate 67 valid immutable production-WebView runs/trials: sequences 1–49 of baseline-current-tree-20260825-r2, 1–3 of baseline-current-tree-post-rate-20260826-r3, and 1–15 of baseline-current-tree-final-continuation-20260826-r1. The exact app binary SHA-256 was 5d07f9ec6282eb05cba6efe9a0fbd34a665262f76029d5da2956e6be3c23c873, source base revision 2105b9dbb4b68f0af486ebc6e9ad68010d2b8375 with dirty-tree identity, WebView2 151.0.4129.101, and packaged runtime queueback-ffmpeg-8.1.2-windows-x86_64-r6. Matrix identity/order/cooldown/terminal/final-corpus verification and the aggregate analyzer passed.",
+        "2026-08-26 measured disposition evidence: the five-game/two-clip library became useful in 192.4 ms median/214.04 ms p95. Cold request-to-first-presented medians were 204.2 ms short, 538.5 ms external, 1681.9 ms representative, and 3075.3 ms long while playback-payload backend medians were only 1.1, 1.1, 4.3, and 8.0 ms; QB-REPLAY-010 owns the post-payload media-readiness/opening result and must not presume the payload/catalog is the bottleneck. Representative/long seek medians were 261.15/282.75 ms and scrub-settle medians were 450.3/486.5 ms with zero server errors. The ten-minute torture arm had no sustained resource-growth flags; one transition-heavy layout arm's short-window flags remain a QB-REPLAY-009 comparison target, not a one-trial leak claim. Full-reencode timing is assigned to QB-CLIP-004.",
+        "2026-08-26 capability disposition evidence: the production WebView applied and advanced accurately at 0.25x through 4x, but 8x produced only about 0.00296x effective advancement and the following transition failed because media stopped advancing; QB-REPLAY-009 owns truthful 8x behavior. The production HEVC probe reported unsupported, so positive HEVC arms were correctly omitted. Optional bounded GPU/decoder telemetry was unavailable, so the baseline does not treat generic GPU activity as hardware-decoder proof or make a normal-path decoder claim; explicit decoder-path validation remains a QB-REPLAY-009 obligation.",
+        "2026-08-26 closure state: the implementation, supported-path GUI matrix, preserved capability failures, sanitized report, and canonical dispositions are complete.",
+        "2026-08-26 final closure verification: replay-benchmark tests passed 72/72, capture-benchmark tests passed 60/60, Tauri Rust tests passed 46/46, frontend Vitest passed 16/16, recorder tests passed 125 library plus 3 binary with 5 declared hardware/profile fixtures ignored, and media-runtime tests passed 10/10 plus the real packaged-runtime test 1/1. Recorder, app, and media-runtime formatting and strict Clippy passed; recorder check/release build, frontend check/build, Tauri production desktop build, analyzer CLI, media-runtime preparation/atomicity, staged-runtime verify/smoke, portable-release staging/verification, canonical schema/invariants for 60 roadmap items, and git diff --check all passed. PowerShell policy blocked only the npm.ps1 shim; the identical npm.cmd scripts passed without a worktree delta. A final acceptance/sanitization review found no unresolved criterion, personal path, identifier, or secret in the committed report."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/completed/qb-replay-008-replay-performance-baseline.md"
+      },
+      "acceptance_criteria": [
+        "A documented, versioned replay-benchmark protocol runs the optimized production Tauri/WebView application against sentinel-owned short, representative, and long H.264 recordings plus supported HEVC coverage; inputs are structurally validated, identity-bound, non-destructively staged, and never taken from or mutated in a real user library.",
+        "Cold and warm scenarios record monotonic milestones for process start, useful library UI, replay-open request, playback payload readiness, media metadata/readiness, first authoritative presented frame, and stable playback.",
+        "Structured per-action evidence distinguishes requested preview time, queued/coalesced/deduplicated/dispatched authoritative seeks, `seeked`, and first presented frame at the requested generation; it records reason, near/far distance, failures, recovery, settle latency, and requested-versus-actual seek counts.",
+        "The scenario suite covers play/pause, the `0.25x`, `0.5x`, `1x`, `2x`, `4x`, and `8x` capability ladder, rapid rate transitions, deterministic near/far seeks, rapid scrub bursts, event jumps, clip endpoint edits, fullscreen transitions, repeated open/close, and a bounded torture loop.",
+        "Replay-server evidence is attributable to the benchmark session and route class and records request/range counts, requested and delivered bytes, completions/cancellations/errors, active/peak streams, and timing without loading whole media into memory or adding unbounded production telemetry.",
+        "A Windows collector records the Chronobreak/WebView process tree plus whole-system CPU, private/working memory, GPU engine/memory where available, disk I/O, process lifetime, WebView/runtime/OS/hardware identity, and collection gaps at a documented cadence with bounded observer overhead.",
+        "Current export baseline scenarios record startup, probe, encode/retry, thumbnail, validation/finalization time, throughput, output size, encoder/fallback identity, media integrity, and source-hash preservation for representative compatible and incompatible requests without pretending unimplemented copy/hybrid paths exist.",
+        "A deterministic analyzer rejects missing, malformed, identity-inconsistent, media-invalid, telemetry-incomplete, or unfinished runs, preserves individual results, computes documented latency/resource distributions, and writes path-sanitized JSON plus Markdown summaries while raw media/telemetry remain ignored.",
+        "The protocol fixes warmups, repetitions, action counts, percentile eligibility, cold/warm definitions, cache/order handling, observer-control arms, event-drop accounting, and deterministic before/after variability/equivalence rules before the first accepted run; these are evidence-validity/disposition rules, not product performance budgets.",
+        "The first accepted baseline records observations and limitations rather than inventing product budgets; it distinguishes expected hardware video-decoder selection from generic GPU activity and excludes unexpected software-decoding canonical runs from the normal-path baseline. Every demonstrated substantial bottleneck or reliability problem receives a canonical feature disposition, while absent evidence does not justify WebView replacement, ReplayIndex persistence, recorder GOP changes, or speculative tuning.",
+        "Applicable app, frontend, media-runtime, feature-list, and project-wide verification passes, and the exact benchmark revision, commands, fixture identities, and results are recorded before this feature is complete."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run deterministic replay manifest, event, attribution, latency, resource, sanitization, and invalid-input fixtures.",
+          "command": "python -m unittest discover -s tools/replay_benchmark/tests -v"
+        },
+        {
+          "type": "automated",
+          "description": "Run Tauri library/playback-server/benchmark-mode tests and frontend unit tests for instrumentation and scenario logic.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; npm run test --prefix app"
+        },
+        {
+          "type": "inspection",
+          "description": "Verify benchmark mode redirects the production initialization/retention path only to explicit sentinel-owned roots, disables user-directed destructive mutations and uncontrolled network work, preserves source hashes outside timed windows, bounds telemetry, and cannot be activated accidentally in normal app startup.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Run preflight and the complete cold/warm short/representative/long replay scenario matrix in the production Tauri WebView, then generate sanitized reports.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1 -Manifest <sentinel-benchmark-manifest>"
+        },
+        {
+          "type": "inspection",
+          "description": "Validate all benchmark media and generated exports with the packaged ffprobe/ffmpeg pair, full decode where required, timestamp/frame checks, and before/after source hashes.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Run every applicable command from docs/development/VERIFICATION.md and validate feature-list schema/invariants.",
+          "command": null
+        }
+      ],
+      "notes": "This feature adds measurement and bounded diagnostic seams, not replay tuning. It must measure the real production Tauri/WebView path rather than browser mock mode. Raw recordings, exports, and high-volume telemetry stay under ignored sentinel-owned build output; only sanitized accepted summaries are committed.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-009",
+      "kind": "feature",
+      "name": "Replay Playback Boundary and Speed Ladder",
+      "description": "Move browser-media lifecycle, authoritative presented-frame timing, bounded seeking, recovery, playback rate, basic audio control, and decoder-path diagnostics behind one narrow HTML-video-backed boundary and expose the required replay speed ladder without remounting or replacing the WebView decoder.",
+      "priority": "P0",
+      "area": "playback",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-006",
+        "QB-REPLAY-008",
+        "QB-REPLAY-012"
+      ],
+      "evidence": [
+        "ViewerScreen currently owns a sound single-video/RVFC/latest-wins baseline but embeds media lifecycle, seeking, recovery, clip looping, metrics, and controls in one component; no playback-rate state or controls exist.",
+        "The same viewer signal currently represents optimistic requested time during a seek and authoritative presented time after media callbacks, which is unsafe as a general replay/index/export clock.",
+        "QB-REPLAY-008 production-WebView capability evidence advanced accurately from 0.25x through 4x, but applying 8x yielded only about 0.00296x effective advancement and the following transition failed because media no longer advanced. The implementation must report, recover from, or explicitly degrade this real WebView limitation rather than treating an assigned playbackRate property as success.",
+        "QB-REPLAY-008 reported HEVC unsupported in the production WebView and could not collect bounded decoder-engine telemetry. Its accepted report therefore makes no hardware-decoder normal-path claim. This feature owns explicit expected-decoder-path validation for canonical media and must distinguish it from generic GPU activity before claiming before/after performance.",
+        "QB-REPLAY-008 completed a ten-minute seek/rate/fullscreen torture arm without sustained resource-growth flags, while one short transition-heavy layout arm flagged monotonic private-memory, working-set, handle, and thread growth. Treat the latter as a focused comparison/review target during boundary extraction, not as a proven leak from one trial."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "One small browser-backed playback controller exposes typed open/readiness, play, pause, latest-wins seek, rate, mute/volume, presented-frame clock, metrics, recovery, and terminal error behavior without introducing a generic backend framework or hiding native media readiness/errors.",
+        "The existing persistent video DOM node, requestVideoFrameCallback preference, one-active-plus-latest seek bound, half-frame deduplication, finite timeout/recovery policy, clip looping, fullscreen continuity, and user-activation-sensitive play behavior remain intact at 1x.",
+        "Canonical Chronobreak codecs/profiles/settings are selected for supported hardware decode, WebView2 GPU acceleration remains enabled in normal production, and production validation identifies the expected hardware video decoder path rather than treating generic GPU activity as proof.",
+        "Hardware decoding is the required normal path for canonical supported media; CPU/software decoding remains available only as an explicitly diagnosed compatibility fallback and is excluded from normal-path performance claims.",
+        "Requested preview time, dispatched seek time, `seeked` time, and authoritative first-presented time are distinct typed states/events; stale generations cannot update current replay state after navigation or recovery.",
+        "Windowed and fullscreen controls expose exactly `0.25x`, `0.5x`, `1x`, `2x`, `4x`, and `8x`; the selected rate survives layout changes and recovery, advances media monotonically, and represents WebView audio muting/unsupported behavior truthfully.",
+        "Pure scheduler/state behavior has deterministic frontend tests through an injected media adapter, while actual codec/rate/readiness behavior is verified in the production WebView.",
+        "QB-REPLAY-008 before/after scenarios show no new media errors, recovery loops, seek amplification, dropped-frame/resource instability, or disposition-requiring regression under the versioned comparison rules; rate-specific limitations receive explicit dispositions rather than being hidden."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test playback state transitions, one-active-plus-latest scheduling, dedupe, stale generations, timeouts/recovery, rate persistence, and cleanup with an injected media adapter.",
+          "command": "npm run test --prefix app"
+        },
+        {
+          "type": "automated",
+          "description": "Run Tauri playback payload/server tests and frontend type/build checks.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; npm run check --prefix app; npm run build --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Re-run the complete replay baseline with emphasis on every rate, rapid transitions, seek generations, clip loops, fullscreen continuity, and recovery.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1 -Manifest <sentinel-benchmark-manifest>"
+        },
+        {
+          "type": "manual",
+          "description": "Exercise the rate ladder and playback controls on representative H.264 and supported HEVC recordings in both layouts, including recovery and clip mode.",
+          "command": null
+        }
+      ],
+      "notes": "Keep the first boundary concrete and HTMLVideoElement-backed. Hardware decoder-path validation is distinct from generic GPU-utilization telemetry. Do not migrate the clip editor's multi-element music preview, add multiple recorded stems, or introduce MSE/libmpv/WebCodecs/native playback in this feature.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-010",
+      "kind": "feature",
+      "name": "Measured Library and Replay Opening",
+      "description": "Make the application and selected replay become useful sooner by removing measured redundant library/probe work and staging optional data without weakening filesystem authority or correctness.",
+      "priority": "P1",
+      "area": "app-performance",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-LIB-008",
+        "QB-REPLAY-008"
+      ],
+      "evidence": [
+        "Current cold startup independently loads games, clips, storage, and settings; games are scanned again while listing clips and again for storage, clip duration can launch one synchronous ffprobe per clip, and replay video loading waits for the full metadata/game-log-derived PlaybackProbe.",
+        "These are confirmed scaling candidates, but QB-REPLAY-008 must establish which costs are material on real short, representative, long, sparse, and event-heavy libraries before the implementation shape is selected.",
+        "QB-REPLAY-008 measured a five-game/two-clip library useful milestone at 192.4 ms median/214.04 ms p95; clip enumeration itself was 102.9 ms median while games and storage were about 10 ms each. That small corpus does not yet justify a persisted catalog or broad startup rewrite. Cold request-to-first-presented medians grew from 204.2 ms short to 1681.9 ms representative and 3075.3 ms long, but playback-payload backend medians were only 1.1, 4.3, and 8.0 ms. Planning must investigate post-payload media metadata/readiness, loopback/container behavior, and larger-library scaling rather than assuming log parsing or IPC is the measured bottleneck."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "QB-REPLAY-008 attributes a material cold/warm library or replay-open delay to concrete filesystem parsing, ffprobe, IPC payload, or UI readiness work before this feature changes production behavior.",
+        "A refresh uses one coherent filesystem snapshot for game/clip identity and byte accounting, avoids parsing game logs when only file sizes are required, and does not synchronously invoke one ffprobe per clip on the critical games-library path.",
+        "The games library and a minimal replay descriptor become useful independently of optional clip details, Data Dragon enrichment, and full semantic timelines; optional resources preserve keyed generation/cancellation ordering and cannot overwrite a newer navigation result.",
+        "Blocking filesystem, hashing, probing, and parsing work is kept off async runtime workers and is explicitly bounded; no lock is held across await and no unbounded task-per-entry fan-out is introduced.",
+        "Filesystem bundles remain canonical and re-indexable, cache state is disposable/invalidation-safe, mutations/export/retention/root changes refresh the same snapshot contract, and valid older recordings remain browseable/playable.",
+        "Before/after cold/warm benchmark results show the targeted milestone improvement without increased wrong/stale results, playback failures, sustained memory growth, startup I/O amplification, source mutation, or a disposition-requiring regression under the versioned QB-REPLAY-008 comparison rules."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test single-snapshot scanning, lazy optional details, mutation/root-change invalidation, stale-generation rejection, blocking-work bounds, and backward-compatible bundle parsing.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; npm run test --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Compare cold/warm startup and replay-open milestones on small/large sparse/event-heavy fixture libraries and short/representative/long media.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1 -Manifest <open-scenario-manifest>"
+        },
+        {
+          "type": "manual",
+          "description": "Open, switch, mutate, export into, and change a dedicated test library while optional resources are loading; verify useful-first UI and no stale navigation results.",
+          "command": null
+        }
+      ],
+      "notes": "This is a measured catalog/open optimization, not authorization for an opaque database or a durable ReplayIndex. If QB-REPLAY-008 does not show a material user-visible issue, record that disposition and do not execute speculative restructuring.",
+      "user_value": 4.5,
+      "differentiation": 3,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-011",
+      "kind": "feature",
+      "name": "Local Playback Server Hardening",
+      "description": "Define and enforce a production least-privilege contract for loopback media delivery before adding more replay-derived artifact routes.",
+      "priority": "P1",
+      "area": "playback-security",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-006"
+      ],
+      "evidence": [
+        "The server binds loopback and validates lexical identifiers, but all routes are unauthenticated, return wildcard CORS, the CSP trusts every 127.0.0.1 port, imported-preview tokens are predictable, and there is no documented origin/DNS-rebinding/local-process or junction/reparse-point threat model."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A durable threat model defines in-scope local origins/processes, DNS rebinding, capability leakage, symlink/junction/reparse traversal, request exhaustion, imported files, and supported development/runtime origins without claiming protection outside the chosen boundary.",
+        "Every media/static URL carries an unguessable per-process capability suitable for HTML media elements, imported-preview capabilities are independently unguessable and revocable, secrets are not logged, and URLs naturally expire when the app exits.",
+        "CORS, Origin handling, and CSP are restricted to the minimum proven Tauri/WebView and development requirements rather than every localhost origin, with explicit compatibility tests for GET, HEAD, single ranges, 206, and 416 behavior.",
+        "Resolved files remain inside approved canonical roots despite symlinks, junctions, reparse points, root changes, or races; unrecognized identifiers and unsupported file types fail closed.",
+        "Connection/request/active-stream limits bound local resource exhaustion without loading whole files, breaking normal rapid seeking, or making a valid replay depend on a remote service.",
+        "Playback, clips, music, HEVC probe, Data Dragon, and future derived-artifact routes use one reviewed policy and pass regression tests in the production WebView."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exercise capability enforcement/rotation, allowed and hostile origins, GET/HEAD/range semantics, traversal and Windows reparse fixtures, imported-token revocation, concurrency limits, and metrics.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "inspection",
+          "description": "Review the threat model, CSP/CORS, URL construction, token logging, canonical-root resolution, and every registered route as one policy surface.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Re-run rapid seek/scrub scenarios and confirm hardening creates no disposition-requiring range-latency, cancellation, or resource-stability regression under the versioned QB-REPLAY-008 comparison rules.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1 -Manifest <seek-scrub-manifest>"
+        }
+      ],
+      "notes": "Port randomness is not an authorization mechanism. Capability URLs are ephemeral and therefore require no recording migration. Keep this feature focused on local delivery; do not combine it with ReplayIndex or preview generation.",
+      "user_value": 4,
+      "differentiation": 2.5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-012",
+      "kind": "feature",
+      "name": "Canonical Replay Time Contract",
+      "description": "Define and test one canonical replay timeline relating capture/source monotonic time, encoded video frame presentation, encoded audio sample/packet presentation, League game/event time, wall time, requested preview/seek time, authoritative presented video time, and clip/export boundaries so replay features cannot silently mix timestamp domains.",
+      "priority": "P1",
+      "area": "replay-architecture",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-REPLAY-006",
+        "QB-REPLAY-008"
+      ],
+      "evidence": [
+        "The recorder has distinct WGC QPC source time, exact CFR output ticks, mapped Live Client game time, and recorded wall time, but the app payload exposes mostly integer milliseconds and the viewer can conflate optimistic requested time with presented media time.",
+        "Stored events trust video_time_ms while snapshot times are recomputed from game offset; clip endpoints round through FPS; actual MP4 time base, start, duration, keyframes, and backend-specific B-frame behavior are not part of the playback contract."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Architecture documentation names each timestamp domain, authority, unit, zero point, monotonicity, precision, rounding rule, valid range, and allowed conversion, including explicit requested/seeked/presented viewer states and a reserved future match-segment mapping.",
+        "Persistent media addressing uses exact frame/sample or rational presentation-time values where milliseconds are insufficient; checked conversions reject overflow, negative/impossible offsets, missing authority, and backend facts that cannot prove exactness.",
+        "Current single-segment metadata, game logs, playback payloads, event/snapshot navigation, frame-aligned clip endpoints, separately controlled audio, and actual ffprobe stream time bases reconcile within the explicitly documented tolerance on representative native and external-backend media.",
+        "Video, audio, League events, ReplayIndex, previews, clipping, and export reuse one canonical timeline; separately rendered audio, if required, is slaved/reconciled to authoritative presented video time and cannot drift as an independent replay clock.",
+        "Play, pause, seek, resume, rate changes, recovery, fullscreen/layout transitions, and frame stepping define measurable synchronization behavior; assignment of equal nominal currentTime values alone is not accepted as proof of synchronization.",
+        "A future segment contract cannot reinterpret independent zero-based MP4 timelines without an explicit immutable media identity and match-relative segment start; this feature does not itself implement restart, stitching, or segmentation.",
+        "Backward-compatible parsing keeps older valid bundles playable, missing exact facts degrade to explicitly approximate behavior, and no derived index or copy export becomes authoritative from inferred encoder names alone.",
+        "Deterministic cross-language fixtures cover boundary frames, rational rounding, seeks before/after game start, event/snapshot mapping, duration mismatch, stale generations, and malformed/legacy inputs."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run Rust and frontend time-domain conversion, boundary, legacy, malformed, and cross-language fixture tests.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; cargo test --manifest-path recorder/Cargo.toml; npm run test --prefix app"
+        },
+        {
+          "type": "inspection",
+          "description": "Trace source QPC through recorder anchoring, CFR/sample production, MP4 presentation time, game mapping, playback seeks, and clip endpoints for both recorder backends.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Compare early/middle/late events, frame steps, and clip endpoints against representative current recordings and ffprobe packet/frame evidence.",
+          "command": null
+        }
+      ],
+      "notes": "Do not add timestamp-aware native muxing, recording segmentation, or format changes here. Recording-time A/V relationships must be trustworthy because playback cannot repair an unknown original offset. Prefer one synchronized media pipeline for the two-group audio model; any parallel path must follow this contract. This feature establishes the contract and typed boundaries that later experiments require.",
+      "user_value": 4.5,
+      "differentiation": 4.5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-013",
+      "kind": "feature",
+      "name": "Versioned Replay Index and Staged Opening",
+      "description": "Build a versioned, rebuildable post-finalization ReplayIndex that can stage useful replay opening and derived-artifact discovery without becoming the sole authority for media or match data.",
+      "priority": "P2",
+      "area": "replay-index",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-LIB-005",
+        "QB-REPLAY-003",
+        "QB-REPLAY-010",
+        "QB-REPLAY-011",
+        "QB-REPLAY-012"
+      ],
+      "evidence": [
+        "No ReplayIndex exists. Opening a replay currently returns one monolithic payload after parsing full metadata/game logs, and derived replay artifacts have no common ownership, version, identity, rebuild, cleanup, or degraded-state contract."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "QB-REPLAY-008/QB-REPLAY-010 evidence identifies concrete open, seek, or repeated-derivation work that an index can reduce, and the chosen index fields are limited to those measured consumers.",
+        "The schema is versioned and bound to validated immutable media identity plus canonical metadata/log revisions; unknown, missing, stale, partial, corrupt, or identity-mismatched indexes are ignored and rebuilt without making a valid recording unplayable.",
+        "Index generation is post-finalization or lazy, single-flight, cancellable, atomically published, bounded in CPU/memory/I/O/storage, and coordinated with playback/export/recording priority; no rich index or thumbnail pass runs on the recording hot path.",
+        "Canonical media, metadata, and game logs remain sufficient to rebuild the index after cache loss or library relocation; source recordings are never rewritten and an opaque index/database is never the only authority.",
+        "Staged opening exposes a minimal validated descriptor/representative preview before optional semantic/index payloads, preserves keyed cancellation on navigation, and degrades explicitly when derived work fails.",
+        "Any keyframe/sample/byte-offset entries use QB-REPLAY-012 exact time and actual probed media facts, are invalidated on exact media change, and never imply copy-safe export or multi-segment continuity without separate proof.",
+        "Before/after replay benchmarks show the targeted improvement with bounded storage and no new stale results, playback failures, recorder interference, source mutation, or sustained resource growth."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test schema versions, source/revision identity, deterministic rebuild, atomic publication, cancellation, stale/corrupt/unknown fallback, cache limits, relocation, cleanup, and staged-resource generations.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; npm run test --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Compare cold/warm staged open, index build/reuse, seeking, resource use, and concurrent playback/background behavior on short, representative, and long recordings.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1 -Manifest <index-open-manifest>"
+        },
+        {
+          "type": "inspection",
+          "description": "Delete only disposable index/cache state from a dedicated fixture library, rebuild it, and verify source media/metadata/log hashes and supported replay behavior are unchanged.",
+          "command": null
+        }
+      ],
+      "notes": "The exact index content/location is selected in its ExecPlan from measured consumers and the QB-LIB-005 rebuildability contract. A narrow PreviewManifest from QB-REPLAY-003 may remain independent or become one versioned index section; avoid parallel authoritative mechanisms.",
+      "user_value": 4,
+      "differentiation": 4,
+      "difficulty": 5,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-014",
+      "kind": "feature",
+      "name": "Replay-oriented GOP and Fragment Experiment",
+      "description": "Compare the current two-second recording GOP/fragment baseline with one-second and 500-millisecond candidates across recorder overhead, media integrity, replay seek behavior, and keyframe-aligned export opportunities before changing production media policy.",
+      "priority": "P2",
+      "area": "recording-for-replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-PERF-002",
+        "QB-REPLAY-003",
+        "QB-REPLAY-008",
+        "QB-REPLAY-009",
+        "QB-REPLAY-012"
+      ],
+      "evidence": [
+        "The native recorder currently uses a 120-frame/two-second IDR cadence at 60 FPS, no B-frames, and keyframe-fragmented MP4; this is a reasonable replay baseline but has not been compared with shorter cadences in the real app.",
+        "The external recorder path can have different actual packet/keyframe/B-frame behavior, so production metadata names alone cannot establish equivalent seek or stream-copy properties."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A test-only, identity-recorded matrix compares two seconds, one second, and 500 milliseconds on every retained recorder backend using otherwise matched codec/profile/resolution/FPS/audio/runtime settings and dedicated changing-media fixtures.",
+        "Recorder measurements include CPU/GPU, frame pacing/lateness, queue/backpressure counters, memory/handles/threads, bitrate/file size, fragment/mux cost, startup/stop/finalization, output progress, and full media/accounting integrity under the unchanged QB-PERF-002 reliability/performance contract.",
+        "Replay measurements include cold/warm opening, near/far seek p50/p95/p99, request-to-first-presented latency, keyframe-to-target decode distance, frame stepping, rapid scrub after thumbnail feedback, and current WebView resource stability.",
+        "Export measurements report the share and latency of exactly keyframe-aligned compatible ranges under the future QB-CLIP-004 decision contract without silently shifting user endpoints or implementing smart-cut/edge-only re-encoding.",
+        "Each candidate is tested with actual ffprobe packet/frame facts and full decode; backend-specific B-frame/time-base/fragment differences remain explicit and no result is inferred from configured encoder names.",
+        "Production recorder settings remain unchanged unless one candidate provides a repeatable user-visible replay/export win and passes every unchanged capture reliability, League-impact, media-integrity, size/quality, and lifecycle gate; otherwise the current two-second baseline is retained with evidence.",
+        "Timestamp-aware muxing, multiple audio stems, ReplayIndex generation on the recorder hot path, backend removal, and playback-engine replacement remain outside this experiment."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test test-only cadence selection, identity reporting, matrix completeness, analyzer calculations, source/media validation, and production-default immutability.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml; python -m unittest discover -s tools/replay_benchmark/tests -v"
+        },
+        {
+          "type": "benchmark",
+          "description": "Run matched recorder fixture/resource arms and the QB-REPLAY-008 app seek/scrub/export scenarios for every cadence/backend combination.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Validate exact codec/profile/time-base/keyframe/B-frame/fragment/audio/duration facts, full decode, source hashes, and unchanged production defaults before any disposition.",
+          "command": null
+        }
+      ],
+      "notes": "This is a profile-led experiment, not a predetermined shorter-GOP optimization. It starts only after QB-PERF-002 and the basic replay-feedback path are complete. A winning result creates or explicitly authorizes a focused production implementation; a neutral/negative result closes with the current media baseline retained.",
+      "user_value": 3.5,
+      "differentiation": 3.5,
+      "difficulty": 5,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-015",
+      "kind": "feature",
+      "name": "Exact Replay Frame Stepping",
+      "description": "Provide previous-frame and next-frame stepping while paused for canonical Chronobreak CFR recordings using the canonical replay-time model and authoritative presented-frame verification in the WebView playback boundary.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-009", "QB-REPLAY-012"],
+      "evidence": [],
+      "execution": {"workflow": "planned", "plan": null},
+      "acceptance_criteria": [
+        "While paused, previous-frame and next-frame controls and documented keyboard shortcuts target the exact adjacent video frame for canonical Chronobreak CFR recordings.",
+        "Stepping uses exact frame/rational replay-time identity and authoritative presented-frame timing, not repeated approximate floating-point millisecond arithmetic or assignment of currentTime alone.",
+        "The controller reconciles requested, seeked, and actually presented frame/timestamp states and reports timeout, mismatch, or unsupported media explicitly.",
+        "Imported, malformed, VFR, unusual B-frame, or otherwise unsupported media may report reduced guarantees without changing the canonical-media contract or requiring a new decoder backend.",
+        "Representative recordings meet a measured stepping correctness and latency target, and stepping does not regress playback recovery, audio synchronization, or resource stability."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Test adjacent-frame arithmetic, boundary behavior, stale generations, keyboard controls, presented-frame reconciliation, and unsupported-media degradation with deterministic fixtures.", "command": "npm run test --prefix app"},
+        {"type": "benchmark", "description": "Measure previous/next-frame latency and correctness on representative canonical recordings and compare WebView presented-frame evidence.", "command": null},
+        {"type": "manual", "description": "Pause, step in both directions at early/middle/late timestamps, and verify visible frame identity and keyboard behavior.", "command": null}
+      ],
+      "notes": "Build on QB-REPLAY-009 and QB-REPLAY-012 with WebView/HTML-video-first behavior. Do not introduce WebCodecs, libmpv, native decoding, or a custom decoder unless measured canonical-media validation proves the current path insufficient.",
+      "user_value": 4.5,
+      "differentiation": 4.5,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-REPLAY-016",
+      "kind": "feature",
+      "name": "Zoomable Timeline and Adaptive LOD",
+      "description": "Let users zoom and pan continuously from whole-match overview to precise frame inspection while deterministically adapting eligible timeline detail to the visible temporal scale.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-001", "QB-REPLAY-012"],
+      "evidence": [],
+      "execution": {"workflow": "planned", "plan": null},
+      "acceptance_criteria": [
+        "Zoom changes the visible window on the canonical replay timeline around a stable cursor/playhead/viewport anchor; panning is bounded at recording start/end and preserves playhead correctness.",
+        "Events, bookmarks, clip boundaries, previews, and frame-level navigation remain aligned to canonical time through repeated zoom/pan operations, and viewport manipulation alone never triggers an authoritative media seek.",
+        "Deterministic display-only Level of Detail selects or aggregates eligible events by temporal scale without changing canonical event data/timestamps; user filters from QB-REPLAY-002 compose with LOD rather than being duplicated.",
+        "Far, medium, close, and very-close views remain responsive on long/event-heavy matches without rendering every event, label, or thumbnail at every scale; preview artifacts reuse QB-REPLAY-003 when applicable.",
+        "Basic zoom/pan remains Solid/WebView-first and does not require a custom GPU/native renderer unless measured validation proves the default path insufficient."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Verify deterministic canonical-time/viewport mapping, anchor preservation, bounds, repeated-cycle stability, LOD selection, filter composition, alignment, and no-seek viewport changes on sparse and event-heavy fixtures.", "command": "npm run test --prefix app"},
+        {"type": "benchmark", "description": "Measure rendering and interaction responsiveness on representative long/event-heavy matches across zoom levels.", "command": null},
+        {"type": "manual", "description": "Navigate whole match → event cluster → precise moment → frame-level inspection while zooming and panning.", "command": null}
+      ],
+      "notes": "Filtering and LOD are separate concerns. Use QB-REPLAY-001 event semantics, QB-REPLAY-002 filters, QB-REPLAY-003 previews, and QB-REPLAY-012 canonical time; do not invent a second timeline, thumbnail system, or speculative semantic-density feature.",
+      "user_value": 4.5,
+      "differentiation": 4.5,
+      "difficulty": 4,
       "stage": "ready"
     },
     {
@@ -2075,7 +2605,7 @@
       "id": "EPIC-AUDIO",
       "kind": "epic",
       "name": "Replay and Clip Audio Control",
-      "description": "Record useful audio sources separately enough that users can control what is heard in replay and exported clips.",
+      "description": "Record exactly two user-controllable audio groups—League audio and everything else—for replay and exported clips without becoming a general-purpose multitrack recorder or mixer.",
       "priority": "P1",
       "area": "audio",
       "status": "in-progress",
@@ -2085,8 +2615,8 @@
         "The current recorder captures one mixed loopback source or silent stereo, and clip export can mix that game track with music; independent recorded source tracks remain open."
       ],
       "success_criteria": [
-        "The supported Windows audio-source model is explicitly defined.",
-        "Available tracks can be controlled independently in replay/export.",
+        "The supported Windows capture model explicitly defines the two groups as League audio and everything else; Discord, microphone, individual applications, and individual voices are outside scope.",
+        "League audio and everything else can be independently muted and volume-controlled in replay and clip/export production.",
         "The design does not introduce unacceptable capture overhead or reliability regression."
       ],
       "notes": "",
@@ -2099,7 +2629,7 @@
       "id": "QB-AUDIO-001",
       "kind": "feature",
       "name": "Separate Audio Tracks",
-      "description": "Record supported audio sources on separate tracks and expose independent volume/mute controls for replay and clip export.",
+      "description": "Capture the product-scoped two-group audio model—League audio and everything else—and expose independent mute/volume controls in replay and clip/export production.",
       "priority": "P1",
       "area": "audio",
       "status": "not-started",
@@ -2107,7 +2637,8 @@
       "dependencies": [
         "QB-CAP-001",
         "QB-PERF-001",
-        "QB-CLIP-007"
+        "QB-CLIP-007",
+        "QB-REPLAY-012"
       ],
       "evidence": [],
       "execution": {
@@ -2115,10 +2646,10 @@
         "plan": null
       },
       "acceptance_criteria": [
-        "The supported source-separation model is documented from actual Windows/capture capabilities.",
-        "At least two supported sources can be distinguished in a controlled recording.",
-        "Replay controls affect only the selected track/source.",
-        "Exported mix matches selected controls.",
+        "The supported capture model distinguishes League audio from everything else in a controlled recording; arbitrary Discord, microphone, application, or voice isolation is not required.",
+        "Replay controls independently mute and set volume for League audio and everything else.",
+        "Exported clips preserve the selected two-group mute/volume controls.",
+        "Both groups remain on one synchronized media pipeline when that supports the controls; a parallel path, if required, is explicitly slaved to the canonical replay timeline.",
         "Capture performance/reliability remains within project budgets."
       ],
       "verification": [
@@ -2138,7 +2669,7 @@
           "command": null
         }
       ],
-      "notes": "Keep draft until the supported Windows source-separation model is defined from actual capture capabilities. Current game/music export controls do not imply separately recorded League/voice tracks.",
+      "notes": "Keep draft until actual Windows capture capabilities and the QB-REPLAY-012 timing integration are demonstrated. Scope is exactly League audio plus everything else; do not expand it into arbitrary multitrack/Discord/microphone/voice isolation. Recording-time A/V relationships remain authoritative and cannot be repaired after capture.",
       "user_value": 4,
       "differentiation": 4,
       "difficulty": 4,

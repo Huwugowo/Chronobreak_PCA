@@ -7,23 +7,28 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
+use tokio::time::Instant as TokioInstant;
 use tracing::{error, info, warn};
 
-use crate::config::{Config, RecordingConfig};
-use crate::encoder::capabilities::FILTER_BUFFERED_FRAME_LIMIT;
-use crate::encoder::{
-    AudioSource, CAPTURE_DIAGNOSTIC_ABI, Ffmpeg, RecordingCandidateStart, RecordingEvidence,
-    RecordingPlan, RecordingSession,
+use crate::config::{CodecPreference, Config, RecordingConfig, RecordingProfile};
+use crate::encoder::capabilities::{
+    DirectInterop, FILTER_BUFFERED_FRAME_LIMIT, NVENC_SURFACE_LIMIT,
 };
+use crate::encoder::{
+    AudioSource, CAPTURE_DIAGNOSTIC_ABI, EncoderKind, Ffmpeg, RecordingCandidateFailureDisposition,
+    RecordingCandidateStart, RecordingEvidence, RecordingPlan, RecordingSession, VideoCodec,
+};
+#[cfg(target_os = "windows")]
+use crate::native::{NativeRecordingSession, NativeRecordingStartupFailureDisposition};
 use crate::platform::{
-    CaptureTarget, capture_target_for_process, fallback_capture_target,
-    validate_capture_target_identity,
+    CaptureTarget, CaptureTargetStateCache, CaptureTargetVisibility, capture_target_for_process,
+    fallback_capture_target, query_capture_target_state,
 };
 use crate::poller::{CaptureMetadata, PollerSession, RecordingDetails, RecordingMetadata};
 use crate::storage::{METADATA_JSON, create_game_directory, unix_timestamp_now, write_json_atomic};
 use crate::watcher::{
     DEFAULT_PROCESS_NAME, LeagueProcess, POLL_INTERVAL, ProcessTransition, ProcessWatcher,
-    transition,
+    ProcessWatcherTelemetry, transition,
 };
 
 #[derive(Debug, Clone)]
@@ -42,8 +47,9 @@ pub enum ServiceCommand {
 pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 
 struct ActiveRecording {
-    session: RecordingSession,
+    session: VideoRecordingSession,
     target: CaptureTarget,
+    target_state_cache: CaptureTargetStateCache,
     diagnostics: watch::Receiver<RecordingEvidence>,
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
@@ -54,7 +60,14 @@ struct ActiveRecording {
 struct StartingRecording {
     process: LeagueProcess,
     cancellation: watch::Sender<bool>,
-    task: JoinHandle<Result<ActiveRecording>>,
+    task: JoinHandle<RecordingStartupResult<ActiveRecording>>,
+    timeout_action: StartupCancellationTimeoutAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupCancellationTimeoutAction {
+    AbortTask,
+    AwaitNativeCleanup,
 }
 
 struct RecordingStartup {
@@ -65,12 +78,294 @@ struct RecordingStartup {
     output_path: PathBuf,
     process: LeagueProcess,
     target: CaptureTarget,
+    #[cfg(target_os = "windows")]
+    windows_backend: WindowsRecorderBackend,
 }
 
-const STARTUP_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(6);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordingStartupDisposition {
+    Cancelled,
+    Retryable,
+    Terminal,
+}
+
+#[derive(Debug)]
+struct RecordingStartupFailure {
+    disposition: RecordingStartupDisposition,
+    error: anyhow::Error,
+}
+
+impl std::fmt::Display for RecordingStartupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+type RecordingStartupResult<T> = std::result::Result<T, RecordingStartupFailure>;
+
+impl RecordingStartupFailure {
+    fn cancelled(error: anyhow::Error) -> Self {
+        Self {
+            disposition: RecordingStartupDisposition::Cancelled,
+            error,
+        }
+    }
+
+    fn retryable(error: anyhow::Error) -> Self {
+        Self {
+            disposition: RecordingStartupDisposition::Retryable,
+            error,
+        }
+    }
+
+    fn terminal(error: anyhow::Error) -> Self {
+        Self {
+            disposition: RecordingStartupDisposition::Terminal,
+            error,
+        }
+    }
+}
+
+trait ClassifyRecordingStartup<T> {
+    fn retryable_startup(self) -> RecordingStartupResult<T>;
+    fn terminal_startup(self) -> RecordingStartupResult<T>;
+}
+
+impl<T> ClassifyRecordingStartup<T> for Result<T> {
+    fn retryable_startup(self) -> RecordingStartupResult<T> {
+        self.map_err(RecordingStartupFailure::retryable)
+    }
+
+    fn terminal_startup(self) -> RecordingStartupResult<T> {
+        self.map_err(RecordingStartupFailure::terminal)
+    }
+}
+
+const STARTUP_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+];
+
+#[derive(Debug, Default)]
+struct RecordingStartupRetryState {
+    process: Option<LeagueProcess>,
+    failures: u32,
+    next_attempt_at: Option<TokioInstant>,
+    terminal: bool,
+    retry_alert_sent: bool,
+    terminal_alert_sent: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordingStartupFailureAction {
+    notify_user: bool,
+    retry_at: Option<TokioInstant>,
+}
+
+impl RecordingStartupRetryState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn permits(&self, process: LeagueProcess, now: TokioInstant) -> bool {
+        if self.process != Some(process) {
+            return true;
+        }
+        !self.terminal && self.next_attempt_at.is_none_or(|deadline| now >= deadline)
+    }
+
+    fn record_failure(
+        &mut self,
+        process: LeagueProcess,
+        disposition: RecordingStartupDisposition,
+        now: TokioInstant,
+    ) -> RecordingStartupFailureAction {
+        if self.process != Some(process) {
+            self.reset();
+            self.process = Some(process);
+        }
+        match disposition {
+            RecordingStartupDisposition::Cancelled => {
+                self.reset();
+                RecordingStartupFailureAction {
+                    notify_user: false,
+                    retry_at: None,
+                }
+            }
+            RecordingStartupDisposition::Retryable => {
+                self.failures = self.failures.saturating_add(1);
+                let delay = startup_retry_delay(self.failures);
+                let retry_at = now + delay;
+                self.next_attempt_at = Some(retry_at);
+                let notify_user = !self.retry_alert_sent;
+                self.retry_alert_sent = true;
+                RecordingStartupFailureAction {
+                    notify_user,
+                    retry_at: Some(retry_at),
+                }
+            }
+            RecordingStartupDisposition::Terminal => {
+                self.terminal = true;
+                self.next_attempt_at = None;
+                let notify_user = !self.terminal_alert_sent;
+                self.terminal_alert_sent = true;
+                RecordingStartupFailureAction {
+                    notify_user,
+                    retry_at: None,
+                }
+            }
+        }
+    }
+
+    fn block_active_process(&mut self, process: Option<LeagueProcess>) {
+        self.reset();
+        self.process = process;
+        self.terminal = process.is_some();
+    }
+}
+
+fn startup_retry_delay(failure_count: u32) -> Duration {
+    let index = failure_count.saturating_sub(1) as usize;
+    STARTUP_RETRY_DELAYS[index.min(STARTUP_RETRY_DELAYS.len() - 1)]
+}
+
+const STARTUP_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(20);
 const CAPTURE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(15);
+const CONTROL_TELEMETRY_INTERVAL: Duration = Duration::from_secs(60);
+#[cfg(target_os = "windows")]
+const WINDOWS_RECORDING_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(target_os = "windows")]
+const WINDOWS_RECORDER_BACKEND_ENV: &str = "QUEUEBACK_WINDOWS_RECORDER_BACKEND";
+
+enum VideoRecordingSession {
+    Ffmpeg(Box<RecordingSession>),
+    #[cfg(target_os = "windows")]
+    Native(NativeRecordingSession),
+}
+
+impl VideoRecordingSession {
+    fn directory(&self) -> &std::path::Path {
+        match self {
+            Self::Ffmpeg(session) => session.directory(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.directory(),
+        }
+    }
+
+    fn video_started_at(&self) -> Instant {
+        match self {
+            Self::Ffmpeg(session) => session.video_started_at(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.video_started_at(),
+        }
+    }
+
+    fn recorded_at(&self) -> std::time::SystemTime {
+        match self {
+            Self::Ffmpeg(session) => session.recorded_at(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.recorded_at(),
+        }
+    }
+
+    fn evidence_receiver(&self) -> watch::Receiver<RecordingEvidence> {
+        match self {
+            Self::Ffmpeg(session) => session.evidence_receiver(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.evidence_receiver(),
+        }
+    }
+
+    fn has_exited(&mut self) -> Result<bool> {
+        match self {
+            Self::Ffmpeg(session) => session.has_exited(),
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => Ok(session.has_exited()),
+        }
+    }
+
+    async fn stop(self) -> Result<PathBuf> {
+        match self {
+            Self::Ffmpeg(session) => (*session).stop().await,
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.stop().await,
+        }
+    }
+
+    async fn stop_with_failure(self, reason: String) -> Result<PathBuf> {
+        match self {
+            Self::Ffmpeg(session) => (*session).stop_with_failure(reason).await,
+            #[cfg(target_os = "windows")]
+            Self::Native(session) => session.stop_with_failure(reason).await,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsRecorderBackend {
+    Ffmpeg,
+    Native,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsRecorderBackend {
+    fn from_environment() -> Result<Self> {
+        Self::parse(env::var(WINDOWS_RECORDER_BACKEND_ENV).ok().as_deref())
+    }
+
+    fn parse(value: Option<&str>) -> Result<Self> {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None => Ok(Self::Native),
+            Some("ffmpeg") | Some("ffmpeg-wgc") => Ok(Self::Ffmpeg),
+            Some("native") => Ok(Self::Native),
+            Some(value) => bail!(
+                "unsupported {WINDOWS_RECORDER_BACKEND_ENV} value {value:?}; expected ffmpeg or native"
+            ),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Ffmpeg => "ffmpeg-wgc",
+            Self::Native => "native-wgc-d3d11-nvenc",
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy)]
+struct WindowsCapturePath {
+    interop: DirectInterop,
+    encoder_depth: u32,
+    filter_buffered_frame_limit: u32,
+    backend: &'static str,
+    support_label: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct RecorderControlTelemetry {
+    startup_attempts: u64,
+    startup_ready: u64,
+    startup_errors: u64,
+    startup_task_failures: u64,
+    startup_retries_scheduled: u64,
+    startup_retry_alerts_suppressed: u64,
+    startup_terminal_failures: u64,
+    target_state_queries: u64,
+    target_state_successes: u64,
+    target_adapter_validations: u64,
+    visible_target_checks: u64,
+    paused_target_checks: u64,
+    target_failures: u64,
+    watchdog_stalls: u64,
+    backend_exits: u64,
+}
 
 struct CaptureProgressWatchdog {
+    state: CaptureProgressState,
     source_qpc: i64,
     source_advanced_at: Instant,
     encoded_frames: u64,
@@ -79,9 +374,24 @@ struct CaptureProgressWatchdog {
     muxed_advanced_at: Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureProgressState {
+    Monitoring,
+    PausedByWindowVisibility,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CaptureProgressObservation {
+    Healthy,
+    PausedByWindowVisibility,
+    ResumedAfterWindowVisibility,
+    Stalled(String),
+}
+
 impl CaptureProgressWatchdog {
     fn new(evidence: &RecordingEvidence, now: Instant) -> Self {
         Self {
+            state: CaptureProgressState::Monitoring,
             source_qpc: evidence.latest_qpc.unwrap_or_default(),
             source_advanced_at: now,
             encoded_frames: evidence.encoded_frames,
@@ -91,11 +401,52 @@ impl CaptureProgressWatchdog {
         }
     }
 
-    fn observe(&mut self, evidence: &RecordingEvidence, now: Instant) -> Option<String> {
+    fn observe(
+        &mut self,
+        evidence: &RecordingEvidence,
+        now: Instant,
+        visibility: CaptureTargetVisibility,
+    ) -> CaptureProgressObservation {
         if let Some(error) = evidence.protocol_error.as_deref() {
-            return Some(format!("capture diagnostics failed: {error}"));
+            return CaptureProgressObservation::Stalled(format!(
+                "capture diagnostics failed: {error}"
+            ));
         }
 
+        self.observe_progress(evidence, now);
+        match (self.state, visibility) {
+            (_, CaptureTargetVisibility::PausedByWindowVisibility) => {
+                self.reset_stall_deadlines(now);
+                if self.state == CaptureProgressState::Monitoring {
+                    self.state = CaptureProgressState::PausedByWindowVisibility;
+                    return CaptureProgressObservation::PausedByWindowVisibility;
+                }
+                return CaptureProgressObservation::Healthy;
+            }
+            (CaptureProgressState::PausedByWindowVisibility, CaptureTargetVisibility::Visible) => {
+                self.state = CaptureProgressState::Monitoring;
+                self.reset_stall_deadlines(now);
+                return CaptureProgressObservation::ResumedAfterWindowVisibility;
+            }
+            (CaptureProgressState::Monitoring, CaptureTargetVisibility::Visible) => {}
+        }
+
+        for (label, last_advanced) in [
+            ("WGC source timestamp", self.source_advanced_at),
+            ("encoded frame count", self.encoded_advanced_at),
+            ("muxed byte count", self.muxed_advanced_at),
+        ] {
+            if now.saturating_duration_since(last_advanced) >= CAPTURE_PROGRESS_STALL_TIMEOUT {
+                return CaptureProgressObservation::Stalled(format!(
+                    "{label} did not advance for {} seconds",
+                    CAPTURE_PROGRESS_STALL_TIMEOUT.as_secs()
+                ));
+            }
+        }
+        CaptureProgressObservation::Healthy
+    }
+
+    fn observe_progress(&mut self, evidence: &RecordingEvidence, now: Instant) {
         let source_qpc = evidence.latest_qpc.unwrap_or_default();
         if source_qpc > self.source_qpc {
             self.source_qpc = source_qpc;
@@ -109,20 +460,12 @@ impl CaptureProgressWatchdog {
             self.muxed_bytes = evidence.muxed_bytes;
             self.muxed_advanced_at = now;
         }
+    }
 
-        for (label, last_advanced) in [
-            ("WGC source timestamp", self.source_advanced_at),
-            ("encoded frame count", self.encoded_advanced_at),
-            ("muxed byte count", self.muxed_advanced_at),
-        ] {
-            if now.saturating_duration_since(last_advanced) >= CAPTURE_PROGRESS_STALL_TIMEOUT {
-                return Some(format!(
-                    "{label} did not advance for {} seconds",
-                    CAPTURE_PROGRESS_STALL_TIMEOUT.as_secs()
-                ));
-            }
-        }
-        None
+    fn reset_stall_deadlines(&mut self, now: Instant) {
+        self.source_advanced_at = now;
+        self.encoded_advanced_at = now;
+        self.muxed_advanced_at = now;
     }
 }
 
@@ -141,6 +484,14 @@ pub async fn run(
 
     let ffmpeg = Ffmpeg::resolve().await?;
     let audio = ffmpeg.detect_audio_source().await;
+    #[cfg(target_os = "windows")]
+    let windows_backend = WindowsRecorderBackend::from_environment()?;
+    #[cfg(target_os = "windows")]
+    info!(
+        backend = windows_backend.label(),
+        selector = WINDOWS_RECORDER_BACKEND_ENV,
+        "selected Windows recorder backend"
+    );
     info!(
         ffmpeg = %ffmpeg.path().display(),
         media_runtime = ffmpeg.runtime_id(),
@@ -157,7 +508,9 @@ pub async fn run(
     let mut previous_process: Option<LeagueProcess> = None;
     let mut active: Option<ActiveRecording> = None;
     let mut starting: Option<StartingRecording> = None;
-    let mut failed_process: Option<LeagueProcess> = None;
+    let mut startup_retry = RecordingStartupRetryState::default();
+    let mut control_telemetry = RecorderControlTelemetry::default();
+    let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -169,6 +522,7 @@ pub async fn run(
                     if let Some(recording) = active.take() {
                         stop_recording(recording, &events).await;
                     }
+                    log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
                     events(ServiceEvent::ShutdownComplete);
                     return Ok(());
                 }
@@ -177,7 +531,7 @@ pub async fn run(
                 let current_process = watcher.refresh();
                 match transition(previous_process, current_process) {
                     ProcessTransition::Appeared(process) => {
-                        failed_process = None;
+                        startup_retry.reset();
                         info!(pid = process.pid, "League process appeared; waiting for its capture window");
                     }
                     ProcessTransition::Replaced(process) => {
@@ -186,7 +540,7 @@ pub async fn run(
                         if let Some(recording) = active.take() {
                             stop_recording(recording, &events).await;
                         }
-                        failed_process = None;
+                        startup_retry.reset();
                     }
                     ProcessTransition::Disappeared => {
                         cancel_starting(starting.take(), &events).await;
@@ -194,7 +548,7 @@ pub async fn run(
                             stop_recording(recording, &events).await;
                             events(ServiceEvent::Idle);
                         }
-                        failed_process = None;
+                        startup_retry.reset();
                     }
                     ProcessTransition::Unchanged => {}
                 }
@@ -207,6 +561,9 @@ pub async fn run(
                     let process = attempt.process;
                     match attempt.task.await {
                         Ok(Ok(recording)) if current_process == Some(process) => {
+                            control_telemetry.startup_ready =
+                                control_telemetry.startup_ready.saturating_add(1);
+                            startup_retry.reset();
                             events(ServiceEvent::Recording {
                                 directory: recording.session.directory().to_path_buf(),
                             });
@@ -217,69 +574,182 @@ pub async fn run(
                             stop_recording(recording, &events).await;
                         }
                         Ok(Err(start_error)) => {
-                            failed_process = Some(process);
-                            error!(error = %start_error, "recording could not start");
-                            events(ServiceEvent::Error {
-                                message: format!("Recording failed to start: {start_error:#}"),
-                            });
+                            control_telemetry.startup_errors =
+                                control_telemetry.startup_errors.saturating_add(1);
+                            let now = TokioInstant::now();
+                            let action = startup_retry.record_failure(
+                                process,
+                                start_error.disposition,
+                                now,
+                            );
+                            match start_error.disposition {
+                                RecordingStartupDisposition::Cancelled => {
+                                    info!(pid = process.pid, "recording startup was cancelled after cleanup");
+                                }
+                                RecordingStartupDisposition::Retryable => {
+                                    control_telemetry.startup_retries_scheduled = control_telemetry
+                                        .startup_retries_scheduled
+                                        .saturating_add(1);
+                                    let retry_in_ms = action.retry_at.map_or(0, |retry_at| {
+                                        retry_at.saturating_duration_since(now).as_millis()
+                                    });
+                                    warn!(
+                                        pid = process.pid,
+                                        retry_in_ms,
+                                        error = %start_error.error,
+                                        "recording startup failed after cleanup; retry scheduled"
+                                    );
+                                }
+                                RecordingStartupDisposition::Terminal => {
+                                    control_telemetry.startup_terminal_failures = control_telemetry
+                                        .startup_terminal_failures
+                                        .saturating_add(1);
+                                    error!(
+                                        pid = process.pid,
+                                        error = %start_error.error,
+                                        "recording startup failed terminally for this process"
+                                    );
+                                }
+                            }
+                            if action.notify_user {
+                                let message = match start_error.disposition {
+                                    RecordingStartupDisposition::Cancelled => {
+                                        "Recording startup was cancelled".to_owned()
+                                    }
+                                    RecordingStartupDisposition::Retryable => format!(
+                                        "Recording temporarily failed to start; retrying automatically: {:#}",
+                                        start_error.error
+                                    ),
+                                    RecordingStartupDisposition::Terminal => format!(
+                                        "Recording failed to start: {:#}",
+                                        start_error.error
+                                    ),
+                                };
+                                events(ServiceEvent::Error {
+                                    message,
+                                });
+                            } else if start_error.disposition == RecordingStartupDisposition::Retryable {
+                                control_telemetry.startup_retry_alerts_suppressed = control_telemetry
+                                    .startup_retry_alerts_suppressed
+                                    .saturating_add(1);
+                            }
                         }
                         Err(join_error) => {
-                            failed_process = Some(process);
+                            control_telemetry.startup_task_failures =
+                                control_telemetry.startup_task_failures.saturating_add(1);
+                            let action = startup_retry.record_failure(
+                                process,
+                                RecordingStartupDisposition::Terminal,
+                                TokioInstant::now(),
+                            );
+                            control_telemetry.startup_terminal_failures = control_telemetry
+                                .startup_terminal_failures
+                                .saturating_add(1);
                             error!(error = %join_error, "recording startup task failed");
-                            events(ServiceEvent::Error {
-                                message: format!("Recording failed to start: {join_error}"),
-                            });
+                            if action.notify_user {
+                                events(ServiceEvent::Error {
+                                    message: format!("Recording failed to start: {join_error}"),
+                                });
+                            }
                         }
                     }
                 }
 
-                if let Some(recording) = active.as_mut()
-                    && let Err(target_error) = validate_capture_target_identity(&recording.target)
-                {
-                    let recording = active.take().expect("active recording exists");
-                    warn!(error = %target_error, "the active League capture target became invalid");
-                    stop_recording_with_failure(
-                        recording,
-                        &events,
-                        format!("the exact League capture target became invalid: {target_error:#}"),
-                    )
-                    .await;
-                    failed_process = current_process;
+                let mut visibility = CaptureTargetVisibility::Visible;
+                if let Some(recording) = active.as_mut() {
+                    control_telemetry.target_state_queries =
+                        control_telemetry.target_state_queries.saturating_add(1);
+                    let target_state = query_capture_target_state(
+                        &recording.target,
+                        &mut recording.target_state_cache,
+                    );
+                    match target_state {
+                        Ok(state) => {
+                            control_telemetry.target_state_successes = control_telemetry
+                                .target_state_successes
+                                .saturating_add(1);
+                            if state.adapter_validated {
+                                control_telemetry.target_adapter_validations = control_telemetry
+                                    .target_adapter_validations
+                                    .saturating_add(1);
+                            }
+                            visibility = state.visibility;
+                            match state.visibility {
+                                CaptureTargetVisibility::Visible => {
+                                    control_telemetry.visible_target_checks = control_telemetry
+                                        .visible_target_checks
+                                        .saturating_add(1);
+                                }
+                                CaptureTargetVisibility::PausedByWindowVisibility => {
+                                    control_telemetry.paused_target_checks = control_telemetry
+                                        .paused_target_checks
+                                        .saturating_add(1);
+                                }
+                            }
+                        }
+                        Err(target_error) => {
+                            control_telemetry.target_failures =
+                                control_telemetry.target_failures.saturating_add(1);
+                            let recording = active.take().expect("active recording exists");
+                            warn!(error = %target_error, "the active League capture target became invalid");
+                            stop_recording_with_failure(
+                                recording,
+                                &events,
+                                format!("the exact League capture target became invalid: {target_error:#}"),
+                            )
+                            .await;
+                            startup_retry.block_active_process(current_process);
+                        }
+                    }
                 }
 
                 if let Some(recording) = active.as_mut() {
                     let evidence = recording.diagnostics.borrow().clone();
                     let now = Instant::now();
-                    if let Some(stall_reason) = recording.progress_watchdog.observe(&evidence, now)
-                    {
-                        let recording = active.take().expect("active recording exists");
-                        warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
-                        stop_recording_with_failure(recording, &events, stall_reason).await;
-                        failed_process = current_process;
-                    } else if now >= recording.progress_report_due {
-                        log_capture_progress(
-                            &evidence,
-                            recording.session.video_started_at().elapsed(),
-                            false,
-                        );
-                        recording.progress_report_due = now + Duration::from_secs(10);
+                    match recording.progress_watchdog.observe(&evidence, now, visibility) {
+                        CaptureProgressObservation::Stalled(stall_reason) => {
+                            control_telemetry.watchdog_stalls =
+                                control_telemetry.watchdog_stalls.saturating_add(1);
+                            let recording = active.take().expect("active recording exists");
+                            warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
+                            stop_recording_with_failure(recording, &events, stall_reason).await;
+                            startup_retry.block_active_process(current_process);
+                        }
+                        CaptureProgressObservation::PausedByWindowVisibility => {
+                            info!("capture progress watchdog paused while the League window is hidden or minimized");
+                        }
+                        CaptureProgressObservation::ResumedAfterWindowVisibility => {
+                            info!("capture progress watchdog resumed after the League window became visible");
+                            recording.progress_report_due = now + Duration::from_secs(10);
+                        }
+                        CaptureProgressObservation::Healthy if now >= recording.progress_report_due => {
+                            log_capture_progress(
+                                &evidence,
+                                recording.session.video_started_at().elapsed(),
+                                false,
+                            );
+                            recording.progress_report_due = now + Duration::from_secs(10);
+                        }
+                        CaptureProgressObservation::Healthy => {}
                     }
                 }
 
                 if let Some(recording) = active.as_mut() {
                     match recording.session.has_exited() {
                         Ok(true) => {
+                            control_telemetry.backend_exits =
+                                control_telemetry.backend_exits.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
-                            warn!("ffmpeg exited while League was still running");
+                            warn!("recorder backend exited while League was still running");
                             events(ServiceEvent::Error {
-                                message: "ffmpeg exited unexpectedly; preserving the partial recording".to_owned(),
+                                message: "recorder backend exited unexpectedly; preserving the partial recording".to_owned(),
                             });
                             stop_recording(recording, &events).await;
-                            failed_process = current_process;
+                            startup_retry.block_active_process(current_process);
                         }
                         Ok(false) => {}
                         Err(inspect_error) => {
-                            error!(error = %inspect_error, "could not inspect ffmpeg");
+                            error!(error = %inspect_error, "could not inspect recorder backend");
                         }
                     }
                 }
@@ -288,19 +758,24 @@ pub async fn run(
                     current_process,
                     active.is_some(),
                     starting.is_some(),
-                    failed_process,
+                    &startup_retry,
+                    TokioInstant::now(),
                 ) {
                     match capture_target_for_process(process.pid) {
                         Ok(target) => {
-                            starting = Some(spawn_recording_start(
-                                ffmpeg.clone(),
-                                config.recording.clone(),
-                                config.app.hevc_playback_supported,
-                                audio.clone(),
-                                output_path.clone(),
+                            control_telemetry.startup_attempts =
+                                control_telemetry.startup_attempts.saturating_add(1);
+                            starting = Some(spawn_recording_start(RecordingStartup {
+                                ffmpeg: ffmpeg.clone(),
+                                recording_config: config.recording.clone(),
+                                hevc_playback_supported: config.app.hevc_playback_supported,
+                                audio: audio.clone(),
+                                output_path: output_path.clone(),
                                 process,
                                 target,
-                            ));
+                                #[cfg(target_os = "windows")]
+                                windows_backend,
+                            }));
                         }
                         Err(target_error) => {
                             tracing::debug!(
@@ -310,6 +785,12 @@ pub async fn run(
                             );
                         }
                     }
+                }
+
+                let now = Instant::now();
+                if now >= control_report_due {
+                    log_control_telemetry(watcher.telemetry(), &control_telemetry, false);
+                    control_report_due = now + CONTROL_TELEMETRY_INTERVAL;
                 }
 
                 previous_process = current_process;
@@ -322,48 +803,92 @@ fn startup_candidate(
     current: Option<LeagueProcess>,
     has_active: bool,
     has_starting: bool,
-    failed: Option<LeagueProcess>,
+    retry: &RecordingStartupRetryState,
+    now: TokioInstant,
 ) -> Option<LeagueProcess> {
-    current.filter(|process| !has_active && !has_starting && failed != Some(*process))
+    current.filter(|process| !has_active && !has_starting && retry.permits(*process, now))
 }
 
-fn spawn_recording_start(
-    ffmpeg: Ffmpeg,
-    recording_config: RecordingConfig,
-    hevc_playback_supported: bool,
-    audio: AudioSource,
-    output_path: PathBuf,
-    process: LeagueProcess,
-    target: CaptureTarget,
-) -> StartingRecording {
+fn log_control_telemetry(
+    watcher: ProcessWatcherTelemetry,
+    telemetry: &RecorderControlTelemetry,
+    terminal: bool,
+) {
+    info!(
+        terminal,
+        process_refreshes = watcher.refreshes,
+        refreshed_process_records = watcher.refreshed_process_records,
+        total_process_refresh_100ns = watcher.total_refresh_100ns,
+        maximum_process_refresh_100ns = watcher.maximum_refresh_100ns,
+        known_processes = watcher.known_processes,
+        maximum_known_processes = watcher.maximum_known_processes,
+        startup_attempts = telemetry.startup_attempts,
+        startup_ready = telemetry.startup_ready,
+        startup_errors = telemetry.startup_errors,
+        startup_task_failures = telemetry.startup_task_failures,
+        startup_retries_scheduled = telemetry.startup_retries_scheduled,
+        startup_retry_alerts_suppressed = telemetry.startup_retry_alerts_suppressed,
+        startup_terminal_failures = telemetry.startup_terminal_failures,
+        target_state_queries = telemetry.target_state_queries,
+        target_state_successes = telemetry.target_state_successes,
+        target_adapter_validations = telemetry.target_adapter_validations,
+        visible_target_checks = telemetry.visible_target_checks,
+        paused_target_checks = telemetry.paused_target_checks,
+        target_failures = telemetry.target_failures,
+        watchdog_stalls = telemetry.watchdog_stalls,
+        backend_exits = telemetry.backend_exits,
+        "recorder control-plane telemetry"
+    );
+}
+
+fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     let (cancellation, receiver) = watch::channel(false);
-    let startup = RecordingStartup {
-        ffmpeg,
-        recording_config,
-        hevc_playback_supported,
-        audio,
-        output_path,
-        process,
-        target,
+    let process = startup.process;
+    #[cfg(target_os = "windows")]
+    let timeout_action = match startup.windows_backend {
+        WindowsRecorderBackend::Ffmpeg => StartupCancellationTimeoutAction::AbortTask,
+        WindowsRecorderBackend::Native => StartupCancellationTimeoutAction::AwaitNativeCleanup,
     };
+    #[cfg(not(target_os = "windows"))]
+    let timeout_action = StartupCancellationTimeoutAction::AbortTask;
     let task = tokio::spawn(async move { start_recording(startup, receiver).await });
     StartingRecording {
         process,
         cancellation,
         task,
+        timeout_action,
     }
 }
 
 async fn cancel_starting(starting: Option<StartingRecording>, events: &EventSink) {
+    cancel_starting_with_timeout(starting, events, STARTUP_CANCELLATION_TIMEOUT).await;
+}
+
+async fn cancel_starting_with_timeout(
+    starting: Option<StartingRecording>,
+    events: &EventSink,
+    timeout: Duration,
+) {
     let Some(mut starting) = starting else {
         return;
     };
     let _ = starting.cancellation.send(true);
-    match tokio::time::timeout(STARTUP_CANCELLATION_TIMEOUT, &mut starting.task).await {
+    match tokio::time::timeout(timeout, &mut starting.task).await {
         Ok(Ok(Ok(recording))) => {
             stop_recording(recording, events).await;
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) => {}
+        Err(_)
+            if starting.timeout_action == StartupCancellationTimeoutAction::AwaitNativeCleanup =>
+        {
+            warn!(
+                pid = starting.process.pid,
+                "native recording startup cancellation exceeded its deadline; waiting for the offloaded worker join because abort cannot contain a hung driver call"
+            );
+            if let Ok(Ok(recording)) = starting.task.await {
+                stop_recording(recording, events).await;
+            }
+        }
         Err(_) => {
             warn!(
                 pid = starting.process.pid,
@@ -410,7 +935,7 @@ pub struct DiagnosticReport {
 async fn start_recording(
     startup: RecordingStartup,
     mut cancellation: watch::Receiver<bool>,
-) -> Result<ActiveRecording> {
+) -> RecordingStartupResult<ActiveRecording> {
     let RecordingStartup {
         ffmpeg,
         recording_config,
@@ -419,17 +944,34 @@ async fn start_recording(
         output_path,
         process,
         target,
+        #[cfg(target_os = "windows")]
+        windows_backend,
     } = startup;
+    let mut target_state_cache = CaptureTargetStateCache::default();
+    let initial_target_state = query_capture_target_state(&target, &mut target_state_cache)
+        .context("capture target changed before recording startup")
+        .retryable_startup()?;
+    if initial_target_state.visibility == CaptureTargetVisibility::PausedByWindowVisibility {
+        return Err(RecordingStartupFailure::retryable(anyhow::anyhow!(
+            "capture target became hidden or minimized before recording startup"
+        )));
+    }
     #[cfg(target_os = "windows")]
-    let candidates = tokio::select! {
-        result = ffmpeg.windows_capture_candidates(
-            &target,
-            &recording_config,
-            hevc_playback_supported,
-        ) => result?,
-        _ = startup_cancelled(&mut cancellation) => {
-            bail!("recording startup was cancelled");
-        }
+    let candidates = if windows_backend == WindowsRecorderBackend::Ffmpeg {
+        Some(tokio::select! {
+            result = ffmpeg.windows_capture_candidates(
+                &target,
+                &recording_config,
+                hevc_playback_supported,
+            ) => result.terminal_startup()?,
+            _ = startup_cancelled(&mut cancellation) => {
+                return Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+                    "recording startup was cancelled"
+                )));
+            }
+        })
+    } else {
+        None
     };
     #[cfg(not(target_os = "windows"))]
     let plan = tokio::select! {
@@ -437,108 +979,182 @@ async fn start_recording(
             &recording_config,
             hevc_playback_supported,
             target.dimensions(),
-        ) => result?,
+        ) => result.terminal_startup()?,
         _ = startup_cancelled(&mut cancellation) => {
-            bail!("recording startup was cancelled");
+            return Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+                "recording startup was cancelled"
+            )));
         }
     };
 
     if *cancellation.borrow() {
-        bail!("recording startup was cancelled");
+        return Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+            "recording startup was cancelled"
+        )));
     }
-    let directory = create_game_directory(&output_path, unix_timestamp_now()?)?;
+    let timestamp = unix_timestamp_now().terminal_startup()?;
+    let directory = create_game_directory(&output_path, timestamp).terminal_startup()?;
 
     #[cfg(target_os = "windows")]
-    let (session, plan, candidate) = {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        let mut failures = Vec::new();
-        let mut selected = None;
-        for (index, (plan, candidate)) in candidates.into_iter().enumerate() {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                failures.push("the total 15-second candidate deadline expired".to_owned());
-                break;
-            }
-            match ffmpeg
-                .start_recording_candidate(
-                    directory.clone(),
-                    &target,
-                    plan,
-                    &audio,
-                    RecordingCandidateStart::new(index, remaining, cancellation.clone()),
-                )
-                .await
+    let (session, plan, capture_path) = match windows_backend {
+        WindowsRecorderBackend::Ffmpeg => {
+            let deadline = std::time::Instant::now() + WINDOWS_RECORDING_STARTUP_TIMEOUT;
+            let mut failures = Vec::new();
+            let mut selected = None;
+            for (index, (plan, candidate)) in candidates
+                .context("FFmpeg/WGC candidates were not planned")
+                .terminal_startup()?
+                .into_iter()
+                .enumerate()
             {
-                Ok(session) => {
-                    selected = Some((session, plan, candidate));
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    failures.push("the total 15-second candidate deadline expired".to_owned());
                     break;
                 }
-                Err(error) => {
-                    if *cancellation.borrow() {
-                        bail!("recording startup was cancelled");
+                match ffmpeg
+                    .start_recording_candidate(
+                        directory.clone(),
+                        &target,
+                        plan,
+                        &audio,
+                        RecordingCandidateStart::new(index, remaining, cancellation.clone()),
+                    )
+                    .await
+                {
+                    Ok(session) => {
+                        selected = Some((
+                            VideoRecordingSession::Ffmpeg(Box::new(session)),
+                            plan,
+                            WindowsCapturePath {
+                                interop: candidate.interop,
+                                encoder_depth: candidate.encoder_depth,
+                                filter_buffered_frame_limit: FILTER_BUFFERED_FRAME_LIMIT,
+                                backend: "windows_graphics_capture_d3d11",
+                                support_label: "optimized-unvalidated",
+                            },
+                        ));
+                        break;
                     }
-                    warn!(
-                        encoder = plan.encoder.codec_name(plan.codec),
-                        interop = candidate.interop.label(),
-                        error = %error,
-                        "same-adapter recording candidate failed"
-                    );
-                    failures.push(format!(
-                        "{} via {}: {error:#}",
-                        plan.encoder.codec_name(plan.codec),
-                        candidate.interop.label()
-                    ));
+                    Err(error) => {
+                        match error.disposition() {
+                            RecordingCandidateFailureDisposition::Cancelled => {
+                                return Err(RecordingStartupFailure::cancelled(error.into_error()));
+                            }
+                            RecordingCandidateFailureDisposition::Terminal => {
+                                return Err(RecordingStartupFailure::terminal(error.into_error()));
+                            }
+                            RecordingCandidateFailureDisposition::Retryable => {}
+                        }
+                        warn!(
+                            encoder = plan.encoder().codec_name(plan.codec()),
+                            interop = candidate.interop.label(),
+                            error = %error,
+                            "same-adapter recording candidate failed"
+                        );
+                        failures.push(format!(
+                            "{} via {}: {error:#}",
+                            plan.encoder().codec_name(plan.codec()),
+                            candidate.interop.label()
+                        ));
+                    }
                 }
             }
+            selected.ok_or_else(|| {
+                RecordingStartupFailure::retryable(anyhow::anyhow!(
+                    "exact-window GPU capture failed; no display/GDI fallback was attempted ({})",
+                    failures.join("; ")
+                ))
+            })?
         }
-        selected.with_context(|| {
-            format!(
-                "exact-window GPU capture failed; no display/GDI fallback was attempted ({})",
-                failures.join("; ")
+        WindowsRecorderBackend::Native => {
+            let plan = native_recording_plan(&recording_config).terminal_startup()?;
+            let session_result = NativeRecordingSession::start(
+                directory.clone(),
+                target.clone(),
+                ffmpeg.path().to_path_buf(),
+                audio.clone(),
+                cancellation.clone(),
+                WINDOWS_RECORDING_STARTUP_TIMEOUT,
             )
-        })?
+            .await;
+            let session = match session_result {
+                Ok(session) => session,
+                Err(error) => {
+                    let disposition = match error.disposition() {
+                        NativeRecordingStartupFailureDisposition::Cancelled => {
+                            RecordingStartupDisposition::Cancelled
+                        }
+                        NativeRecordingStartupFailureDisposition::Retryable => {
+                            RecordingStartupDisposition::Retryable
+                        }
+                        NativeRecordingStartupFailureDisposition::Terminal => {
+                            RecordingStartupDisposition::Terminal
+                        }
+                    };
+                    return Err(RecordingStartupFailure {
+                        disposition,
+                        error: error.into_error(),
+                    });
+                }
+            };
+            (
+                VideoRecordingSession::Native(session),
+                plan,
+                WindowsCapturePath {
+                    interop: DirectInterop::D3d11Nvenc,
+                    encoder_depth: NVENC_SURFACE_LIMIT,
+                    filter_buffered_frame_limit: 0,
+                    backend: "native_windows_graphics_capture_d3d11",
+                    support_label: "optimized-unvalidated",
+                },
+            )
+        }
     };
 
     #[cfg(not(target_os = "windows"))]
     let (session, plan) = {
-        let session = ffmpeg
+        let session_result = ffmpeg
             .start_recording(directory.clone(), &target, plan, &audio)
-            .await?;
-        (session, plan)
+            .await;
+        let session = match session_result {
+            Ok(session) => session,
+            Err(error) if *cancellation.borrow() => {
+                return Err(RecordingStartupFailure::cancelled(error));
+            }
+            Err(error) => return Err(RecordingStartupFailure::retryable(error)),
+        };
+        (VideoRecordingSession::Ffmpeg(Box::new(session)), plan)
     };
 
     if *cancellation.borrow() {
-        let _ = session.stop().await;
-        bail!("recording startup was cancelled");
+        let _ = session
+            .stop_with_failure("recording startup was cancelled".to_owned())
+            .await;
+        return Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+            "recording startup was cancelled"
+        )));
     }
 
     let recording_resolution = plan
         .output_dimensions(target.dimensions())
         .map(|(width, height)| format!("{width}x{height}"))
         .unwrap_or_else(|| "source".to_owned());
-    let poller = match PollerSession::start(&directory, session.video_started_at()).await {
-        Ok(poller) => poller,
-        Err(error) => {
-            let _ = session.stop().await;
-            return Err(error).context("failed to start the Live Client poller");
-        }
-    };
-    if *cancellation.borrow() {
-        let _ = tokio::join!(poller.stop(), session.stop());
-        bail!("recording startup was cancelled");
-    }
     let diagnostics = session.evidence_receiver();
     let initial_diagnostics = diagnostics.borrow().clone();
 
     #[cfg(target_os = "windows")]
-    let capture_details = {
-        let capture_adapter_luid = format!("{:016x}", candidate.adapter_luid);
+    let capture_details_result: Result<_> = (|| {
+        let capture_adapter_luid_value = target
+            .windows_adapter_luid()
+            .context("optimized Windows target has no adapter LUID")?;
+        let capture_adapter_luid = format!("{capture_adapter_luid_value:016x}");
         let capture_adapter_name = target
             .windows_adapter_name()
             .unwrap_or("unknown")
             .to_owned();
         let capture_output = target.windows_output_name().unwrap_or("unknown").to_owned();
-        let encoder_interop = candidate.interop.label().to_owned();
+        let encoder_interop = capture_path.interop.label().to_owned();
         let output_dimensions = plan
             .output_dimensions(target.dimensions())
             .context("optimized Windows capture has no output dimensions")?;
@@ -556,14 +1172,14 @@ async fn start_recording(
             output_dimensions,
             frame_pool_capacity,
             output_pool_capacity,
-            FILTER_BUFFERED_FRAME_LIMIT,
-            candidate.encoder_depth,
+            capture_path.filter_buffered_frame_limit,
+            capture_path.encoder_depth,
         );
         info!(
             frame_pool_capacity,
             output_pool_capacity,
-            filter_buffered_frame_limit = FILTER_BUFFERED_FRAME_LIMIT,
-            encoder_depth = candidate.encoder_depth,
+            filter_buffered_frame_limit = capture_path.filter_buffered_frame_limit,
+            encoder_depth = capture_path.encoder_depth,
             maximum_texture_bytes,
             "optimized capture resource bounds"
         );
@@ -571,20 +1187,20 @@ async fn start_recording(
             "windows_graphics_capture_bgra_d3d11".to_owned(),
             "scale_d3d11_video_processor_nv12".to_owned(),
         ];
-        if plan.encoder.label() == "qsv" {
+        if plan.encoder().label() == "qsv" {
             gpu_stages.push("d3d11_to_qsv_direct_hwmap".to_owned());
         }
         gpu_stages.push(encoder_interop.clone());
         let capture = CaptureMetadata {
             schema_version: 1,
-            backend: "windows_graphics_capture_d3d11".to_owned(),
+            backend: capture_path.backend.to_owned(),
             diagnostics_abi: CAPTURE_DIAGNOSTIC_ABI,
-            support_label: "optimized-unvalidated".to_owned(),
+            support_label: capture_path.support_label.to_owned(),
             capture_adapter_luid: capture_adapter_luid.clone(),
             encoder_adapter_luid: capture_adapter_luid.clone(),
             capture_adapter_name: capture_adapter_name.clone(),
             capture_output: capture_output.clone(),
-            encoder_backend: plan.encoder.label().to_owned(),
+            encoder_backend: plan.encoder().label().to_owned(),
             encoder_interop: encoder_interop.clone(),
             media_runtime_id: ffmpeg.runtime_id().to_owned(),
             source_format: "d3d11_bgra".to_owned(),
@@ -593,8 +1209,8 @@ async fn start_recording(
             gpu_stages,
             frame_pool_capacity,
             capture_output_pool_capacity: output_pool_capacity,
-            filter_buffered_frame_limit: FILTER_BUFFERED_FRAME_LIMIT,
-            encoder_depth: candidate.encoder_depth,
+            filter_buffered_frame_limit: capture_path.filter_buffered_frame_limit,
+            encoder_depth: capture_path.encoder_depth,
             progress_stall_timeout_seconds: u32::try_from(CAPTURE_PROGRESS_STALL_TIMEOUT.as_secs())
                 .unwrap_or(u32::MAX),
             maximum_texture_bytes,
@@ -609,7 +1225,7 @@ async fn start_recording(
             latest_qpc_100ns: initial_diagnostics.latest_qpc.unwrap_or_default(),
             terminal_progress: false,
         };
-        (
+        Ok((
             capture.backend.clone(),
             Some(capture_adapter_luid),
             Some(capture_adapter_name),
@@ -617,7 +1233,26 @@ async fn start_recording(
             Some(encoder_interop),
             capture.support_label.clone(),
             Some(capture),
-        )
+        ))
+    })();
+    #[cfg(target_os = "windows")]
+    let capture_details = match capture_details_result {
+        Ok(details) => details,
+        Err(error) => {
+            let cleanup = session
+                .stop_with_failure(format!(
+                    "recording startup invariant failed before publication: {error:#}"
+                ))
+                .await
+                .err();
+            let error = match cleanup {
+                Some(cleanup_error) => {
+                    error.context(format!("video cleanup also failed: {cleanup_error:#}"))
+                }
+                None => error,
+            };
+            return Err(RecordingStartupFailure::terminal(error));
+        }
     };
     #[cfg(not(target_os = "windows"))]
     let capture_details = (
@@ -630,12 +1265,49 @@ async fn start_recording(
         None,
     );
 
+    let poller = match PollerSession::start(&directory, session.video_started_at()).await {
+        Ok(poller) => poller,
+        Err(error) => {
+            let cleanup = session
+                .stop_with_failure(format!("Live Client poller startup failed: {error:#}"))
+                .await
+                .err();
+            let error = error.context("failed to start the Live Client poller");
+            let error = match cleanup {
+                Some(cleanup_error) => {
+                    error.context(format!("video cleanup also failed: {cleanup_error:#}"))
+                }
+                None => error,
+            };
+            return Err(RecordingStartupFailure::retryable(error));
+        }
+    };
+    if *cancellation.borrow() {
+        let (_, video_cleanup) = tokio::join!(
+            poller.stop(),
+            session.stop_with_failure("recording startup was cancelled".to_owned())
+        );
+        let error = video_cleanup.err().map_or_else(
+            || anyhow::anyhow!("recording startup was cancelled"),
+            |cleanup_error| {
+                anyhow::anyhow!(
+                    "recording startup was cancelled; video cleanup also failed: {cleanup_error:#}"
+                )
+            },
+        );
+        return Err(RecordingStartupFailure::cancelled(error));
+    }
+
     #[cfg(target_os = "windows")]
     info!(
         pid = process.pid,
         directory = %directory.display(),
-        capture_adapter_luid = format_args!("{:016x}", candidate.adapter_luid),
-        encoder_interop = candidate.interop.label(),
+        capture_adapter_luid = format_args!(
+            "{:016x}",
+            target.windows_adapter_luid().unwrap_or_default()
+        ),
+        encoder_interop = capture_path.interop.label(),
+        backend = capture_path.backend,
         "recording started"
     );
     #[cfg(not(target_os = "windows"))]
@@ -654,14 +1326,15 @@ async fn start_recording(
     Ok(ActiveRecording {
         session,
         target,
+        target_state_cache,
         diagnostics,
         progress_watchdog: CaptureProgressWatchdog::new(&initial_diagnostics, now),
         progress_report_due: now + Duration::from_secs(10),
         poller,
         details: RecordingDetails {
-            encoder_used: plan.encoder.label().to_owned(),
-            codec: plan.codec.label().to_owned(),
-            profile: plan.profile.label().to_owned(),
+            encoder_used: plan.encoder().label().to_owned(),
+            codec: plan.codec().label().to_owned(),
+            profile: plan.profile().label().to_owned(),
             resolution: recording_resolution,
             fps: plan.fps(),
             capture_backend: capture_details.0,
@@ -679,6 +1352,21 @@ async fn start_recording(
             capture: capture_details.6,
         },
     })
+}
+
+#[cfg(target_os = "windows")]
+fn native_recording_plan(recording: &RecordingConfig) -> Result<RecordingPlan> {
+    if recording.codec == CodecPreference::Hevc {
+        bail!("the native recorder currently supports H.264 only");
+    }
+    if !matches!(
+        recording.profile,
+        RecordingProfile::Auto | RecordingProfile::High
+    ) {
+        bail!("the native recorder currently requires the auto or high 1080p60 profile");
+    }
+    RecordingPlan::new(EncoderKind::Nvenc, VideoCodec::H264, RecordingProfile::High)
+        .context("could not select the fixed native 1080p60 H.264 plan")
 }
 
 async fn startup_cancelled(cancellation: &mut watch::Receiver<bool>) {
@@ -709,16 +1397,22 @@ async fn stop_recording_inner(
     let ActiveRecording {
         session,
         target: _,
+        target_state_cache: _,
         diagnostics,
         progress_watchdog: _,
         progress_report_due: _,
         poller,
         mut details,
     } = recording;
-    let directory = session.directory().to_path_buf();
     let recorded_at = session.recorded_at();
     let duration = session.video_started_at().elapsed();
-    let (summary, video_result) = tokio::join!(poller.stop(), session.stop());
+    let video_stop = async {
+        match failure_reason {
+            Some(reason) => session.stop_with_failure(reason).await,
+            None => session.stop().await,
+        }
+    };
+    let (summary, video_result) = tokio::join!(poller.stop(), video_stop);
 
     let final_diagnostics = diagnostics.borrow().clone();
     log_capture_progress(
@@ -745,39 +1439,38 @@ async fn stop_recording_inner(
             final_diagnostics.capture_terminal && final_diagnostics.progress_end;
     }
 
-    let metadata_result = RecordingMetadata::new(recorded_at, duration, summary, details);
-    match metadata_result {
-        Ok(metadata) => {
-            if let Err(metadata_error) =
-                write_json_atomic(&directory.join(METADATA_JSON), &metadata).await
-            {
-                error!(error = %metadata_error, "could not write recording metadata");
-                events(ServiceEvent::Error {
-                    message: format!("Recording metadata could not be saved: {metadata_error:#}"),
-                });
-            }
-        }
-        Err(metadata_error) => {
-            error!(error = %metadata_error, "could not build recording metadata");
-            events(ServiceEvent::Error {
-                message: format!("Recording metadata could not be created: {metadata_error:#}"),
-            });
-        }
-    }
-
-    let video_result = match (video_result, failure_reason) {
-        (Ok(_), Some(reason)) => Err(anyhow::anyhow!(reason)),
-        (result, _) => result,
-    };
     match video_result {
         Ok(directory) => {
             info!(directory = %directory.display(), "video closed");
+            let metadata_result = RecordingMetadata::new(recorded_at, duration, summary, details);
+            match metadata_result {
+                Ok(metadata) => {
+                    if let Err(metadata_error) =
+                        write_json_atomic(&directory.join(METADATA_JSON), &metadata).await
+                    {
+                        error!(error = %metadata_error, "could not write recording metadata");
+                        events(ServiceEvent::Error {
+                            message: format!(
+                                "Recording metadata could not be saved: {metadata_error:#}"
+                            ),
+                        });
+                    }
+                }
+                Err(metadata_error) => {
+                    error!(error = %metadata_error, "could not build recording metadata");
+                    events(ServiceEvent::Error {
+                        message: format!(
+                            "Recording metadata could not be created: {metadata_error:#}"
+                        ),
+                    });
+                }
+            }
         }
         Err(stop_error) => {
             error!(error = %stop_error, "recording stopped with an error");
             events(ServiceEvent::Error {
                 message: format!(
-                    "Recording stopped unexpectedly; the fragmented MP4 was preserved: {stop_error:#}"
+                    "Recording stopped unexpectedly; no canonical video was published. Any recoverable output remains under an explicit .partial.mp4 name: {stop_error:#}"
                 ),
             });
         }
@@ -829,23 +1522,190 @@ fn maximum_texture_bytes(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_recorder_backend_defaults_to_native_with_explicit_ffmpeg_fallback() {
+        assert_eq!(
+            WindowsRecorderBackend::parse(None).unwrap(),
+            WindowsRecorderBackend::Native
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("")).unwrap(),
+            WindowsRecorderBackend::Native
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("ffmpeg")).unwrap(),
+            WindowsRecorderBackend::Ffmpeg
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("ffmpeg-wgc")).unwrap(),
+            WindowsRecorderBackend::Ffmpeg
+        );
+        assert_eq!(
+            WindowsRecorderBackend::parse(Some("native")).unwrap(),
+            WindowsRecorderBackend::Native
+        );
+        assert!(WindowsRecorderBackend::parse(Some("automatic")).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_plan_is_fixed_to_high_h264() {
+        let mut recording = RecordingConfig::default();
+        let plan = native_recording_plan(&recording).unwrap();
+        assert_eq!(plan.encoder(), EncoderKind::Nvenc);
+        assert_eq!(plan.codec(), VideoCodec::H264);
+        assert_eq!(plan.profile(), RecordingProfile::High);
+
+        recording.codec = CodecPreference::Hevc;
+        assert!(native_recording_plan(&recording).is_err());
+        recording.codec = CodecPreference::H264;
+        recording.profile = RecordingProfile::Low;
+        assert!(native_recording_plan(&recording).is_err());
+    }
+
     #[test]
     fn a_process_without_a_window_remains_eligible_on_the_next_tick() {
         let process = LeagueProcess { pid: 42 };
+        let retry = RecordingStartupRetryState::default();
+        let now = TokioInstant::now();
         assert_eq!(
-            startup_candidate(Some(process), false, false, None),
+            startup_candidate(Some(process), false, false, &retry, now),
             Some(process)
         );
         assert_eq!(
-            startup_candidate(Some(process), false, false, None),
+            startup_candidate(Some(process), false, false, &retry, now),
             Some(process)
         );
         assert_eq!(
-            startup_candidate(Some(process), false, false, Some(process)),
+            startup_candidate(Some(process), true, false, &retry, now),
             None
         );
-        assert_eq!(startup_candidate(Some(process), true, false, None), None);
-        assert_eq!(startup_candidate(Some(process), false, true, None), None);
+        assert_eq!(
+            startup_candidate(Some(process), false, true, &retry, now),
+            None
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retryable_startup_failures_follow_the_exact_bounded_schedule() {
+        let process = LeagueProcess { pid: 42 };
+        let mut retry = RecordingStartupRetryState::default();
+
+        for (index, expected_delay) in [2_u64, 5, 10, 30, 30].into_iter().enumerate() {
+            let now = TokioInstant::now();
+            let action = retry.record_failure(process, RecordingStartupDisposition::Retryable, now);
+            let retry_at = action.retry_at.expect("retryable failure has a deadline");
+            assert_eq!(
+                retry_at.duration_since(now),
+                Duration::from_secs(expected_delay)
+            );
+            assert_eq!(action.notify_user, index == 0);
+            assert!(!retry.permits(process, retry_at - Duration::from_nanos(1)));
+            assert!(retry.permits(process, retry_at));
+            assert_eq!(
+                startup_candidate(Some(process), false, false, &retry, retry_at),
+                Some(process)
+            );
+            tokio::time::advance(Duration::from_secs(expected_delay)).await;
+            assert_eq!(TokioInstant::now(), retry_at);
+        }
+    }
+
+    #[test]
+    fn terminal_startup_failure_blocks_only_the_same_process() {
+        let process = LeagueProcess { pid: 42 };
+        let replacement = LeagueProcess { pid: 43 };
+        let now = TokioInstant::now();
+        let mut retry = RecordingStartupRetryState::default();
+
+        let action = retry.record_failure(process, RecordingStartupDisposition::Terminal, now);
+
+        assert!(action.notify_user);
+        assert_eq!(action.retry_at, None);
+        assert!(!retry.permits(process, now + Duration::from_secs(300)));
+        let repeated = retry.record_failure(
+            process,
+            RecordingStartupDisposition::Terminal,
+            now + Duration::from_secs(1),
+        );
+        assert!(!repeated.notify_user);
+        assert!(retry.permits(replacement, now));
+        retry.reset();
+        assert!(retry.permits(process, now));
+    }
+
+    #[test]
+    fn cancellation_resets_pending_backoff_without_alerting() {
+        let process = LeagueProcess { pid: 42 };
+        let now = TokioInstant::now();
+        let mut retry = RecordingStartupRetryState::default();
+        retry.record_failure(process, RecordingStartupDisposition::Retryable, now);
+
+        let action = retry.record_failure(
+            process,
+            RecordingStartupDisposition::Cancelled,
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(action.retry_at, None);
+        assert!(!action.notify_user);
+        assert!(retry.permits(process, now + Duration::from_secs(1)));
+    }
+
+    #[tokio::test]
+    async fn native_startup_timeout_waits_for_offloaded_cleanup_instead_of_aborting() {
+        let (cancellation, mut receiver) = watch::channel(false);
+        let cleanup_completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_cleanup_completed = Arc::clone(&cleanup_completed);
+        let task = tokio::spawn(async move {
+            receiver
+                .changed()
+                .await
+                .expect("fixture cancellation sender remains alive");
+            assert!(*receiver.borrow());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            task_cleanup_completed.store(true, std::sync::atomic::Ordering::Release);
+            Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+                "fixture native startup cancelled"
+            )))
+        });
+        let starting = StartingRecording {
+            process: LeagueProcess { pid: 42 },
+            cancellation,
+            task,
+            timeout_action: StartupCancellationTimeoutAction::AwaitNativeCleanup,
+        };
+        let events: EventSink = Arc::new(|_| {});
+
+        cancel_starting_with_timeout(Some(starting), &events, Duration::from_millis(1)).await;
+
+        assert!(cleanup_completed.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn active_failure_does_not_create_an_implicit_second_segment() {
+        let process = LeagueProcess { pid: 42 };
+        let now = TokioInstant::now();
+        let mut retry = RecordingStartupRetryState::default();
+
+        retry.block_active_process(Some(process));
+
+        assert!(!retry.permits(process, now + Duration::from_secs(300)));
+        retry.reset();
+        assert!(retry.permits(process, now));
+    }
+
+    #[test]
+    fn retry_attempt_directories_are_unique_and_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+
+        let first = create_game_directory(directory.path(), 123).unwrap();
+        let second = create_game_directory(directory.path(), 123).unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.is_dir());
+        assert!(second.is_dir());
     }
 
     #[test]
@@ -871,12 +1731,22 @@ mod tests {
         evidence.encoded_frames = 20;
         evidence.muxed_bytes = 2_000;
         assert_eq!(
-            watchdog.observe(&evidence, start + Duration::from_secs(14)),
-            None
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(14),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Healthy
         );
         assert_eq!(
-            watchdog.observe(&evidence, start + Duration::from_secs(29)),
-            Some("WGC source timestamp did not advance for 15 seconds".to_owned())
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(29),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Stalled(
+                "WGC source timestamp did not advance for 15 seconds".to_owned()
+            )
         );
     }
 
@@ -887,8 +1757,65 @@ mod tests {
         let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
         evidence.protocol_error = Some("counter regression".to_owned());
         assert_eq!(
-            watchdog.observe(&evidence, start),
-            Some("capture diagnostics failed: counter regression".to_owned())
+            watchdog.observe(&evidence, start, CaptureTargetVisibility::Visible),
+            CaptureProgressObservation::Stalled(
+                "capture diagnostics failed: counter regression".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn capture_progress_watchdog_pauses_and_resets_for_window_visibility() {
+        let start = Instant::now();
+        let evidence = RecordingEvidence {
+            latest_qpc: Some(100),
+            encoded_frames: 10,
+            muxed_bytes: 1_000,
+            ..RecordingEvidence::default()
+        };
+        let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
+
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(20),
+                CaptureTargetVisibility::PausedByWindowVisibility
+            ),
+            CaptureProgressObservation::PausedByWindowVisibility
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(80),
+                CaptureTargetVisibility::PausedByWindowVisibility
+            ),
+            CaptureProgressObservation::Healthy
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(81),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::ResumedAfterWindowVisibility
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(95),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Healthy
+        );
+        assert_eq!(
+            watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(96),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Stalled(
+                "WGC source timestamp did not advance for 15 seconds".to_owned()
+            )
         );
     }
 }

@@ -78,11 +78,26 @@ export type ClipExportOutput = {
   output_path: string;
   thumbnail_path: string;
   file_size_bytes: number;
+  strategy: "full_reencode";
+  encoder_used: string;
+  encode_elapsed_ms: number;
+  thumbnail_elapsed_ms: number;
+  retry_count: number;
+  attempts: Array<{
+    encoder: string;
+    elapsed_ms: number;
+    successful: boolean;
+    error: string | null;
+  }>;
 };
 
 export type ClipExportResult = {
   outputs: ClipExportOutput[];
   elapsed_ms: number;
+  setup_elapsed_ms: number;
+  source_probe_elapsed_ms: number;
+  source_probe_strategy: "recording_metadata";
+  finalize_elapsed_ms: number;
   total_file_size_bytes: number;
 };
 

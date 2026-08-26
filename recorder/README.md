@@ -12,7 +12,7 @@ cargo build --release
 
 The binary is written to `target/release/recorder.exe` on Windows.
 
-The Windows recorder requires QueueBack's exact paired media runtime at
+The Windows recorder requires QueueBack's exact paired r6 media runtime at
 `resources/media-runtime` beside `recorder.exe`. During development only,
 `QUEUEBACK_MEDIA_RUNTIME_DIR` may point to a complete staged runtime that passes
 the same embedded lock. The recorder does not accept `LEAGUE_REPLAY_FFMPEG`, a
@@ -31,8 +31,12 @@ cargo run -- --diagnose
 This validates configuration, packaged-runtime identity, an actual hardware encode,
 and the selected concrete codec/profile, and reports the runtime ID. The optimized
 Windows graph itself is selected only after League exposes its exact HWND and DXGI
-adapter. Read `../docs/architecture/windows-capture.md` for the GPU-resident WGC,
-same-adapter NVENC/AMF/QSV, finite-pool, and support-label contract. With
+adapter. The default is the in-process WGC/D3D11/NVENC H.264 backend. Set
+`QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` to select the retained external
+WGC/D3D11 NVENC/AMF/QSV backend explicitly; `native` and `ffmpeg-wgc` are accepted
+aliases. Backend failures do not silently switch paths. Read
+`../docs/architecture/windows-capture.md` for the finite-pool, lifecycle, and
+support-label contract. With
 `profile = "auto"`, diagnostics runs the short
 encode benchmark documented in `../RECORDER.md` Section 8. It also reports whether a
 Windows loopback audio device was found.
@@ -45,9 +49,9 @@ profile = "auto" # auto | very_low | low | medium | high | very_high
 codec = "auto"   # auto | h264 | hevc
 ```
 
-Until the Phase 3 app validates HEVC in its real webview, codec auto conservatively
-selects H.264. `codec = "hevc"` explicitly enables hardware HEVC now; validate the
-resulting file in the intended player before keeping that override.
+The native default currently accepts H.264 with the auto/high 1080p60 profile.
+HEVC and other profiles require the explicit FFmpeg backend. Until the app validates
+HEVC in its real webview, codec auto conservatively selects H.264.
 
 If neither `Stereo Mix` nor a DirectShow WASAPI loopback device is available, the
 recorder keeps the video recording alive with a silent stereo track. To select a
@@ -84,6 +88,10 @@ finite pool values. `-CollectResources -KeepTargetVisible` adds process/GPU-memo
 sampling and keeps the generated GDI surface composited during the bounded soak;
 the separate occlusion scenario owns hidden-window behavior. Outputs stay under
 sentinel-owned `build/perf`.
+
+Native source, NVENC, MP4, lifecycle, and matched-backend probes live under
+`examples/native_*` and `../tools/native_backend/`. They require the same staged r6
+runtime and write only to dedicated evidence or temporary roots.
 
 Windows may show its normal capture indicator. QueueBack requests no captured cursor
 and public border suppression, but it does not manipulate the physical pointer or use

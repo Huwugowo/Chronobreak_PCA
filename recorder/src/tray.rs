@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::sync::mpsc;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -31,54 +31,85 @@ pub fn run(
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
 
+    let worker = spawn_worker(
+        config,
+        command_receiver,
+        proxy.clone(),
+        command_sender.clone(),
+        smoke_test_timeout,
+    )?;
+
     let menu_proxy = proxy.clone();
     MenuEvent::set_event_handler(Some(move |event| {
         let _ = menu_proxy.send_event(UserEvent::Menu(event));
     }));
 
-    spawn_worker(config, command_receiver, proxy.clone());
-
-    if let Some(timeout) = smoke_test_timeout {
-        let smoke_sender = command_sender.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(timeout);
-            let _ = smoke_sender.send(ServiceCommand::Shutdown);
-        });
-    }
-
     let mut application = TrayApplication::new(command_sender);
-    event_loop
+    let tray_result = event_loop
         .run_app(&mut application)
-        .context("tray event loop failed")
+        .context("tray event loop failed");
+    application.request_shutdown();
+    MenuEvent::set_event_handler::<fn(MenuEvent)>(None);
+
+    let worker_result = worker
+        .join()
+        .map_err(|_| anyhow!("recorder service thread panicked"))
+        .and_then(|result| result);
+    match (tray_result, worker_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(tray_error), Err(worker_error)) => Err(tray_error.context(format!(
+            "recorder service also failed while the tray stopped: {worker_error:#}"
+        ))),
+    }
 }
 
 fn spawn_worker(
     config: Config,
     command_receiver: mpsc::UnboundedReceiver<ServiceCommand>,
     proxy: EventLoopProxy<UserEvent>,
-) {
-    std::thread::Builder::new()
+    command_sender: mpsc::UnboundedSender<ServiceCommand>,
+    smoke_test_timeout: Option<Duration>,
+) -> Result<std::thread::JoinHandle<Result<()>>> {
+    let worker = std::thread::Builder::new()
         .name("recorder-service".to_owned())
         .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("failed to create recorder runtime");
             let sink = std::sync::Arc::new(move |event| {
                 let _ = proxy.send_event(UserEvent::Service(event));
             });
-            if let Err(error) = runtime.block_on(league_replay_recorder::service::run(
-                config,
-                command_receiver,
-                sink.clone(),
-            )) {
+            let service_sink = std::sync::Arc::clone(&sink);
+            let result = (|| {
+                let runtime = crate::build_service_runtime()?;
+                runtime.block_on(async move {
+                    let smoke_task = smoke_test_timeout.map(|timeout| {
+                        tokio::spawn(async move {
+                            tokio::time::sleep(timeout).await;
+                            let _ = command_sender.send(ServiceCommand::Shutdown);
+                        })
+                    });
+                    let result = league_replay_recorder::service::run(
+                        config,
+                        command_receiver,
+                        service_sink,
+                    )
+                    .await;
+                    if let Some(task) = smoke_task {
+                        task.abort();
+                        let _ = task.await;
+                    }
+                    result
+                })
+            })();
+            if let Err(error) = &result {
                 sink(ServiceEvent::Error {
                     message: format!("Recorder service stopped: {error:#}"),
                 });
                 sink(ServiceEvent::ShutdownComplete);
             }
+            result
         })
-        .expect("failed to start recorder service thread");
+        .context("failed to start recorder service thread")?;
+    Ok(worker)
 }
 
 struct TrayApplication {
