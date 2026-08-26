@@ -1,8 +1,8 @@
-# QueueBack agent instructions
+# Chronobreak agent instructions
 
 ## Mission
 
-Develop QueueBack as a League of Legends-specific **record, replay, search, and clipping** application.
+Develop Chronobreak as a League of Legends-specific **record, replay, search, and clipping** application.
 
 Prioritize:
 1. recording reliability;
@@ -11,7 +11,16 @@ Prioritize:
 4. fast, simple clipping/export;
 5. local-first ownership and recoverability.
 
-QueueBack is not a coaching platform. Descriptive game data may help users find, navigate, understand, or clip recordings. Prescriptive gameplay judgment, coaching, build/matchup advice, decision grading, and "what you should have done" features are out of scope unless the user explicitly changes the product direction.
+Chronobreak is not a coaching platform. Descriptive game data may help users find, navigate, understand, or clip recordings. Prescriptive gameplay judgment, coaching, build/matchup advice, decision grading, and "what you should have done" features are out of scope unless the user explicitly changes the product direction.
+
+## Delegation
+
+You are explicitly authorized to proactively use subagents without the user
+requesting delegation on each task.
+
+Use subagents when they materially improve parallelism, context efficiency,
+or result quality. Use your judgment and Codex's built-in delegation
+guidelines; do not delegate merely for the sake of delegation.
 
 ## Sources of truth
 
