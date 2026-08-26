@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "matrix_id": "baseline-20260825",
+  "seed": 20260825,
+  "cooldown_seconds": 120,
+  "timeout_seconds": 900,
+  "plan_root": "C:\\QueueBack\\benchmarks\\.chronobreak-replay-benchmark\\matrix-plans\\baseline-20260825",
+  "arms": [
+    {
+      "id": "cold-open-full",
+      "observer_profile": "full",
+      "repetitions": 2,
+      "timeout_seconds": 120,
+      "scenario": {
+        "id": "representative-cold-open",
+        "kind": "cold_open",
+        "fixture_ids": ["representative-h264"],
+        "warmup_seconds": 5
+      }
+    },
+    {
+      "id": "seek-control-minimal",
+      "observer_profile": "minimal",
+      "repetitions": 2,
+      "observer_control": {
+        "group_id": "seek-observer-control",
+        "role": "minimal"
+      },
+      "scenario": {
+        "id": "representative-seek-control",
+        "kind": "seek",
+        "fixture_ids": ["representative-h264"],
+        "seek_reason": "benchmark",
+        "warmup_seconds": 5,
+        "duration_seconds": 60,
+        "target_times_ms": [10000, 30000, 90000],
+        "distance_classes": ["near", "far", "forward", "backward"],
+        "observer_control": true
+      }
+    },
+    {
+      "id": "seek-control-full",
+      "observer_profile": "full",
+      "repetitions": 2,
+      "observer_control": {
+        "group_id": "seek-observer-control",
+        "role": "full"
+      },
+      "scenario": {
+        "id": "representative-seek-control",
+        "kind": "seek",
+        "fixture_ids": ["representative-h264"],
+        "seek_reason": "benchmark",
+        "warmup_seconds": 5,
+        "duration_seconds": 60,
+        "target_times_ms": [10000, 30000, 90000],
+        "distance_classes": ["near", "far", "forward", "backward"],
+        "observer_control": true
+      }
+    }
+  ],
+  "order": [
+    { "arm_id": "cold-open-full", "trial_id": "cold-01" },
+    { "arm_id": "seek-control-minimal", "trial_id": "pair-01", "pair_id": "pair-01" },
+    { "arm_id": "seek-control-full", "trial_id": "pair-01", "pair_id": "pair-01" },
+    { "arm_id": "cold-open-full", "trial_id": "cold-02" },
+    { "arm_id": "seek-control-full", "trial_id": "pair-02", "pair_id": "pair-02" },
+    { "arm_id": "seek-control-minimal", "trial_id": "pair-02", "pair_id": "pair-02" }
+  ]
+}

@@ -249,11 +249,14 @@ Two different checks exist and are not interchangeable:
 
 - `--diagnose` contains a short synthetic encoder/profile selection benchmark.
 - The [capture benchmark protocol](../performance/capture-benchmark.md) defines the reproducible League baseline-versus-recording matrices, performance budget, raw counter semantics, collector/finalizer commands, and sanitized schema-v1/schema-v2 report workflow.
+- The [replay benchmark protocol](../performance/replay-benchmark.md) defines the sentinel-owned production Tauri/WebView replay, application, loopback-server, process-tree, and current-export baseline. It is a characterization/disposition gate, not a product performance budget.
 
 Run the deterministic analyzer/collector fixtures with:
 
 ```powershell
 python -m unittest discover -s tools/capture_benchmark/tests -v
+python -m unittest discover -s tools/replay_benchmark/tests -v
+npm run test --prefix app
 ```
 
 Exercise static collector preflight with an operator-supplied PresentMon 2.x console executable:

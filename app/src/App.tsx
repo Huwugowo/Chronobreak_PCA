@@ -13,6 +13,7 @@ import {
   chooseOutputFolder,
   cleanUpNow,
   ensureHevcCapability,
+  exportClip,
   loadClips,
   loadDdragonStatus,
   loadGames,
@@ -26,6 +27,13 @@ import {
   resolveItemName,
   setGameSaved,
 } from "./api";
+import {
+  initializeReplayBenchmark,
+  REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
+  type BenchmarkFixture,
+  type BenchmarkScenario,
+  type ReplayBenchmarkObserver,
+} from "./benchmark";
 import AppHeader from "./components/AppHeader";
 import ClipExporterScreen from "./components/ClipExporterScreen";
 import ClipModal from "./components/ClipModal";
@@ -38,9 +46,11 @@ import type {
   ClipSummary,
   DdragonStatus,
   GameSummary,
+  HevcProbeStatus,
   LibraryTab,
   NavigationState,
   ReturnNavigationState,
+  ClipExportPreset,
 } from "./types";
 import styles from "./App.module.css";
 
@@ -76,11 +86,23 @@ function App() {
   const [usage, { refetch: refetchUsage }] = createResource(loadStorageUsage);
   const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
   const [ddragon, { refetch: refetchDdragon }] = createResource(loadDdragonStatus);
+  const [benchmarkObserver] = createResource(initializeReplayBenchmark);
+  const [benchmarkHevcCapability, setBenchmarkHevcCapability] =
+    createSignal<HevcProbeStatus | null>(null);
   const [busyId, setBusyId] = createSignal<string | null>(null);
   const [deleteTarget, setDeleteTarget] = createSignal<DeleteTarget | null>(null);
   const [activeClip, setActiveClip] = createSignal<ClipSummary | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
   let noticeTimer: number | undefined;
+  let benchmarkNavigationStarted = false;
+  let benchmarkLibraryUsefulEmitted = false;
+  let benchmarkViewerCycles = 0;
+  let benchmarkFailureStarted = false;
+  let benchmarkHevcCapabilityEmitted = false;
+  let benchmarkReopenTimer: number | undefined;
+  let benchmarkScenarioTimer: number | undefined;
+  let benchmarkUsefulFrame: number | undefined;
+  let benchmarkUsefulPaintFrame: number | undefined;
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -197,6 +219,191 @@ function App() {
     }
   };
 
+  const loading = createMemo(
+    () =>
+      (games() === undefined && games.loading) ||
+      (clips() === undefined && clips.loading) ||
+      (usage() === undefined && usage.loading) ||
+      (settings() === undefined && settings.loading),
+  );
+  const loadError = createMemo(() => games.error ?? clips.error ?? usage.error ?? settings.error);
+
+  const runBenchmarkExport = async (
+    observer: ReplayBenchmarkObserver,
+    scenario: BenchmarkScenario,
+    fixture: BenchmarkFixture,
+  ) => {
+    const actionId = "export-1";
+    try {
+      const game = games()?.find((candidate) => candidate.timestamp === fixture.game_timestamp);
+      if (!game) throw new Error("export fixture is absent from the benchmark library");
+      const rawStart = typeof scenario.clip_start_ms === "number" ? scenario.clip_start_ms : 10_000;
+      const rawEnd =
+        typeof scenario.clip_end_ms === "number"
+          ? scenario.clip_end_ms
+          : Math.min(game.duration_ms, rawStart + 20_000);
+      const clipStartMs = Math.max(0, Math.min(rawStart, game.duration_ms - 5_000));
+      const clipEndMs = Math.max(
+        clipStartMs + 5_000,
+        Math.min(rawEnd, game.duration_ms),
+      );
+      const allowedPresets = new Set<ClipExportPreset>(["horizontal", "vertical", "discord"]);
+      const requestedPresets = Array.isArray(scenario.export_presets)
+        ? scenario.export_presets.filter(
+            (preset): preset is ClipExportPreset =>
+              typeof preset === "string" && allowedPresets.has(preset as ClipExportPreset),
+          )
+        : ["horizontal" as const];
+      const presets = requestedPresets.length > 0 ? requestedPresets : ["horizontal" as const];
+      const requestedMusicMode =
+        typeof scenario.music_mode === "string"
+          ? scenario.music_mode
+          : Array.isArray(scenario.music_modes)
+            ? scenario.music_modes[0]
+            : undefined;
+      const requestedGainMode =
+        typeof scenario.gain_mode === "string"
+          ? scenario.gain_mode
+          : Array.isArray(scenario.gain_modes)
+            ? scenario.gain_modes[0]
+            : undefined;
+      const useBuiltInMusic = requestedMusicMode === "built_in";
+      const gameAudioVolume = requestedGainMode === "non_unity" ? 0.8 : 1;
+      const builtInFilename =
+        typeof scenario.built_in_music_filename === "string"
+          ? scenario.built_in_music_filename
+          : "momentum.mp3";
+      observer.emit(
+        "export_requested",
+        {
+          fixture_alias: fixture.alias,
+          clip_start_ms: clipStartMs,
+          clip_end_ms: clipEndMs,
+          presets,
+          music_mode: useBuiltInMusic ? "built_in" : "none",
+          game_audio_volume: gameAudioVolume,
+          benchmark_scope: "backend_command",
+          ui_workflow_included: false,
+        },
+        { actionId, required: true },
+      );
+      const result = await exportClip(
+        {
+          game_timestamp: fixture.game_timestamp,
+          clip_start_ms: clipStartMs,
+          clip_end_ms: clipEndMs,
+          presets,
+          vertical_focus: 0.72,
+          vertical_position: 0.5,
+          music: useBuiltInMusic
+            ? { kind: "builtin", filename: builtInFilename }
+            : { kind: "none" },
+          game_audio_volume: gameAudioVolume,
+          music_volume: 1,
+        },
+        (progress) =>
+          observer.emit(
+            "export_progress",
+            {
+              stage: progress.stage,
+              percent: progress.percent,
+              preset: progress.preset,
+              completed_outputs: progress.completed_outputs,
+              total_outputs: progress.total_outputs,
+            },
+            { actionId },
+          ),
+      );
+      observer.emit(
+        "export_completed",
+        {
+          elapsed_ms: result.elapsed_ms,
+          setup_elapsed_ms: result.setup_elapsed_ms,
+          source_probe_elapsed_ms: result.source_probe_elapsed_ms,
+          source_probe_strategy: result.source_probe_strategy,
+          finalize_elapsed_ms: result.finalize_elapsed_ms,
+          total_file_size_bytes: result.total_file_size_bytes,
+          throughput_bytes_per_second:
+            result.elapsed_ms > 0
+              ? (result.total_file_size_bytes * 1_000) / result.elapsed_ms
+              : null,
+          outputs: result.outputs,
+          strategy: "full_reencode",
+          copy_strategy: "not_implemented",
+          hybrid_strategy: "not_implemented",
+          benchmark_scope: "backend_command",
+          ui_workflow_included: false,
+        },
+        { actionId, required: true },
+      );
+      observer.emit("scenario_completed", { kind: scenario.kind }, { required: true });
+      await observer.complete("complete", null, { output_count: result.outputs.length });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      observer.emit(
+        "action_failed",
+        { action_kind: "export", benchmark_scope: "backend_command", reason },
+        { actionId, required: true },
+      );
+      observer.emit("scenario_failed", { reason }, { required: true });
+      await observer.complete("failed", reason);
+    }
+  };
+
+  const beginBenchmarkScenario = (
+    observer: ReplayBenchmarkObserver,
+    scenario: BenchmarkScenario,
+  ) => {
+    if (benchmarkNavigationStarted || benchmarkFailureStarted) return;
+    benchmarkNavigationStarted = true;
+    observer.emit("scenario_started", { kind: scenario.kind }, { required: true });
+    if (scenario.kind === "app_idle") {
+      const requested =
+        scenario.parameters?.duration_ms ??
+        (typeof scenario.idle_seconds === "number" ? scenario.idle_seconds * 1_000 : undefined);
+      const durationMs =
+        typeof requested === "number" && Number.isFinite(requested)
+          ? Math.min(600_000, Math.max(1_000, requested))
+          : 60_000;
+      benchmarkScenarioTimer = window.setTimeout(() => {
+        benchmarkScenarioTimer = undefined;
+        observer.emit("scenario_completed", { kind: scenario.kind }, { required: true });
+        void observer.complete("complete", null, { duration_ms: durationMs });
+      }, durationMs);
+      return;
+    }
+    const fixture = observer.fixtureForScenario();
+    if (!fixture) {
+      observer.emit("scenario_failed", { reason: "fixture_not_found" }, { required: true });
+      void observer.complete("failed", "scenario fixture was not declared");
+      return;
+    }
+    if (
+      String(fixture.codec ?? "").toLowerCase() === "hevc" &&
+      benchmarkHevcCapability()?.supported !== true
+    ) {
+      const reason = "HEVC playback is unsupported by the benchmark WebView environment";
+      benchmarkFailureStarted = true;
+      observer.emit(
+        "scenario_failed",
+        { phase: "media_capability", reason },
+        { required: true },
+      );
+      void observer.complete("failed", reason, { phase: "media_capability" });
+      return;
+    }
+    if (scenario.kind === "export") {
+      void runBenchmarkExport(observer, scenario, fixture);
+      return;
+    }
+    observer.emit(
+      "replay_requested",
+      { fixture_alias: fixture.alias },
+      { required: true },
+    );
+    setNavigation({ screen: "viewer", gameTimestamp: fixture.game_timestamp });
+  };
+
   createEffect(() => {
     const current = navigation();
     if (current.screen !== "library") return;
@@ -207,10 +414,76 @@ function App() {
     }
   });
 
+  createEffect(() => {
+    const observer = benchmarkObserver();
+    if (!observer) return;
+    const error = loadError();
+    if (error) {
+      if (!benchmarkFailureStarted) {
+        benchmarkFailureStarted = true;
+        const reason = error instanceof Error ? error.message : String(error);
+        observer.emit("scenario_failed", { phase: "library_load", reason }, { required: true });
+        void observer.complete("failed", reason, { phase: "library_load" });
+      }
+      return;
+    }
+    if (loading()) return;
+    const hevcCapability = benchmarkHevcCapability();
+    if (!hevcCapability) return;
+    if (!benchmarkHevcCapabilityEmitted) {
+      benchmarkHevcCapabilityEmitted = true;
+      observer.emit(
+        "hevc_capability",
+        { tested: hevcCapability.tested, supported: hevcCapability.supported },
+        { required: true },
+      );
+    }
+    if (!hevcCapability.tested) {
+      if (!benchmarkFailureStarted) {
+        benchmarkFailureStarted = true;
+        const reason = "HEVC capability probe did not produce an authoritative result";
+        observer.emit(
+          "scenario_failed",
+          { phase: "hevc_capability", reason },
+          { required: true },
+        );
+        void observer.complete("failed", reason, { phase: "hevc_capability" });
+      }
+      return;
+    }
+    if (!benchmarkLibraryUsefulEmitted) {
+      benchmarkLibraryUsefulEmitted = true;
+      benchmarkUsefulFrame = window.requestAnimationFrame(() => {
+        benchmarkUsefulFrame = undefined;
+        benchmarkUsefulPaintFrame = window.requestAnimationFrame(() => {
+          benchmarkUsefulPaintFrame = undefined;
+          observer.emit(
+            "library_useful",
+            {
+              game_count: games()?.length ?? 0,
+              clip_count: clips()?.length ?? 0,
+              after_library_paint: true,
+            },
+            { required: true },
+          );
+          beginBenchmarkScenario(observer, observer.scenario());
+        });
+      });
+      return;
+    }
+    beginBenchmarkScenario(observer, observer.scenario());
+  });
+
   onMount(() => {
     void ensureHevcCapability()
-      .then(() => refetchSettings())
-      .catch(showError);
+      .then((status) => {
+        setBenchmarkHevcCapability(status);
+        return refetchSettings();
+      })
+      .catch((error) => {
+        setBenchmarkHevcCapability({ tested: false, supported: false, probe_url: "" });
+        showError(error);
+      });
 
     const pollAssets = window.setInterval(async () => {
       const status = await refetchDdragon();
@@ -223,21 +496,90 @@ function App() {
       }
     }, 700);
 
-    onCleanup(() => window.clearInterval(pollAssets));
+    const onBenchmarkViewerCycle = () => {
+      const observer = benchmarkObserver();
+      if (!observer) return;
+      const scenario = observer.scenario();
+      benchmarkViewerCycles += 1;
+      const requestedIterations = scenario.iterations;
+      const iterations =
+        typeof requestedIterations === "number" && Number.isSafeInteger(requestedIterations)
+          ? Math.min(10_000, Math.max(1, requestedIterations))
+          : scenario.kind === "warm_open"
+            ? 6
+            : 20;
+      if (benchmarkViewerCycles >= iterations) {
+        const completeCycles = () => {
+          observer.emit(
+            "scenario_completed",
+            { kind: scenario.kind, viewer_cycles: benchmarkViewerCycles },
+            { required: true },
+          );
+          void observer.complete("complete", null, { viewer_cycles: benchmarkViewerCycles });
+        };
+        if (scenario.kind === "lifecycle") {
+          observer.emit(
+            "viewer_close_requested",
+            { completed_cycles: benchmarkViewerCycles },
+            { required: true },
+          );
+          setNavigation({ screen: "library", tab: "games" });
+          benchmarkReopenTimer = window.setTimeout(() => {
+            benchmarkReopenTimer = undefined;
+            completeCycles();
+          }, 0);
+        } else {
+          completeCycles();
+        }
+        return;
+      }
+      const nextFixture = observer.fixtureForScenario(benchmarkViewerCycles);
+      if (!nextFixture) {
+        void observer.complete("failed", "viewer cycle fixture is unavailable");
+        return;
+      }
+      if (
+        String(nextFixture.codec ?? "").toLowerCase() === "hevc" &&
+        benchmarkHevcCapability()?.supported !== true
+      ) {
+        const reason = "HEVC playback is unsupported by the benchmark WebView environment";
+        observer.emit(
+          "scenario_failed",
+          { phase: "media_capability", reason },
+          { required: true },
+        );
+        void observer.complete("failed", reason, { phase: "media_capability" });
+        return;
+      }
+      observer.emit(
+        "viewer_reopen_requested",
+        { completed_cycles: benchmarkViewerCycles, expected_cycles: iterations },
+        { required: true },
+      );
+      setNavigation({ screen: "library", tab: "games" });
+      benchmarkReopenTimer = window.setTimeout(() => {
+        benchmarkReopenTimer = undefined;
+        setNavigation({ screen: "viewer", gameTimestamp: nextFixture.game_timestamp });
+      }, 100);
+    };
+    window.addEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
+
+    onCleanup(() => {
+      window.clearInterval(pollAssets);
+      window.removeEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
+    });
   });
 
   onCleanup(() => {
     if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
+    if (benchmarkReopenTimer !== undefined) window.clearTimeout(benchmarkReopenTimer);
+    if (benchmarkScenarioTimer !== undefined) window.clearTimeout(benchmarkScenarioTimer);
+    if (benchmarkUsefulFrame !== undefined) window.cancelAnimationFrame(benchmarkUsefulFrame);
+    if (benchmarkUsefulPaintFrame !== undefined) {
+      window.cancelAnimationFrame(benchmarkUsefulPaintFrame);
+    }
   });
 
-  const loading = createMemo(
-    () =>
-      (games() === undefined && games.loading) ||
-      (clips() === undefined && clips.loading) ||
-      (usage() === undefined && usage.loading) ||
-      (settings() === undefined && settings.loading),
-  );
-  const loadError = createMemo(() => games.error ?? clips.error ?? usage.error ?? settings.error);
   const returnState = (state: NavigationState): ReturnNavigationState =>
     state.screen === "settings" ? state.returnTo : state;
 

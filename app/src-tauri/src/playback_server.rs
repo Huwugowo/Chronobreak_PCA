@@ -1,10 +1,11 @@
+use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context as TaskContext, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -27,6 +28,7 @@ use crate::library::{valid_clip_asset, valid_game_id};
 use crate::music;
 
 const HEVC_PROBE: &[u8] = include_bytes!("../resources/hevc-probe.mp4");
+const BENCHMARK_REQUEST_CAPACITY: usize = 4096;
 
 #[derive(Debug, Default)]
 pub struct PlaybackMetrics {
@@ -55,6 +57,310 @@ impl PlaybackMetrics {
             completed_streams: self.completed_streams.load(Ordering::Relaxed),
             cancelled_streams: self.cancelled_streams.load(Ordering::Relaxed),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteClass {
+    GameVideo,
+    Clip,
+    BuiltInMusic,
+    ImportedMusic,
+    HevcProbe,
+    Ddragon,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestLifecycle {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub scenario_id: String,
+    pub trial_id: String,
+    pub monotonic_ms: f64,
+    pub source: String,
+    pub kind: String,
+    pub request_id: u64,
+    pub route_class: RouteClass,
+    pub method: String,
+    pub status: u16,
+    pub range_start: Option<u64>,
+    pub range_end: Option<u64>,
+    pub declared_bytes: u64,
+    pub delivered_bytes: u64,
+    pub started_ms: f64,
+    pub first_byte_ms: Option<f64>,
+    pub completed_ms: f64,
+    pub outcome: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestTelemetrySnapshot {
+    pub capacity: u64,
+    pub high_water_mark: u64,
+    pub overwritten_records: u64,
+    pub active_streams: u64,
+    pub peak_active_streams: u64,
+    pub pending_records: u64,
+    pub requests: Vec<RequestLifecycle>,
+}
+
+#[derive(Debug, Default)]
+struct RequestBuffer {
+    records: VecDeque<RequestLifecycle>,
+    high_water_mark: u64,
+}
+
+#[derive(Debug)]
+pub struct BenchmarkRequestTelemetry {
+    run_id: String,
+    scenario_id: String,
+    trial_id: String,
+    monotonic_offset_ms: f64,
+    started_at: Instant,
+    next_request_id: AtomicU64,
+    active_streams: AtomicU64,
+    peak_active_streams: AtomicU64,
+    overwritten_records: AtomicU64,
+    buffer: Mutex<RequestBuffer>,
+}
+
+impl BenchmarkRequestTelemetry {
+    pub fn new(
+        run_id: String,
+        scenario_id: String,
+        trial_id: String,
+        monotonic_offset_ms: f64,
+    ) -> Self {
+        Self {
+            run_id,
+            scenario_id,
+            trial_id,
+            monotonic_offset_ms,
+            started_at: Instant::now(),
+            next_request_id: AtomicU64::new(1),
+            active_streams: AtomicU64::new(0),
+            peak_active_streams: AtomicU64::new(0),
+            overwritten_records: AtomicU64::new(0),
+            buffer: Mutex::new(RequestBuffer::default()),
+        }
+    }
+
+    fn elapsed_ms(&self) -> f64 {
+        self.monotonic_offset_ms + self.started_at.elapsed().as_secs_f64() * 1_000.0
+    }
+
+    fn begin(self: &Arc<Self>, route_class: RouteClass, method: &Method) -> PendingRequest {
+        let active = self.active_streams.fetch_add(1, Ordering::Relaxed) + 1;
+        self.peak_active_streams
+            .fetch_max(active, Ordering::Relaxed);
+        PendingRequest {
+            telemetry: Arc::clone(self),
+            request_id: self.next_request_id.fetch_add(1, Ordering::Relaxed),
+            route_class,
+            method: method.as_str().to_owned(),
+            started_ms: self.elapsed_ms(),
+            finished: false,
+        }
+    }
+
+    fn push(&self, record: RequestLifecycle) {
+        let mut buffer = self
+            .buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if buffer.records.len() == BENCHMARK_REQUEST_CAPACITY {
+            buffer.records.pop_front();
+            self.overwritten_records.fetch_add(1, Ordering::Relaxed);
+        }
+        buffer.records.push_back(record);
+        buffer.high_water_mark = buffer.high_water_mark.max(buffer.records.len() as u64);
+    }
+
+    pub fn take(&self, maximum: usize) -> RequestTelemetrySnapshot {
+        let mut buffer = self
+            .buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = maximum.min(buffer.records.len());
+        let requests = buffer.records.drain(..count).collect::<Vec<_>>();
+        RequestTelemetrySnapshot {
+            capacity: BENCHMARK_REQUEST_CAPACITY as u64,
+            high_water_mark: buffer.high_water_mark,
+            overwritten_records: self.overwritten_records.load(Ordering::Relaxed),
+            active_streams: self.active_streams.load(Ordering::Relaxed),
+            peak_active_streams: self.peak_active_streams.load(Ordering::Relaxed),
+            pending_records: buffer.records.len() as u64,
+            requests,
+        }
+    }
+}
+
+struct PendingRequest {
+    telemetry: Arc<BenchmarkRequestTelemetry>,
+    request_id: u64,
+    route_class: RouteClass,
+    method: String,
+    started_ms: f64,
+    finished: bool,
+}
+
+impl PendingRequest {
+    fn finish(
+        mut self,
+        status: StatusCode,
+        range: Option<(u64, u64)>,
+        declared_bytes: u64,
+        delivered_bytes: u64,
+        first_byte: bool,
+        outcome: &str,
+    ) {
+        let completed_ms = self.telemetry.elapsed_ms();
+        self.telemetry.push(RequestLifecycle {
+            schema_version: 1,
+            run_id: self.telemetry.run_id.clone(),
+            scenario_id: self.telemetry.scenario_id.clone(),
+            trial_id: self.telemetry.trial_id.clone(),
+            monotonic_ms: completed_ms,
+            source: "server".to_owned(),
+            kind: "request_lifecycle".to_owned(),
+            request_id: self.request_id,
+            route_class: self.route_class,
+            method: self.method.clone(),
+            status: status.as_u16(),
+            range_start: range.map(|(start, _)| start),
+            range_end: range.map(|(_, end)| end),
+            declared_bytes,
+            delivered_bytes,
+            started_ms: self.started_ms,
+            first_byte_ms: first_byte.then_some(completed_ms),
+            completed_ms,
+            outcome: outcome.to_owned(),
+        });
+        self.finished = true;
+        self.telemetry
+            .active_streams
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+
+    fn stream(
+        mut self,
+        status: StatusCode,
+        range: (u64, u64),
+        declared_bytes: u64,
+    ) -> RequestTracker {
+        self.finished = true;
+        RequestTracker {
+            telemetry: Arc::clone(&self.telemetry),
+            request_id: self.request_id,
+            route_class: self.route_class,
+            method: self.method.clone(),
+            status,
+            range,
+            declared_bytes,
+            delivered_bytes: 0,
+            started_ms: self.started_ms,
+            first_byte_ms: None,
+            finished: false,
+        }
+    }
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let completed_ms = self.telemetry.elapsed_ms();
+        self.telemetry.push(RequestLifecycle {
+            schema_version: 1,
+            run_id: self.telemetry.run_id.clone(),
+            scenario_id: self.telemetry.scenario_id.clone(),
+            trial_id: self.telemetry.trial_id.clone(),
+            monotonic_ms: completed_ms,
+            source: "server".to_owned(),
+            kind: "request_lifecycle".to_owned(),
+            request_id: self.request_id,
+            route_class: self.route_class,
+            method: self.method.clone(),
+            status: 499,
+            range_start: None,
+            range_end: None,
+            declared_bytes: 0,
+            delivered_bytes: 0,
+            started_ms: self.started_ms,
+            first_byte_ms: None,
+            completed_ms,
+            outcome: "cancelled".to_owned(),
+        });
+        self.telemetry
+            .active_streams
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+struct RequestTracker {
+    telemetry: Arc<BenchmarkRequestTelemetry>,
+    request_id: u64,
+    route_class: RouteClass,
+    method: String,
+    status: StatusCode,
+    range: (u64, u64),
+    declared_bytes: u64,
+    delivered_bytes: u64,
+    started_ms: f64,
+    first_byte_ms: Option<f64>,
+    finished: bool,
+}
+
+impl RequestTracker {
+    fn observe(&mut self, bytes: u64) {
+        if bytes > 0 && self.first_byte_ms.is_none() {
+            self.first_byte_ms = Some(self.telemetry.elapsed_ms());
+        }
+        self.delivered_bytes = self.delivered_bytes.saturating_add(bytes);
+    }
+
+    fn complete(&mut self) {
+        self.finish("completed");
+    }
+
+    fn finish(&mut self, outcome: &str) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        let completed_ms = self.telemetry.elapsed_ms();
+        self.telemetry.push(RequestLifecycle {
+            schema_version: 1,
+            run_id: self.telemetry.run_id.clone(),
+            scenario_id: self.telemetry.scenario_id.clone(),
+            trial_id: self.telemetry.trial_id.clone(),
+            monotonic_ms: completed_ms,
+            source: "server".to_owned(),
+            kind: "request_lifecycle".to_owned(),
+            request_id: self.request_id,
+            route_class: self.route_class,
+            method: self.method.clone(),
+            status: self.status.as_u16(),
+            range_start: Some(self.range.0),
+            range_end: Some(self.range.1),
+            declared_bytes: self.declared_bytes,
+            delivered_bytes: self.delivered_bytes,
+            started_ms: self.started_ms,
+            first_byte_ms: self.first_byte_ms,
+            completed_ms,
+            outcome: outcome.to_owned(),
+        });
+        self.telemetry
+            .active_streams
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl Drop for RequestTracker {
+    fn drop(&mut self) {
+        self.finish("cancelled");
     }
 }
 
@@ -114,8 +420,10 @@ impl MediaRoots {
 struct PlaybackState {
     roots: Arc<MediaRoots>,
     metrics: Arc<PlaybackMetrics>,
+    benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
     ddragon_cache: PathBuf,
     ddragon_client: reqwest::Client,
+    allow_ddragon_network: bool,
 }
 
 struct CountingReader<R> {
@@ -124,16 +432,23 @@ struct CountingReader<R> {
     expected_bytes: u64,
     consumed_bytes: u64,
     completed: bool,
+    request: Option<RequestTracker>,
 }
 
 impl<R> CountingReader<R> {
-    fn new(inner: R, metrics: Arc<PlaybackMetrics>, expected_bytes: u64) -> Self {
+    fn new(
+        inner: R,
+        metrics: Arc<PlaybackMetrics>,
+        expected_bytes: u64,
+        request: Option<RequestTracker>,
+    ) -> Self {
         Self {
             inner,
             metrics,
             expected_bytes,
             consumed_bytes: 0,
             completed: false,
+            request,
         }
     }
 }
@@ -147,18 +462,32 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
         let this = self.get_mut();
         let filled_before = buffer.filled().len();
         let result = Pin::new(&mut this.inner).poll_read(context, buffer);
-        if let Poll::Ready(Ok(())) = &result {
-            let bytes_read = buffer.filled().len().saturating_sub(filled_before) as u64;
-            this.metrics
-                .response_bytes
-                .fetch_add(bytes_read, Ordering::Relaxed);
-            this.consumed_bytes = this.consumed_bytes.saturating_add(bytes_read);
-            if !this.completed && this.consumed_bytes >= this.expected_bytes {
-                this.completed = true;
+        match &result {
+            Poll::Ready(Ok(())) => {
+                let bytes_read = buffer.filled().len().saturating_sub(filled_before) as u64;
                 this.metrics
-                    .completed_streams
-                    .fetch_add(1, Ordering::Relaxed);
+                    .response_bytes
+                    .fetch_add(bytes_read, Ordering::Relaxed);
+                this.consumed_bytes = this.consumed_bytes.saturating_add(bytes_read);
+                if let Some(request) = &mut this.request {
+                    request.observe(bytes_read);
+                }
+                if !this.completed && this.consumed_bytes >= this.expected_bytes {
+                    this.completed = true;
+                    this.metrics
+                        .completed_streams
+                        .fetch_add(1, Ordering::Relaxed);
+                    if let Some(request) = &mut this.request {
+                        request.complete();
+                    }
+                }
             }
+            Poll::Ready(Err(_)) => {
+                if let Some(request) = &mut this.request {
+                    request.finish("error");
+                }
+            }
+            Poll::Pending => {}
         }
         result
     }
@@ -178,6 +507,8 @@ pub async fn start(
     roots: Arc<MediaRoots>,
     metrics: Arc<PlaybackMetrics>,
     ddragon_cache: PathBuf,
+    benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
+    allow_ddragon_network: bool,
 ) -> Result<String> {
     let ddragon_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
@@ -186,8 +517,10 @@ pub async fn start(
     let state = PlaybackState {
         roots,
         metrics,
+        benchmark_requests,
         ddragon_cache,
         ddragon_client,
+        allow_ddragon_network,
     };
     let router = Router::new()
         .route("/games/{timestamp}/video.mp4", any(game_video))
@@ -227,7 +560,7 @@ async fn game_video(
         .join("games")
         .join(timestamp)
         .join("video.mp4");
-    serve_file(state, request, &path, "video/mp4").await
+    serve_file(state, request, &path, "video/mp4", RouteClass::GameVideo).await
 }
 
 async fn clip_asset(
@@ -244,11 +577,18 @@ async fn clip_asset(
         "video/mp4"
     };
     let path = state.roots.output_directory().join("clips").join(filename);
-    serve_file(state, request, &path, content_type).await
+    serve_file(state, request, &path, content_type, RouteClass::Clip).await
 }
 
 async fn hevc_probe(State(state): State<PlaybackState>, request: Request<Body>) -> Response<Body> {
-    serve_embedded(state, request, HEVC_PROBE, "video/mp4").await
+    serve_embedded(
+        state,
+        request,
+        HEVC_PROBE,
+        "video/mp4",
+        RouteClass::HevcProbe,
+    )
+    .await
 }
 
 async fn built_in_music(
@@ -259,7 +599,14 @@ async fn built_in_music(
     let Some(bytes) = music::bytes_for(&filename) else {
         return empty_response(StatusCode::NOT_FOUND, "audio/mpeg");
     };
-    serve_embedded(state, request, bytes, "audio/mpeg").await
+    serve_embedded(
+        state,
+        request,
+        bytes,
+        "audio/mpeg",
+        RouteClass::BuiltInMusic,
+    )
+    .await
 }
 
 async fn imported_music_preview(
@@ -281,7 +628,14 @@ async fn imported_music_preview(
         "wav" => "audio/wav",
         _ => return empty_response(StatusCode::NOT_FOUND, "application/octet-stream"),
     };
-    serve_file(state, request, &path, content_type).await
+    serve_file(
+        state,
+        request,
+        &path,
+        content_type,
+        RouteClass::ImportedMusic,
+    )
+    .await
 }
 
 async fn ddragon_asset(
@@ -298,6 +652,7 @@ async fn ddragon_asset(
         &version,
         &kind,
         &asset,
+        state.allow_ddragon_network,
     )
     .await
     {
@@ -307,7 +662,7 @@ async fn ddragon_asset(
             return empty_response(StatusCode::NOT_FOUND, "image/png");
         }
     };
-    let mut response = serve_file(state, request, &path, "image/png").await;
+    let mut response = serve_file(state, request, &path, "image/png", RouteClass::Ddragon).await;
     response.headers_mut().insert(
         CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
@@ -320,13 +675,36 @@ async fn serve_embedded(
     request: Request<Body>,
     bytes: &'static [u8],
     content_type: &'static str,
+    route_class: RouteClass,
 ) -> Response<Body> {
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
+    let pending = state
+        .benchmark_requests
+        .as_ref()
+        .map(|telemetry| telemetry.begin(route_class, request.method()));
     if !valid_method(request.method()) {
+        finish_immediate(
+            pending,
+            StatusCode::METHOD_NOT_ALLOWED,
+            None,
+            0,
+            0,
+            false,
+            "error",
+        );
         return empty_response(StatusCode::METHOD_NOT_ALLOWED, content_type);
     }
     let total_length = bytes.len() as u64;
     let Some((status, start, end)) = response_range(&state, &request, total_length) else {
+        finish_immediate(
+            pending,
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            None,
+            0,
+            0,
+            false,
+            "error",
+        );
         return range_not_satisfiable(total_length, content_type);
     };
     let response_length = end - start + 1;
@@ -339,6 +717,20 @@ async fn serve_embedded(
             .fetch_add(response_length, Ordering::Relaxed);
         Body::from(bytes[start as usize..=end as usize].to_vec())
     };
+    let delivered = if request.method() == Method::HEAD {
+        0
+    } else {
+        response_length
+    };
+    finish_immediate(
+        pending,
+        status,
+        Some((start, end)),
+        response_length,
+        delivered,
+        delivered > 0,
+        "completed",
+    );
     build_response(body, status, start, end, total_length, content_type)
 }
 
@@ -347,42 +739,117 @@ async fn serve_file(
     request: Request<Body>,
     path: &Path,
     content_type: &'static str,
+    route_class: RouteClass,
 ) -> Response<Body> {
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
+    let pending = state
+        .benchmark_requests
+        .as_ref()
+        .map(|telemetry| telemetry.begin(route_class, request.method()));
     if !valid_method(request.method()) {
+        finish_immediate(
+            pending,
+            StatusCode::METHOD_NOT_ALLOWED,
+            None,
+            0,
+            0,
+            false,
+            "error",
+        );
         return empty_response(StatusCode::METHOD_NOT_ALLOWED, content_type);
     }
 
     let Ok(mut file) = File::open(path).await else {
+        finish_immediate(pending, StatusCode::NOT_FOUND, None, 0, 0, false, "error");
         return empty_response(StatusCode::NOT_FOUND, content_type);
     };
     let Ok(metadata) = file.metadata().await else {
+        finish_immediate(
+            pending,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+            0,
+            0,
+            false,
+            "error",
+        );
         return empty_response(StatusCode::INTERNAL_SERVER_ERROR, content_type);
     };
     let total_length = metadata.len();
     if total_length == 0 {
+        finish_immediate(pending, StatusCode::OK, None, 0, 0, false, "completed");
         return build_empty_file_response(content_type);
     }
     let Some((status, start, end)) = response_range(&state, &request, total_length) else {
+        finish_immediate(
+            pending,
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            None,
+            0,
+            0,
+            false,
+            "error",
+        );
         return range_not_satisfiable(total_length, content_type);
     };
     let response_length = end - start + 1;
 
     if start > 0 && file.seek(SeekFrom::Start(start)).await.is_err() {
+        finish_immediate(
+            pending,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Some((start, end)),
+            response_length,
+            0,
+            false,
+            "error",
+        );
         return empty_response(StatusCode::INTERNAL_SERVER_ERROR, content_type);
     }
 
     let body = if request.method() == Method::HEAD {
+        finish_immediate(
+            pending,
+            status,
+            Some((start, end)),
+            response_length,
+            0,
+            false,
+            "completed",
+        );
         Body::empty()
     } else {
+        let request = pending.map(|pending| pending.stream(status, (start, end), response_length));
         let reader = CountingReader::new(
             file.take(response_length),
             Arc::clone(&state.metrics),
             response_length,
+            request,
         );
         Body::from_stream(ReaderStream::new(reader))
     };
     build_response(body, status, start, end, total_length, content_type)
+}
+
+fn finish_immediate(
+    pending: Option<PendingRequest>,
+    status: StatusCode,
+    range: Option<(u64, u64)>,
+    declared_bytes: u64,
+    delivered_bytes: u64,
+    first_byte: bool,
+    outcome: &str,
+) {
+    if let Some(pending) = pending {
+        pending.finish(
+            status,
+            range,
+            declared_bytes,
+            delivered_bytes,
+            first_byte,
+            outcome,
+        );
+    }
 }
 
 fn response_range(
@@ -537,8 +1004,10 @@ mod tests {
         let state = PlaybackState {
             roots: Arc::new(MediaRoots::new(directory.path().to_path_buf())),
             metrics: Arc::new(PlaybackMetrics::default()),
+            benchmark_requests: None,
             ddragon_cache: directory.path().join("ddragon"),
             ddragon_client: reqwest::Client::new(),
+            allow_ddragon_network: true,
         };
         let request = || Request::builder().body(Body::empty()).unwrap();
 
@@ -560,10 +1029,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn head_request_declares_the_file_without_claiming_body_delivery() {
+        let directory = tempfile::tempdir().unwrap();
+        let game_directory = directory.path().join("games").join("1786000000-1");
+        std::fs::create_dir_all(&game_directory).unwrap();
+        std::fs::write(game_directory.join("video.mp4"), b"video").unwrap();
+        let telemetry = Arc::new(BenchmarkRequestTelemetry::new(
+            "run-1".to_owned(),
+            "cold-open".to_owned(),
+            "trial-1".to_owned(),
+            0.0,
+        ));
+        let state = PlaybackState {
+            roots: Arc::new(MediaRoots::new(directory.path().to_path_buf())),
+            metrics: Arc::new(PlaybackMetrics::default()),
+            benchmark_requests: Some(Arc::clone(&telemetry)),
+            ddragon_cache: directory.path().join("ddragon"),
+            ddragon_client: reqwest::Client::new(),
+            allow_ddragon_network: true,
+        };
+        let request = Request::builder()
+            .method(Method::HEAD)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = game_video(State(state), AxumPath("1786000000-1".to_owned()), request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CONTENT_LENGTH], "5");
+        let snapshot = telemetry.take(1);
+        assert_eq!(snapshot.active_streams, 0);
+        assert_eq!(snapshot.requests.len(), 1);
+        let request = &snapshot.requests[0];
+        assert_eq!(request.method, "HEAD");
+        assert_eq!(request.declared_bytes, 5);
+        assert_eq!(request.delivered_bytes, 0);
+        assert_eq!(request.outcome, "completed");
+        assert!(request.first_byte_ms.is_none());
+    }
+
+    #[tokio::test]
     async fn counts_only_bytes_consumed_from_a_response() {
         let metrics = Arc::new(PlaybackMetrics::default());
         let source = tokio::io::repeat(7).take(16);
-        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 16);
+        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 16, None);
         let mut consumed = [0_u8; 6];
 
         reader.read_exact(&mut consumed).await.unwrap();
@@ -577,12 +1086,63 @@ mod tests {
     async fn counts_completed_streams() {
         let metrics = Arc::new(PlaybackMetrics::default());
         let source = tokio::io::repeat(7).take(8);
-        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 8);
+        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 8, None);
         let mut consumed = [0_u8; 8];
 
         reader.read_exact(&mut consumed).await.unwrap();
 
         assert_eq!(metrics.snapshot().completed_streams, 1);
         assert_eq!(metrics.snapshot().cancelled_streams, 0);
+    }
+
+    #[tokio::test]
+    async fn benchmark_request_telemetry_reconciles_a_completed_stream() {
+        let telemetry = Arc::new(BenchmarkRequestTelemetry::new(
+            "run-1".to_owned(),
+            "seek".to_owned(),
+            "trial-1".to_owned(),
+            25.0,
+        ));
+        let pending = telemetry.begin(RouteClass::GameVideo, &Method::GET);
+        let tracker = pending.stream(StatusCode::PARTIAL_CONTENT, (10, 13), 4);
+        let metrics = Arc::new(PlaybackMetrics::default());
+        let source = tokio::io::repeat(7).take(4);
+        let mut reader = CountingReader::new(source, metrics, 4, Some(tracker));
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        drop(reader);
+
+        let snapshot = telemetry.take(128);
+        assert_eq!(snapshot.active_streams, 0);
+        assert_eq!(snapshot.peak_active_streams, 1);
+        assert_eq!(snapshot.overwritten_records, 0);
+        assert_eq!(snapshot.requests.len(), 1);
+        let request = &snapshot.requests[0];
+        assert_eq!(request.run_id, "run-1");
+        assert_eq!(request.scenario_id, "seek");
+        assert_eq!(request.trial_id, "trial-1");
+        assert_eq!(request.route_class, RouteClass::GameVideo);
+        assert_eq!(request.delivered_bytes, 4);
+        assert_eq!(request.outcome, "completed");
+        assert!(request.first_byte_ms.is_some());
+        assert!(request.completed_ms >= request.started_ms);
+    }
+
+    #[test]
+    fn benchmark_request_cancelled_before_response_is_not_reported_as_an_error() {
+        let telemetry = Arc::new(BenchmarkRequestTelemetry::new(
+            "run-1".to_owned(),
+            "seek".to_owned(),
+            "trial-1".to_owned(),
+            0.0,
+        ));
+
+        drop(telemetry.begin(RouteClass::GameVideo, &Method::GET));
+
+        let snapshot = telemetry.take(1);
+        assert_eq!(snapshot.active_streams, 0);
+        assert_eq!(snapshot.requests.len(), 1);
+        assert_eq!(snapshot.requests[0].status, 499);
+        assert_eq!(snapshot.requests[0].outcome, "cancelled");
     }
 }

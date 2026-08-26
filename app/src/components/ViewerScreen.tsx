@@ -14,6 +14,15 @@ import {
   loadPlaybackProbe,
   loadServerMetrics,
 } from "../api";
+import {
+  buildScenarioActions,
+  emitReplayBenchmarkEvent,
+  isCurrentMediaGeneration,
+  isLatestBenchmarkAction,
+  REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
+  replayBenchmarkObserver,
+  type ScenarioAction,
+} from "../benchmark";
 import { formatBytes, formatDate, formatDuration } from "../format";
 import type {
   ClipDraft,
@@ -62,13 +71,23 @@ type SeekReason =
   | "endpoint-edit"
   | "clip-preview"
   | "clip-loop"
-  | "recovery";
+  | "recovery"
+  | "event-jump"
+  | "benchmark";
 
 type ScheduledSeek = {
   generation: number;
   targetMs: number;
   reason: SeekReason;
   playAfter: boolean;
+  benchmark?: {
+    actionId: string;
+    requestedAtMs: number;
+    fromMs: number;
+    settle: () => void;
+    cancelled: boolean;
+    onDispatch?: () => void;
+  };
 };
 
 type MediaDiagnosticEvent = {
@@ -89,10 +108,39 @@ type EndpointHoldState = {
 const ENDPOINT_HOLD_THRESHOLD_MS = 200;
 const SEEK_INTERVAL_MS = 100;
 const SEEK_TIMEOUT_MS = 1_500;
+const BENCHMARK_MEDIA_READY_TIMEOUT_MS = 30_000;
 const MAX_DIAGNOSTIC_EVENTS = 50;
+const UNTRACKED_SEEK_COMPLETION = Promise.resolve();
 
 function ViewerScreen(props: Props) {
   const [probe] = createResource(() => props.gameTimestamp, loadPlaybackProbe);
+  let payloadReported = false;
+  let failureReported = false;
+
+  createEffect(() => {
+    const loaded = probe();
+    if (!loaded || payloadReported) return;
+    payloadReported = true;
+    emitReplayBenchmarkEvent(
+      "playback_payload_ready",
+      {
+        event_count: loaded.events.length,
+        participant_count: loaded.participants.length,
+        duration_ms: loaded.game.duration_ms,
+      },
+      { required: true },
+    );
+  });
+
+  createEffect(() => {
+    const error = probe.error;
+    const observer = replayBenchmarkObserver();
+    if (!error || !observer || failureReported) return;
+    failureReported = true;
+    const reason = error instanceof Error ? error.message : String(error);
+    observer.emit("scenario_failed", { phase: "playback_probe", reason }, { required: true });
+    void observer.complete("failed", reason, { phase: "playback_probe" });
+  });
 
   return (
     <div class={styles.viewerScreen}>
@@ -133,9 +181,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   let seekDispatchTimerId: number | undefined;
   let seekTimeoutId: number | undefined;
   let recoveryTimerId: number | undefined;
+  let benchmarkMediaReadyTimerId: number | undefined;
   let frameSampleStartedAt = performance.now();
   let lastSeekDispatchedAt = Number.NEGATIVE_INFINITY;
-  let mediaGeneration = 0;
+  let mediaGeneration = replayBenchmarkObserver()?.nextMediaGeneration() ?? 0;
   let recoveryTargetMs = 0;
   let inFlightSeek: ScheduledSeek | undefined;
   let pendingSeek: ScheduledSeek | undefined;
@@ -144,6 +193,16 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   let disposed = false;
   let clipLoopSeekPending = false;
   let endpointHold: EndpointHoldState | undefined;
+  let pendingBenchmarkPlayActionId: string | undefined;
+  let pendingBenchmarkPauseActionId: string | undefined;
+  let latestBenchmarkSeekActionId: string | undefined;
+  let awaitingPresentedSeek: ScheduledSeek | undefined;
+  let firstPresentedGeneration = -1;
+  let canPlayGeneration = -1;
+  let benchmarkScenarioStarted = false;
+  let benchmarkScenarioFinished = false;
+  let benchmarkEndpointSequence = 0;
+  const benchmarkAbortController = new AbortController();
 
   const events = [...props.probe.events].sort(
     (left, right) => left.video_time_ms - right.video_time_ms,
@@ -264,6 +323,55 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     }
   };
 
+  const observePresentedFrame = (presentedTimeMs: number) => {
+    if (firstPresentedGeneration !== mediaGeneration) {
+      firstPresentedGeneration = mediaGeneration;
+      emitReplayBenchmarkEvent(
+        "first_presented_frame",
+        {
+          media_time_ms: presentedTimeMs,
+          ready_state: video.readyState,
+          presentation_clock: clockSource(),
+          authoritative: typeof video.requestVideoFrameCallback === "function",
+        },
+        { generation: mediaGeneration, required: true },
+      );
+      queueMicrotask(() => void runBenchmarkScenario());
+    }
+    const completed = awaitingPresentedSeek;
+    const benchmark = completed?.benchmark;
+    if (
+      completed &&
+      benchmark &&
+      isCurrentMediaGeneration(completed.generation, mediaGeneration) &&
+      isLatestBenchmarkAction(
+        benchmark.actionId,
+        latestBenchmarkSeekActionId,
+        benchmark.cancelled,
+      )
+    ) {
+      awaitingPresentedSeek = undefined;
+      emitReplayBenchmarkEvent(
+        "seek_presented",
+        {
+          target_ms: completed.targetMs,
+          presented_media_time_ms: presentedTimeMs,
+          target_error_ms: presentedTimeMs - completed.targetMs,
+          request_to_presented_ms: performance.now() - benchmark.requestedAtMs,
+          reason: completed.reason,
+          presentation_clock: clockSource(),
+          authoritative: typeof video.requestVideoFrameCallback === "function",
+        },
+        {
+          generation: completed.generation,
+          actionId: benchmark.actionId,
+          required: true,
+        },
+      );
+      benchmark.settle();
+    }
+  };
+
   const syncPresentedTime = (presentedTimeMs: number) => {
     if (editingEndpoint()) return;
     const range = clipRange();
@@ -283,14 +391,20 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
   const onVideoFrame: VideoFrameRequestCallback = (_now, frame) => {
     if (disposed) return;
-    syncPresentedTime(frame.mediaTime * 1_000);
+    const presentedTimeMs = frame.mediaTime * 1_000;
+    observePresentedFrame(presentedTimeMs);
+    syncPresentedTime(presentedTimeMs);
     sampleFrame();
     frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
   };
 
   const onAnimationFrame = () => {
     animationFrameId = undefined;
-    syncPresentedTime(video.currentTime * 1_000);
+    const presentedTimeMs = video.currentTime * 1_000;
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      observePresentedFrame(presentedTimeMs);
+    }
+    syncPresentedTime(presentedTimeMs);
     sampleFrame();
     if (!video.paused) animationFrameId = requestAnimationFrame(onAnimationFrame);
   };
@@ -358,8 +472,13 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const resetSeekScheduler = () => {
     clearSeekDispatchTimer();
     clearSeekTimeout();
+    inFlightSeek?.benchmark?.settle();
+    pendingSeek?.benchmark?.settle();
+    awaitingPresentedSeek?.benchmark?.settle();
     inFlightSeek = undefined;
     pendingSeek = undefined;
+    awaitingPresentedSeek = undefined;
+    latestBenchmarkSeekActionId = undefined;
     clipLoopSeekPending = false;
     setSeekQueueLabel("IDLE");
   };
@@ -375,13 +494,42 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     if (video.error !== null) attemptRecovery(mediaErrorDescription());
   };
 
-  const playNativeVideo = async () => {
-    if (!props.probe.video_url || mediaState() !== "ready") return;
+  const playNativeVideo = async (propagateFailure = false) => {
+    if (!props.probe.video_url || mediaState() !== "ready") {
+      if (propagateFailure) throw new Error("media is not ready for playback");
+      return;
+    }
     try {
       await video.play();
     } catch (error) {
       handlePlayRejection(error);
+      if (propagateFailure) throw error;
     }
+  };
+
+  const cancelBenchmarkSeek = (
+    request: ScheduledSeek | undefined,
+    replacementTargetMs: number,
+    phase: string,
+    kind = "action_cancelled_superseded",
+  ) => {
+    const benchmark = request?.benchmark;
+    if (!request || !benchmark || benchmark.cancelled) return;
+    benchmark.cancelled = true;
+    emitReplayBenchmarkEvent(
+      kind,
+      {
+        phase,
+        target_ms: request.targetMs,
+        replacement_target_ms: replacementTargetMs,
+      },
+      {
+        generation: request.generation,
+        actionId: benchmark.actionId,
+        required: true,
+      },
+    );
+    benchmark.settle();
   };
 
   const dispatchPendingSeek = () => {
@@ -397,10 +545,23 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
     const request = pendingSeek;
     pendingSeek = undefined;
+    const benchmark = request.benchmark;
     const frameToleranceMs = 500 / props.probe.recording_fps;
     if (Math.abs(video.currentTime * 1_000 - request.targetMs) <= frameToleranceMs) {
       addDiagnostic("seek-deduped", `${request.reason}@${request.targetMs.toFixed(1)}`);
+      if (benchmark && !benchmark.cancelled) {
+        emitReplayBenchmarkEvent(
+          "seek_deduped",
+          {
+            target_ms: request.targetMs,
+            actual_media_time_ms: video.currentTime * 1_000,
+            reason: request.reason,
+          },
+          { generation: request.generation, actionId: benchmark.actionId, required: true },
+        );
+      }
       if (request.playAfter && request.generation === mediaGeneration) void playNativeVideo();
+      benchmark?.settle();
       setSeekQueueLabel("IDLE");
       dispatchPendingSeek();
       return;
@@ -410,10 +571,35 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     setSeekQueueLabel("1 ACTIVE");
     lastSeekDispatchedAt = performance.now();
     addDiagnostic("seek-start", `${request.reason}@${request.targetMs.toFixed(1)}`);
+    if (benchmark && !benchmark.cancelled) {
+      const distanceMs = request.targetMs - benchmark.fromMs;
+      emitReplayBenchmarkEvent(
+        "seek_dispatched",
+        {
+          target_ms: request.targetMs,
+          from_ms: benchmark.fromMs,
+          distance_ms: distanceMs,
+          direction: distanceMs < 0 ? "backward" : "forward",
+          distance_class: Math.abs(distanceMs) <= 10_000 ? "near" : "far",
+          request_to_dispatch_ms: performance.now() - benchmark.requestedAtMs,
+          reason: request.reason,
+        },
+        { generation: request.generation, actionId: benchmark.actionId, required: true },
+      );
+    }
     try {
       video.currentTime = request.targetMs / 1_000;
+      benchmark?.onDispatch?.();
     } catch (error) {
       inFlightSeek = undefined;
+      if (benchmark && !benchmark.cancelled) {
+        emitReplayBenchmarkEvent(
+          "action_failed",
+          { phase: "seek_assignment", reason: String(error), target_ms: request.targetMs },
+          { generation: request.generation, actionId: benchmark.actionId, required: true },
+        );
+      }
+      benchmark?.settle();
       addDiagnostic("seek-assignment-failed", String(error));
       attemptRecovery("The local preview rejected a seek request.");
       return;
@@ -423,32 +609,97 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       const timedOut = inFlightSeek;
       if (!timedOut || timedOut.generation !== mediaGeneration) return;
       addDiagnostic("seek-timeout", `${timedOut.reason}@${timedOut.targetMs.toFixed(1)}`);
+      const timedOutBenchmark = timedOut.benchmark;
+      if (timedOutBenchmark && !timedOutBenchmark.cancelled) {
+        emitReplayBenchmarkEvent(
+          "seek_timeout",
+          { target_ms: timedOut.targetMs, reason: timedOut.reason },
+          {
+            generation: timedOut.generation,
+            actionId: timedOutBenchmark.actionId,
+            required: true,
+          },
+        );
+      }
       attemptRecovery(`Preview seek timed out after ${SEEK_TIMEOUT_MS} ms.`);
     }, SEEK_TIMEOUT_MS);
   };
 
   const seekTo = (
     requestedTimeMs: number,
-    options: { reason?: SeekReason; playAfter?: boolean } = {},
-  ) => {
+    options: {
+      reason?: SeekReason;
+      playAfter?: boolean;
+      onBenchmarkDispatch?: () => void;
+    } = {},
+  ): Promise<void> => {
     const range = clipRange();
     const targetTimeMs = range
       ? clamp(requestedTimeMs, range.startMs, range.endMs)
       : clamp(requestedTimeMs, 0, durationMs);
     setVideoTimeMs(targetTimeMs);
-    if (!props.probe.video_url) {
-      setSeekLatencyMs(0);
-      clipLoopSeekPending = false;
-      return;
-    }
-    pendingSeek = {
-      generation: mediaGeneration,
-      targetMs: targetTimeMs,
-      reason: options.reason ?? "navigation",
-      playAfter: options.playAfter ?? false,
+    const reason = options.reason ?? "navigation";
+    const observer = replayBenchmarkObserver();
+
+    const enqueue = (settle?: () => void) => {
+      const benchmark = observer && settle
+        ? {
+            actionId: observer.nextActionId("seek"),
+            requestedAtMs: performance.now(),
+            fromMs: video.currentTime * 1_000,
+            settle,
+            cancelled: false,
+            onDispatch: options.onBenchmarkDispatch,
+          }
+        : undefined;
+      if (benchmark) {
+        latestBenchmarkSeekActionId = benchmark.actionId;
+        emitReplayBenchmarkEvent(
+          "seek_requested",
+          {
+            requested_preview_ms: targetTimeMs,
+            raw_requested_ms: requestedTimeMs,
+            from_ms: benchmark.fromMs,
+            reason,
+          },
+          { generation: mediaGeneration, actionId: benchmark.actionId, required: true },
+        );
+        cancelBenchmarkSeek(inFlightSeek, targetTimeMs, "native_seek_in_flight");
+        cancelBenchmarkSeek(awaitingPresentedSeek, targetTimeMs, "awaiting_presented_frame");
+        if (awaitingPresentedSeek?.benchmark?.cancelled) awaitingPresentedSeek = undefined;
+      }
+      if (!props.probe.video_url) {
+        setSeekLatencyMs(0);
+        clipLoopSeekPending = false;
+        if (benchmark) {
+          emitReplayBenchmarkEvent(
+            "action_failed",
+            { phase: "seek_request", reason: "recording has no playback URL" },
+            { generation: mediaGeneration, actionId: benchmark.actionId, required: true },
+          );
+          benchmark.settle();
+        }
+        return;
+      }
+      if (pendingSeek) {
+        cancelBenchmarkSeek(pendingSeek, targetTimeMs, "pending_dispatch", "seek_pending_replaced");
+      }
+      pendingSeek = {
+        generation: mediaGeneration,
+        targetMs: targetTimeMs,
+        reason,
+        playAfter: options.playAfter ?? false,
+        benchmark,
+      };
+      setSeekQueueLabel(inFlightSeek ? "1 ACTIVE + LATEST" : "1 PENDING");
+      dispatchPendingSeek();
     };
-    setSeekQueueLabel(inFlightSeek ? "1 ACTIVE + LATEST" : "1 PENDING");
-    dispatchPendingSeek();
+
+    if (!observer) {
+      enqueue();
+      return UNTRACKED_SEEK_COMPLETION;
+    }
+    return new Promise<void>((settle) => enqueue(settle));
   };
 
   const attemptRecovery = (reason: string, manual = false) => {
@@ -462,13 +713,20 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       setMediaState("degraded");
       setMediaError(reason);
       addDiagnostic("preview-degraded", reason);
+      emitReplayBenchmarkEvent(
+        "preview_degraded",
+        { reason },
+        { generation: mediaGeneration, required: true },
+      );
       return;
     }
 
     recoveryAttempts.push(now);
     setRecoveryCount(recoveryAttempts.length);
     recoveryTargetMs = videoTimeMs();
-    mediaGeneration += 1;
+    mediaGeneration = replayBenchmarkObserver()?.nextMediaGeneration() ?? mediaGeneration + 1;
+    firstPresentedGeneration = -1;
+    canPlayGeneration = -1;
     resetSeekScheduler();
     video.pause();
     setVideoTimeMs(recoveryTargetMs);
@@ -477,6 +735,15 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     addDiagnostic(
       "recovery-start",
       `attempt=${recoveryAttempts.length}; target=${recoveryTargetMs.toFixed(1)}; ${reason}; ${mediaSnapshot()}`,
+    );
+    emitReplayBenchmarkEvent(
+      "recovery_started",
+      {
+        attempt: recoveryAttempts.length,
+        target_ms: recoveryTargetMs,
+        reason,
+      },
+      { generation: mediaGeneration, required: true },
     );
     if (recoveryTimerId !== undefined) window.clearTimeout(recoveryTimerId);
     recoveryTimerId = window.setTimeout(() => {
@@ -736,18 +1003,498 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     }
   };
 
-  const enterFullscreen = () => {
+  const benchmarkAbortError = () => new DOMException("benchmark scenario disposed", "AbortError");
+
+  const waitForBenchmark = (durationMs: number) =>
+    new Promise<void>((resolve, reject) => {
+      const signal = benchmarkAbortController.signal;
+      if (signal.aborted) {
+        reject(benchmarkAbortError());
+        return;
+      }
+      const timeoutId = window.setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, durationMs);
+      const onAbort = () => {
+        window.clearTimeout(timeoutId);
+        reject(benchmarkAbortError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+
+  const waitForBenchmarkFrames = (count = 2) =>
+    new Promise<void>((resolve, reject) => {
+      const signal = benchmarkAbortController.signal;
+      let frameId: number | undefined;
+      let remaining = count;
+      const onAbort = () => {
+        if (frameId !== undefined) cancelAnimationFrame(frameId);
+        reject(benchmarkAbortError());
+      };
+      const onFrame = () => {
+        frameId = undefined;
+        remaining -= 1;
+        if (remaining <= 0) {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+          return;
+        }
+        frameId = requestAnimationFrame(onFrame);
+      };
+      if (signal.aborted) {
+        reject(benchmarkAbortError());
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+      frameId = requestAnimationFrame(onFrame);
+    });
+
+  const releaseBenchmarkMedia = async () => {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    await waitForBenchmark(100);
+  };
+
+  const withBenchmarkTimeout = async <T,>(promise: Promise<T>, label: string): Promise<T> => {
+    let timeoutId: number | undefined;
+    const signal = benchmarkAbortController.signal;
+    let rejectOnAbort: ((reason?: unknown) => void) | undefined;
+    const onAbort = () => rejectOnAbort?.(benchmarkAbortError());
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(
+            () => reject(new Error(`${label} timed out`)),
+            SEEK_TIMEOUT_MS * 4,
+          );
+        }),
+        new Promise<never>((_, reject) => {
+          rejectOnAbort = reject;
+          if (signal.aborted) reject(benchmarkAbortError());
+          else signal.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+    }
+  };
+
+  const failBenchmarkAction = (
+    actionKind: string,
+    actionId: string,
+    error: unknown,
+    generation = mediaGeneration,
+  ) => {
+    emitReplayBenchmarkEvent(
+      "action_failed",
+      {
+        action_kind: actionKind,
+        reason: error instanceof Error ? error.message : String(error),
+      },
+      { generation, actionId, required: true },
+    );
+  };
+
+  const runBenchmarkAction = async (action: ScenarioAction) => {
+    switch (action.kind) {
+      case "wait":
+        await waitForBenchmark(action.durationMs);
+        return;
+      case "play": {
+        const observer = replayBenchmarkObserver();
+        if (!observer) throw new Error("benchmark observer is unavailable");
+        const actionId = observer.nextActionId("play");
+        emitReplayBenchmarkEvent(
+          "play_requested",
+          { media_time_ms: video.currentTime * 1_000 },
+          { generation: mediaGeneration, actionId, required: true },
+        );
+        try {
+          pendingBenchmarkPlayActionId = actionId;
+          await playNativeVideo(true);
+          if (video.paused || video.ended) throw new Error("native playback did not start");
+          emitReplayBenchmarkEvent(
+            "play_complete",
+            { media_time_ms: video.currentTime * 1_000 },
+            { generation: mediaGeneration, actionId, required: true },
+          );
+          pendingBenchmarkPlayActionId = undefined;
+          return;
+        } catch (error) {
+          pendingBenchmarkPlayActionId = undefined;
+          if (!benchmarkAbortController.signal.aborted) failBenchmarkAction("play", actionId, error);
+          throw error;
+        }
+      }
+      case "pause": {
+        const observer = replayBenchmarkObserver();
+        if (!observer) throw new Error("benchmark observer is unavailable");
+        const actionId = observer.nextActionId("pause");
+        emitReplayBenchmarkEvent(
+          "pause_requested",
+          { media_time_ms: video.currentTime * 1_000 },
+          { generation: mediaGeneration, actionId, required: true },
+        );
+        try {
+          pendingBenchmarkPauseActionId = actionId;
+          video.pause();
+          if (!video.paused) throw new Error("native playback did not pause");
+          emitReplayBenchmarkEvent(
+            "pause_complete",
+            { media_time_ms: video.currentTime * 1_000 },
+            { generation: mediaGeneration, actionId, required: true },
+          );
+          pendingBenchmarkPauseActionId = undefined;
+          return;
+        } catch (error) {
+          pendingBenchmarkPauseActionId = undefined;
+          if (!benchmarkAbortController.signal.aborted) failBenchmarkAction("pause", actionId, error);
+          throw error;
+        }
+      }
+      case "stable-playback": {
+        const generation = mediaGeneration;
+        const startedAt = performance.now();
+        const startingMediaTime = video.currentTime;
+        const startingQuality = video.getVideoPlaybackQuality?.();
+        await waitForBenchmark(action.durationMs);
+        const mediaDeltaMs = (video.currentTime - startingMediaTime) * 1_000;
+        if (
+          generation !== mediaGeneration ||
+          video.paused ||
+          video.ended ||
+          mediaDeltaMs < Math.min(100, action.durationMs * 0.1)
+        ) {
+          throw new Error("stable playback window did not advance current media");
+        }
+        const quality = video.getVideoPlaybackQuality?.();
+        emitReplayBenchmarkEvent(
+          "steady_playback",
+          {
+            duration_ms: performance.now() - startedAt,
+            media_advance_ms: mediaDeltaMs,
+            total_frame_delta:
+              quality && startingQuality
+                ? quality.totalVideoFrames - startingQuality.totalVideoFrames
+                : null,
+            dropped_frame_delta:
+              quality && startingQuality
+                ? quality.droppedVideoFrames - startingQuality.droppedVideoFrames
+                : null,
+            presentation_clock: clockSource(),
+          },
+          { generation, required: true },
+        );
+        return;
+      }
+      case "rate": {
+        const observer = replayBenchmarkObserver();
+        if (!observer) throw new Error("benchmark observer is unavailable");
+        const actionId = observer.nextActionId("rate");
+        const generation = mediaGeneration;
+        const startedAt = performance.now();
+        const startingMediaTime = video.currentTime;
+        const startingQuality = video.getVideoPlaybackQuality?.();
+        emitReplayBenchmarkEvent(
+          "rate_requested",
+          { rate: action.rate },
+          { generation, actionId, required: true },
+        );
+        try {
+          if (video.paused || video.ended) throw new Error("rate action requires active playback");
+          video.playbackRate = action.rate;
+          emitReplayBenchmarkEvent(
+            "rate_applied",
+            { requested_rate: action.rate, actual_rate: video.playbackRate },
+            { generation, actionId, required: true },
+          );
+          await waitForBenchmark(action.durationMs);
+          const wallSeconds = (performance.now() - startedAt) / 1_000;
+          const mediaAdvance = video.currentTime - startingMediaTime;
+          if (generation !== mediaGeneration || video.paused || video.ended || mediaAdvance <= 0) {
+            throw new Error("rate window ended without advancing current media");
+          }
+          const quality = video.getVideoPlaybackQuality?.();
+          emitReplayBenchmarkEvent(
+            "rate_observed",
+            {
+              requested_rate: action.rate,
+              actual_rate: video.playbackRate,
+              effective_rate: wallSeconds > 0 ? mediaAdvance / wallSeconds : null,
+              muted: video.muted,
+              volume: video.volume,
+              dropped_frames: quality?.droppedVideoFrames ?? null,
+              dropped_frame_delta:
+                quality && startingQuality
+                  ? quality.droppedVideoFrames - startingQuality.droppedVideoFrames
+                  : null,
+            },
+            { generation, actionId, required: true },
+          );
+          return;
+        } catch (error) {
+          if (!benchmarkAbortController.signal.aborted) {
+            failBenchmarkAction("rate", actionId, error, generation);
+          }
+          throw error;
+        }
+      }
+      case "seek":
+        {
+          const reason: SeekReason =
+            action.reason === "endpoint-edit" || action.reason === "event-jump"
+              ? action.reason
+              : "benchmark";
+          let targetMs = action.targetMs;
+          if (reason === "event-jump" && events.length > 0) {
+            const eventIndex = nearestIndexAt(events, action.targetMs);
+            if (eventIndex >= 0) {
+              const selected = events[eventIndex];
+              targetMs = selected.video_time_ms;
+              if (clipRange()) setClipRange(clipRangeForAnchor(targetMs, selected));
+              emitReplayBenchmarkEvent(
+                "event_jump_selected",
+                { event_type: selected.event_type, target_ms: targetMs },
+                { generation: mediaGeneration },
+              );
+            }
+          }
+          if (reason === "endpoint-edit") {
+            if (!clipRange()) setClipRange(clipRangeForAnchor(targetMs));
+            const endpoint: ClipEndpoint =
+              benchmarkEndpointSequence++ % 2 === 0 ? "start" : "end";
+            const range = clipRange();
+            if (!range) throw new Error("benchmark endpoint edit could not create a clip range");
+            const nextRange = moveClipEndpoint(
+              range,
+              endpoint,
+              targetMs,
+              durationMs,
+              props.probe.recording_fps,
+            );
+            setEditingEndpoint(endpoint);
+            setClipRange(nextRange);
+            targetMs = clipEndpointPreviewMs(
+              nextRange,
+              endpoint,
+              props.probe.recording_fps,
+            );
+            emitReplayBenchmarkEvent(
+              "clip_endpoint_updated",
+              {
+                endpoint,
+                clip_start_ms: nextRange.startMs,
+                clip_end_ms: nextRange.endMs,
+                target_ms: targetMs,
+              },
+              { generation: mediaGeneration },
+            );
+          }
+          await withBenchmarkTimeout(
+            seekTo(targetMs, { reason }),
+            `seek to ${targetMs}`,
+          );
+          if (reason === "endpoint-edit") setEditingEndpoint(null);
+          await waitForBenchmark(100);
+          return;
+        }
+      case "scrub": {
+        emitReplayBenchmarkEvent(
+          "scrub_started",
+          { request_count: action.targetsMs.length },
+          { generation: mediaGeneration, required: true },
+        );
+        let settle = Promise.resolve();
+        for (const targetMs of action.targetsMs) {
+          settle = seekTo(targetMs, { reason: "benchmark" });
+          await waitForBenchmark(action.intervalMs);
+        }
+        await withBenchmarkTimeout(settle, "scrub settle");
+        emitReplayBenchmarkEvent(
+          "scrub_settled",
+          { request_count: action.targetsMs.length, media_time_ms: video.currentTime * 1_000 },
+          { generation: mediaGeneration, required: true },
+        );
+        return;
+      }
+      case "fullscreen":
+        {
+          let settle: Promise<void> | undefined;
+          if (action.seekTargetMs !== undefined) {
+            let markDispatched!: () => void;
+            const dispatched = new Promise<void>((resolve) => {
+              markDispatched = resolve;
+            });
+            settle = seekTo(action.seekTargetMs, {
+              reason: "benchmark",
+              onBenchmarkDispatch: markDispatched,
+            });
+            await withBenchmarkTimeout(dispatched, "layout seek dispatch");
+          }
+          if (action.enabled) enterFullscreen(true);
+          else exitFullscreen(true);
+          await waitForBenchmarkFrames();
+          if (settle) await withBenchmarkTimeout(settle, "layout seek settle");
+          return;
+        }
+      case "clip-mode":
+        if (action.enabled) {
+          setClipRange(clipRangeForAnchor(action.anchorMs ?? video.currentTime * 1_000));
+        } else {
+          cancelClipMode();
+        }
+        emitReplayBenchmarkEvent(
+          "clip_mode_applied",
+          { enabled: action.enabled, anchor_ms: action.anchorMs ?? null },
+          { generation: mediaGeneration, required: true },
+        );
+        return;
+    }
+  };
+
+  const runBenchmarkScenario = async () => {
+    const observer = replayBenchmarkObserver();
+    if (
+      !observer ||
+      benchmarkScenarioStarted ||
+      mediaState() !== "ready" ||
+      canPlayGeneration !== mediaGeneration ||
+      firstPresentedGeneration !== mediaGeneration
+    ) {
+      return;
+    }
+    benchmarkScenarioStarted = true;
+    if (benchmarkMediaReadyTimerId !== undefined) {
+      window.clearTimeout(benchmarkMediaReadyTimerId);
+      benchmarkMediaReadyTimerId = undefined;
+    }
+    try {
+      const scenario = observer.scenario();
+      const actions = buildScenarioActions(scenario, durationMs);
+      for (const action of actions) await runBenchmarkAction(action);
+      video.pause();
+      await updateMetrics();
+      const quality = video.getVideoPlaybackQuality?.();
+      const completionKind =
+        scenario.kind === "warm_open" ||
+        (scenario.kind === "lifecycle" && typeof scenario.duration_seconds !== "number")
+          ? "viewer_cycle_completed"
+          : "scenario_completed";
+      const completionPayload = {
+        kind: scenario.kind,
+        media_time_ms: video.currentTime * 1_000,
+        ready_state: video.readyState,
+        network_state: video.networkState,
+        playback_rate: video.playbackRate,
+        total_frames: quality?.totalVideoFrames ?? null,
+        dropped_frames: quality?.droppedVideoFrames ?? null,
+        server_metrics: serverMetrics(),
+      };
+      await releaseBenchmarkMedia();
+      observer.emit(completionKind, completionPayload, {
+        generation: mediaGeneration,
+        required: true,
+      });
+      benchmarkScenarioFinished = true;
+      if (
+        scenario.kind === "warm_open" ||
+        (scenario.kind === "lifecycle" && typeof scenario.duration_seconds !== "number")
+      ) {
+        window.dispatchEvent(new CustomEvent(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT));
+        return;
+      }
+      await observer.complete("complete", null, { action_count: actions.length });
+    } catch (error) {
+      if (benchmarkAbortController.signal.aborted || disposed) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      observer.emit(
+        "scenario_failed",
+        { reason },
+        { generation: mediaGeneration, required: true },
+      );
+      resetSeekScheduler();
+      await releaseBenchmarkMedia().catch(() => undefined);
+      benchmarkScenarioFinished = true;
+      await observer.complete("failed", reason);
+    }
+  };
+
+  let benchmarkFullscreenEventRequired = false;
+
+  const enterFullscreen = (required = false) => {
+    benchmarkFullscreenEventRequired ||= required;
+    emitReplayBenchmarkEvent(
+      "fullscreen_requested",
+      { enabled: true },
+      { generation: mediaGeneration, required },
+    );
     setIsFullscreen(true);
   };
 
-  const exitFullscreen = () => setIsFullscreen(false);
+  const exitFullscreen = (required = false) => {
+    benchmarkFullscreenEventRequired ||= required;
+    emitReplayBenchmarkEvent(
+      "fullscreen_requested",
+      { enabled: false },
+      { generation: mediaGeneration, required },
+    );
+    setIsFullscreen(false);
+  };
 
+  let previousFullscreen = isFullscreen();
   createEffect(() => {
-    document.body.classList.toggle("replay-fullscreen", isFullscreen());
+    const fullscreen = isFullscreen();
+    document.body.classList.toggle("replay-fullscreen", fullscreen);
+    if (fullscreen !== previousFullscreen) {
+      previousFullscreen = fullscreen;
+      emitReplayBenchmarkEvent(
+        "fullscreen_applied",
+        { enabled: fullscreen, media_time_ms: video.currentTime * 1_000 },
+        { generation: mediaGeneration, required: benchmarkFullscreenEventRequired },
+      );
+      benchmarkFullscreenEventRequired = false;
+    }
   });
 
   onMount(() => {
+    emitReplayBenchmarkEvent(
+      "viewer_mounted",
+      {
+        duration_ms: durationMs,
+        recording_fps: props.probe.recording_fps,
+        has_video_url: Boolean(props.probe.video_url),
+      },
+      { generation: mediaGeneration, required: true },
+    );
     const updateTime = () => syncPresentedTime(video.currentTime * 1_000);
+    const onLoadStart = () =>
+      emitReplayBenchmarkEvent(
+        "media_loadstart",
+        { network_state: video.networkState },
+        { generation: mediaGeneration, required: true },
+      );
+    const onLoadedData = () =>
+      emitReplayBenchmarkEvent(
+        "media_loadeddata",
+        { ready_state: video.readyState },
+        { generation: mediaGeneration },
+      );
+    const onCanPlay = () => {
+      canPlayGeneration = mediaGeneration;
+      emitReplayBenchmarkEvent(
+        "media_canplay",
+        { ready_state: video.readyState },
+        { generation: mediaGeneration, required: true },
+      );
+      if (clockSource() === "ANIMATION FRAME" && animationFrameId === undefined) {
+        animationFrameId = requestAnimationFrame(onAnimationFrame);
+      }
+      queueMicrotask(() => void runBenchmarkScenario());
+    };
     const onLoadedMetadata = () => {
       const recovered = mediaState() === "recovering";
       setMediaState("ready");
@@ -755,6 +1502,16 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       addDiagnostic(
         recovered ? "recovery-ready" : "metadata-ready",
         `duration=${(video.duration * 1_000).toFixed(1)}; readyState=${video.readyState}`,
+      );
+      emitReplayBenchmarkEvent(
+        recovered ? "recovery_ready" : "metadata_ready",
+        {
+          duration_ms: video.duration * 1_000,
+          ready_state: video.readyState,
+          video_width: video.videoWidth,
+          video_height: video.videoHeight,
+        },
+        { generation: mediaGeneration, required: true },
       );
       const range = clipRange();
       if (recovered) {
@@ -772,14 +1529,46 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       if (clockSource() === "ANIMATION FRAME" && animationFrameId === undefined) {
         animationFrameId = requestAnimationFrame(onAnimationFrame);
       }
+      emitReplayBenchmarkEvent(
+        "native_play",
+        { media_time_ms: video.currentTime * 1_000, rate: video.playbackRate },
+        {
+          generation: mediaGeneration,
+          actionId: pendingBenchmarkPlayActionId,
+          required: true,
+        },
+      );
+      pendingBenchmarkPlayActionId = undefined;
     };
     const onPause = () => {
       setIsPlaying(false);
       if (!editingEndpoint() && mediaState() !== "recovering") updateTime();
+      emitReplayBenchmarkEvent(
+        "native_pause",
+        { media_time_ms: video.currentTime * 1_000 },
+        {
+          generation: mediaGeneration,
+          actionId: pendingBenchmarkPauseActionId,
+          required: true,
+        },
+      );
+      pendingBenchmarkPauseActionId = undefined;
     };
     const onSeeking = () => {
       if (inFlightSeek) {
         addDiagnostic("media-seeking", `${inFlightSeek.reason}@${inFlightSeek.targetMs.toFixed(1)}`);
+        const benchmark = inFlightSeek.benchmark;
+        if (benchmark && !benchmark.cancelled) {
+          emitReplayBenchmarkEvent(
+            "native_seeking",
+            { target_ms: inFlightSeek.targetMs, reason: inFlightSeek.reason },
+            {
+              generation: inFlightSeek.generation,
+              actionId: benchmark.actionId,
+              required: true,
+            },
+          );
+        }
       }
     };
     const onSeeked = () => {
@@ -791,13 +1580,37 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       if (!editingEndpoint()) updateTime();
       if (completed) {
         const latency = performance.now() - lastSeekDispatchedAt;
+        const benchmark = completed.benchmark;
         setSeekLatencyMs(latency);
         addDiagnostic(
           "seek-complete",
           `${completed.reason}@${completed.targetMs.toFixed(1)} in ${latency.toFixed(0)}ms`,
         );
+        if (benchmark && !benchmark.cancelled) {
+          emitReplayBenchmarkEvent(
+            "seeked",
+            {
+              target_ms: completed.targetMs,
+              actual_media_time_ms: video.currentTime * 1_000,
+              request_to_seeked_ms: performance.now() - benchmark.requestedAtMs,
+              dispatch_to_seeked_ms: latency,
+              reason: completed.reason,
+            },
+            {
+              generation: completed.generation,
+              actionId: benchmark.actionId,
+              required: true,
+            },
+          );
+          awaitingPresentedSeek = completed;
+        } else {
+          benchmark?.settle();
+        }
         if (completed.generation === mediaGeneration && completed.playAfter) {
           void playNativeVideo();
+        }
+        if (benchmark && !benchmark.cancelled && typeof video.requestVideoFrameCallback !== "function") {
+          requestAnimationFrame(() => observePresentedFrame(video.currentTime * 1_000));
         }
       }
       dispatchPendingSeek();
@@ -816,6 +1629,15 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       addDiagnostic(
         "media-error",
         `${description}; ${mediaSnapshot()}`,
+      );
+      emitReplayBenchmarkEvent(
+        "media_error",
+        {
+          description,
+          code: video.error?.code ?? null,
+          message: video.error?.message ?? null,
+        },
+        { generation: mediaGeneration, required: true },
       );
       attemptRecovery(description);
     };
@@ -861,6 +1683,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       }
     };
 
+    video.addEventListener("loadstart", onLoadStart);
+    video.addEventListener("loadeddata", onLoadedData);
+    video.addEventListener("canplay", onCanPlay);
     video.addEventListener("loadedmetadata", onLoadedMetadata);
     video.addEventListener("pause", onPause);
     video.addEventListener("play", onPlay);
@@ -874,12 +1699,52 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     } else {
       setClockSource("ANIMATION FRAME");
       video.addEventListener("timeupdate", updateTime);
+      if (props.probe.video_url) animationFrameId = requestAnimationFrame(onAnimationFrame);
     }
     metricsIntervalId = window.setInterval(() => void updateMetrics(), 1_000);
+    const observer = replayBenchmarkObserver();
+    if (observer && props.probe.video_url) {
+      benchmarkMediaReadyTimerId = window.setTimeout(() => {
+        benchmarkMediaReadyTimerId = undefined;
+        if (benchmarkScenarioStarted || benchmarkScenarioFinished || disposed) return;
+        benchmarkScenarioFinished = true;
+        const reason =
+          `media readiness timed out after ${BENCHMARK_MEDIA_READY_TIMEOUT_MS} ms`;
+        observer.emit(
+          "scenario_failed",
+          { phase: "media_readiness", reason },
+          { generation: mediaGeneration, required: true },
+        );
+        void releaseBenchmarkMedia()
+          .catch(() => undefined)
+          .then(() => observer.complete("failed", reason, { phase: "media_readiness" }));
+      }, BENCHMARK_MEDIA_READY_TIMEOUT_MS);
+    }
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) onLoadedMetadata();
+    if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) onCanPlay();
 
     onCleanup(() => {
       disposed = true;
+      const observer = replayBenchmarkObserver();
+      if (observer && !benchmarkScenarioFinished) {
+        const reason = "viewer disposed before benchmark scenario completion";
+        benchmarkScenarioFinished = true;
+        observer.emit(
+          "scenario_failed",
+          { phase: "viewer_disposed", reason },
+          { generation: mediaGeneration, required: true },
+        );
+        void observer.complete("failed", reason, { phase: "viewer_disposed" });
+      }
+      benchmarkAbortController.abort();
+      emitReplayBenchmarkEvent(
+        "viewer_disposed",
+        { media_time_ms: video.currentTime * 1_000 },
+        { generation: mediaGeneration, required: true },
+      );
+      video.removeEventListener("loadstart", onLoadStart);
+      video.removeEventListener("loadeddata", onLoadedData);
+      video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("play", onPlay);
@@ -898,6 +1763,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       resetSeekScheduler();
       if (recoveryTimerId !== undefined) window.clearTimeout(recoveryTimerId);
       if (metricsIntervalId !== undefined) window.clearInterval(metricsIntervalId);
+      if (benchmarkMediaReadyTimerId !== undefined) {
+        window.clearTimeout(benchmarkMediaReadyTimerId);
+      }
     });
   });
 
@@ -1026,7 +1894,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 onClipEndpointBlur={handleClipEndpointBlur}
                 onExportClip={exportSelectedClip}
                 onCancelClip={cancelClipMode}
-                onExit={exitFullscreen}
+                onExit={() => exitFullscreen()}
               />
             </Show>
           </div>
@@ -1199,7 +2067,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             <button
               class={styles.fullscreenButton}
               type="button"
-              onClick={enterFullscreen}
+              onClick={() => enterFullscreen()}
               title="Open fullscreen replay"
             >
               <span aria-hidden="true">⛶</span> FULLSCREEN

@@ -435,11 +435,28 @@ export const exportClip = async (
         thumbnail_path: `~/LeagueReplays/clips/${filename}.jpg`,
         file_size_bytes:
           preset === "discord" ? 9_200_000 : Math.round(durationSeconds * (24_192_000 / 8)),
+        strategy: "full_reencode" as const,
+        encoder_used: "mock-libx264",
+        encode_elapsed_ms: 800,
+        thumbnail_elapsed_ms: 112,
+        retry_count: 0,
+        attempts: [
+          {
+            encoder: "mock-libx264",
+            elapsed_ms: 800,
+            successful: true,
+            error: null,
+          },
+        ],
       };
     });
     const result: ClipExportResult = {
       outputs,
       elapsed_ms: 912,
+      setup_elapsed_ms: 12,
+      source_probe_elapsed_ms: 2,
+      source_probe_strategy: "recording_metadata",
+      finalize_elapsed_ms: 8,
       total_file_size_bytes: outputs.reduce((total, output) => total + output.file_size_bytes, 0),
     };
     mockClips = [

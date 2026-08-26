@@ -53,12 +53,30 @@ pub struct ClipExportOutput {
     pub output_path: String,
     pub thumbnail_path: String,
     pub file_size_bytes: u64,
+    pub strategy: String,
+    pub encoder_used: String,
+    pub encode_elapsed_ms: u64,
+    pub thumbnail_elapsed_ms: u64,
+    pub retry_count: u32,
+    pub attempts: Vec<ClipExportAttempt>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ClipExportAttempt {
+    pub encoder: String,
+    pub elapsed_ms: u64,
+    pub successful: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ClipExportResult {
     pub outputs: Vec<ClipExportOutput>,
     pub elapsed_ms: u64,
+    pub setup_elapsed_ms: u64,
+    pub source_probe_elapsed_ms: u64,
+    pub source_probe_strategy: String,
+    pub finalize_elapsed_ms: u64,
     pub total_file_size_bytes: u64,
 }
 
@@ -122,6 +140,19 @@ struct EncodingContext<'a> {
     encoders: &'a [H264Encoder],
 }
 
+struct EncodeOutcome {
+    encoder_used: String,
+    attempts: Vec<ClipExportAttempt>,
+}
+
+struct OutputDiagnostics {
+    encoder_used: String,
+    encode_elapsed_ms: u64,
+    thumbnail_elapsed_ms: u64,
+    retry_count: u32,
+    attempts: Vec<ClipExportAttempt>,
+}
+
 struct BatchProgress<'a> {
     channel: &'a Channel<ClipExportProgress>,
     preset: ClipExportPreset,
@@ -173,11 +204,13 @@ pub async fn export(
     if !source_video.is_file() {
         bail!("recording video is unavailable")
     }
+    let source_probe_started = Instant::now();
     let metadata: SourceMetadata = serde_json::from_slice(
         &fs::read(game_directory.join("metadata.json"))
             .context("failed to read recording metadata")?,
     )
     .context("failed to parse recording metadata")?;
+    let source_probe_elapsed_ms = elapsed_ms(source_probe_started);
     if metadata.duration_ms > 0 && request.clip_end_ms > metadata.duration_ms.saturating_add(1_000)
     {
         bail!("clip endpoint exceeds the recording duration")
@@ -202,6 +235,7 @@ pub async fn export(
         .context("system clock is before the Unix epoch")?
         .as_secs();
     let mut staged = Vec::with_capacity(total_outputs);
+    let setup_elapsed_ms = elapsed_ms(started_at);
 
     for (output_index, preset) in request.presets.iter().copied().enumerate() {
         let paths = unique_paths(
@@ -217,19 +251,22 @@ pub async fn export(
             last_percent: ((output_index * 100) / total_outputs) as u8,
             last_stage: None,
         };
-        if let Err(error) =
-            encode_output(&encoding, preset, source_fps, &paths, &mut reporter).await
-        {
-            cleanup_export_paths(&paths, false);
-            for (_, staged_paths) in &staged {
-                cleanup_export_paths(staged_paths, false);
-            }
-            return Err(error);
-        }
-        staged.push((preset, paths));
+        let diagnostics =
+            match encode_output(&encoding, preset, source_fps, &paths, &mut reporter).await {
+                Ok(diagnostics) => diagnostics,
+                Err(error) => {
+                    cleanup_export_paths(&paths, false);
+                    for (_, staged_paths, _) in &staged {
+                        cleanup_export_paths(staged_paths, false);
+                    }
+                    return Err(error);
+                }
+            };
+        staged.push((preset, paths, diagnostics));
     }
 
-    for (_, paths) in &staged {
+    let finalize_started = Instant::now();
+    for (_, paths, _) in &staged {
         let finalized = fs::rename(&paths.partial_thumbnail, &paths.thumbnail)
             .context("failed to finalize clip thumbnail")
             .and_then(|()| {
@@ -237,7 +274,7 @@ pub async fn export(
                     .context("failed to finalize exported clip")
             });
         if let Err(error) = finalized {
-            for (_, cleanup) in &staged {
+            for (_, cleanup, _) in &staged {
                 cleanup_export_paths(cleanup, true);
             }
             return Err(error);
@@ -246,7 +283,7 @@ pub async fn export(
 
     let mut outputs = Vec::with_capacity(staged.len());
     let mut total_file_size_bytes = 0_u64;
-    for (preset, paths) in staged {
+    for (preset, paths, diagnostics) in staged {
         let file_size_bytes = fs::metadata(&paths.video)
             .context("failed to inspect completed clip")?
             .len();
@@ -257,6 +294,12 @@ pub async fn export(
             output_path: paths.video.to_string_lossy().into_owned(),
             thumbnail_path: paths.thumbnail.to_string_lossy().into_owned(),
             file_size_bytes,
+            strategy: "full_reencode".to_owned(),
+            encoder_used: diagnostics.encoder_used,
+            encode_elapsed_ms: diagnostics.encode_elapsed_ms,
+            thumbnail_elapsed_ms: diagnostics.thumbnail_elapsed_ms,
+            retry_count: diagnostics.retry_count,
+            attempts: diagnostics.attempts,
         });
     }
     progress
@@ -268,9 +311,14 @@ pub async fn export(
             total_outputs: total_outputs as u8,
         })
         .ok();
+    let finalize_elapsed_ms = elapsed_ms(finalize_started);
     Ok(ClipExportResult {
         outputs,
-        elapsed_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+        elapsed_ms: elapsed_ms(started_at),
+        setup_elapsed_ms,
+        source_probe_elapsed_ms,
+        source_probe_strategy: "recording_metadata".to_owned(),
+        finalize_elapsed_ms,
         total_file_size_bytes,
     })
 }
@@ -281,9 +329,12 @@ async fn encode_output(
     source_fps: u32,
     paths: &ExportPaths,
     progress: &mut BatchProgress<'_>,
-) -> Result<()> {
+) -> Result<OutputDiagnostics> {
+    let encode_started = Instant::now();
     let mut profile = export_profile(encoding.request, preset, source_fps, None)?;
-    encode_with_fallback(encoding, &profile, &paths.partial_video, progress).await?;
+    let mut outcome =
+        encode_with_fallback(encoding, &profile, &paths.partial_video, progress).await?;
+    let mut retry_count = 0_u32;
 
     if preset == ClipExportPreset::Discord {
         let first_size = fs::metadata(&paths.partial_video)
@@ -296,7 +347,11 @@ async fn encode_output(
                 .floor()
                 .max(250.0) as u64;
             profile = export_profile(encoding.request, preset, source_fps, Some(adjusted))?;
-            encode_with_fallback(encoding, &profile, &paths.partial_video, progress).await?;
+            let retry =
+                encode_with_fallback(encoding, &profile, &paths.partial_video, progress).await?;
+            retry_count = retry_count.saturating_add(1);
+            outcome.encoder_used = retry.encoder_used;
+            outcome.attempts.extend(retry.attempts);
         }
         let final_size = fs::metadata(&paths.partial_video)
             .context("failed to inspect exported clip")?
@@ -306,7 +361,10 @@ async fn encode_output(
         }
     }
 
+    let encode_elapsed_ms = elapsed_ms(encode_started);
+
     progress.send(ExportStage::Thumbnail, 96);
+    let thumbnail_started = Instant::now();
     generate_thumbnail(
         encoding.ffmpeg,
         &paths.partial_video,
@@ -315,7 +373,13 @@ async fn encode_output(
     .await?;
     // Keep 100% reserved for the atomically published batch result.
     progress.send(ExportStage::Thumbnail, 99);
-    Ok(())
+    Ok(OutputDiagnostics {
+        encoder_used: outcome.encoder_used,
+        encode_elapsed_ms,
+        thumbnail_elapsed_ms: elapsed_ms(thumbnail_started),
+        retry_count,
+        attempts: outcome.attempts,
+    })
 }
 
 fn validate_request(request: &ClipExportRequest) -> Result<()> {
@@ -490,8 +554,9 @@ async fn encode_with_fallback(
     profile: &ExportProfile,
     output: &Path,
     progress: &mut BatchProgress<'_>,
-) -> Result<()> {
+) -> Result<EncodeOutcome> {
     let mut errors = Vec::new();
+    let mut attempts = Vec::new();
     for encoder in encoding.encoders {
         fs::remove_file(output).ok();
         let arguments = ffmpeg_arguments(
@@ -502,6 +567,7 @@ async fn encode_with_fallback(
             *encoder,
             output,
         );
+        let attempt_started = Instant::now();
         match run_ffmpeg(
             encoding.ffmpeg,
             arguments,
@@ -510,11 +576,34 @@ async fn encode_with_fallback(
         )
         .await
         {
-            Ok(()) => return Ok(()),
-            Err(error) => errors.push(format!("{}: {error}", encoder_name(*encoder))),
+            Ok(()) => {
+                attempts.push(ClipExportAttempt {
+                    encoder: encoder_name(*encoder).to_owned(),
+                    elapsed_ms: elapsed_ms(attempt_started),
+                    successful: true,
+                    error: None,
+                });
+                return Ok(EncodeOutcome {
+                    encoder_used: encoder_name(*encoder).to_owned(),
+                    attempts,
+                });
+            }
+            Err(error) => {
+                attempts.push(ClipExportAttempt {
+                    encoder: encoder_name(*encoder).to_owned(),
+                    elapsed_ms: elapsed_ms(attempt_started),
+                    successful: false,
+                    error: Some(error.to_string()),
+                });
+                errors.push(format!("{}: {error}", encoder_name(*encoder)));
+            }
         }
     }
     bail!("all H.264 encoders failed: {}", errors.join(" | "))
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 fn ffmpeg_arguments(

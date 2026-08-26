@@ -4,3 +4,4 @@ Completed plans are retained here as implementation evidence and decision histor
 
 - `QB-PERF-001`: `qb-perf-001-capture-benchmark-budget.md`
 - `QB-DIST-001`: `qb-dist-001-packaged-media-tool-contract.md`
+- `QB-REPLAY-008`: `qb-replay-008-replay-performance-baseline.md`

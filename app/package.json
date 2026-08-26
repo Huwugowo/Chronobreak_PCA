@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "vitest run --environment node",
     "check": "tsc --noEmit",
     "build": "npm run check && vite build",
     "desktop:build": "tauri build --no-bundle",
@@ -22,6 +23,10 @@
     "@tauri-apps/cli": "2.11.4",
     "typescript": "7.0.2",
     "vite": "8.2.0",
-    "vite-plugin-solid": "2.11.14"
+    "vite-plugin-solid": "2.11.14",
+    "vitest": "4.1.11"
+  },
+  "overrides": {
+    "nanoid": "3.3.18"
   }
 }

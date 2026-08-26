@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://queueback.local/schemas/replay-benchmark/manifest-v1.schema.json",
+  "title": "QueueBack replay benchmark manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "sentinel_root",
+    "library_root",
+    "config_path",
+    "app_data_root",
+    "result_root",
+    "scratch_root",
+    "observer_profile",
+    "ddragon",
+    "fixtures",
+    "scenarios"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"
+    },
+    "sentinel_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "library_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "config_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "app_data_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "result_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "scratch_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "observer_profile": {
+      "type": "string",
+      "enum": ["minimal", "full"]
+    },
+    "ddragon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "cache_root", "cache_fingerprint"],
+      "properties": {
+        "mode": { "const": "offline" },
+        "cache_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "cache_fingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/preparedFixture" }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "$ref": "#/$defs/scenario" }
+    },
+    "app_binary": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "analyzer_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "python_path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "timeout_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
+    "prepared_utc": { "type": "string", "format": "date-time" },
+    "preparation_receipt": { "$ref": "#/$defs/absoluteWindowsPath" },
+    "media_tools": { "$ref": "#/$defs/mediaTools" }
+  },
+  "$defs": {
+    "absoluteWindowsPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z]:\\\\"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "not": { "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)" }
+    },
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "size_bytes", "sha256", "last_write_utc"],
+      "properties": {
+        "relative_path": { "$ref": "#/$defs/safeRelativePath" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "last_write_utc": { "type": "string", "format": "date-time" }
+      }
+    },
+    "mediaValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "ffprobe", "decode_ok"],
+      "properties": {
+        "relative_path": { "$ref": "#/$defs/safeRelativePath" },
+        "ffprobe": { "type": "object" },
+        "decode_ok": { "type": "boolean" },
+        "decode_stderr": { "type": "string", "maxLength": 16384 }
+      }
+    },
+    "preparedFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "alias", "game_timestamp", "kind", "relative_path", "files", "media_validation"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$" },
+        "alias": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$" },
+        "game_timestamp": { "type": "string", "pattern": "^\\d+(?:-[1-9]\\d{0,2})?$" },
+        "kind": {
+          "type": "string",
+          "enum": ["recording_bundle", "media", "negative_fixture"]
+        },
+        "relative_path": { "$ref": "#/$defs/safeRelativePath" },
+        "backend": { "type": ["string", "null"], "maxLength": 64 },
+        "codec": { "type": ["string", "null"], "maxLength": 32 },
+        "negative": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/fileIdentity" }
+        },
+        "media_validation": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mediaValidation" }
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "fixture_ids", "trial_id"],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "export" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": [
+              "clip_start_ms",
+              "clip_end_ms",
+              "expected_duration_ms",
+              "expected_video_codec",
+              "expected_audio_codec",
+              "export_presets"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "lifecycle" } },
+            "required": ["kind"]
+          },
+          "else": {
+            "properties": { "fixture_ids": { "maxItems": 1 } }
+          }
+        }
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "app_idle",
+            "cold_open",
+            "warm_open",
+            "play_pause",
+            "rate",
+            "seek",
+            "scrub",
+            "layout",
+            "lifecycle",
+            "export"
+          ]
+        },
+        "fixture_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+        },
+        "trial_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$" },
+        "seek_reason": {
+          "type": "string",
+          "enum": ["benchmark", "event-jump", "endpoint-edit"]
+        },
+        "seek_playback_mode": {
+          "type": "string",
+          "enum": ["playing", "paused"]
+        },
+        "seed": { "type": "integer", "minimum": 0 },
+        "warmup_seconds": { "type": "number", "minimum": 0, "maximum": 3600 },
+        "duration_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400 },
+        "idle_seconds": { "type": "number", "minimum": 0, "maximum": 3600 },
+        "target_times_ms": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "rates": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "number", "enum": [0.25, 0.5, 1, 2, 4, 8] }
+        },
+        "request_rate_hz": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+        "iterations": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "distance_classes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["near", "far", "forward", "backward"] }
+        },
+        "export_presets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["horizontal", "vertical", "discord"] }
+        },
+        "clip_start_ms": { "type": "integer", "minimum": 0 },
+        "clip_end_ms": { "type": "integer", "minimum": 5000 },
+        "expected_duration_ms": { "type": "integer", "minimum": 5000, "maximum": 86400000 },
+        "duration_tolerance_ms": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "expected_video_codec": { "const": "h264" },
+        "expected_audio_codec": { "const": "aac" },
+        "music_mode": { "type": "string", "enum": ["none", "built_in"] },
+        "gain_mode": { "type": "string", "enum": ["unity", "non_unity"] },
+        "built_in_music_filename": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "music_modes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["none", "built_in"] }
+        },
+        "gain_modes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["unity", "non_unity"] }
+        },
+        "endpoint_alignment": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["keyframe", "non_keyframe"] }
+        },
+        "observer_control": { "type": "boolean" }
+      }
+    },
+    "toolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size_bytes", "sha256", "version_line"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "version_line": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "mediaTools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_id", "ffmpeg", "ffprobe"],
+      "properties": {
+        "runtime_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ffmpeg": { "$ref": "#/$defs/toolIdentity" },
+        "ffprobe": { "$ref": "#/$defs/toolIdentity" }
+      }
+    }
+  }
+}
