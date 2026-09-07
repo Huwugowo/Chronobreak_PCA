@@ -229,8 +229,9 @@ async fn export_clip(
                 "export_started",
                 serde_json::json!({
                     "game_timestamp": request.game_timestamp,
-                    "clip_start_ms": request.clip_start_ms,
-                    "clip_end_ms": request.clip_end_ms,
+                    "media_id": request.media_id,
+                    "start_frame": request.start_frame,
+                    "end_frame_exclusive": request.end_frame_exclusive,
                     "presets": request.presets,
                 }),
             )
@@ -240,6 +241,7 @@ async fn export_clip(
         &output_directory,
         &music_directory,
         media_tools.ffmpeg(),
+        media_tools.ffprobe(),
         request,
         progress,
     )
@@ -380,17 +382,19 @@ fn record_hevc_probe_result(
     }
     config::write_atomic(&state.hevc_probe_path, &bytes).map_err(error_string)?;
 
-    let mut next = state
-        .config
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    next.app.hevc_playback_supported = supported;
-    config::save(&state.config_path, &next).map_err(error_string)?;
-    *state
-        .config
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+    if state.benchmark.is_none() {
+        let mut next = state
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        next.app.hevc_playback_supported = supported;
+        config::save(&state.config_path, &next).map_err(error_string)?;
+        *state
+            .config
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+    }
 
     if let Some(benchmark) = &state.benchmark {
         benchmark

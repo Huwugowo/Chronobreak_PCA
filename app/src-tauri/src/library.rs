@@ -5,6 +5,10 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
+use chronobreak_replay_time::{
+    GameCalibrationV2, GameTick, MappedReplayTime, MappingUnavailableReason, MediaId,
+    MediaTimelineV2, REPLAY_TICKS_PER_SECOND, REPLAY_TIME_SCHEMA_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -70,8 +74,8 @@ pub struct AutoDeleteResult {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ViewerEvent {
     pub event_type: String,
-    pub game_time_ms: u64,
-    pub video_time_ms: u64,
+    pub game_tick: GameTick,
+    pub mapped_replay_time: MappedReplayTime,
     pub killer: Option<String>,
     pub victim: Option<String>,
     pub assisters: Vec<String>,
@@ -100,17 +104,17 @@ pub struct ReplayParticipant {
     pub relation: EventRelation,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PlayerTimelinePoint {
-    pub game_time_ms: u64,
-    pub video_time_ms: u64,
+    pub game_tick: GameTick,
+    pub mapped_replay_time: MappedReplayTime,
     pub cs: u32,
     pub level: u32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct KdaTimelinePoint {
-    pub video_time_ms: u64,
+    pub mapped_replay_time: MappedReplayTime,
     pub kills: u32,
     pub deaths: u32,
     pub assists: u32,
@@ -120,8 +124,7 @@ pub struct KdaTimelinePoint {
 pub struct PlaybackProbe {
     pub game: GameSummary,
     pub video_url: String,
-    pub recording_fps: u32,
-    pub game_start_video_offset_ms: u64,
+    pub media_timeline: MediaTimelineV2,
     pub local_player_name: Option<String>,
     pub participants: Vec<ReplayParticipant>,
     pub player_timeline: Vec<PlayerTimelinePoint>,
@@ -129,66 +132,207 @@ pub struct PlaybackProbe {
     pub events: Vec<ViewerEvent>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MetadataDocument {
+    schema_version: u32,
+    media_id: MediaId,
+    media_timeline: MediaTimelineV2,
     recorded_at: String,
-    duration_ms: u64,
-    recording_fps: u32,
-    video_offset_ms: Option<u64>,
     game_mode: Option<String>,
     local_player_summoner_name: Option<String>,
     local_player_champion: Option<String>,
     local_player_team: Option<String>,
+    encoder_used: String,
+    #[serde(rename = "recording_codec")]
+    _recording_codec: String,
+    #[serde(rename = "recording_profile")]
+    _recording_profile: String,
+    #[serde(rename = "recording_resolution")]
+    _recording_resolution: String,
+    #[serde(rename = "capture_backend")]
+    _capture_backend: String,
+    #[serde(rename = "capture_adapter_luid")]
+    _capture_adapter_luid: Option<String>,
+    #[serde(rename = "capture_adapter_name")]
+    _capture_adapter_name: Option<String>,
+    #[serde(rename = "capture_output")]
+    _capture_output: Option<String>,
+    #[serde(rename = "encoder_interop")]
+    _encoder_interop: Option<String>,
+    #[serde(rename = "media_runtime_id")]
+    _media_runtime_id: String,
+    #[serde(rename = "capture_support_label")]
+    _capture_support_label: String,
+    #[serde(rename = "source_frames_surfaced")]
+    _source_frames_surfaced: u64,
+    #[serde(rename = "source_frames_superseded")]
+    _source_frames_superseded: u64,
+    #[serde(rename = "cfr_duplicates")]
+    _cfr_duplicates: u64,
+    #[serde(rename = "cfr_discards")]
+    _cfr_discards: u64,
+    #[serde(rename = "pool_recreations")]
+    _pool_recreations: u64,
+    #[serde(rename = "capture")]
+    _capture: Option<CaptureMetadataDocument>,
     saved: bool,
 }
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct GameLogDocument {
-    game_start_video_offset_ms: i64,
-    snapshots: Vec<GameSnapshot>,
-    events: Vec<GameEvent>,
+pub(crate) struct ExportRecordingAuthority {
+    pub media_timeline: MediaTimelineV2,
+    pub encoder_used: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureMetadataDocument {
+    #[serde(rename = "schema_version")]
+    _schema_version: u32,
+    #[serde(rename = "backend")]
+    _backend: String,
+    #[serde(rename = "diagnostics_abi")]
+    _diagnostics_abi: u32,
+    #[serde(rename = "support_label")]
+    _support_label: String,
+    #[serde(rename = "capture_adapter_luid")]
+    _capture_adapter_luid: String,
+    #[serde(rename = "encoder_adapter_luid")]
+    _encoder_adapter_luid: String,
+    #[serde(rename = "capture_adapter_name")]
+    _capture_adapter_name: String,
+    #[serde(rename = "capture_output")]
+    _capture_output: String,
+    #[serde(rename = "encoder_backend")]
+    _encoder_backend: String,
+    #[serde(rename = "encoder_interop")]
+    _encoder_interop: String,
+    #[serde(rename = "media_runtime_id")]
+    _media_runtime_id: String,
+    #[serde(rename = "source_format")]
+    _source_format: String,
+    #[serde(rename = "converted_format")]
+    _converted_format: String,
+    #[serde(rename = "host_readback")]
+    _host_readback: bool,
+    #[serde(rename = "gpu_stages")]
+    _gpu_stages: Vec<String>,
+    #[serde(rename = "frame_pool_capacity")]
+    _frame_pool_capacity: u32,
+    #[serde(rename = "capture_output_pool_capacity")]
+    _capture_output_pool_capacity: u32,
+    #[serde(rename = "filter_buffered_frame_limit")]
+    _filter_buffered_frame_limit: u32,
+    #[serde(rename = "encoder_depth")]
+    _encoder_depth: u32,
+    #[serde(rename = "progress_stall_timeout_seconds")]
+    _progress_stall_timeout_seconds: u32,
+    #[serde(rename = "maximum_texture_bytes")]
+    _maximum_texture_bytes: u64,
+    #[serde(rename = "source_frames_surfaced")]
+    _source_frames_surfaced: u64,
+    #[serde(rename = "source_frames_superseded")]
+    _source_frames_superseded: u64,
+    #[serde(rename = "encoded_frames")]
+    _encoded_frames: u64,
+    #[serde(rename = "muxed_bytes")]
+    _muxed_bytes: u64,
+    #[serde(rename = "cfr_duplicates")]
+    _cfr_duplicates: u64,
+    #[serde(rename = "cfr_discards")]
+    _cfr_discards: u64,
+    #[serde(rename = "pool_recreations")]
+    _pool_recreations: u64,
+    #[serde(rename = "first_qpc_100ns")]
+    _first_qpc_100ns: i64,
+    #[serde(rename = "latest_qpc_100ns")]
+    _latest_qpc_100ns: i64,
+    #[serde(rename = "terminal_progress")]
+    _terminal_progress: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GameLogDocument {
+    schema_version: u32,
+    media_id: MediaId,
+    calibration: Option<GameCalibrationV2>,
+    snapshots: Vec<GameSnapshot>,
+    events: Vec<GameEvent>,
+    #[serde(rename = "snapshot_derived_changes")]
+    _snapshot_derived_changes: Vec<SnapshotChangeDocument>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GameSnapshot {
-    game_time_ms: i64,
+    game_tick: GameTick,
     players: Vec<SnapshotPlayer>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SnapshotPlayer {
     summoner_name: String,
     team: String,
     champion: String,
+    #[serde(rename = "gold")]
+    _gold: Option<i64>,
+    #[serde(rename = "hp")]
+    _hp: Option<i64>,
+    #[serde(rename = "hp_max")]
+    _hp_max: Option<i64>,
     cs: u32,
     level: u32,
     items: Vec<SnapshotItem>,
     summoner_spells: Option<Vec<String>>,
     keystone_id: Option<u32>,
+    #[serde(rename = "rune_ids")]
+    _rune_ids: Option<Vec<u32>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SnapshotItem {
     item_id: u32,
     slot: u32,
+    #[serde(rename = "count")]
+    _count: u32,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotChangeDocument {
+    #[serde(rename = "game_tick")]
+    _game_tick: GameTick,
+    #[serde(rename = "player")]
+    _player: String,
+    #[serde(rename = "change_type")]
+    _change_type: SnapshotChangeTypeDocument,
+    #[serde(rename = "item_id")]
+    _item_id: Option<u32>,
+    #[serde(rename = "new_level")]
+    _new_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum SnapshotChangeTypeDocument {
+    ItemPurchased,
+    ItemSold,
+    LevelUp,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GameEvent {
     #[serde(rename = "type")]
     event_type: String,
-    game_time_ms: i64,
-    video_time_ms: i64,
+    game_tick: GameTick,
     killer: Option<String>,
     victim: Option<String>,
-    assisters: Vec<String>,
+    assisters: Option<Vec<String>>,
     dragon_type: Option<String>,
+    #[serde(rename = "stolen")]
+    _stolen: Option<bool>,
     kill_streak: Option<u32>,
     acer: Option<String>,
     acing_team: Option<String>,
@@ -237,18 +381,13 @@ pub fn playback_probe(
         bail!("invalid game identifier");
     }
     let game_directory = output_directory.join("games").join(timestamp);
-    let game = read_game_summary(&game_directory, timestamp.to_owned());
+    let (metadata, log) = read_recording_bundle(&game_directory)?;
+    let game = game_summary_from_bundle(&game_directory, timestamp.to_owned(), &metadata, &log);
     if !game.video_available {
         bail!("recording video is unavailable");
     }
 
-    let metadata = read_json::<MetadataDocument>(&game_directory.join(METADATA_JSON))?;
-    if metadata.recording_fps == 0 {
-        bail!("recording metadata contains an invalid frame rate");
-    }
-    let recording_fps = metadata.recording_fps;
     let local_player_name = metadata.local_player_summoner_name.clone();
-    let log = read_game_log(&game_directory.join(GAME_LOG_JSON))?;
     let mut team_by_player = HashMap::new();
     let mut roster = Vec::new();
     let mut roster_seen = HashSet::new();
@@ -300,43 +439,42 @@ pub fn playback_probe(
         EventRelation::Enemy => 1,
         EventRelation::Neutral => 2,
     });
-    let game_start_video_offset_ms = u64::try_from(log.game_start_video_offset_ms)
-        .ok()
-        .filter(|offset| *offset > 0)
-        .or(metadata.video_offset_ms)
-        .unwrap_or(0);
-
-    let mut player_timeline = log
-        .snapshots
-        .iter()
-        .filter_map(|snapshot| {
-            let game_time_ms = u64::try_from(snapshot.game_time_ms).ok()?;
-            let local_player = local_player_name.as_deref()?;
-            let player = snapshot
+    let mut player_timeline = Vec::new();
+    if let Some(local_player) = local_player_name.as_deref() {
+        for snapshot in &log.snapshots {
+            let Some(player) = snapshot
                 .players
                 .iter()
-                .find(|player| same_player(&player.summoner_name, local_player))?;
-            Some(PlayerTimelinePoint {
-                game_time_ms,
-                video_time_ms: game_start_video_offset_ms.saturating_add(game_time_ms),
+                .find(|player| same_player(&player.summoner_name, local_player))
+            else {
+                continue;
+            };
+            player_timeline.push(PlayerTimelinePoint {
+                game_tick: snapshot.game_tick,
+                mapped_replay_time: map_game_tick(
+                    &log,
+                    snapshot.game_tick,
+                    &metadata.media_timeline,
+                )?,
                 cs: player.cs,
                 level: player.level,
-            })
-        })
-        .collect::<Vec<_>>();
-    player_timeline.sort_by_key(|point| point.video_time_ms);
+            });
+        }
+    }
+    player_timeline.sort_by_key(|point| point.game_tick);
     player_timeline
         .dedup_by(|current, previous| current.cs == previous.cs && current.level == previous.level);
 
-    let mut events = log
-        .events
-        .into_iter()
-        .filter_map(|event| {
-            let relation = event_relation(&event, local_player_team.as_deref(), &team_by_player);
-            viewer_event(event, relation)
-        })
-        .collect::<Vec<_>>();
-    events.sort_by_key(|event| event.video_time_ms);
+    let mut events = Vec::with_capacity(log.events.len());
+    for event in &log.events {
+        let relation = event_relation(event, local_player_team.as_deref(), &team_by_player);
+        events.push(viewer_event(
+            event.clone(),
+            relation,
+            map_game_tick(&log, event.game_tick, &metadata.media_timeline)?,
+        ));
+    }
+    events.sort_by_key(|event| event.game_tick);
     let kda_timeline = local_player_name
         .as_deref()
         .map(|player| build_kda_timeline(player, &events))
@@ -344,8 +482,7 @@ pub fn playback_probe(
     Ok(PlaybackProbe {
         video_url: format!("{origin}/games/{timestamp}/video.mp4"),
         game,
-        recording_fps,
-        game_start_video_offset_ms,
+        media_timeline: metadata.media_timeline,
         local_player_name,
         participants,
         player_timeline,
@@ -451,11 +588,8 @@ pub fn save_game(output_directory: &Path, timestamp: &str, saved: bool) -> Resul
     if !metadata_path.exists() {
         bail!("incomplete recordings cannot be saved");
     }
-    let mut metadata: serde_json::Value = read_json(&metadata_path)?;
-    let object = metadata
-        .as_object_mut()
-        .context("metadata.json must contain an object")?;
-    object.insert("saved".to_owned(), serde_json::Value::Bool(saved));
+    let mut metadata = read_metadata(&metadata_path)?;
+    metadata.saved = saved;
     let mut bytes = serde_json::to_vec_pretty(&metadata).context("failed to serialize metadata")?;
     bytes.push(b'\n');
     config::write_atomic(&metadata_path, &bytes)
@@ -536,12 +670,21 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let video_size_bytes = fs::metadata(directory.join(VIDEO_MP4))
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let metadata_path = directory.join(METADATA_JSON);
-    let Ok(metadata) = read_json::<MetadataDocument>(&metadata_path) else {
+    let Ok((metadata, game_log)) = read_recording_bundle(directory) else {
         return incomplete_summary(timestamp, video_size_bytes);
     };
+    game_summary_from_bundle(directory, timestamp, &metadata, &game_log)
+}
 
-    let game_log = read_game_log(&directory.join(GAME_LOG_JSON)).unwrap_or_default();
+fn game_summary_from_bundle(
+    directory: &Path,
+    timestamp: String,
+    metadata: &MetadataDocument,
+    game_log: &GameLogDocument,
+) -> GameSummary {
+    let video_size_bytes = fs::metadata(directory.join(VIDEO_MP4))
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     let local_player_name = metadata.local_player_summoner_name.as_deref();
     let (kills, deaths, assists) = local_player_name
         .map(|player| derive_kda(player, &game_log.events))
@@ -554,10 +697,14 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
         timestamp,
         champion: metadata
             .local_player_champion
+            .clone()
             .unwrap_or_else(|| "Unknown".to_owned()),
-        game_mode: metadata.game_mode.unwrap_or_else(|| "Unknown".to_owned()),
-        duration_ms: metadata.duration_ms,
-        recorded_at: metadata.recorded_at,
+        game_mode: metadata
+            .game_mode
+            .clone()
+            .unwrap_or_else(|| "Unknown".to_owned()),
+        duration_ms: display_duration_ms(&metadata.media_timeline),
+        recorded_at: metadata.recorded_at.clone(),
         kills,
         deaths,
         assists,
@@ -660,6 +807,7 @@ fn derive_kda(player: &str, events: &[GameEvent]) -> (u32, u32, u32) {
             event
                 .assisters
                 .iter()
+                .flatten()
                 .any(|assister| same_player(assister, player)),
         );
     }
@@ -702,14 +850,18 @@ fn event_relation(
     }
 }
 
-fn viewer_event(event: GameEvent, relation: EventRelation) -> Option<ViewerEvent> {
-    Some(ViewerEvent {
+fn viewer_event(
+    event: GameEvent,
+    relation: EventRelation,
+    mapped_replay_time: MappedReplayTime,
+) -> ViewerEvent {
+    ViewerEvent {
         event_type: event.event_type,
-        game_time_ms: u64::try_from(event.game_time_ms).ok()?,
-        video_time_ms: u64::try_from(event.video_time_ms).ok()?,
+        game_tick: event.game_tick,
+        mapped_replay_time,
         killer: event.killer,
         victim: event.victim,
-        assisters: event.assisters,
+        assisters: event.assisters.unwrap_or_default(),
         dragon_type: event.dragon_type,
         kill_streak: event.kill_streak,
         acer: event.acer,
@@ -718,7 +870,7 @@ fn viewer_event(event: GameEvent, relation: EventRelation) -> Option<ViewerEvent
         inhibitor: event.inhibitor,
         result: event.result,
         relation,
-    })
+    }
 }
 
 fn build_kda_timeline(player: &str, events: &[ViewerEvent]) -> Vec<KdaTimelinePoint> {
@@ -746,7 +898,7 @@ fn build_kda_timeline(player: &str, events: &[ViewerEvent]) -> Vec<KdaTimelinePo
         deaths += u32::from(is_death);
         assists += u32::from(is_assist);
         points.push(KdaTimelinePoint {
-            video_time_ms: event.video_time_ms,
+            mapped_replay_time: event.mapped_replay_time.clone(),
             kills,
             deaths,
             assists,
@@ -755,16 +907,101 @@ fn build_kda_timeline(player: &str, events: &[ViewerEvent]) -> Vec<KdaTimelinePo
     points
 }
 
-fn read_game_log(path: &Path) -> Result<GameLogDocument> {
-    if !path.exists() {
-        return Ok(GameLogDocument::default());
+fn read_recording_bundle(directory: &Path) -> Result<(MetadataDocument, GameLogDocument)> {
+    let metadata = read_metadata(&directory.join(METADATA_JSON))?;
+    let game_log = read_game_log(&directory.join(GAME_LOG_JSON))?;
+    if metadata.media_id != game_log.media_id
+        || metadata.media_id != metadata.media_timeline.media_id
+    {
+        bail!("rebuild development library: schema-v2 media_id values do not match")
     }
-    read_json(path)
+    Ok((metadata, game_log))
+}
+pub(crate) fn recording_export_authority(directory: &Path) -> Result<ExportRecordingAuthority> {
+    let (metadata, _) = read_recording_bundle(directory)?;
+    Ok(ExportRecordingAuthority {
+        media_timeline: metadata.media_timeline,
+        encoder_used: metadata.encoder_used,
+    })
+}
+
+fn read_metadata(path: &Path) -> Result<MetadataDocument> {
+    let metadata: MetadataDocument = read_json(path)?;
+    if metadata.schema_version != REPLAY_TIME_SCHEMA_VERSION {
+        bail!("rebuild development library: metadata.json is not schema version 2")
+    }
+    metadata
+        .media_timeline
+        .validate()
+        .context("rebuild development library: metadata.json media_timeline is invalid")?;
+    if metadata.media_id != metadata.media_timeline.media_id {
+        bail!("rebuild development library: metadata.json media_id does not match media_timeline")
+    }
+    if metadata._recording_codec != metadata.media_timeline.video.codec
+        || metadata._capture_backend != metadata.media_timeline.producer.backend
+        || metadata._media_runtime_id != metadata.media_timeline.producer.media_runtime_id
+    {
+        bail!(
+            "rebuild development library: metadata.json recorder facts do not match media_timeline"
+        )
+    }
+    if let Some(capture) = &metadata._capture
+        && (capture._schema_version != 1
+            || capture._backend != metadata._capture_backend
+            || capture._media_runtime_id != metadata._media_runtime_id)
+    {
+        bail!(
+            "rebuild development library: metadata.json capture facts do not match recorder facts"
+        )
+    }
+    Ok(metadata)
+}
+
+fn read_game_log(path: &Path) -> Result<GameLogDocument> {
+    let game_log: GameLogDocument = read_json(path)?;
+    if game_log.schema_version != REPLAY_TIME_SCHEMA_VERSION {
+        bail!("rebuild development library: game_log.json is not schema version 2")
+    }
+    if let Some(calibration) = &game_log.calibration {
+        calibration
+            .validate()
+            .context("rebuild development library: game_log.json calibration is invalid")?;
+    }
+    Ok(game_log)
+}
+
+fn map_game_tick(
+    game_log: &GameLogDocument,
+    game_tick: GameTick,
+    media_timeline: &MediaTimelineV2,
+) -> Result<MappedReplayTime> {
+    match &game_log.calibration {
+        Some(calibration) => calibration
+            .map_game_tick(game_tick, media_timeline.video.replay_end)
+            .context("rebuild development library: game-log affine mapping is invalid"),
+        None => Ok(MappedReplayTime::Unavailable {
+            reason: MappingUnavailableReason::CalibrationUnavailable,
+        }),
+    }
+}
+
+fn display_duration_ms(media_timeline: &MediaTimelineV2) -> u64 {
+    media_timeline.video.replay_end.get() / (REPLAY_TICKS_PER_SECOND / 1_000)
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
+    let bytes = fs::read(path).with_context(|| {
+        format!(
+            "rebuild development library: failed to read {}",
+            path.display()
+        )
+    })?;
+    serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "rebuild development library: failed to parse {}",
+            path.display()
+        )
+    })
 }
 
 fn compare_games(left: &GameSummary, right: &GameSummary) -> Ordering {
@@ -845,28 +1082,104 @@ fn hide_console(_command: &mut Command) {}
 mod tests {
     use std::path::PathBuf;
 
+    use chronobreak_replay_time::{
+        AudioTimelineV2, CalibrationStatus, ContainerTimelineV2, GameCalibrationV2, MediaPts,
+        ProducerEvidenceV2, Rational, ReplayTick, SignedReplayTick, VideoTimelineV2,
+    };
     use serde_json::json;
     use tempfile::tempdir;
 
     use super::*;
 
+    const MEDIA_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
+
+    fn timeline() -> MediaTimelineV2 {
+        MediaTimelineV2 {
+            schema_version: REPLAY_TIME_SCHEMA_VERSION,
+            replay_ticks_per_second: REPLAY_TICKS_PER_SECOND,
+            media_id: MediaId::parse(MEDIA_ID).unwrap(),
+            video: VideoTimelineV2 {
+                codec: "h264".to_owned(),
+                profile: Some("High".to_owned()),
+                time_base: Rational::positive(1, 15_360, "video time base").unwrap(),
+                first_pts: MediaPts::new(0),
+                frame_rate: Rational::positive(60, 1, "frame rate").unwrap(),
+                frame_count: chronobreak_replay_time::FrameBoundary::new(600).unwrap(),
+                one_past_last_pts: MediaPts::new(153_600),
+                replay_end: ReplayTick::new(480_000_000).unwrap(),
+                exact_cfr: true,
+            },
+            audio: AudioTimelineV2 {
+                present: true,
+                codec: Some("aac".to_owned()),
+                sample_rate: Some(48_000),
+                time_base: Some(Rational::positive(1, 48_000, "audio time base").unwrap()),
+                first_pts: Some(MediaPts::new(0)),
+                replay_start: Some(SignedReplayTick::new(0).unwrap()),
+                replay_end: Some(SignedReplayTick::new(480_000_000).unwrap()),
+            },
+            container: ContainerTimelineV2 {
+                start_seconds: Rational::new(0, 1).unwrap(),
+                duration_seconds: Rational::positive(10, 1, "duration").unwrap(),
+            },
+            producer: ProducerEvidenceV2 {
+                backend: "native".to_owned(),
+                expected_frame_rate: Rational::positive(60, 1, "expected frame rate").unwrap(),
+                expected_frame_count: chronobreak_replay_time::FrameBoundary::new(600).unwrap(),
+                media_runtime_id: "test-runtime".to_owned(),
+            },
+            capture: None,
+        }
+    }
+
+    fn available_calibration() -> serde_json::Value {
+        serde_json::to_value(GameCalibrationV2 {
+            status: CalibrationStatus::Available,
+            sample_count: 5,
+            first_game_tick: Some(GameTick::new(0).unwrap()),
+            last_game_tick: Some(GameTick::new(20_000_000).unwrap()),
+            replay_tick_at_game_zero: Some(SignedReplayTick::new(-48_000_000).unwrap()),
+            maximum_rtt_game_ticks: 1_000,
+            maximum_residual_game_ticks: 1,
+            uncertainty_game_ticks: 1,
+        })
+        .unwrap()
+    }
+
     fn write_game(root: &Path, timestamp: &str, recorded_at: &str, saved: bool) -> PathBuf {
         let game = root.join("games").join(timestamp);
         fs::create_dir_all(&game).unwrap();
         fs::write(game.join(VIDEO_MP4), b"video").unwrap();
+        let media_timeline = serde_json::to_value(timeline()).unwrap();
         fs::write(
             game.join(METADATA_JSON),
             serde_json::to_vec(&json!({
+                "schema_version": 2,
+                "media_id": MEDIA_ID,
+                "media_timeline": media_timeline,
                 "recorded_at": recorded_at,
-                "duration_ms": 120000,
-                "recording_fps": 60,
-                "video_offset_ms": 5000,
                 "game_mode": "CLASSIC",
                 "local_player_summoner_name": "Player#EUW",
                 "local_player_champion": "Syndra",
                 "local_player_team": "ORDER",
-                "saved": saved,
-                "preserved": "yes"
+                "encoder_used": "nvenc",
+                "recording_codec": "h264",
+                "recording_profile": "high",
+                "recording_resolution": "1920x1080",
+                "capture_backend": "native",
+                "capture_adapter_luid": null,
+                "capture_adapter_name": null,
+                "capture_output": null,
+                "encoder_interop": null,
+                "media_runtime_id": "test-runtime",
+                "capture_support_label": "fixture",
+                "source_frames_surfaced": 0,
+                "source_frames_superseded": 0,
+                "cfr_duplicates": 0,
+                "cfr_discards": 0,
+                "pool_recreations": 0,
+                "capture": null,
+                "saved": saved
             }))
             .unwrap(),
         )
@@ -874,29 +1187,19 @@ mod tests {
         fs::write(
             game.join(GAME_LOG_JSON),
             serde_json::to_vec(&json!({
-                "game_start_video_offset_ms": 5000,
+                "schema_version": 2,
+                "media_id": MEDIA_ID,
+                "calibration": available_calibration(),
                 "snapshots": [
-                    {
-                        "game_time_ms": 1000,
-                        "players": [
-                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":1,"level":1,"items":[{"item_id":1056,"slot":0}],"summoner_spells":["SummonerFlash","SummonerTeleport"],"keystone_id":8214},
-                            {"summoner_name":"Ally#EUW","team":"ORDER","champion":"LeeSin","cs":1,"level":1},
-                            {"summoner_name":"Enemy#EUW","team":"CHAOS","champion":"Viktor","cs":2,"level":1}
-                        ]
-                    },
-                    {
-                        "game_time_ms": 11000,
-                        "players": [
-                            {"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","cs":8,"level":2,"items":[{"item_id":3020,"slot":1},{"item_id":6657,"slot":0},{"item_id":3340,"slot":6}]}
-                        ]
-                    }
+                    {"game_tick":"0","players":[{"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","gold":null,"hp":null,"hp_max":null,"cs":1,"level":1,"items":[{"item_id":1056,"slot":0,"count":1}],"summoner_spells":["SummonerFlash","SummonerTeleport"],"keystone_id":8214}]},
+                    {"game_tick":"3000000","players":[{"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","gold":null,"hp":null,"hp_max":null,"cs":8,"level":2,"items":[{"item_id":3020,"slot":1,"count":1},{"item_id":6657,"slot":0,"count":1},{"item_id":3340,"slot":6,"count":1}]}]}
                 ],
-                "events": [
-                    {"type":"ChampionKill","game_time_ms":1000,"video_time_ms":6000,"killer":"Player","victim":"Enemy","assisters":[]},
-                    {"type":"ChampionKill","game_time_ms":2000,"video_time_ms":7000,"killer":"Enemy","victim":"Player","assisters":[]},
-                    {"type":"ChampionKill","game_time_ms":3000,"video_time_ms":8000,"killer":"Ally","victim":"Enemy","assisters":["Player"]},
-                    {"type":"DragonKill","game_time_ms":4000,"video_time_ms":9000,"killer":"Player","assisters":["Ally"],"dragon_type":"Air"}
-                ]
+                "events":[
+                    {"type":"ChampionKill","game_tick":"0","killer":"Player","victim":"Enemy","assisters":[]},
+                    {"type":"ChampionKill","game_tick":"1000000","killer":"Enemy","victim":"Player","assisters":[]},
+                    {"type":"ChampionKill","game_tick":"2000000","killer":"Ally","victim":"Enemy","assisters":["Player"]}
+                ],
+                "snapshot_derived_changes": []
             }))
             .unwrap(),
         )
@@ -905,219 +1208,130 @@ mod tests {
     }
 
     #[test]
-    fn lists_current_bundles_by_date_and_derives_kda() {
-        let root = tempdir().unwrap();
-        write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
-        write_game(root.path(), "1786000001", "2026-08-06T10:00:00Z", false);
-
-        let games = list_games(root.path()).unwrap();
-        assert_eq!(games.len(), 2);
-        assert_eq!(games[0].timestamp, "1786000001");
-        assert_eq!(
-            (games[0].kills, games[0].deaths, games[0].assists),
-            (1, 1, 1)
-        );
-        assert_eq!(games[0].video_size_bytes, 5);
-        assert_eq!(
-            games[0].summoner_spells,
-            ["SummonerFlash", "SummonerTeleport"]
-        );
-        assert_eq!(games[0].keystone_id, Some(8214));
-        assert_eq!(
-            games[0].items,
-            vec![
-                GameItemSummary {
-                    item_id: 6657,
-                    slot: 0,
-                },
-                GameItemSummary {
-                    item_id: 3020,
-                    slot: 1,
-                },
-                GameItemSummary {
-                    item_id: 3340,
-                    slot: 6,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn collision_suffixed_recording_bundle_is_browsable_playable_and_mutable() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "1786000000-1", "2026-08-05T10:00:00Z", false);
-
-        let games = list_games(root.path()).unwrap();
-        assert_eq!(games.len(), 1);
-        assert_eq!(games[0].timestamp, "1786000000-1");
-        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000-1").unwrap();
-        assert_eq!(
-            probe.video_url,
-            "http://127.0.0.1:9000/games/1786000000-1/video.mp4"
-        );
-
-        save_game(root.path(), "1786000000-1", true).unwrap();
-        let metadata: serde_json::Value = read_json(&game.join(METADATA_JSON)).unwrap();
-        assert_eq!(metadata["saved"], true);
-        save_game(root.path(), "1786000000-1", false).unwrap();
-        delete_game(root.path(), "1786000000-1").unwrap();
-        assert!(!game.exists());
-    }
-
-    #[test]
-    fn builds_sorted_frame_driven_playback_payload() {
+    fn builds_schema_v2_payload_with_exact_mapping_results() {
         let root = tempdir().unwrap();
         write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
 
         let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
 
-        assert_eq!(probe.game_start_video_offset_ms, 5_000);
-        assert_eq!(probe.recording_fps, 60);
+        assert_eq!(probe.media_timeline.media_id.as_str(), MEDIA_ID);
+        assert_eq!(probe.game.duration_ms, 10_000);
         assert_eq!(probe.local_player_name.as_deref(), Some("Player#EUW"));
+        assert!(matches!(
+            probe.events[0].mapped_replay_time,
+            MappedReplayTime::BeforeMedia { .. }
+        ));
+        assert!(matches!(
+            probe.events[1].mapped_replay_time,
+            MappedReplayTime::InsideMedia { .. }
+        ));
+        assert!(matches!(
+            probe.events[2].mapped_replay_time,
+            MappedReplayTime::InsideMedia { .. }
+        ));
+        assert_eq!(probe.kda_timeline.len(), 3);
         assert_eq!(
-            probe.participants,
-            vec![
-                ReplayParticipant {
-                    summoner_name: "Player#EUW".to_owned(),
-                    champion: "Syndra".to_owned(),
-                    relation: EventRelation::Ally,
-                },
-                ReplayParticipant {
-                    summoner_name: "Ally#EUW".to_owned(),
-                    champion: "LeeSin".to_owned(),
-                    relation: EventRelation::Ally,
-                },
-                ReplayParticipant {
-                    summoner_name: "Enemy#EUW".to_owned(),
-                    champion: "Viktor".to_owned(),
-                    relation: EventRelation::Enemy,
-                },
-            ]
-        );
-        assert_eq!(
-            probe.player_timeline,
-            vec![
-                PlayerTimelinePoint {
-                    game_time_ms: 1_000,
-                    video_time_ms: 6_000,
-                    cs: 1,
-                    level: 1,
-                },
-                PlayerTimelinePoint {
-                    game_time_ms: 11_000,
-                    video_time_ms: 16_000,
-                    cs: 8,
-                    level: 2,
-                },
-            ]
-        );
-        assert_eq!(
-            probe.kda_timeline,
-            vec![
-                KdaTimelinePoint {
-                    video_time_ms: 6_000,
-                    kills: 1,
-                    deaths: 0,
-                    assists: 0,
-                },
-                KdaTimelinePoint {
-                    video_time_ms: 7_000,
-                    kills: 1,
-                    deaths: 1,
-                    assists: 0,
-                },
-                KdaTimelinePoint {
-                    video_time_ms: 8_000,
-                    kills: 1,
-                    deaths: 1,
-                    assists: 1,
-                },
-            ]
-        );
-        assert_eq!(probe.events.len(), 4);
-        assert_eq!(probe.events[0].relation, EventRelation::Ally);
-        assert_eq!(probe.events[1].relation, EventRelation::Enemy);
-        assert_eq!(probe.events[2].relation, EventRelation::Ally);
-        assert_eq!(probe.events[3].event_type, "DragonKill");
-        assert_eq!(probe.events[3].dragon_type.as_deref(), Some("Air"));
-        assert_eq!(
-            probe.video_url,
-            "http://127.0.0.1:9000/games/1786000000/video.mp4"
+            (probe.game.kills, probe.game.deaths, probe.game.assists),
+            (1, 1, 1)
         );
     }
 
     #[test]
-    fn playback_requires_a_recording_frame_rate() {
+    fn rejects_schema_v1_unknown_missing_and_mismatched_bundles() {
         let root = tempdir().unwrap();
         let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
         let metadata_path = game.join(METADATA_JSON);
         let mut metadata: serde_json::Value = read_json(&metadata_path).unwrap();
-        metadata["recording_fps"] = json!(0);
-        fs::write(metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        metadata["schema_version"] = json!(1);
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(
+            playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000")
+                .unwrap_err()
+                .to_string()
+                .contains("rebuild development library")
+        );
 
-        let error = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000")
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("invalid frame rate"));
+        metadata["schema_version"] = json!(2);
+        metadata["unexpected"] = json!(true);
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").is_err());
+
+        metadata.as_object_mut().unwrap().remove("unexpected");
+        metadata.as_object_mut().unwrap().remove("media_timeline");
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").is_err());
+
+        write_game(root.path(), "1786000001", "2026-08-05T10:00:00Z", false);
+        let log_path = root
+            .path()
+            .join("games")
+            .join("1786000001")
+            .join(GAME_LOG_JSON);
+        let mut log: serde_json::Value = read_json(&log_path).unwrap();
+        log["schema_version"] = json!(1);
+        fs::write(&log_path, serde_json::to_vec(&log).unwrap()).unwrap();
+        assert!(
+            playback_probe(root.path(), "http://127.0.0.1:9000", "1786000001")
+                .unwrap_err()
+                .to_string()
+                .contains("game_log.json is not schema version 2")
+        );
+
+        log["schema_version"] = json!(2);
+        log["media_id"] = json!("123e4567-e89b-42d3-a456-426614174001");
+        fs::write(log_path, serde_json::to_vec(&log).unwrap()).unwrap();
+        assert!(
+            playback_probe(root.path(), "http://127.0.0.1:9000", "1786000001")
+                .unwrap_err()
+                .to_string()
+                .contains("media_id")
+        );
     }
 
     #[test]
-    fn keeps_incomplete_video_bundles_at_the_bottom() {
+    fn reports_after_media_and_unavailable_without_saturation() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
+        let log_path = game.join(GAME_LOG_JSON);
+        let mut log: serde_json::Value = read_json(&log_path).unwrap();
+        log["events"].as_array_mut().unwrap()[2]["game_tick"] = json!("30000000");
+        fs::write(&log_path, serde_json::to_vec(&log).unwrap()).unwrap();
+        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
+        assert!(matches!(
+            probe.events[2].mapped_replay_time,
+            MappedReplayTime::AfterMedia { .. }
+        ));
+
+        log["calibration"] = serde_json::Value::Null;
+        fs::write(log_path, serde_json::to_vec(&log).unwrap()).unwrap();
+        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
+        assert!(matches!(
+            probe.events[0].mapped_replay_time,
+            MappedReplayTime::Unavailable { .. }
+        ));
+    }
+
+    #[test]
+    fn save_requires_and_preserves_strict_schema_v2_metadata() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
+        save_game(root.path(), "1786000000", true).unwrap();
+        let metadata: MetadataDocument = read_metadata(&game.join(METADATA_JSON)).unwrap();
+        assert!(metadata.saved);
+        assert_eq!(metadata.media_id.as_str(), MEDIA_ID);
+    }
+
+    #[test]
+    fn keeps_incomplete_bundles_at_the_bottom() {
         let root = tempdir().unwrap();
         write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
         let incomplete = root.path().join("games").join("1786000001");
         fs::create_dir_all(&incomplete).unwrap();
         fs::write(incomplete.join(VIDEO_MP4), b"partial").unwrap();
-
         let games = list_games(root.path()).unwrap();
         assert_eq!(games.len(), 2);
         assert!(!games[0].incomplete);
         assert!(games[1].incomplete);
-        assert!(games[1].video_available);
-    }
-
-    #[test]
-    fn save_updates_metadata_without_losing_fields() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
-
-        save_game(root.path(), "1786000000", true).unwrap();
-
-        let metadata: serde_json::Value = read_json(&game.join(METADATA_JSON)).unwrap();
-        assert_eq!(metadata["saved"], true);
-        assert_eq!(metadata["preserved"], "yes");
-    }
-
-    #[test]
-    fn delete_requires_saved_games_to_be_unsaved_first() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", true);
-        assert!(delete_game(root.path(), "1786000000").is_err());
-        assert!(game.exists());
-
-        save_game(root.path(), "1786000000", false).unwrap();
-        delete_game(root.path(), "1786000000").unwrap();
-        assert!(!game.exists());
-    }
-
-    #[test]
-    fn auto_delete_skips_saved_recent_and_incomplete_games() {
-        let root = tempdir().unwrap();
-        let old = write_game(root.path(), "1786000000", "2025-01-01T00:00:00Z", false);
-        let saved = write_game(root.path(), "1786000001", "2025-01-01T00:00:00Z", true);
-        let recent = write_game(root.path(), "1786000002", "2026-07-30T00:00:00Z", false);
-        let incomplete = root.path().join("games").join("1786000003");
-        fs::create_dir_all(&incomplete).unwrap();
-        fs::write(incomplete.join(VIDEO_MP4), b"partial").unwrap();
-        let now = OffsetDateTime::parse("2026-08-06T00:00:00Z", &Rfc3339).unwrap();
-
-        let result = run_auto_delete_at(root.path(), 30, now).unwrap();
-
-        assert_eq!(result.deleted_count, 1);
-        assert!(!old.exists());
-        assert!(saved.exists());
-        assert!(recent.exists());
-        assert!(incomplete.exists());
     }
 
     #[test]

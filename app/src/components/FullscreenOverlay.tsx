@@ -12,7 +12,13 @@ import {
   eventSummary,
   eventTitle,
   nearestIndexAt,
+  replayTickAtFrameBoundary,
 } from "../viewerUtils";
+import {
+  REPLAY_TICKS_PER_SECOND,
+  type MediaTimelineV2,
+  type ReplayTick,
+} from "../replayTime";
 import ChampionFilter from "./ChampionFilter";
 import styles from "./FullscreenOverlay.module.css";
 
@@ -20,9 +26,9 @@ type Props = {
   champion: string;
   localPlayerName: string | null;
   events: readonly ViewerEvent[];
-  durationMs: number;
-  videoTimeMs: number;
-  gameClockSeconds: number;
+  mediaTimeline: MediaTimelineV2;
+  replayTick: ReplayTick;
+  gameTick: string;
   beforeGameStart: boolean;
   currentKda: KdaTimelinePoint | undefined;
   isPlaying: boolean;
@@ -33,11 +39,11 @@ type Props = {
   onPlayerToggle: (summonerName: string) => void;
   onPlayerClear: () => void;
   onTogglePlayback: () => void;
-  onSeek: (videoTimeMs: number) => void;
+  onSeek: (replayTick: ReplayTick) => void;
   onActivateClip: () => void;
   onEventSelect: (event: ViewerEvent) => void;
   onClipEndpointEditStart: (endpoint: "start" | "end") => void;
-  onClipEndpointPreview: (endpoint: "start" | "end", requestedMs: number) => void;
+  onClipEndpointPreview: (endpoint: "start" | "end", requestedTick: ReplayTick) => void;
   onClipEndpointEditFinish: () => void;
   onClipEndpointKeyDown: (event: KeyboardEvent, endpoint: "start" | "end") => void;
   onClipEndpointKeyUp: (event: KeyboardEvent, endpoint: "start" | "end") => void;
@@ -59,44 +65,57 @@ function FullscreenOverlay(props: Props) {
   const [displayedEvent, setDisplayedEvent] = createSignal<ViewerEvent | null>(null);
   const [eventCardVisible, setEventCardVisible] = createSignal(false);
 
-  const progress = createMemo(() => clamp((props.videoTimeMs / props.durationMs) * 100, 0, 100));
-  const videoSecond = createMemo(() => Math.floor(props.videoTimeMs / 1_000));
+  const replayEnd = createMemo(() => props.mediaTimeline.video.replayEnd);
+  const replayTickToMilliseconds = (tick: ReplayTick): number =>
+    Math.floor((tick * 1_000) / REPLAY_TICKS_PER_SECOND);
+  const gameTickToMilliseconds = (tick: string): number => Number(BigInt(tick) / 1_000n);
+  const frameBoundaryTick = (frame: ClipRange["startFrame"]): ReplayTick =>
+    replayTickAtFrameBoundary(frame, props.mediaTimeline);
+  const mappedEvents = createMemo(() =>
+    props.events.filter(
+      (event): event is ViewerEvent & { replay_tick: ReplayTick } => event.replay_tick !== undefined,
+    ),
+  );
+  const progress = createMemo(() => clamp((props.replayTick / replayEnd()) * 100, 0, 100));
+  const replaySecond = createMemo(() => Math.floor(replayTickToMilliseconds(props.replayTick) / 1_000));
   const markerPositions = createMemo(() =>
-    props.events.map((event, index) => ({
+    mappedEvents().map((event, index) => ({
       event,
       index,
-      position: clamp((event.video_time_ms / props.durationMs) * 100, 0, 100),
+      position: clamp((event.replay_tick / replayEnd()) * 100, 0, 100),
     })),
   );
   const clipStartPosition = createMemo(() =>
     props.clipRange
-      ? clamp((props.clipRange.startMs / props.durationMs) * 100, 0, 100)
+      ? clamp((frameBoundaryTick(props.clipRange.startFrame) / replayEnd()) * 100, 0, 100)
       : 0,
   );
   const clipEndPosition = createMemo(() =>
     props.clipRange
-      ? clamp((props.clipRange.endMs / props.durationMs) * 100, 0, 100)
+      ? clamp((frameBoundaryTick(props.clipRange.endFrameExclusive) / replayEnd()) * 100, 0, 100)
       : 100,
   );
   const minuteTicks = Array.from(
-    { length: Math.floor(props.durationMs / 60_000) + 1 },
+    { length: Math.floor(replayTickToMilliseconds(replayEnd()) / 60_000) + 1 },
     (_, index) => ({
       minute: index,
-      position: clamp(((index * 60_000) / props.durationMs) * 100, 0, 100),
+      position: clamp(((index * 60 * REPLAY_TICKS_PER_SECOND) / replayEnd()) * 100, 0, 100),
       major: index % 4 === 0,
     }),
   );
-  const timelineLabels = [0, 8 * 60_000, 16 * 60_000, 24 * 60_000, props.durationMs]
-    .filter((value, index, values) => value <= props.durationMs && values.indexOf(value) === index)
+  const timelineLabels = [0, 8, 16, 24]
+    .map((minute) => minute * 60 * REPLAY_TICKS_PER_SECOND)
+    .concat(replayEnd())
+    .filter((value, index, values) => value <= replayEnd() && values.indexOf(value) === index)
     .map((value) => ({
       value,
-      position: clamp((value / props.durationMs) * 100, 0, 100),
+      position: clamp((value / replayEnd()) * 100, 0, 100),
     }));
 
-  const nearestEventIndex = createMemo(() => nearestIndexAt(props.events, props.videoTimeMs));
+  const nearestEventIndex = createMemo(() => nearestIndexAt(mappedEvents(), props.replayTick));
   const proximityEventIndex = createMemo(() => {
     const index = nearestEventIndex();
-    return index >= 0 && Math.abs(props.events[index].video_time_ms - props.videoTimeMs) <= 1_000
+    return index >= 0 && Math.abs(mappedEvents()[index].replay_tick - props.replayTick) <= REPLAY_TICKS_PER_SECOND
       ? index
       : -1;
   });
@@ -127,7 +146,7 @@ function FullscreenOverlay(props: Props) {
       lastTriggeredEvent = undefined;
       return;
     }
-    const event = props.events[index];
+    const event = mappedEvents()[index];
     if (event === lastTriggeredEvent) return;
     lastTriggeredEvent = event;
     showEventCard(event);
@@ -147,18 +166,20 @@ function FullscreenOverlay(props: Props) {
   const seekFromRail = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0) return;
-    props.onSeek(((event.clientX - bounds.left) / bounds.width) * props.durationMs);
+    props.onSeek(
+      Math.round(clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * replayEnd()) as ReplayTick,
+    );
   };
 
   const handleRailKey = (event: KeyboardEvent) => {
-    let target: number | undefined;
-    if (event.key === "PageDown") target = props.videoTimeMs - 30_000;
-    if (event.key === "PageUp") target = props.videoTimeMs + 30_000;
-    if (event.key === "Home") target = 0;
-    if (event.key === "End") target = props.durationMs;
+    let target: ReplayTick | undefined;
+    if (event.key === "PageDown") target = (props.replayTick - 30 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
+    if (event.key === "PageUp") target = (props.replayTick + 30 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
+    if (event.key === "Home") target = 0 as ReplayTick;
+    if (event.key === "End") target = replayEnd();
     if (target === undefined) return;
     event.preventDefault();
-    props.onSeek(target);
+    props.onSeek(clamp(target, 0, replayEnd()) as ReplayTick);
   };
 
   const beginClipDrag = (
@@ -175,7 +196,7 @@ function FullscreenOverlay(props: Props) {
       if (bounds.width <= 0) return;
       props.onClipEndpointPreview(
         endpoint,
-        ((pointerEvent.clientX - bounds.left) / bounds.width) * props.durationMs,
+        Math.round(clamp((pointerEvent.clientX - bounds.left) / bounds.width, 0, 1) * replayEnd()) as ReplayTick,
       );
     };
     const cleanup = (pointerEvent: PointerEvent) => {
@@ -222,7 +243,7 @@ function FullscreenOverlay(props: Props) {
           </span>
         </div>
         <div class={styles.topStatus}>
-          <strong>{props.beforeGameStart ? "--:--" : formatDuration(props.gameClockSeconds * 1_000)}</strong>
+          <strong>{props.beforeGameStart ? "--:--" : formatDuration(gameTickToMilliseconds(props.gameTick))}</strong>
           <span class={styles.recStatus}><i aria-hidden="true" /> REC</span>
           <button type="button" onClick={props.onExit} aria-label="Exit fullscreen replay">EXIT <span aria-hidden="true">×</span></button>
         </div>
@@ -260,7 +281,7 @@ function FullscreenOverlay(props: Props) {
             <For each={minuteTicks}>{(tick) => <i classList={{ [styles.majorTick]: tick.major }} style={`left:${tick.position}%`} />}</For>
           </div>
           <div class={styles.timelineLabels} aria-hidden="true">
-            <For each={timelineLabels}>{(label) => <span style={`left:${label.position}%`}>{formatDuration(label.value)}</span>}</For>
+            <For each={timelineLabels}>{(label) => <span style={`left:${label.position}%`}>{formatDuration(replayTickToMilliseconds(label.value as ReplayTick))}</span>}</For>
           </div>
           <div
             ref={fullscreenRail}
@@ -269,9 +290,9 @@ function FullscreenOverlay(props: Props) {
             tabIndex={0}
             aria-label="Fullscreen replay position"
             aria-valuemin={0}
-            aria-valuemax={Math.floor(props.durationMs / 1_000)}
-            aria-valuenow={videoSecond()}
-            aria-valuetext={`${formatDuration(videoSecond() * 1_000)} of ${formatDuration(props.durationMs)}`}
+            aria-valuemax={Math.floor(replayTickToMilliseconds(replayEnd()) / 1_000)}
+            aria-valuenow={replaySecond()}
+            aria-valuetext={`${formatDuration(replaySecond() * 1_000)} of ${formatDuration(replayTickToMilliseconds(replayEnd()))}`}
             onPointerDown={seekFromRail}
             onKeyDown={handleRailKey}
             data-testid="fullscreen-scrubber"
@@ -287,7 +308,7 @@ function FullscreenOverlay(props: Props) {
                 class={`${styles.clipHandle} ${styles.clipHandleStart}`}
                 style={`left:${clipStartPosition()}%`}
                 type="button"
-                aria-label={`Clip starts at ${formatDuration(props.clipRange!.startMs)}`}
+                aria-label={`Clip starts at ${formatDuration(replayTickToMilliseconds(frameBoundaryTick(props.clipRange!.startFrame)))}`}
                 onPointerDown={(event) => beginClipDrag(event, "start")}
                 onKeyDown={(event) => props.onClipEndpointKeyDown(event, "start")}
                 onKeyUp={(event) => props.onClipEndpointKeyUp(event, "start")}
@@ -297,7 +318,7 @@ function FullscreenOverlay(props: Props) {
                 class={`${styles.clipHandle} ${styles.clipHandleEnd}`}
                 style={`left:${clipEndPosition()}%`}
                 type="button"
-                aria-label={`Clip ends at ${formatDuration(props.clipRange!.endMs)}`}
+                aria-label={`Clip ends at ${formatDuration(replayTickToMilliseconds(frameBoundaryTick(props.clipRange!.endFrameExclusive)))}`}
                 onPointerDown={(event) => beginClipDrag(event, "end")}
                 onKeyDown={(event) => props.onClipEndpointKeyDown(event, "end")}
                 onKeyUp={(event) => props.onClipEndpointKeyUp(event, "end")}
@@ -311,7 +332,7 @@ function FullscreenOverlay(props: Props) {
                   class={`${styles.fullscreenMarker} ${styles[`marker${marker.event.relation}`]}`}
                   style={`left:${marker.position}%`}
                   type="button"
-                  aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(marker.event.game_time_ms)}`}
+                  aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(gameTickToMilliseconds(marker.event.game_tick))}`}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => { event.stopPropagation(); props.onEventSelect(marker.event); }}
                 />
@@ -339,9 +360,9 @@ function FullscreenOverlay(props: Props) {
             </button>
           </Show>
           <span class={styles.controlsDivider} />
-          <span class={styles.fullscreenTime}><strong>{formatDuration(videoSecond() * 1_000)}</strong> / {formatDuration(props.durationMs)}</span>
+          <span class={styles.fullscreenTime}><strong>{formatDuration(replaySecond() * 1_000)}</strong> / {formatDuration(replayTickToMilliseconds(replayEnd()))}</span>
         </div>
-        <span class={styles.ambientTime}>{formatDuration(videoSecond() * 1_000)}</span>
+        <span class={styles.ambientTime}>{formatDuration(replaySecond() * 1_000)}</span>
       </section>
 
       <ChampionFilter

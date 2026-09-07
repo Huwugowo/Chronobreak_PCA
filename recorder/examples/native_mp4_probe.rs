@@ -1,6 +1,8 @@
 #[cfg(target_os = "windows")]
 mod windows_probe {
-    use std::path::PathBuf;
+    use std::fs::{self, OpenOptions};
+    use std::io::{self, Write};
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -19,6 +21,10 @@ mod windows_probe {
         let mut stall_worker_ms = None;
         let mut stall_mux_after_writes = None;
         let mut stall_mux_ms = None;
+        let mut fail_mux_after_writes = None;
+        let mut fail_mux_after_fragment_after_writes = None;
+        let mut fixture_pcm = None;
+        let mut fixture_start_signal = None;
         let mut max_no_slot_admission_failures = 0_u64;
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -87,6 +93,34 @@ mod windows_probe {
                             .context("--stall-mux-ms must be an integer")?,
                     );
                 }
+                "--fail-mux-after-writes" => {
+                    fail_mux_after_writes = Some(
+                        args.next()
+                            .context("--fail-mux-after-writes requires a value")?
+                            .parse::<u64>()
+                            .context("--fail-mux-after-writes must be an integer")?,
+                    );
+                }
+                "--fail-mux-after-fragment-after-writes" => {
+                    fail_mux_after_fragment_after_writes = Some(
+                        args.next()
+                            .context("--fail-mux-after-fragment-after-writes requires a value")?
+                            .parse::<u64>()
+                            .context("--fail-mux-after-fragment-after-writes must be an integer")?,
+                    );
+                }
+                "--fixture-pcm" => {
+                    fixture_pcm = Some(
+                        args.next()
+                            .context("--fixture-pcm requires a TCP endpoint")?,
+                    );
+                }
+                "--fixture-start-signal" => {
+                    fixture_start_signal = Some(PathBuf::from(
+                        args.next()
+                            .context("--fixture-start-signal requires a path")?,
+                    ));
+                }
                 "--max-no-slot-admission-failures" | "--max-slot-tick-drops" => {
                     max_no_slot_admission_failures = args
                         .next()
@@ -104,8 +138,49 @@ mod windows_probe {
 
         let target = capture_target_for_process(pid)
             .with_context(|| format!("could not resolve exact HWND for fixture PID {pid}"))?;
-        let mut session =
-            NativeRecorderSession::start(&target, &ffmpeg, &AudioSource::Silent, &output)?;
+        #[cfg(feature = "replay-time-fixture")]
+        let audio = fixture_pcm
+            .as_ref()
+            .map(|endpoint| AudioSource::ReplayTimeFixturePcm(endpoint.clone()))
+            .unwrap_or(AudioSource::Silent);
+        #[cfg(not(feature = "replay-time-fixture"))]
+        let audio = {
+            ensure!(
+                fixture_pcm.is_none() && fixture_start_signal.is_none(),
+                "fixture PCM and start signaling require the replay-time-fixture Cargo feature"
+            );
+            AudioSource::Silent
+        };
+        #[cfg(feature = "replay-time-fixture")]
+        if let Some(signal) = fixture_start_signal.as_ref() {
+            ensure!(
+                fixture_pcm.is_some(),
+                "--fixture-start-signal requires --fixture-pcm"
+            );
+            ensure!(
+                !signal.exists(),
+                "fixture start signal must not exist before the shared epoch"
+            );
+            println!(
+                "CHRONOBREAK_NATIVE_MP4_READY_FOR_START_SIGNAL path={}",
+                signal.display()
+            );
+            io::stdout()
+                .flush()
+                .context("could not publish native fixture start readiness")?;
+        }
+        let mut session = NativeRecorderSession::start(&target, &ffmpeg, &audio, &output)?;
+        #[cfg(feature = "replay-time-fixture")]
+        if let Some(signal) = fixture_start_signal.as_ref() {
+            publish_fixture_start_signal(signal)?;
+            println!(
+                "CHRONOBREAK_NATIVE_MP4_START_SIGNAL_PUBLISHED path={}",
+                signal.display()
+            );
+            io::stdout()
+                .flush()
+                .context("could not publish native fixture epoch release")?;
+        }
         #[cfg(feature = "native-failure-injection")]
         if let Some(ticks) = fail_nvenc_after_ticks {
             session.inject_nvenc_failure_after_ticks(ticks)?;
@@ -139,6 +214,23 @@ mod windows_probe {
             (None, None) => {}
             _ => bail!("--stall-mux-after-writes and --stall-mux-ms must be provided together"),
         }
+        #[cfg(feature = "native-failure-injection")]
+        ensure!(
+            fail_mux_after_writes.is_none() || fail_mux_after_fragment_after_writes.is_none(),
+            "exact and post-fragment mux failure injections are mutually exclusive"
+        );
+        #[cfg(feature = "native-failure-injection")]
+        if let Some(write_count) = fail_mux_after_writes {
+            session.inject_mux_failure_after_writes(write_count)?;
+            println!("CHRONOBREAK_NATIVE_FAILURE_INJECTION mux_failure_after_writes={write_count}");
+        }
+        #[cfg(feature = "native-failure-injection")]
+        if let Some(minimum_write_count) = fail_mux_after_fragment_after_writes {
+            session.inject_mux_failure_after_fragment_after_writes(minimum_write_count)?;
+            println!(
+                "CHRONOBREAK_NATIVE_FAILURE_INJECTION mux_failure_after_fragment_after_writes={minimum_write_count}"
+            );
+        }
         #[cfg(not(feature = "native-failure-injection"))]
         {
             ensure!(
@@ -152,6 +244,10 @@ mod windows_probe {
             ensure!(
                 stall_mux_after_writes.is_none() && stall_mux_ms.is_none(),
                 "mux writer stall injection requires the native-failure-injection Cargo feature"
+            );
+            ensure!(
+                fail_mux_after_writes.is_none() && fail_mux_after_fragment_after_writes.is_none(),
+                "mux failure injection requires the native-failure-injection Cargo feature"
             );
         }
         println!(
@@ -307,6 +403,43 @@ mod windows_probe {
             output.display()
         );
         Ok(())
+    }
+    #[cfg(feature = "replay-time-fixture")]
+    fn publish_fixture_start_signal(signal: &Path) -> Result<()> {
+        let mut temporary_name = signal.as_os_str().to_os_string();
+        temporary_name.push(".tmp");
+        let temporary = PathBuf::from(temporary_name);
+        ensure!(
+            !temporary.exists(),
+            "fixture start-signal staging file already exists"
+        );
+        let result = (|| -> Result<()> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .with_context(|| {
+                    format!(
+                        "could not create fixture start-signal staging file {}",
+                        temporary.display()
+                    )
+                })?;
+            file.write_all(b"start\n")
+                .context("could not write fixture start signal")?;
+            file.sync_all()
+                .context("could not flush fixture start signal")?;
+            drop(file);
+            fs::rename(&temporary, signal).with_context(|| {
+                format!(
+                    "could not atomically publish fixture start signal {}",
+                    signal.display()
+                )
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 }
 

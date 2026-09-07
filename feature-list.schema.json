@@ -11,7 +11,8 @@
   ],
   "properties": {
     "schema_version": {
-      "type": "string"
+      "type": "string",
+      "const": "1.1"
     },
     "project": {
       "type": "object",
@@ -275,9 +276,93 @@
                   "type": [
                     "string",
                     "null"
-                  ]
+                  ],
+                  "pattern": "^docs/exec-plans/(?:completed/)?[a-z0-9][a-z0-9-]*\\.md$"
+                },
+                "progress": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^docs/execution/[a-z0-9][a-z0-9-]*\\.md$"
                 }
-              }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "workflow": {
+                        "const": "planned"
+                      },
+                      "plan": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "workflow",
+                      "plan"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "progress"
+                    ],
+                    "properties": {
+                      "progress": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "workflow": {
+                        "enum": [
+                          "direct",
+                          "adaptive"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "workflow"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "plan": {
+                        "const": null
+                      },
+                      "progress": {
+                        "const": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "workflow": {
+                        "const": "planned"
+                      },
+                      "plan": {
+                        "const": null
+                      }
+                    },
+                    "required": [
+                      "workflow",
+                      "plan"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "progress": {
+                        "const": null
+                      }
+                    }
+                  }
+                }
+              ]
             },
             "acceptance_criteria": {
               "type": "array",

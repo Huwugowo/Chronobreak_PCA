@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "corpus_id": "generated-current-tree-20260827",
+  "sentinel_root": "C:\\QueueBack\\replay-time\\.chronobreak-replay-time",
+  "output_root": "C:\\QueueBack\\replay-time\\.chronobreak-replay-time\\sources\\generated-current-tree-20260827",
+  "fixtures": [
+    {
+      "id": "short-copy-h264",
+      "media_id": "123e4567-e89b-42d3-a456-426614174000",
+      "alias": "short-copy-h264",
+      "game_timestamp": "1787600000",
+      "source_video": "C:\\QueueBack\\generated-sources\\short-h264.mp4",
+      "transform": "copy",
+      "expected_video_codec": "h264",
+      "expected_audio_codec": "aac",
+      "expected_frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "minimum_duration_seconds": 120,
+      "event_interval_seconds": 5,
+      "snapshot_interval_seconds": 30
+    },
+    {
+      "id": "normalized-corpus-h264",
+      "media_id": "8a0f5b7e-8bb7-4bd9-85d1-75afcf7ca19e",
+      "alias": "normalized-corpus-h264",
+      "game_timestamp": "1787600001",
+      "source_video": "C:\\QueueBack\\generated-sources\\variable-cadence-h264.mp4",
+      "transform": "normalize",
+      "expected_video_codec": "h264",
+      "expected_audio_codec": "aac",
+      "expected_frame_rate": {
+        "numerator": "60000",
+        "denominator": "1001"
+      },
+      "minimum_duration_seconds": 1001,
+      "target_duration_seconds": {
+        "numerator": "1001",
+        "denominator": "1"
+      },
+      "event_interval_seconds": 5,
+      "snapshot_interval_seconds": 30
+    }
+  ]
+}

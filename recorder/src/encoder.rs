@@ -6,6 +6,7 @@ use std::process::{Output, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
+use chronobreak_replay_time::{FrameBoundary, Rational};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
@@ -14,18 +15,14 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::config::{CodecPreference, RecordingConfig, RecordingProfile};
+use crate::finalizer::CompletedVideoCandidate;
 use crate::platform::{
     CaptureSource, CaptureTarget, instant_from_qpc_100ns, validate_capture_target,
 };
-use crate::storage::{VIDEO_MP4, VIDEO_PARTIAL_MP4};
+use crate::storage::VIDEO_PARTIAL_MP4;
 
-pub mod capabilities;
 mod progress;
 
-use capabilities::{
-    CaptureCandidate, EncoderCapability, FILTER_BUFFERED_FRAME_LIMIT, NVENC_SURFACE_LIMIT,
-    plan_candidates,
-};
 pub use progress::{CAPTURE_DIAGNOSTIC_ABI, RecordingEvidence};
 use progress::{StreamKind, drain_stream};
 
@@ -35,7 +32,10 @@ const FFMPEG_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const FFMPEG_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const PROBE_OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) const FRAGMENTED_MP4_FLAGS: &str = "+frag_keyframe+empty_moov+default_base_moof";
+const FFMPEG_NVENC_SURFACE_LIMIT: u32 = 4;
+const FFMPEG_FILTER_BUFFERED_FRAME_LIMIT: u32 = 32;
+pub(crate) const FRAGMENTED_MP4_FLAGS: &str =
+    "+frag_keyframe+empty_moov+delay_moov+default_base_moof";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -86,7 +86,7 @@ impl EncoderKind {
                     EncoderSpeed::Quality => "p5",
                 };
                 push_args(arguments, &["-preset", preset, "-bf", "0", "-surfaces"]);
-                arguments.push(NVENC_SURFACE_LIMIT.to_string().into());
+                arguments.push(FFMPEG_NVENC_SURFACE_LIMIT.to_string().into());
             }
             Self::Amf => {
                 let quality = match speed {
@@ -273,6 +273,8 @@ pub enum AudioSource {
     DirectShow(String),
     AvFoundationCombined,
     Silent,
+    #[cfg(feature = "replay-time-fixture")]
+    ReplayTimeFixturePcm(String),
 }
 
 impl AudioSource {
@@ -281,6 +283,8 @@ impl AudioSource {
             Self::DirectShow(device) => format!("DirectShow device {device:?}"),
             Self::AvFoundationCombined => "AVFoundation default audio".to_owned(),
             Self::Silent => "silent stereo fallback".to_owned(),
+            #[cfg(feature = "replay-time-fixture")]
+            Self::ReplayTimeFixturePcm(_) => "synchronized replay-time fixture PCM".to_owned(),
         }
     }
 }
@@ -288,85 +292,8 @@ impl AudioSource {
 #[derive(Debug, Clone)]
 pub struct Ffmpeg {
     path: PathBuf,
+    ffprobe_path: PathBuf,
     runtime_id: String,
-}
-
-pub(crate) struct RecordingCandidateStart {
-    candidate_index: usize,
-    startup_timeout: Duration,
-    cancellation: watch::Receiver<bool>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RecordingCandidateFailureDisposition {
-    Cancelled,
-    Retryable,
-    Terminal,
-}
-
-#[derive(Debug)]
-pub(crate) struct RecordingCandidateFailure {
-    disposition: RecordingCandidateFailureDisposition,
-    error: anyhow::Error,
-}
-
-impl RecordingCandidateFailure {
-    fn cancelled(error: anyhow::Error) -> Self {
-        Self {
-            disposition: RecordingCandidateFailureDisposition::Cancelled,
-            error,
-        }
-    }
-
-    fn retryable(error: anyhow::Error) -> Self {
-        Self {
-            disposition: RecordingCandidateFailureDisposition::Retryable,
-            error,
-        }
-    }
-
-    fn terminal(error: anyhow::Error) -> Self {
-        Self {
-            disposition: RecordingCandidateFailureDisposition::Terminal,
-            error,
-        }
-    }
-
-    pub(crate) fn disposition(&self) -> RecordingCandidateFailureDisposition {
-        self.disposition
-    }
-
-    pub(crate) fn into_error(self) -> anyhow::Error {
-        self.error
-    }
-}
-
-impl std::fmt::Display for RecordingCandidateFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.error.fmt(formatter)
-    }
-}
-
-type RecordingCandidateResult<T> = std::result::Result<T, RecordingCandidateFailure>;
-
-impl RecordingCandidateStart {
-    pub(crate) fn new(
-        candidate_index: usize,
-        startup_timeout: Duration,
-        cancellation: watch::Receiver<bool>,
-    ) -> Self {
-        Self {
-            candidate_index,
-            startup_timeout,
-            cancellation,
-        }
-    }
-}
-
-struct RecordingOutputStart {
-    output_name: String,
-    startup_timeout: Duration,
-    cancellation: Option<watch::Receiver<bool>>,
 }
 
 impl Ffmpeg {
@@ -377,12 +304,17 @@ impl Ffmpeg {
         let tools = queueback_media_runtime::resolve(&packaged_root).await?;
         Ok(Self {
             path: tools.ffmpeg().to_path_buf(),
+            ffprobe_path: tools.ffprobe().to_path_buf(),
             runtime_id: tools.runtime_id().to_owned(),
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn ffprobe_path(&self) -> &Path {
+        &self.ffprobe_path
     }
 
     pub fn runtime_id(&self) -> &str {
@@ -457,47 +389,6 @@ impl Ffmpeg {
         bail!(
             "no working hardware {requested} encoder was found; software encoding is intentionally unsupported"
         )
-    }
-
-    pub async fn windows_capture_candidates(
-        &self,
-        target: &CaptureTarget,
-        recording: &RecordingConfig,
-        hevc_playback_supported: bool,
-    ) -> Result<Vec<(RecordingPlan, CaptureCandidate)>> {
-        let adapter_luid = target
-            .windows_adapter_luid()
-            .context("the optimized Windows target has no DXGI adapter LUID")?;
-        let advertised = self.advertised_encoders().await?;
-        let codecs = codec_candidates(recording.codec, hevc_playback_supported);
-        let mut capabilities = Vec::new();
-
-        for encoder in [EncoderKind::Nvenc, EncoderKind::Amf, EncoderKind::Qsv] {
-            for codec in codecs.iter().copied() {
-                if advertised.contains(encoder.codec_name(codec)) {
-                    let Some(capability) =
-                        EncoderCapability::compiled_candidate(encoder, codec, adapter_luid)
-                    else {
-                        continue;
-                    };
-                    capabilities.push(capability);
-                }
-            }
-        }
-
-        let candidates = plan_candidates(adapter_luid, &codecs, &capabilities)
-            .context("optimized Windows capture is unsupported")?;
-        let profile = match recording.profile {
-            RecordingProfile::Auto => RecordingProfile::High,
-            profile => profile,
-        };
-        Ok(candidates
-            .into_iter()
-            .map(|candidate| {
-                RecordingPlan::new(candidate.encoder, candidate.codec, profile)
-                    .map(|plan| (plan, candidate))
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     async fn recommend_profile(
@@ -711,72 +602,17 @@ impl Ffmpeg {
         plan: RecordingPlan,
         audio: &AudioSource,
     ) -> Result<RecordingSession> {
-        self.start_recording_output(
-            directory,
-            target,
-            plan,
-            audio,
-            RecordingOutputStart {
-                output_name: VIDEO_PARTIAL_MP4.to_owned(),
-                startup_timeout: FFMPEG_STARTUP_TIMEOUT,
-                cancellation: None,
-            },
-        )
-        .await
-        .map_err(RecordingCandidateFailure::into_error)
-    }
-
-    pub(crate) async fn start_recording_candidate(
-        &self,
-        directory: PathBuf,
-        target: &CaptureTarget,
-        plan: RecordingPlan,
-        audio: &AudioSource,
-        start: RecordingCandidateStart,
-    ) -> RecordingCandidateResult<RecordingSession> {
-        self.start_recording_output(
-            directory,
-            target,
-            plan,
-            audio,
-            RecordingOutputStart {
-                output_name: format!("video-candidate-{}.partial.mp4", start.candidate_index),
-                startup_timeout: start.startup_timeout,
-                cancellation: Some(start.cancellation),
-            },
-        )
-        .await
-    }
-
-    async fn start_recording_output(
-        &self,
-        directory: PathBuf,
-        target: &CaptureTarget,
-        plan: RecordingPlan,
-        audio: &AudioSource,
-        start: RecordingOutputStart,
-    ) -> RecordingCandidateResult<RecordingSession> {
         #[cfg(test)]
         if self.runtime_id != "test-runtime" {
-            validate_capture_target(target).map_err(|error| {
-                RecordingCandidateFailure::retryable(
-                    error.context("capture target changed before FFmpeg startup"),
-                )
-            })?;
+            validate_capture_target(target)
+                .context("capture target changed before FFmpeg startup")?;
         }
         #[cfg(not(test))]
-        validate_capture_target(target).map_err(|error| {
-            RecordingCandidateFailure::retryable(
-                error.context("capture target changed before FFmpeg startup"),
-            )
-        })?;
-        let output = directory.join(&start.output_name);
-        let arguments =
-            build_recording_arguments(target, plan, audio, &output).map_err(|error| {
-                RecordingCandidateFailure::terminal(
-                    error.context("invalid FFmpeg recording argument contract"),
-                )
-            })?;
+        validate_capture_target(target).context("capture target changed before FFmpeg startup")?;
+
+        let output = directory.join(VIDEO_PARTIAL_MP4);
+        let arguments = build_recording_arguments(target, plan, audio, &output)
+            .context("invalid FFmpeg recording argument contract")?;
         info!(
             ffmpeg = %self.path.display(),
             target = %target.description(),
@@ -797,25 +633,20 @@ impl Ffmpeg {
             .kill_on_drop(true);
         let mut child = command
             .spawn()
-            .with_context(|| format!("failed to start {}", self.path.display()))
-            .map_err(RecordingCandidateFailure::retryable)?;
+            .with_context(|| format!("failed to start {}", self.path.display()))?;
         let (evidence_sender, mut evidence_receiver) = watch::channel(RecordingEvidence::default());
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,
             None => {
                 terminate_child_before_stream_tasks(&mut child).await;
-                return Err(RecordingCandidateFailure::terminal(anyhow::anyhow!(
-                    "FFmpeg progress pipe was not created"
-                )));
+                bail!("FFmpeg progress pipe was not created");
             }
         };
         let stderr = match child.stderr.take() {
             Some(stderr) => stderr,
             None => {
                 terminate_child_before_stream_tasks(&mut child).await;
-                return Err(RecordingCandidateFailure::terminal(anyhow::anyhow!(
-                    "FFmpeg diagnostics pipe was not created"
-                )));
+                bail!("FFmpeg diagnostics pipe was not created");
             }
         };
         let stdout_sender = evidence_sender.clone();
@@ -827,8 +658,8 @@ impl Ffmpeg {
         });
 
         let startup = tokio::time::timeout(
-            start.startup_timeout,
-            wait_for_startup(&mut child, &mut evidence_receiver, start.cancellation),
+            FFMPEG_STARTUP_TIMEOUT,
+            wait_for_startup(&mut child, &mut evidence_receiver),
         )
         .await;
         let evidence = match startup {
@@ -839,10 +670,10 @@ impl Ffmpeg {
             }
             Err(_) => {
                 terminate_failed_startup(&mut child, stdout_task, stderr_task).await;
-                return Err(RecordingCandidateFailure::retryable(anyhow::anyhow!(
-                    "FFmpeg did not report a real WGC frame and advancing encoded output within {} seconds",
-                    start.startup_timeout.as_secs_f64()
-                )));
+                bail!(
+                    "FFmpeg did not report a real capture frame and advancing encoded output within {} seconds",
+                    FFMPEG_STARTUP_TIMEOUT.as_secs_f64()
+                );
             }
         };
 
@@ -861,14 +692,14 @@ impl Ffmpeg {
             let now = Instant::now();
             let recorded_at = SystemTime::now()
                 .checked_sub(now.saturating_duration_since(video_started_at))
-                .context("WGC first-frame wall-clock anchor underflowed")?;
+                .context("capture first-frame wall-clock anchor underflowed")?;
             Ok((first_qpc, video_started_at, recorded_at))
         })();
         let (first_qpc, video_started_at, recorded_at) = match anchors {
             Ok(anchors) => anchors,
             Err(error) => {
                 terminate_failed_startup(&mut child, stdout_task, stderr_task).await;
-                return Err(RecordingCandidateFailure::terminal(error));
+                return Err(error);
             }
         };
 
@@ -883,6 +714,7 @@ impl Ffmpeg {
         Ok(RecordingSession {
             directory,
             output,
+            plan,
             child,
             stdout_task: Some(stdout_task),
             stderr_task: Some(stderr_task),
@@ -896,62 +728,29 @@ impl Ffmpeg {
 async fn wait_for_startup(
     child: &mut Child,
     evidence: &mut watch::Receiver<RecordingEvidence>,
-    mut cancellation: Option<watch::Receiver<bool>>,
-) -> RecordingCandidateResult<RecordingEvidence> {
+) -> Result<RecordingEvidence> {
     loop {
-        if cancellation
-            .as_ref()
-            .is_some_and(|receiver| *receiver.borrow())
-        {
-            return Err(RecordingCandidateFailure::cancelled(anyhow::anyhow!(
-                "recording startup was cancelled"
-            )));
-        }
         let snapshot = evidence.borrow().clone();
         if let Some(error) = snapshot.protocol_error.as_deref() {
-            return Err(RecordingCandidateFailure::terminal(anyhow::anyhow!(
-                "FFmpeg capture observability failed: {error}"
-            )));
+            bail!("FFmpeg capture observability failed: {error}");
         }
         if snapshot.startup_ready() {
             return Ok(snapshot);
         }
-        let status = child
+        if let Some(status) = child
             .try_wait()
-            .context("failed to inspect FFmpeg during startup")
-            .map_err(RecordingCandidateFailure::retryable)?;
-        if let Some(status) = status {
-            return Err(RecordingCandidateFailure::retryable(anyhow::anyhow!(
-                "FFmpeg exited during startup with status {status}"
-            )));
+            .context("failed to inspect FFmpeg during startup")?
+        {
+            bail!("FFmpeg exited during startup with status {status}");
         }
 
         tokio::select! {
             changed = evidence.changed() => {
                 if changed.is_err() {
-                    return Err(RecordingCandidateFailure::retryable(anyhow::anyhow!(
-                        "FFmpeg capture/progress pipes closed before startup became ready"
-                    )));
+                    bail!("FFmpeg capture/progress pipes closed before startup became ready");
                 }
             }
-            _ = wait_for_cancellation(&mut cancellation) => {
-                return Err(RecordingCandidateFailure::cancelled(anyhow::anyhow!(
-                    "recording startup was cancelled"
-                )));
-            }
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-        }
-    }
-}
-
-async fn wait_for_cancellation(cancellation: &mut Option<watch::Receiver<bool>>) {
-    let Some(receiver) = cancellation else {
-        std::future::pending::<()>().await;
-        return;
-    };
-    loop {
-        if *receiver.borrow() || receiver.changed().await.is_err() {
-            return;
         }
     }
 }
@@ -987,6 +786,7 @@ async fn join_or_abort(task: &mut JoinHandle<()>) {
 pub struct RecordingSession {
     directory: PathBuf,
     output: PathBuf,
+    plan: RecordingPlan,
     child: Child,
     stdout_task: Option<JoinHandle<()>>,
     stderr_task: Option<JoinHandle<()>>,
@@ -1022,18 +822,14 @@ impl RecordingSession {
             .is_some())
     }
 
-    pub async fn stop(self) -> Result<PathBuf> {
-        self.stop_inner(None).await
+    pub async fn stop(self) -> Result<CompletedVideoCandidate> {
+        self.stop_inner().await
     }
 
-    pub(crate) async fn stop_with_failure(self, failure_reason: String) -> Result<PathBuf> {
-        self.stop_inner(Some(failure_reason)).await
-    }
-
-    async fn stop_inner(mut self, failure_reason: Option<String>) -> Result<PathBuf> {
+    async fn stop_inner(mut self) -> Result<CompletedVideoCandidate> {
         let mut exit_status = self.child.try_wait().context("failed to inspect ffmpeg")?;
         let exited_before_stop = exit_status.is_some();
-        let mut stop_error = failure_reason;
+        let mut stop_error = None;
         if exit_status.is_none() {
             if let Some(mut stdin) = self.child.stdin.take() {
                 let delivery = tokio::time::timeout(FFMPEG_PIPE_DRAIN_TIMEOUT, async {
@@ -1146,24 +942,17 @@ impl RecordingSession {
             );
         }
 
-        let canonical_output = self.directory.join(VIDEO_MP4);
-        if tokio::fs::try_exists(&canonical_output).await? {
-            bail!(
-                "refusing to overwrite an existing recording at {}; validated partial remains at {}",
-                canonical_output.display(),
-                output.display()
-            );
-        }
-        tokio::fs::rename(&output, &canonical_output)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to publish validated output {} as {}",
-                    output.display(),
-                    canonical_output.display()
-                )
-            })?;
-        Ok(self.directory)
+        let expected_frame_rate =
+            Rational::positive(i64::from(self.plan.fps()), 1, "recording frame rate")
+                .map_err(anyhow::Error::new)?;
+        let expected_frame_count =
+            FrameBoundary::new(evidence.encoded_frames).map_err(anyhow::Error::new)?;
+        CompletedVideoCandidate::new(
+            self.directory,
+            output,
+            expected_frame_rate,
+            expected_frame_count,
+        )
     }
 }
 
@@ -1376,36 +1165,11 @@ fn build_recording_arguments(
             "-filter_buffered_frames",
         ],
     );
-    arguments.push(FILTER_BUFFERED_FRAME_LIMIT.to_string().into());
+    arguments.push(FFMPEG_FILTER_BUFFERED_FRAME_LIMIT.to_string().into());
 
     match &target.source {
-        CaptureSource::WindowsGraphicsCapture {
-            hwnd,
-            adapter_index,
-            ..
-        } => {
-            push_args(&mut arguments, &["-init_hw_device"]);
-            arguments.push(format!("d3d11va=queueback:{adapter_index}").into());
-            if plan.encoder == EncoderKind::Qsv {
-                push_args(
-                    &mut arguments,
-                    &["-init_hw_device", "qsv=queueback_qsv@queueback"],
-                );
-            }
-            push_args(
-                &mut arguments,
-                &["-filter_hw_device", "queueback", "-f", "lavfi", "-i"],
-            );
-            arguments.push(
-                format!(
-                    "gfxcapture=hwnd={hwnd}:capture_cursor=false:capture_border=false:display_border=false:max_framerate={}:output_fmt=bgra",
-                    plan.fps()
-                )
-                .into(),
-            );
-
-            append_windows_audio_arguments(&mut arguments, audio);
-            push_args(&mut arguments, &["-map", "0:v:0", "-map", "1:a:0"]);
+        CaptureSource::WindowsGraphicsCapture { .. } => {
+            bail!("the FFmpeg-driven Windows Graphics Capture recorder has been retired")
         }
         CaptureSource::DesktopRegion {
             x,
@@ -1462,34 +1226,20 @@ fn build_recording_arguments(
     let output_dimensions = plan.benchmark_dimensions(source_dimensions);
     append_encoding_arguments(&mut arguments, plan, output_dimensions)?;
 
-    if matches!(&target.source, CaptureSource::WindowsGraphicsCapture { .. }) {
-        push_args(&mut arguments, &["-vf"]);
-        let mut filter = format!(
-            "scale_d3d11=width={}:height={}:format=nv12",
-            output_dimensions.0, output_dimensions.1
-        );
-        if plan.encoder == EncoderKind::Qsv {
-            filter.push_str(",hwmap=derive_device=qsv:mode=read+direct");
-        }
-        arguments.push(filter.into());
-        push_args(&mut arguments, &["-fps_mode", "cfr", "-r"]);
-        arguments.push(plan.fps().to_string().into());
+    if let Some(source) = source_dimensions {
+        append_fixed_scale_filter(&mut arguments, source, output_dimensions);
     } else {
-        if let Some(source) = source_dimensions {
-            append_fixed_scale_filter(&mut arguments, source, output_dimensions);
-        } else {
-            let maximum = plan.spec.max_dimensions;
-            push_args(&mut arguments, &["-vf"]);
-            arguments.push(
-                format!(
-                    "scale=w='min(iw,{})':h='min(ih,{})':force_original_aspect_ratio=decrease:force_divisible_by=2",
-                    maximum.0, maximum.1
-                )
-                .into(),
-            );
-        }
-        push_args(&mut arguments, &["-pix_fmt", "yuv420p"]);
+        let maximum = plan.spec.max_dimensions;
+        push_args(&mut arguments, &["-vf"]);
+        arguments.push(
+            format!(
+                "scale=w='min(iw,{})':h='min(ih,{})':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                maximum.0, maximum.1
+            )
+            .into(),
+        );
     }
+    push_args(&mut arguments, &["-pix_fmt", "yuv420p"]);
     if plan.codec == VideoCodec::Hevc {
         // `hvc1` is the interoperable MP4 sample entry expected by Apple media stacks.
         push_args(&mut arguments, &["-tag:v", "hvc1"]);
@@ -1501,6 +1251,7 @@ fn build_recording_arguments(
             "aac",
             "-b:a",
             "192k",
+            "-shortest",
             "-flush_packets",
             "1",
             "-movflags",
@@ -1532,6 +1283,24 @@ pub(crate) fn append_windows_audio_arguments(arguments: &mut Vec<OsString>, audi
                     "anullsrc=channel_layout=stereo:sample_rate=48000",
                 ],
             );
+        }
+        #[cfg(feature = "replay-time-fixture")]
+        AudioSource::ReplayTimeFixturePcm(endpoint) => {
+            push_args(
+                arguments,
+                &[
+                    "-thread_queue_size",
+                    "1024",
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-i",
+                ],
+            );
+            arguments.push(endpoint.into());
         }
     }
 }
@@ -1606,39 +1375,7 @@ pub(crate) fn push_args(target: &mut Vec<OsString>, values: &[&str]) {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "windows")]
-    use super::capabilities::DirectInterop;
     use super::*;
-
-    fn target() -> CaptureTarget {
-        CaptureTarget {
-            source: CaptureSource::WindowsGraphicsCapture {
-                pid: 42,
-                generation: 1,
-                hwnd: 0x1234,
-                width: 1920,
-                height: 1080,
-                dpi: 96,
-                window_title: Some("League".to_owned()),
-                adapter_index: 0,
-                adapter_luid: 0x1122_3344_5566_7788,
-                adapter_name: "Fixture GPU".to_owned(),
-                output_name: "DISPLAY1".to_owned(),
-            },
-        }
-    }
-
-    fn plan(profile: RecordingProfile, codec: VideoCodec) -> RecordingPlan {
-        plan_with_encoder(EncoderKind::Nvenc, profile, codec)
-    }
-
-    fn plan_with_encoder(
-        encoder: EncoderKind,
-        profile: RecordingProfile,
-        codec: VideoCodec,
-    ) -> RecordingPlan {
-        RecordingPlan::new(encoder, codec, profile).unwrap()
-    }
 
     #[test]
     fn recording_plan_constructor_rejects_an_unresolved_profile() {
@@ -1654,36 +1391,6 @@ mod tests {
         assert_eq!(selected.codec(), VideoCodec::H264);
         assert_eq!(selected.profile(), RecordingProfile::High);
         assert_eq!(selected.fps(), 60);
-    }
-
-    #[cfg(target_os = "windows")]
-    fn write_recording_fixture(path: &Path, stop_exit_code: u32) {
-        let script = r#"@echo off
-setlocal EnableDelayedExpansion
-set "last="
-for %%A in (%*) do set "last=%%~A"
-> "!last!" echo fake-fragmented-mp4
->&2 echo queueback_capture abi=1 event=ready frame_pool_capacity=2 output_pool_capacity=8
->&2 echo queueback_capture abi=1 event=first_frame source_frames_surfaced=1 source_frames_superseded=0 first_qpc=100 latest_qpc=100
-echo frame=2
-echo total_size=20
-echo out_time_us=16667
-echo progress=continue
-:wait
-set "line="
-set /p line=
-if /I "!line!"=="q" (
-  echo frame=3
-  echo total_size=20
-  echo out_time_us=33333
-  echo progress=end
-  >&2 echo queueback_capture abi=1 event=terminal source_frames_surfaced=2 source_frames_superseded=0 pool_recreations=0 first_qpc=100 latest_qpc=200
-  exit /b __STOP_EXIT_CODE__
-)
-goto wait
-"#
-        .replace("__STOP_EXIT_CODE__", &stop_exit_code.to_string());
-        std::fs::write(path, script).unwrap();
     }
 
     #[test]
@@ -1707,129 +1414,25 @@ goto wait
         assert_eq!(quoted_device_names(listing), vec!["Stereo Mix"]);
     }
 
+    #[cfg(feature = "replay-time-fixture")]
     #[test]
-    fn builds_gpu_resident_nvenc_window_capture_with_silent_audio() {
-        let args = build_recording_arguments(
-            &target(),
-            plan(RecordingProfile::High, VideoCodec::H264),
-            &AudioSource::Silent,
-            Path::new("video.mp4"),
-        )
-        .unwrap();
-        let args: Vec<String> = args
+    fn replay_time_fixture_pcm_uses_the_paced_stereo_input() {
+        let endpoint = "tcp://127.0.0.1:49152";
+        let mut arguments = Vec::new();
+        append_windows_audio_arguments(
+            &mut arguments,
+            &AudioSource::ReplayTimeFixturePcm(endpoint.to_owned()),
+        );
+        let arguments = arguments
             .into_iter()
             .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-        assert!(args.windows(2).any(|pair| pair == ["-c:v", "h264_nvenc"]));
-        assert!(args.windows(2).any(|pair| pair == ["-b:v", "12000k"]));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["-init_hw_device", "d3d11va=queueback:0"])
-        );
-        assert!(args.iter().any(|argument| {
-            argument.starts_with("gfxcapture=hwnd=4660:")
-                && argument.contains("capture_cursor=false")
-                && argument.contains("display_border=false")
-        }));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["-vf", "scale_d3d11=width=1920:height=1080:format=nv12"])
-        );
-        assert!(args.windows(2).any(|pair| pair == ["-surfaces", "4"]));
-        assert!(args.windows(2).any(|pair| pair == ["-bf", "0"]));
-        assert!(!args.iter().any(|argument| argument == "gdigrab"));
-        assert!(!args.iter().any(|argument| argument == "yuv420p"));
-        assert!(!args.iter().any(|argument| argument == "1024"));
-        assert!(
-            args.iter()
-                .any(|arg| arg == "anullsrc=channel_layout=stereo:sample_rate=48000")
-        );
-        assert!(args.windows(2).any(|pair| pair == ["-re", "-f"]));
-        assert!(args.windows(2).any(|pair| pair == ["-g", "120"]));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["-movflags", FRAGMENTED_MP4_FLAGS])
-        );
-        assert!(args.windows(2).any(|pair| pair == ["-flush_packets", "1"]));
-        assert_eq!(args.last().map(String::as_str), Some("video.mp4"));
-    }
-
-    #[test]
-    fn lower_profile_adds_aspect_preserving_scale_filter() {
-        let args = build_recording_arguments(
-            &target(),
-            plan(RecordingProfile::VeryLow, VideoCodec::H264),
-            &AudioSource::Silent,
-            Path::new("video.mp4"),
-        )
-        .unwrap();
-        let args: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["-vf", "scale_d3d11=width=1280:height=720:format=nv12"])
-        );
-        assert!(args.windows(2).any(|pair| pair == ["-g", "60"]));
-    }
-
-    #[test]
-    fn gpu_native_amf_and_qsv_keep_the_vendor_boundary_after_d3d11() {
-        let amf = build_recording_arguments(
-            &target(),
-            plan_with_encoder(EncoderKind::Amf, RecordingProfile::High, VideoCodec::H264),
-            &AudioSource::Silent,
-            Path::new("video.mp4"),
-        )
-        .unwrap();
-        let amf = amf
-            .iter()
-            .map(|argument| argument.to_string_lossy())
             .collect::<Vec<_>>();
-        assert!(amf.windows(2).any(|pair| pair == ["-c:v", "h264_amf"]));
-        assert!(amf.windows(2).any(|pair| pair == ["-async_depth", "4"]));
-        assert!(!amf.iter().any(|argument| argument.contains("hwdownload")));
 
-        let qsv = build_recording_arguments(
-            &target(),
-            plan_with_encoder(EncoderKind::Qsv, RecordingProfile::High, VideoCodec::H264),
-            &AudioSource::Silent,
-            Path::new("video.mp4"),
-        )
-        .unwrap();
-        let qsv = qsv
-            .iter()
-            .map(|argument| argument.to_string_lossy())
-            .collect::<Vec<_>>();
-        assert!(
-            qsv.windows(2)
-                .any(|pair| pair == ["-init_hw_device", "qsv=queueback_qsv@queueback"])
-        );
-        assert!(qsv.windows(2).any(|pair| pair == ["-c:v", "h264_qsv"]));
-        assert!(
-            qsv.iter()
-                .any(|argument| argument.contains("hwmap=derive_device=qsv:mode=read+direct"))
-        );
-        assert!(!qsv.iter().any(|argument| argument.contains("hwdownload")));
-    }
-
-    #[test]
-    fn hevc_uses_smaller_target_and_interoperable_mp4_tag() {
-        let args = build_recording_arguments(
-            &target(),
-            plan(RecordingProfile::High, VideoCodec::Hevc),
-            &AudioSource::Silent,
-            Path::new("video.mp4"),
-        )
-        .unwrap();
-        let args: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-        assert!(args.windows(2).any(|pair| pair == ["-c:v", "hevc_nvenc"]));
-        assert!(args.windows(2).any(|pair| pair == ["-b:v", "8000k"]));
-        assert!(args.windows(2).any(|pair| pair == ["-tag:v", "hvc1"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-f", "s16le"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-ar", "48000"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-ac", "2"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-i", endpoint]));
+        assert!(!arguments.windows(2).any(|pair| pair == ["-re", "-f"]));
     }
 
     #[test]
@@ -1903,359 +1506,5 @@ try {
             .share_mode(0)
             .open(&lock)
             .expect("the timed-out child still owns its exclusive lock");
-    }
-
-    #[cfg(target_os = "windows")]
-    #[tokio::test]
-    async fn recording_session_stops_with_one_mp4() {
-        let directory = tempfile::tempdir().unwrap();
-        let fake_ffmpeg = directory.path().join("fake-ffmpeg.cmd");
-        std::fs::write(
-            &fake_ffmpeg,
-            r#"@echo off
-setlocal EnableDelayedExpansion
-set "last="
-for %%A in (%*) do (
-  if /I "%%~A"=="-version" exit /b 0
-  if /I "%%~A"=="-encoders" (
-    echo V....D h264_nvenc fake encoder
-    exit /b 0
-  )
-  set "last=%%~A"
-)
-if "!last!"=="-" exit /b 0
-> "!last!" echo fake-fragmented-mp4
->&2 echo queueback_capture abi=1 event=ready frame_pool_capacity=2 output_pool_capacity=8
->&2 echo queueback_capture abi=1 event=first_frame source_frames_surfaced=1 source_frames_superseded=0 first_qpc=100 latest_qpc=100
-echo frame=2
-echo total_size=20
-echo out_time_us=16667
-echo progress=continue
-:wait
-set "line="
-set /p line=
-if /I "!line!"=="q" (
-  echo frame=3
-  echo total_size=20
-  echo out_time_us=33333
-  echo progress=end
-  >&2 echo queueback_capture abi=1 event=terminal source_frames_surfaced=2 source_frames_superseded=0 pool_recreations=0 first_qpc=100 latest_qpc=200
-  exit /b 0
-)
-goto wait
-"#,
-        )
-        .unwrap();
-
-        let ffmpeg = Ffmpeg {
-            path: fake_ffmpeg,
-            runtime_id: "test-runtime".to_owned(),
-        };
-        let selected = ffmpeg
-            .select_recording_plan(&RecordingConfig::default(), false, Some((1920, 1080)))
-            .await
-            .unwrap();
-        assert_eq!(selected.encoder, EncoderKind::Nvenc);
-        assert_eq!(selected.codec, VideoCodec::H264);
-        assert_eq!(selected.profile, RecordingProfile::High);
-
-        let bundle = directory.path().join("bundle");
-        std::fs::create_dir(&bundle).unwrap();
-        let session = ffmpeg
-            .start_recording(bundle.clone(), &target(), selected, &AudioSource::Silent)
-            .await
-            .unwrap();
-        assert!(!bundle.join(VIDEO_MP4).exists());
-        assert!(bundle.join(VIDEO_PARTIAL_MP4).exists());
-
-        let completed_directory = session.stop().await.unwrap();
-        assert_eq!(completed_directory, bundle);
-        assert!(bundle.join(VIDEO_MP4).exists());
-        assert!(!bundle.join(VIDEO_PARTIAL_MP4).exists());
-        let completed_files: Vec<_> = std::fs::read_dir(&bundle)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(completed_files, [std::ffi::OsString::from(VIDEO_MP4)]);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[tokio::test]
-    async fn failed_ffmpeg_stop_never_publishes_the_partial_recording() {
-        let directory = tempfile::tempdir().unwrap();
-        let fake_ffmpeg = directory.path().join("failing-stop-ffmpeg.cmd");
-        write_recording_fixture(&fake_ffmpeg, 7);
-        let bundle = directory.path().join("bundle");
-        std::fs::create_dir(&bundle).unwrap();
-        let ffmpeg = Ffmpeg {
-            path: fake_ffmpeg,
-            runtime_id: "test-runtime".to_owned(),
-        };
-        let session = ffmpeg
-            .start_recording(
-                bundle.clone(),
-                &target(),
-                plan(RecordingProfile::High, VideoCodec::H264),
-                &AudioSource::Silent,
-            )
-            .await
-            .unwrap();
-
-        let error = session.stop().await.unwrap_err();
-        assert!(error.to_string().contains("partial MP4 preserved"));
-        assert!(!bundle.join(VIDEO_MP4).exists());
-        assert!(bundle.join(VIDEO_PARTIAL_MP4).exists());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[tokio::test]
-    async fn external_failure_never_publishes_an_otherwise_valid_recording() {
-        let directory = tempfile::tempdir().unwrap();
-        let fake_ffmpeg = directory.path().join("external-failure-ffmpeg.cmd");
-        write_recording_fixture(&fake_ffmpeg, 0);
-        let bundle = directory.path().join("bundle");
-        std::fs::create_dir(&bundle).unwrap();
-        let ffmpeg = Ffmpeg {
-            path: fake_ffmpeg,
-            runtime_id: "test-runtime".to_owned(),
-        };
-        let session = ffmpeg
-            .start_recording(
-                bundle.clone(),
-                &target(),
-                plan(RecordingProfile::High, VideoCodec::H264),
-                &AudioSource::Silent,
-            )
-            .await
-            .unwrap();
-
-        let error = session
-            .stop_with_failure("fixture watchdog failure".to_owned())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("fixture watchdog failure"));
-        assert!(!bundle.join(VIDEO_MP4).exists());
-        assert!(bundle.join(VIDEO_PARTIAL_MP4).exists());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[tokio::test]
-    async fn startup_cancellation_terminates_the_child_before_the_readiness_deadline() {
-        let directory = tempfile::tempdir().unwrap();
-        let fake_ffmpeg = directory.path().join("never-ready-ffmpeg.cmd");
-        std::fs::write(
-            &fake_ffmpeg,
-            r#"@echo off
-setlocal EnableDelayedExpansion
-set "last="
-for %%A in (%*) do set "last=%%~A"
-> "!last!" echo partial-fragment
-:wait
-set "line="
-set /p line=
-goto wait
-"#,
-        )
-        .unwrap();
-        let bundle = directory.path().join("bundle");
-        std::fs::create_dir(&bundle).unwrap();
-        let ffmpeg = Ffmpeg {
-            path: fake_ffmpeg,
-            runtime_id: "test-runtime".to_owned(),
-        };
-        let (cancel, receiver) = watch::channel(false);
-        let target = target();
-        let started = Instant::now();
-        let task = tokio::spawn(async move {
-            ffmpeg
-                .start_recording_candidate(
-                    bundle,
-                    &target,
-                    plan(RecordingProfile::High, VideoCodec::H264),
-                    &AudioSource::Silent,
-                    RecordingCandidateStart::new(0, Duration::from_secs(60), receiver),
-                )
-                .await
-        });
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        cancel.send(true).unwrap();
-        let result = tokio::time::timeout(Duration::from_secs(4), task)
-            .await
-            .expect("cancellation must remain bounded")
-            .unwrap();
-        let error = match result {
-            Ok(_) => panic!("a cancelled startup unexpectedly became ready"),
-            Err(error) => error,
-        };
-        assert_eq!(
-            error.disposition(),
-            RecordingCandidateFailureDisposition::Cancelled
-        );
-        assert!(error.to_string().contains("cancelled"));
-        assert!(started.elapsed() < Duration::from_secs(4));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[tokio::test]
-    async fn startup_protocol_violation_is_terminal_and_reaps_the_child() {
-        let directory = tempfile::tempdir().unwrap();
-        let fake_ffmpeg = directory.path().join("invalid-protocol-ffmpeg.cmd");
-        std::fs::write(
-            &fake_ffmpeg,
-            r#"@echo off
-setlocal EnableDelayedExpansion
-set "last="
-for %%A in (%*) do set "last=%%~A"
-> "!last!" echo partial-fragment
->&2 echo queueback_capture abi=1 event=unexpected
-:wait
-set "line="
-set /p line=
-goto wait
-"#,
-        )
-        .unwrap();
-        let bundle = directory.path().join("bundle");
-        std::fs::create_dir(&bundle).unwrap();
-        let ffmpeg = Ffmpeg {
-            path: fake_ffmpeg,
-            runtime_id: "test-runtime".to_owned(),
-        };
-        let (_cancel, cancellation) = watch::channel(false);
-
-        let result = tokio::time::timeout(
-            Duration::from_secs(4),
-            ffmpeg.start_recording_candidate(
-                bundle.clone(),
-                &target(),
-                plan(RecordingProfile::High, VideoCodec::H264),
-                &AudioSource::Silent,
-                RecordingCandidateStart::new(0, Duration::from_secs(60), cancellation),
-            ),
-        )
-        .await
-        .expect("terminal protocol failure did not reap its child");
-        let error = match result {
-            Ok(_) => panic!("invalid startup protocol unexpectedly became ready"),
-            Err(error) => error,
-        };
-
-        assert_eq!(
-            error.disposition(),
-            RecordingCandidateFailureDisposition::Terminal
-        );
-        assert!(error.to_string().contains("observability failed"));
-        assert!(bundle.join("video-candidate-0.partial.mp4").is_file());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[tokio::test]
-    #[ignore = "requires a locked QUEUEBACK_MEDIA_RUNTIME_DIR plus QUEUEBACK_FFMPEG_LIFECYCLE_TEST_PID; optional duration/output variables preserve A/B evidence"]
-    async fn real_ffmpeg_lifecycle_records_a_non_league_window() {
-        let pid = std::env::var("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_PID")
-            .unwrap()
-            .parse::<u32>()
-            .unwrap();
-        let duration_seconds = std::env::var("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_SECONDS")
-            .map_or(Ok(5), |value| value.parse::<u64>())
-            .expect("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_SECONDS must be an integer");
-        assert!(
-            (1..=3_600).contains(&duration_seconds),
-            "FFmpeg lifecycle fixture duration must be between 1 and 3600 seconds"
-        );
-        let persistent_directory =
-            std::env::var_os("QUEUEBACK_FFMPEG_LIFECYCLE_TEST_OUTPUT").map(PathBuf::from);
-        let temporary_directory = persistent_directory
-            .is_none()
-            .then(|| tempfile::tempdir().unwrap());
-        let directory = persistent_directory
-            .clone()
-            .unwrap_or_else(|| temporary_directory.as_ref().unwrap().path().to_path_buf());
-        if persistent_directory.is_some() {
-            assert!(
-                !directory.exists(),
-                "persistent FFmpeg lifecycle fixture directory must be new: {}",
-                directory.display()
-            );
-            std::fs::create_dir_all(&directory).unwrap();
-        }
-
-        let ffmpeg = Ffmpeg::resolve().await.unwrap();
-        let decode_ffmpeg = ffmpeg.path().to_path_buf();
-        let target = crate::platform::capture_target_for_process(pid).unwrap();
-        let recording = RecordingConfig {
-            profile: RecordingProfile::High,
-            codec: CodecPreference::H264,
-        };
-        let candidates = ffmpeg
-            .windows_capture_candidates(&target, &recording, false)
-            .await
-            .unwrap();
-        let (selected_plan, selected_candidate) = candidates
-            .into_iter()
-            .find(|(plan, candidate)| {
-                plan.encoder() == EncoderKind::Nvenc
-                    && plan.codec() == VideoCodec::H264
-                    && candidate.interop == DirectInterop::D3d11Nvenc
-            })
-            .expect("locked runtime did not expose the direct D3D11/NVENC candidate");
-        let (_cancel, cancellation) = watch::channel(false);
-        let session = ffmpeg
-            .start_recording_candidate(
-                directory.clone(),
-                &target,
-                selected_plan,
-                &AudioSource::Silent,
-                RecordingCandidateStart::new(0, Duration::from_secs(15), cancellation),
-            )
-            .await
-            .unwrap();
-        let final_evidence = session.evidence_receiver();
-        assert!(final_evidence.borrow().startup_ready());
-        tokio::time::sleep(Duration::from_secs(duration_seconds)).await;
-
-        let published = session.stop().await.unwrap();
-        let video = published.join(VIDEO_MP4);
-        assert!(video.is_file());
-        assert!(std::fs::metadata(&video).unwrap().len() > 0);
-        let final_evidence = final_evidence.borrow().clone();
-        assert!(final_evidence.capture_terminal);
-        assert!(final_evidence.progress_end);
-        assert_eq!(final_evidence.frame_pool_capacity, Some(2));
-        assert_eq!(final_evidence.output_pool_capacity, Some(8));
-        assert!(final_evidence.protocol_error.is_none());
-        assert!(
-            final_evidence.encoded_frames >= duration_seconds.saturating_mul(55),
-            "FFmpeg lifecycle encoded {} frames during a {}-second fixture",
-            final_evidence.encoded_frames,
-            duration_seconds
-        );
-        assert!(final_evidence.muxed_bytes > 0);
-        assert!(final_evidence.output_time_us.is_some_and(|value| value > 0));
-        assert!(
-            final_evidence
-                .latest_qpc
-                .zip(final_evidence.first_qpc)
-                .is_some_and(|(latest, first)| latest > first)
-        );
-        if persistent_directory.is_some() {
-            std::fs::write(
-                published.join("recording-evidence.txt"),
-                format!(
-                    "duration_seconds={duration_seconds}\ninterop={}\n{final_evidence:#?}\n",
-                    selected_candidate.interop.label()
-                ),
-            )
-            .unwrap();
-        }
-        assert!(
-            std::process::Command::new(decode_ffmpeg)
-                .args(["-v", "error", "-i"])
-                .arg(video)
-                .args(["-f", "null", "-"])
-                .status()
-                .unwrap()
-                .success()
-        );
     }
 }

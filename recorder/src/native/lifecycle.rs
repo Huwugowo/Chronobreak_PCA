@@ -7,11 +7,13 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, anyhow, bail};
+use chronobreak_replay_time::{FrameBoundary, Rational};
 use tokio::sync::watch;
 
 use crate::encoder::{AudioSource, RecordingEvidence};
+use crate::finalizer::CompletedVideoCandidate;
 use crate::platform::{CaptureTarget, instant_from_qpc_100ns, validate_capture_target};
-use crate::storage::{VIDEO_MP4, VIDEO_PARTIAL_MP4};
+use crate::storage::VIDEO_PARTIAL_MP4;
 
 use super::{NativeRecorderSession, NativeSessionTelemetrySnapshot};
 
@@ -325,15 +327,15 @@ impl NativeRecordingSession {
         self.worker.is_finished()
     }
 
-    pub(crate) async fn stop(self) -> Result<PathBuf> {
+    pub(crate) async fn stop(self) -> Result<CompletedVideoCandidate> {
         self.stop_inner(None).await
     }
 
-    pub(crate) async fn stop_with_failure(self, reason: String) -> Result<PathBuf> {
+    pub(crate) async fn stop_with_failure(self, reason: String) -> Result<CompletedVideoCandidate> {
         self.stop_inner(Some(reason)).await
     }
 
-    async fn stop_inner(self, failure_reason: Option<String>) -> Result<PathBuf> {
+    async fn stop_inner(self, failure_reason: Option<String>) -> Result<CompletedVideoCandidate> {
         let Self {
             directory,
             output,
@@ -376,24 +378,11 @@ impl NativeRecordingSession {
             );
         }
 
-        let canonical_output = directory.join(VIDEO_MP4);
-        if tokio::fs::try_exists(&canonical_output).await? {
-            bail!(
-                "refusing to overwrite an existing recording at {}; validated partial remains at {}",
-                canonical_output.display(),
-                output.display()
-            );
-        }
-        tokio::fs::rename(&output, &canonical_output)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to publish validated native output {} as {}",
-                    output.display(),
-                    canonical_output.display()
-                )
-            })?;
-        Ok(directory)
+        let expected_frame_rate =
+            Rational::positive(60, 1, "native recording frame rate").map_err(anyhow::Error::new)?;
+        let expected_frame_count =
+            FrameBoundary::new(final_evidence.encoded_frames).map_err(anyhow::Error::new)?;
+        CompletedVideoCandidate::new(directory, output, expected_frame_rate, expected_frame_count)
     }
 }
 
@@ -603,12 +592,13 @@ mod tests {
         let observer = Arc::new(NativeWorkerCleanupObserver::default());
         session.worker.cleanup_observer = Some(Arc::clone(&observer));
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
-        assert!(!directory.path().join(VIDEO_MP4).exists());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
 
-        let published = session.stop().await.unwrap();
-        assert_eq!(published, directory.path());
-        assert!(directory.path().join(VIDEO_MP4).is_file());
-        assert!(!directory.path().join(VIDEO_PARTIAL_MP4).exists());
+        let completed = session.stop().await.unwrap();
+        assert_eq!(completed.directory(), directory.path());
+        assert_eq!(completed.expected_frame_count().get(), 120);
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+        assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert_explicit_cleanup(&observer);
     }
 
@@ -625,7 +615,7 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("fixture watchdog failure"));
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
-        assert!(!directory.path().join(VIDEO_MP4).exists());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
         assert_explicit_cleanup(&observer);
     }
 
@@ -833,7 +823,7 @@ mod tests {
         );
         assert!(error.to_string().contains("startup was cancelled"));
         assert!(started.elapsed() < Duration::from_secs(10));
-        assert!(!directory.path().join(VIDEO_MP4).exists());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
     }
 
     #[cfg(target_os = "windows")]
@@ -887,7 +877,7 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(duration_seconds)).await;
 
         let published = session.stop().await.unwrap();
-        let video = published.join(VIDEO_MP4);
+        let video = published.partial_path().to_path_buf();
         assert!(video.is_file());
         assert!(std::fs::metadata(&video).unwrap().len() > 0);
         let final_evidence = final_evidence.borrow().clone();
@@ -912,7 +902,7 @@ mod tests {
         );
         if persistent_directory.is_some() {
             std::fs::write(
-                published.join("recording-evidence.txt"),
+                published.directory().join("recording-evidence.txt"),
                 format!("duration_seconds={duration_seconds}\n{final_evidence:#?}\n"),
             )
             .unwrap();

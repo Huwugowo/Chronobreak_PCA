@@ -1,9 +1,8 @@
-//! Native Windows WGC/D3D11/NVENC recorder engine.
+//! Sole production Windows recorder: WGC/D3D11/NVENC.
 //!
-//! The production service can select this developer-gated backend while the
-//! FFmpeg reference path remains available. It keeps capture, conversion,
-//! direct NVENC, muxing, and lifecycle ownership inside the exact-HWND,
-//! same-adapter boundary without changing League target discovery.
+//! Capture, conversion, direct NVENC submission, muxing, and lifecycle
+//! ownership remain inside one exact-HWND, same-adapter boundary. FFmpeg is
+//! used only for synchronized audio encoding and fragmented-MP4 muxing.
 
 mod capture;
 mod clock;

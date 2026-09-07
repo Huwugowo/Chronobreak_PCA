@@ -34,15 +34,20 @@ export type ClipSummary = {
   source_date: string | null;
 };
 
+import type { FrameBoundary, MediaId, ReplayTick } from "./replayTime";
+
+/** A source-frame interval is the only replay/export address carried between screens. */
 export type ClipDraft = {
   gameTimestamp: string;
-  clipStartMs: number;
-  clipEndMs: number;
+  mediaId: MediaId;
+  startFrame: FrameBoundary;
+  endFrameExclusive: FrameBoundary;
 };
 
 export type ClipRange = {
-  startMs: number;
-  endMs: number;
+  mediaId: MediaId;
+  startFrame: FrameBoundary;
+  endFrameExclusive: FrameBoundary;
 };
 
 export type ClipExportPreset = "discord" | "horizontal" | "vertical";
@@ -54,8 +59,9 @@ export type ClipMusicSource =
 
 export type ClipExportRequest = {
   game_timestamp: string;
-  clip_start_ms: number;
-  clip_end_ms: number;
+  media_id: string;
+  start_frame: string;
+  end_frame_exclusive: string;
   presets: ClipExportPreset[];
   vertical_focus: number;
   vertical_position: number;
@@ -65,7 +71,7 @@ export type ClipExportRequest = {
 };
 
 export type ClipExportProgress = {
-  stage: "encoding" | "thumbnail" | "complete";
+  stage: "encoding" | "validating" | "thumbnail" | "complete";
   percent: number;
   preset: ClipExportPreset | null;
   completed_outputs: number;
@@ -81,6 +87,11 @@ export type ClipExportOutput = {
   strategy: "full_reencode";
   encoder_used: string;
   encode_elapsed_ms: number;
+  validation_elapsed_ms: number;
+  validated_frame_count: string;
+  validated_video_replay_end: string;
+  validated_audio_replay_start: string;
+  validated_audio_replay_end: string;
   thumbnail_elapsed_ms: number;
   retry_count: number;
   attempts: Array<{
@@ -111,8 +122,9 @@ export type BuiltInMusicTrack = {
 
 export type ViewerEvent = {
   event_type: string;
-  game_time_ms: number;
-  video_time_ms: number;
+  game_tick: string;
+  /** Undefined means game calibration did not map this observation into video. */
+  replay_tick?: ReplayTick;
   killer: string | null;
   victim: string | null;
   assisters: string[];
@@ -127,14 +139,14 @@ export type ViewerEvent = {
 };
 
 export type PlayerTimelinePoint = {
-  game_time_ms: number;
-  video_time_ms: number;
+  game_tick: string;
+  replay_tick?: ReplayTick;
   cs: number;
   level: number;
 };
 
 export type KdaTimelinePoint = {
-  video_time_ms: number;
+  replay_tick?: ReplayTick;
   kills: number;
   deaths: number;
   assists: number;
@@ -149,8 +161,7 @@ export type ReplayParticipant = {
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;
-  recording_fps: number;
-  game_start_video_offset_ms: number;
+  media_timeline: import("./replayTime").MediaTimelineV2;
   local_player_name: string | null;
   participants: ReplayParticipant[];
   player_timeline: PlayerTimelinePoint[];

@@ -2,11 +2,12 @@
 param(
     [ValidateSet("steady", "resize", "minimize_restore", "occlusion", "close_window")]
     [string]$Scenario = "steady",
-    [ValidateSet("none", "nvenc_failure")]
+    [ValidateSet("none", "nvenc_failure", "mux_failure", "pre_first_fragment")]
     [string]$Interruption = "none",
     [ValidateRange(2, 7200)]
     [int]$DurationSeconds = 10,
     [switch]$CollectResources,
+    [switch]$ReplayTimeMarkers,
     [switch]$KeepTargetVisible,
     [ValidateRange(1, 60)]
     [int]$ResourceSampleSeconds = 5,
@@ -16,6 +17,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($ReplayTimeMarkers -and ($Scenario -ne "steady" -or $Interruption -ne "none")) {
+    throw "Replay-time markers require the steady scenario without an interruption."
+}
+if ($ReplayTimeMarkers -and ($DurationSeconds -lt 6 -or $DurationSeconds -gt 120)) {
+    throw "Replay-time marker verification requires a duration from 6 through 120 seconds."
+}
 
 function Invoke-BoundedProcess {
     param(
@@ -177,7 +185,7 @@ try {
     $ErrorActionPreference = "Continue"
     $buildOutput = & cargo build --manifest-path (Join-Path $repository "recorder\Cargo.toml") `
         --release --example wgc_fixture --example native_mp4_probe `
-        --features native-failure-injection 2>&1
+        --features native-failure-injection,replay-time-fixture 2>&1
     $buildExitCode = $LASTEXITCODE
 }
 finally {
@@ -203,6 +211,17 @@ $executionStateSet = $false
 $expectedFailure = $Scenario -eq "close_window" -or $Interruption -ne "none"
 $resourceSamples = New-Object 'System.Collections.Generic.List[object]'
 $resourceFfmpegPid = $null
+$markerEndpoint = $null
+$markerGeneration = $null
+$markerContract = $null
+$markerStartSignal = if ($ReplayTimeMarkers) {
+    Join-Path $runRoot "marker-start.signal"
+} else {
+    $null
+}
+if ($markerStartSignal -and (Test-Path -LiteralPath $markerStartSignal)) {
+    throw "The dedicated marker start signal already exists."
+}
 
 try {
     if ($KeepTargetVisible) {
@@ -232,6 +251,12 @@ public static class QueueBackNativeFixtureExecutionState {
         "--action-after-seconds", $firstActionSeconds,
         "--restore-after-seconds", $secondActionSeconds
     )
+    if ($ReplayTimeMarkers) {
+        $fixtureArguments += @(
+            "--marker-duration-seconds", $DurationSeconds,
+            "--marker-start-signal", $markerStartSignal
+        )
+    }
     if ($KeepTargetVisible) {
         $fixtureArguments += "--always-on-top"
     }
@@ -243,16 +268,34 @@ public static class QueueBackNativeFixtureExecutionState {
     for ($attempt = 0; $attempt -lt 150; $attempt++) {
         Start-Sleep -Milliseconds 100
         if (Test-Path -LiteralPath $fixtureStdout -PathType Leaf) {
-            $targetLine = Get-Content -LiteralPath $fixtureStdout |
+            $fixtureLines = @(Get-Content -LiteralPath $fixtureStdout)
+            $targetLine = $fixtureLines |
                 Where-Object { $_ -like "QUEUEBACK_WGC_TARGET*" } |
                 Select-Object -Last 1
             if ($targetLine) {
                 $target = [string]$targetLine
+            }
+            if ($ReplayTimeMarkers) {
+                $endpointLine = $fixtureLines |
+                    Where-Object { $_ -like "QUEUEBACK_WGC_MARKER_AUDIO endpoint=*" } |
+                    Select-Object -Last 1
+                $contractLine = $fixtureLines |
+                    Where-Object { $_ -like "QUEUEBACK_WGC_MARKER_CONTRACT *" } |
+                    Select-Object -Last 1
+                if ($endpointLine -and ([string]$endpointLine) -match 'endpoint=(tcp://[^\s]+)') {
+                    $markerEndpoint = [string]$Matches[1]
+                }
+                if ($contractLine -and ([string]$contractLine) -match 'generation=(\d+)') {
+                    $markerContract = [string]$contractLine
+                    $markerGeneration = [int]$Matches[1]
+                }
+            }
+            if ($target -and (-not $ReplayTimeMarkers -or ($markerEndpoint -and $null -ne $markerGeneration))) {
                 break
             }
         }
         if ($fixture.HasExited) {
-            throw "The native fixture target exited before publishing its HWND."
+            throw "The native fixture target exited before publishing its capture contract."
         }
     }
     if (-not $target -or $target -notmatch "hwnd=(\d+) adapter_index=(\d+)") {
@@ -268,9 +311,23 @@ public static class QueueBackNativeFixtureExecutionState {
         "--output", $video,
         "--duration-seconds", $DurationSeconds
     )
+    if ($ReplayTimeMarkers) {
+        if (-not $markerEndpoint -or $null -eq $markerGeneration) {
+            throw "The native fixture did not publish its marker endpoint and generation."
+        }
+        $captureArguments += @(
+            "--fixture-pcm", $markerEndpoint,
+            "--fixture-start-signal", $markerStartSignal
+        )
+    }
     if ($Interruption -eq "nvenc_failure") {
         $failureTick = [Math]::Max(60, [Math]::Min(120, $DurationSeconds * 30))
         $captureArguments += @("--fail-nvenc-after-ticks", $failureTick)
+    }
+    if ($Interruption -eq "mux_failure") {
+        $captureArguments += @("--fail-mux-after-fragment-after-writes", 120)
+    } elseif ($Interruption -eq "pre_first_fragment") {
+        $captureArguments += @("--fail-mux-after-writes", 1)
     }
 
     $capture = Start-Process -FilePath $captureExe -ArgumentList $captureArguments `
@@ -385,6 +442,8 @@ if ($CollectResources) {
     $resourceSampleArray | Export-Csv -LiteralPath (Join-Path $runRoot "resource-samples.csv") -NoTypeInformation -Encoding UTF8
 }
 
+$markerVerification = $null
+$muxFailureTrigger = $null
 $passLine = Get-Content -LiteralPath $captureStdout -ErrorAction SilentlyContinue |
     Where-Object { $_ -like "CHRONOBREAK_NATIVE_MP4_PASS *" } |
     Select-Object -Last 1
@@ -398,79 +457,251 @@ if (-not $expectedFailure) {
     }
     $requiredFailure = if ($Scenario -eq "close_window") {
         "native WGC target closed while recording"
-    } else {
+    } elseif ($Interruption -eq "nvenc_failure") {
         "injected terminal native NVENC failure"
+    } else {
+        "injected terminal native mux failure"
     }
     if ($captureError -notlike "*$requiredFailure*") {
         throw "The $Scenario/$Interruption native fixture did not return its exact expected failure: $captureError"
     }
+    if ($Interruption -eq "mux_failure") {
+        if ($captureError -notmatch 'mode=after_completed_fragment minimum_writes=(\d+) observed_writes=(\d+) moof_offset=(\d+) mdat_offset=(\d+) fragment_end_offset=(\d+) file_length=(\d+)') {
+            throw "The mux-failure fixture lacks complete-fragment trigger evidence: $captureError"
+        }
+        $muxFailureTrigger = [ordered]@{
+            mode = "after_completed_fragment"
+            minimum_writes = [uint64]$Matches[1]
+            observed_writes = [uint64]$Matches[2]
+            moof_offset = [uint64]$Matches[3]
+            mdat_offset = [uint64]$Matches[4]
+            fragment_end_offset = [uint64]$Matches[5]
+            file_length = [uint64]$Matches[6]
+        }
+        if (
+            $muxFailureTrigger.minimum_writes -ne 120 -or
+            $muxFailureTrigger.observed_writes -lt $muxFailureTrigger.minimum_writes -or
+            $muxFailureTrigger.moof_offset -ge $muxFailureTrigger.mdat_offset -or
+            $muxFailureTrigger.mdat_offset -ge $muxFailureTrigger.fragment_end_offset -or
+            $muxFailureTrigger.fragment_end_offset -gt $muxFailureTrigger.file_length
+        ) {
+            throw "The mux-failure fixture reported an invalid complete-fragment boundary."
+        }
+    } elseif ($Interruption -eq "pre_first_fragment") {
+        if ($captureError -notmatch 'mode=after_completed_writes requested_writes=(\d+) observed_writes=(\d+) file_length=(\d+) fragment_published=false') {
+            throw "The pre-first-fragment fixture lacks exact trigger evidence: $captureError"
+        }
+        $muxFailureTrigger = [ordered]@{
+            mode = "after_completed_writes"
+            requested_writes = [uint64]$Matches[1]
+            observed_writes = [uint64]$Matches[2]
+            file_length = [uint64]$Matches[3]
+            fragment_published = $false
+        }
+        if (
+            $muxFailureTrigger.requested_writes -ne 1 -or
+            $muxFailureTrigger.observed_writes -lt 1
+        ) {
+            throw "The pre-first-fragment fixture did not trigger after the literal first write."
+        }
+    }
 }
 
-if (-not (Test-Path -LiteralPath $video -PathType Leaf) -or (Get-Item -LiteralPath $video).Length -le 0) {
-    throw "The native fixture output is missing or empty at $video."
-}
-
-$probeResult = Invoke-BoundedProcess -FilePath $ffprobe -Arguments @(
-    "-v", "error",
-    "-show_entries", "format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,start_time,duration",
-    "-of", "json", $video
-) -TimeoutSeconds 60
-if ($probeResult.ExitCode -ne 0) {
-    throw "ffprobe rejected the native fixture output: $($probeResult.StandardError)"
-}
-[System.IO.File]::WriteAllText((Join-Path $runRoot "ffprobe.json"), $probeResult.StandardOutput)
-$probe = $probeResult.StandardOutput | ConvertFrom-Json
-$videoStreams = @($probe.streams | Where-Object codec_type -eq "video")
-$audioStreams = @($probe.streams | Where-Object codec_type -eq "audio")
-if ($videoStreams.Count -ne 1 -or $audioStreams.Count -ne 1) {
-    throw "Native fixture output must contain exactly one video and one audio stream."
-}
-$videoStream = $videoStreams[0]
-if ([string]$videoStream.codec_name -ne "h264" -or [string]$audioStreams[0].codec_name -ne "aac") {
-    throw "Native fixture output must use H.264 video and AAC audio."
-}
-if ([int]$videoStream.width -ne 1920 -or [int]$videoStream.height -ne 1080 -or [string]$videoStream.r_frame_rate -ne "60/1") {
-    throw "Native fixture output is not the required 1920x1080 at 60/1 FPS."
-}
-
-$decodeTimeout = [Math]::Max(60, [Math]::Ceiling($DurationSeconds / 2))
-$decodeResult = Invoke-BoundedProcess -FilePath $ffmpeg -Arguments @(
-    "-v", "error", "-xerror", "-threads", "1", "-i", $video, "-f", "null", "NUL"
-) -TimeoutSeconds $decodeTimeout
-if ($decodeResult.ExitCode -ne 0) {
-    throw "Full native fixture decode failed: $($decodeResult.StandardError)"
-}
-
-$frameMd5Path = Join-Path $runRoot "frames.framemd5"
-$hashResult = Invoke-BoundedProcess -FilePath $ffmpeg -Arguments @(
-    "-v", "error", "-xerror", "-threads", "1", "-i", $video, "-an", "-f", "framemd5", "-y", $frameMd5Path
-) -TimeoutSeconds ([Math]::Max(60, $DurationSeconds))
-if ($hashResult.ExitCode -ne 0) {
-    throw "Native fixture frame-change analysis failed: $($hashResult.StandardError)"
-}
+$probe = $null
 $decodedFrames = 0
 $uniqueHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-foreach ($line in [System.IO.File]::ReadLines($frameMd5Path)) {
-    if ($line -match '^\d') {
-        $decodedFrames++
-        [void]$uniqueHashes.Add(($line.Split(',')[-1]).Trim())
+$fullDecode = "not-applicable"
+$videoBytes = if (Test-Path -LiteralPath $video -PathType Leaf) {
+    (Get-Item -LiteralPath $video).Length
+} else {
+    0
+}
+$videoSha256 = if ($videoBytes -gt 0) {
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $video).Hash.ToLowerInvariant()
+} else {
+    $null
+}
+
+if ($Interruption -eq "pre_first_fragment") {
+    if ($videoBytes -gt 0) {
+        $earlyProbe = Invoke-BoundedProcess -FilePath $ffprobe -Arguments @(
+            "-v", "error",
+            "-show_entries", "stream=index,codec_type",
+            "-of", "json", $video
+        ) -TimeoutSeconds 60
+        if ($earlyProbe.ExitCode -eq 0) {
+            $earlyProbeValue = $earlyProbe.StandardOutput | ConvertFrom-Json
+            if (@($earlyProbeValue.streams).Count -gt 0) {
+                throw "Pre-first-fragment interruption unexpectedly left finalized media streams."
+            }
+        }
+    }
+    $fullDecode = "not-applicable-before-first-fragment"
+} else {
+    if ($videoBytes -le 0) {
+        throw "The native fixture output is missing or empty at $video."
+    }
+    $probeResult = Invoke-BoundedProcess -FilePath $ffprobe -Arguments @(
+        "-v", "error",
+        "-show_entries", "format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,start_time,duration",
+        "-of", "json", $video
+    ) -TimeoutSeconds 60
+    if ($probeResult.ExitCode -ne 0) {
+        throw "ffprobe rejected the native fixture output: $($probeResult.StandardError)"
+    }
+    [System.IO.File]::WriteAllText((Join-Path $runRoot "ffprobe.json"), $probeResult.StandardOutput)
+    $probe = $probeResult.StandardOutput | ConvertFrom-Json
+    $videoStreams = @($probe.streams | Where-Object codec_type -eq "video")
+    $audioStreams = @($probe.streams | Where-Object codec_type -eq "audio")
+    if ($videoStreams.Count -ne 1 -or $audioStreams.Count -ne 1) {
+        throw "Native fixture output must contain exactly one video and one audio stream."
+    }
+    $videoStream = $videoStreams[0]
+    if ([string]$videoStream.codec_name -ne "h264" -or [string]$audioStreams[0].codec_name -ne "aac") {
+        throw "Native fixture output must use H.264 video and AAC audio."
+    }
+    if ([int]$videoStream.width -ne 1920 -or [int]$videoStream.height -ne 1080 -or [string]$videoStream.r_frame_rate -ne "60/1") {
+        throw "Native fixture output is not the required 1920x1080 at 60/1 FPS."
+    }
+
+    $decodeTimeout = [Math]::Max(60, [Math]::Ceiling($DurationSeconds / 2))
+    $decodeResult = Invoke-BoundedProcess -FilePath $ffmpeg -Arguments @(
+        "-v", "error", "-xerror", "-threads", "1", "-i", $video, "-f", "null", "NUL"
+    ) -TimeoutSeconds $decodeTimeout
+    if ($decodeResult.ExitCode -ne 0) {
+        throw "Full native fixture decode failed: $($decodeResult.StandardError)"
+    }
+    $fullDecode = "pass"
+
+    $frameMd5Path = Join-Path $runRoot "frames.framemd5"
+    $hashResult = Invoke-BoundedProcess -FilePath $ffmpeg -Arguments @(
+        "-v", "error", "-xerror", "-threads", "1", "-i", $video, "-an", "-f", "framemd5", "-y", $frameMd5Path
+    ) -TimeoutSeconds ([Math]::Max(60, $DurationSeconds))
+    if ($hashResult.ExitCode -ne 0) {
+        throw "Native fixture frame-change analysis failed: $($hashResult.StandardError)"
+    }
+    foreach ($line in [System.IO.File]::ReadLines($frameMd5Path)) {
+        if ($line -match '^\d') {
+            $decodedFrames++
+            [void]$uniqueHashes.Add(($line.Split(',')[-1]).Trim())
+        }
+    }
+    if (-not $expectedFailure) {
+        $expectedFrames = $DurationSeconds * 60
+        if ($decodedFrames -ne $expectedFrames) {
+            throw "Native fixture decoded $decodedFrames frames instead of the exact $expectedFrames CFR contract."
+        }
+        $minimumUnique = if ($Scenario -eq "minimize_restore") {
+            $DurationSeconds * 5
+        } else {
+            $DurationSeconds * 10
+        }
+        if ($uniqueHashes.Count -lt $minimumUnique) {
+            throw "Native fixture did not prove changing media ($decodedFrames frames, $($uniqueHashes.Count) unique hashes)."
+        }
+    } elseif ($decodedFrames -lt 60 -or $uniqueHashes.Count -lt 10) {
+        throw "Native failed-partial output is too short or static ($decodedFrames frames, $($uniqueHashes.Count) unique hashes)."
     }
 }
-if (-not $expectedFailure) {
-    $expectedFrames = $DurationSeconds * 60
-    if ($decodedFrames -ne $expectedFrames) {
-        throw "Native fixture decoded $decodedFrames frames instead of the exact $expectedFrames CFR contract."
+
+if ($ReplayTimeMarkers) {
+    if ($markerContract -notmatch "duration_frames=$($DurationSeconds * 60) sample_rate=48000") {
+        throw "The native fixture marker contract disagrees with the requested duration or sample rate: $markerContract"
     }
-    $minimumUnique = if ($Scenario -eq "minimize_restore") {
-        $DurationSeconds * 5
-    } else {
-        $DurationSeconds * 10
+    $fixtureLines = @(Get-Content -LiteralPath $fixtureStdout -ErrorAction SilentlyContinue)
+    $connectedLine = $fixtureLines |
+        Where-Object { $_ -eq "QUEUEBACK_WGC_MARKER_AUDIO_CONNECTED generation=$markerGeneration" } |
+        Select-Object -Last 1
+    if (-not $connectedLine) {
+        throw "The native fixture PCM source never committed the shared marker epoch."
     }
-    if ($uniqueHashes.Count -lt $minimumUnique) {
-        throw "Native fixture did not prove changing media ($decodedFrames frames, $($uniqueHashes.Count) unique hashes)."
+    $markerError = $fixtureLines |
+        Where-Object { $_ -like "QUEUEBACK_WGC_MARKER_AUDIO_ERROR *" } |
+        Select-Object -Last 1
+    if ($markerError) {
+        throw "The native fixture PCM source failed: $markerError"
     }
-} elseif ($decodedFrames -lt 60 -or $uniqueHashes.Count -lt 10) {
-    throw "Native failed-partial output is too short or static ($decodedFrames frames, $($uniqueHashes.Count) unique hashes)."
+
+    $markerProbePath = Join-Path $runRoot "marker-frames.ffprobe.json"
+    $markerProbe = Invoke-BoundedProcess -FilePath $ffprobe -Arguments @(
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_streams",
+        "-show_frames",
+        "-show_entries", "stream=index,codec_type,time_base:frame=media_type,best_effort_timestamp",
+        "-of", "json",
+        $video
+    ) -TimeoutSeconds 60
+    if ($markerProbe.ExitCode -ne 0) {
+        throw "Native marker frame PTS probing failed: $($markerProbe.StandardError)"
+    }
+    [System.IO.File]::WriteAllText($markerProbePath, $markerProbe.StandardOutput)
+
+    $markerVideoPath = Join-Path $runRoot "marker.gray"
+    $markerVideo = Invoke-BoundedProcess -FilePath $ffmpeg -Arguments @(
+        "-v", "error", "-xerror", "-threads", "1",
+        "-i", $video,
+        "-an",
+        "-vf", "crop=1280:960:320:60,scale=320:240:flags=neighbor,format=gray",
+        "-fps_mode", "passthrough",
+        "-pix_fmt", "gray",
+        "-f", "rawvideo",
+        "-y", $markerVideoPath
+    ) -TimeoutSeconds ([Math]::Max(60, $DurationSeconds))
+    if ($markerVideo.ExitCode -ne 0) {
+        throw "Native marker video decode failed: $($markerVideo.StandardError)"
+    }
+
+    $markerAudioPath = Join-Path $runRoot "marker.wav"
+    $markerAudio = Invoke-BoundedProcess -FilePath $ffmpeg -Arguments @(
+        "-v", "error", "-xerror", "-threads", "1",
+        "-i", $video,
+        "-map", "0:a:0",
+        "-ac", "1",
+        "-ar", "48000",
+        "-c:a", "pcm_s16le",
+        "-y", $markerAudioPath
+    ) -TimeoutSeconds ([Math]::Max(60, $DurationSeconds))
+    if ($markerAudio.ExitCode -ne 0) {
+        throw "Native marker audio decode failed: $($markerAudio.StandardError)"
+    }
+
+    $markerManifestPath = Join-Path $runRoot "marker-manifest.json"
+    $markerResultPath = Join-Path $runRoot "marker-result.json"
+    $fixtureTools = Join-Path $repository "tools\replay_time\fixture_tools.py"
+    $python = (Get-Command python.exe -ErrorAction Stop).Source
+    $markerCheck = Invoke-BoundedProcess -FilePath $python -Arguments @(
+        $fixtureTools,
+        "verify-native-recorder-media",
+        "--source-media", $video,
+        "--video", $markerVideoPath,
+        "--audio", $markerAudioPath,
+        "--probe", $markerProbePath,
+        "--duration-seconds", $DurationSeconds,
+        "--expected-generation", $markerGeneration,
+        "--manifest", $markerManifestPath,
+        "--result", $markerResultPath
+    ) -TimeoutSeconds ([Math]::Max(60, $DurationSeconds))
+    if ($markerCheck.ExitCode -ne 0) {
+        throw "Diagnostic native marker verification failed: $($markerCheck.StandardError)"
+    }
+    $markerVerification = Get-Content -Raw -LiteralPath $markerResultPath | ConvertFrom-Json
+    if (
+        -not $markerVerification.passed -or
+        [string]$markerVerification.command -ne "verify-native-recorder-media" -or
+        [int]$markerVerification.expected_generation -ne $markerGeneration -or
+        [int]$markerVerification.invalid_post_epoch_payload_frames -ne 0 -or
+        [int]$markerVerification.markers_in_interval -ne 3 -or
+        $markerVerification.capture_latency_identifiable -ne $false -or
+        $markerVerification.drift_gate_applied -ne $false -or
+        [string]$markerVerification.timing_claim -ne "diagnostic-coarse-wgc-alignment-only" -or
+        [string]$markerVerification.strict_drift_authority -ne "native-post-capture-mux-replay-time"
+    ) {
+        throw "Diagnostic native marker verification returned an invalid result contract."
+    }
+    if ([string]$markerVerification.input_files.source_media.sha256 -ne $videoSha256) {
+        throw "Diagnostic native marker verification did not bind the captured media hash."
+    }
 }
 
 $actionLines = @(Get-Content -LiteralPath $fixtureStdout -ErrorAction SilentlyContinue |
@@ -532,13 +763,21 @@ $result = [ordered]@{
     action_lines = @($actionLines | ForEach-Object { [string]$_ })
     decoded_frames = $decodedFrames
     unique_frame_hashes = $uniqueHashes.Count
-    video_bytes = (Get-Item -LiteralPath $video).Length
-    video_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $video).Hash.ToLowerInvariant()
+    video_bytes = $videoBytes
+    video_sha256 = $videoSha256
     ffprobe = $probe
     native_telemetry = $telemetry
+    replay_time_markers = [ordered]@{
+        requested = [bool]$ReplayTimeMarkers
+        source_contract = $markerContract
+        expected_generation = $markerGeneration
+        start_signal = $markerStartSignal
+        verification = $markerVerification
+    }
     expected_failure_detail = $(if ($expectedFailure) { $captureError.Trim() } else { $null })
+    mux_failure_trigger = $muxFailureTrigger
     resource_summary = $resourceSummary
-    full_decode = "pass"
+    full_decode = $fullDecode
     result = "pass"
 }
 Write-Json -Path (Join-Path $runRoot "result.json") -Value $result

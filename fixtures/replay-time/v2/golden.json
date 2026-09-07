@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "replay_ticks_per_second": "48000000",
+  "maximum_replay_tick": "4147200000000",
+  "frame_cases": [
+    {
+      "id": "frame-zero-60",
+      "frame_rate": { "numerator": "60", "denominator": "1" },
+      "frame_boundary": "0",
+      "expected_replay_tick": "0"
+    },
+    {
+      "id": "one-frame-30",
+      "frame_rate": { "numerator": "30", "denominator": "1" },
+      "frame_boundary": "1",
+      "expected_replay_tick": "1600000"
+    },
+    {
+      "id": "one-frame-60",
+      "frame_rate": { "numerator": "60", "denominator": "1" },
+      "frame_boundary": "1",
+      "expected_replay_tick": "800000"
+    },
+    {
+      "id": "one-frame-ntsc",
+      "frame_rate": { "numerator": "30000", "denominator": "1001" },
+      "frame_boundary": "1",
+      "expected_replay_tick": "1601600"
+    },
+    {
+      "id": "one-second-60",
+      "frame_rate": { "numerator": "60", "denominator": "1" },
+      "frame_boundary": "60",
+      "expected_replay_tick": "48000000"
+    },
+    {
+      "id": "last-supported-boundary",
+      "frame_rate": { "numerator": "60", "denominator": "1" },
+      "frame_boundary": "5184000",
+      "expected_replay_tick": "4147200000000"
+    }
+  ],
+  "rounding_cases": [
+    { "id": "positive-floor", "value": "3", "numerator": "1", "denominator": "2", "rounding": "floor", "expected": "1" },
+    { "id": "positive-ceil", "value": "3", "numerator": "1", "denominator": "2", "rounding": "ceil", "expected": "2" },
+    { "id": "positive-even-down", "value": "5", "numerator": "1", "denominator": "2", "rounding": "nearest_ties_to_even", "expected": "2" },
+    { "id": "positive-even-up", "value": "3", "numerator": "1", "denominator": "2", "rounding": "nearest_ties_to_even", "expected": "2" },
+    { "id": "negative-floor", "value": "-3", "numerator": "1", "denominator": "2", "rounding": "floor", "expected": "-2" },
+    { "id": "negative-ceil", "value": "-3", "numerator": "1", "denominator": "2", "rounding": "ceil", "expected": "-1" },
+    { "id": "negative-even", "value": "-1", "numerator": "1", "denominator": "2", "rounding": "nearest_ties_to_even", "expected": "0" }
+  ],
+  "invalid_unsigned_decimals": ["", "00", "01", "+1", "-1", " 1", "1 ", "1.0", "1e3", "4147200000001"],
+  "invalid_signed_decimals": ["", "-0", "00", "01", "-01", "+1", " 1", "1 ", "1.0", "1e3", "4147200000001", "-4147200000001"]
+}

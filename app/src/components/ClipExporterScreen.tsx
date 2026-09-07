@@ -24,6 +24,11 @@ import type {
   ClipExportProgress,
   ClipExportResult,
 } from "../types";
+import {
+  browserSecondsForReplayTick,
+  createClipRange,
+  frameBoundaryToReplayTick,
+} from "../replayTime";
 import { clamp } from "../viewerUtils";
 import styles from "./ClipExporterScreen.module.css";
 
@@ -97,7 +102,7 @@ function ClipExporterScreen(props: Props) {
   const [musicVolume, setMusicVolume] = createSignal(1);
   const [previewReady, setPreviewReady] = createSignal(false);
   const [previewPlaying, setPreviewPlaying] = createSignal(false);
-  const [previewTimeMs, setPreviewTimeMs] = createSignal(props.draft.clipStartMs);
+  const [previewTimeMs, setPreviewTimeMs] = createSignal(0);
   const [previewError, setPreviewError] = createSignal<string | null>(null);
   const [musicPreviewError, setMusicPreviewError] = createSignal<string | null>(null);
   const [exporting, setExporting] = createSignal(false);
@@ -111,7 +116,42 @@ function ClipExporterScreen(props: Props) {
   const [result, setResult] = createSignal<ClipExportResult | null>(null);
   const [exportError, setExportError] = createSignal<string | null>(null);
 
-  const durationMs = createMemo(() => props.draft.clipEndMs - props.draft.clipStartMs);
+  const clipRange = createMemo(() => {
+    const timeline = probe()?.media_timeline;
+    return timeline
+      ? createClipRange(
+          timeline,
+          props.draft.startFrame,
+          props.draft.endFrameExclusive,
+          props.draft.mediaId,
+        )
+      : null;
+  });
+  const clipStartMs = createMemo(() => {
+    const timeline = probe()?.media_timeline;
+    const range = clipRange();
+    if (!timeline || !range) return 0;
+    return browserSecondsForReplayTick(
+      timeline,
+      frameBoundaryToReplayTick(range.startFrame, timeline.video.frameRate),
+    ) * 1_000;
+  });
+  const clipEndMs = createMemo(() => {
+    const timeline = probe()?.media_timeline;
+    const range = clipRange();
+    if (!timeline || !range) return 0;
+    return browserSecondsForReplayTick(
+      timeline,
+      frameBoundaryToReplayTick(range.endFrameExclusive, timeline.video.frameRate),
+    ) * 1_000;
+  });
+  const durationMs = createMemo(() => clipEndMs() - clipStartMs());
+  const frameDurationMs = createMemo(() => {
+    const timeline = probe()?.media_timeline;
+    if (!timeline) return 1;
+    return 1_000 * Number(timeline.video.frameRate.denominator) /
+      Number(timeline.video.frameRate.numerator);
+  });
   const selectedTrack = createMemo(() =>
     tracks()?.find((track) => track.filename === builtInFilename()),
   );
@@ -159,7 +199,7 @@ function ClipExporterScreen(props: Props) {
   };
 
   const musicTimeFor = (timeMs: number) => {
-    const offsetSeconds = Math.max(0, timeMs - props.draft.clipStartMs) / 1_000;
+    const offsetSeconds = Math.max(0, timeMs - clipStartMs()) / 1_000;
     const musicDuration = musicPreview?.duration;
     return musicDuration && Number.isFinite(musicDuration) && musicDuration > 0
       ? offsetSeconds % musicDuration
@@ -185,8 +225,8 @@ function ClipExporterScreen(props: Props) {
   const seekPreview = (requestedMs: number) => {
     const targetMs = clamp(
       requestedMs,
-      props.draft.clipStartMs,
-      props.draft.clipEndMs,
+      clipStartMs(),
+      clipEndMs(),
     );
     setPreviewTimeMs(targetMs);
     setMediaTime(previewVideo, targetMs / 1_000);
@@ -216,7 +256,7 @@ function ClipExporterScreen(props: Props) {
 
   const requestPreviewSeek = (requestedMs: number) => {
     setPreviewTimeMs(
-      clamp(requestedMs, props.draft.clipStartMs, props.draft.clipEndMs),
+      clamp(requestedMs, clipStartMs(), clipEndMs()),
     );
     pendingPreviewSeekMs = requestedMs;
     dispatchPreviewSeek();
@@ -240,8 +280,8 @@ function ClipExporterScreen(props: Props) {
       return;
     }
     let currentMs = previewVideo.currentTime * 1_000;
-    if (currentMs >= props.draft.clipEndMs - 8) {
-      currentMs = props.draft.clipStartMs;
+    if (currentMs >= clipEndMs() - 8) {
+      currentMs = clipStartMs();
       seekPreview(currentMs);
       resumeSecondaryMedia();
     } else {
@@ -255,8 +295,8 @@ function ClipExporterScreen(props: Props) {
     if (!previewVideo || !previewReady()) return;
     setPreviewError(null);
     setMusicPreviewError(null);
-    if (restart || previewTimeMs() >= props.draft.clipEndMs - 20) {
-      seekPreview(props.draft.clipStartMs);
+    if (restart || previewTimeMs() >= clipEndMs() - 20) {
+      seekPreview(clipStartMs());
     } else {
       syncSecondaryMedia(previewTimeMs(), true);
     }
@@ -413,8 +453,9 @@ function ClipExporterScreen(props: Props) {
       const exported = await exportClip(
         {
           game_timestamp: props.draft.gameTimestamp,
-          clip_start_ms: props.draft.clipStartMs,
-          clip_end_ms: props.draft.clipEndMs,
+          media_id: props.draft.mediaId,
+          start_frame: props.draft.startFrame.toString(),
+          end_frame_exclusive: props.draft.endFrameExclusive.toString(),
           presets: [...selectedPresets()],
           vertical_focus: verticalFocus(),
           vertical_position: verticalPosition(),
@@ -454,8 +495,8 @@ function ClipExporterScreen(props: Props) {
           <h1>Publish the moment.</h1>
         </div>
         <dl>
-          <div><dt>START</dt><dd>{formatDuration(props.draft.clipStartMs)}</dd></div>
-          <div><dt>END</dt><dd>{formatDuration(props.draft.clipEndMs)}</dd></div>
+          <div><dt>START</dt><dd>{formatDuration(clipStartMs())}</dd></div>
+          <div><dt>END</dt><dd>{formatDuration(clipEndMs())}</dd></div>
           <div><dt>DURATION</dt><dd>{formatDuration(durationMs())}</dd></div>
         </dl>
       </header>
@@ -566,7 +607,7 @@ function ClipExporterScreen(props: Props) {
                       onLoadedMetadata={() => {
                         setPreviewReady(true);
                         setPreviewError(null);
-                        seekPreview(props.draft.clipStartMs);
+                        seekPreview(clipStartMs());
                       }}
                       onCanPlay={() => setPreviewReady(true)}
                       onPlay={() => setPreviewPlaying(true)}
@@ -606,15 +647,15 @@ function ClipExporterScreen(props: Props) {
                   </button>
                   <input
                     type="range"
-                    min={props.draft.clipStartMs}
-                    max={props.draft.clipEndMs}
-                    step={Math.max(1, Math.round(1_000 / probe()!.recording_fps))}
+                    min={clipStartMs()}
+                    max={clipEndMs()}
+                    step={frameDurationMs()}
                     value={previewTimeMs()}
                     aria-label="Clip preview position"
                     onInput={(event) => requestPreviewSeek(Number(event.currentTarget.value))}
                   />
                   <span>
-                    {formatDuration(previewTimeMs() - props.draft.clipStartMs)} / {formatDuration(durationMs())}
+                    {formatDuration(previewTimeMs() - clipStartMs())} / {formatDuration(durationMs())}
                   </span>
                   <button type="button" disabled={!previewReady()} onClick={() => void playPreview(true)}>
                     RESTART
@@ -721,7 +762,11 @@ function ClipExporterScreen(props: Props) {
                   <div class={styles.progressBlock} role="status">
                     <div>
                       <span>
-                        {progress().stage === "thumbnail" ? "GENERATING THUMBNAIL" : "ENCODING"}
+                        {progress().stage === "thumbnail"
+                          ? "GENERATING THUMBNAIL"
+                          : progress().stage === "validating"
+                            ? "VALIDATING OUTPUT"
+                            : "ENCODING"}
                         {progress().preset ? ` · ${presetLabel(progress().preset!)}` : ""}
                         {` · ${Math.min(progress().completed_outputs + 1, progress().total_outputs)}/${progress().total_outputs}`}
                       </span>

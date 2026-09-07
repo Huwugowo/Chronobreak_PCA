@@ -1,15 +1,17 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
+use chronobreak_replay_time::{
+    CalibrationStatus, GameCalibrationV2, GameTick, MediaId, MediaTimelineV2,
+    REPLAY_TICKS_PER_GAME_TICK, SignedReplayTick,
+};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -35,17 +37,33 @@ const POLLER_ABORT_REAP_TIMEOUT: Duration = Duration::from_secs(1);
 const POLLER_FINALIZATION_TIMEOUT: Duration = Duration::from_secs(5);
 const GAME_LOG_WRITE_COALESCE_WINDOW: Duration = Duration::from_millis(250);
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GameLog {
-    pub game_start_video_offset_ms: Option<i64>,
+    pub schema_version: u32,
+    pub media_id: MediaId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<GameCalibrationV2>,
     pub snapshots: Vec<Snapshot>,
     pub events: Vec<GameEvent>,
     pub snapshot_derived_changes: Vec<SnapshotChange>,
 }
 
+impl GameLog {
+    pub fn new(media_id: MediaId) -> Self {
+        Self {
+            schema_version: 2,
+            media_id,
+            calibration: None,
+            snapshots: Vec::new(),
+            events: Vec::new(),
+            snapshot_derived_changes: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Snapshot {
-    pub game_time_ms: i64,
+    pub game_tick: GameTick,
     pub players: Vec<PlayerSnapshot>,
 }
 
@@ -79,8 +97,7 @@ pub struct ItemSnapshot {
 pub struct GameEvent {
     #[serde(rename = "type")]
     pub event_type: String,
-    pub game_time_ms: i64,
-    pub video_time_ms: i64,
+    pub game_tick: GameTick,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub killer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,14 +124,13 @@ pub struct GameEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SnapshotChange {
-    pub game_time_ms: i64,
+    pub game_tick: GameTick,
     pub player: String,
     pub change_type: SnapshotChangeType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_level: Option<u32>,
-    pub video_time_ms: i64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,7 +142,6 @@ pub enum SnapshotChangeType {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PollerSummary {
-    pub game_start_video_offset_ms: Option<i64>,
     pub game_mode: Option<String>,
     pub local_player_summoner_name: Option<String>,
     pub local_player_champion: Option<String>,
@@ -135,18 +150,18 @@ pub struct PollerSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecordingMetadata {
+    pub schema_version: u32,
+    pub media_id: MediaId,
+    pub media_timeline: MediaTimelineV2,
     pub recorded_at: String,
-    pub duration_ms: u64,
     pub game_mode: Option<String>,
     pub local_player_summoner_name: Option<String>,
     pub local_player_champion: Option<String>,
     pub local_player_team: Option<String>,
-    pub video_offset_ms: Option<i64>,
     pub encoder_used: String,
     pub recording_codec: String,
     pub recording_profile: String,
     pub recording_resolution: String,
-    pub recording_fps: u32,
     pub capture_backend: String,
     pub capture_adapter_luid: Option<String>,
     pub capture_adapter_name: Option<String>,
@@ -223,29 +238,26 @@ pub struct RecordingDetails {
 
 impl RecordingMetadata {
     pub fn new(
-        recorded_at: SystemTime,
-        duration: Duration,
+        recorded_at: String,
+        media_timeline: MediaTimelineV2,
         summary: PollerSummary,
         recording: RecordingDetails,
-    ) -> Result<Self> {
-        let recorded_at = OffsetDateTime::from(recorded_at)
-            .format(&Rfc3339)
-            .context("failed to format recording start time")?;
-        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    ) -> Self {
+        let media_id = media_timeline.media_id.clone();
 
-        Ok(Self {
+        Self {
+            schema_version: 2,
+            media_id,
+            media_timeline,
             recorded_at,
-            duration_ms,
             game_mode: summary.game_mode,
             local_player_summoner_name: summary.local_player_summoner_name,
             local_player_champion: summary.local_player_champion,
             local_player_team: summary.local_player_team,
-            video_offset_ms: summary.game_start_video_offset_ms,
             encoder_used: recording.encoder_used,
             recording_codec: recording.codec,
             recording_profile: recording.profile,
             recording_resolution: recording.resolution,
-            recording_fps: recording.fps,
             capture_backend: recording.capture_backend,
             capture_adapter_luid: recording.capture_adapter_luid,
             capture_adapter_name: recording.capture_adapter_name,
@@ -260,7 +272,13 @@ impl RecordingMetadata {
             pool_recreations: recording.pool_recreations,
             capture: recording.capture,
             saved: false,
-        })
+        }
+    }
+}
+
+impl crate::finalizer::FinalMetadata for RecordingMetadata {
+    fn media_timeline(&self) -> &MediaTimelineV2 {
+        &self.media_timeline
     }
 }
 
@@ -367,12 +385,20 @@ impl Drop for GameLogWriter {
 }
 
 impl PollerSession {
-    pub async fn start(directory: &Path, video_started_at: Instant) -> Result<Self> {
+    pub async fn start(
+        directory: &Path,
+        media_id: MediaId,
+        video_started_at: Instant,
+    ) -> Result<Self> {
         let output = directory.join(GAME_LOG_JSON);
-        let state = Arc::new(Mutex::new(PollerState::default()));
+        let state = Arc::new(Mutex::new(PollerState {
+            game_log: GameLog::new(media_id),
+            ..PollerState::default()
+        }));
+        let initial_game_log = state.lock().await.game_log.clone();
         tokio::time::timeout(
             POLLER_STARTUP_WRITE_TIMEOUT,
-            write_json_atomic(&output, &GameLog::default()),
+            write_json_atomic(&output, &initial_game_log),
         )
         .await
         .context("initial game log write timed out")??;
@@ -503,7 +529,7 @@ fn log_poller_diagnostics(state: &PollerState, game_log_bytes: u64) {
     );
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PollerState {
     game_log: GameLog,
     summary: PollerSummary,
@@ -511,6 +537,7 @@ struct PollerState {
     revision: u64,
     durable_revision: u64,
     diagnostics: PollerDiagnostics,
+    last_calibration_clock: Option<GameTick>,
 }
 
 impl PollerState {
@@ -672,6 +699,7 @@ impl LiveClient {
                 game_data: game_data.value,
                 events,
             },
+            request_started_at: game_data.request_started_at,
             received_at: game_data.received_at,
             latency,
         })
@@ -695,6 +723,7 @@ impl LiveClient {
                 game_data: game_data.value,
                 events: RawEventData::default(),
             },
+            request_started_at: game_data.request_started_at,
             received_at: game_data.received_at,
             latency,
         })
@@ -724,6 +753,7 @@ impl LiveClient {
             .with_context(|| format!("invalid JSON response from {url}"))?;
         Ok(Received {
             value,
+            request_started_at,
             received_at,
             latency,
         })
@@ -732,6 +762,7 @@ impl LiveClient {
 
 struct Received<T> {
     value: T,
+    request_started_at: Instant,
     received_at: Instant,
     latency: Duration,
 }
@@ -756,39 +787,30 @@ async fn run_poller(
 
     let calibration_revision = {
         let mut state = state.lock().await;
-        state.game_log.game_start_video_offset_ms = Some(calibration.video_offset_ms);
-        state.summary.game_start_video_offset_ms = Some(calibration.video_offset_ms);
+        state.game_log.calibration = Some(calibration.evidence.clone());
+        state.last_calibration_clock = calibration.evidence.last_game_tick;
         if let Some(initial_data) = &mut initial_data {
             update_summary(&mut state.summary, initial_data);
-            reconcile_events(
-                &mut state,
-                std::mem::take(&mut initial_data.events.events),
-                calibration.video_offset_ms,
-            );
-            append_snapshot(
-                &mut state.game_log,
-                initial_data,
-                calibration.video_offset_ms,
-            )?;
+            reconcile_events(&mut state, std::mem::take(&mut initial_data.events.events));
+            append_snapshot(&mut state.game_log, initial_data)?;
         }
         state.mark_dirty()
     };
     notify_game_log_writer(&writer, calibration_revision)?;
     info!(
-        video_offset_ms = calibration.video_offset_ms,
+        sample_count = calibration.evidence.sample_count,
         "Live Client clock calibrated"
     );
 
     let event_loop = event_loop(
         client.clone(),
-        calibration.video_offset_ms,
         cancellation.clone(),
         Arc::clone(&state),
         writer.clone(),
     );
     let snapshot_loop = snapshot_loop(
         client,
-        calibration.video_offset_ms,
+        video_started_at,
         cancellation,
         state,
         writer,
@@ -799,13 +821,28 @@ async fn run_poller(
 }
 
 struct Calibration {
-    video_offset_ms: i64,
+    evidence: GameCalibrationV2,
+}
+
+impl Default for PollerState {
+    fn default() -> Self {
+        Self {
+            game_log: GameLog::new(MediaId::new_v4()),
+            summary: PollerSummary::default(),
+            diagnostics: PollerDiagnostics::default(),
+            last_calibration_clock: None,
+            seen_event_ids: HashSet::new(),
+            revision: 0,
+            durable_revision: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ClockSample {
-    received_at: Instant,
-    game_time_seconds: f64,
+    midpoint: Instant,
+    game_tick: GameTick,
+    round_trip: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -814,11 +851,15 @@ struct CalibrationWindow {
 }
 
 impl CalibrationWindow {
-    fn push(&mut self, sample: ClockSample, video_started_at: Instant) -> Option<i64> {
+    fn push(
+        &mut self,
+        sample: ClockSample,
+        video_started_at: Instant,
+    ) -> Option<GameCalibrationV2> {
         if self
             .samples
             .back()
-            .is_some_and(|previous| sample.game_time_seconds <= previous.game_time_seconds)
+            .is_some_and(|previous| sample.game_tick <= previous.game_tick)
         {
             self.samples.clear();
         }
@@ -830,11 +871,11 @@ impl CalibrationWindow {
             return None;
         }
 
-        let offset = calibration_offset(&self.samples, video_started_at);
-        if offset.is_none() {
+        let evidence = calibration_evidence(&self.samples, video_started_at);
+        if evidence.is_none() {
             self.samples.clear();
         }
-        offset
+        evidence
     }
 
     fn clear(&mut self) {
@@ -869,14 +910,27 @@ async fn calibrate(
                     sleep_or_cancel(CALIBRATION_PROBE_INTERVAL, cancellation).await;
                     continue;
                 };
-                if let Some(video_offset_ms) = window.push(
+                let game_tick = match GameTick::from_seconds(game_time_seconds) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        warn!(%error, "ignoring invalid Live Client game clock");
+                        window.clear();
+                        sleep_or_cancel(CALIBRATION_PROBE_INTERVAL, cancellation).await;
+                        continue;
+                    }
+                };
+                if let Some(evidence) = window.push(
                     ClockSample {
-                        received_at: received.received_at,
-                        game_time_seconds,
+                        midpoint: request_midpoint(
+                            received.request_started_at,
+                            received.received_at,
+                        ),
+                        game_tick,
+                        round_trip: received.latency,
                     },
                     video_started_at,
                 ) {
-                    return Ok(Some(Calibration { video_offset_ms }));
+                    return Ok(Some(Calibration { evidence }));
                 }
                 sleep_or_cancel(CALIBRATION_PROBE_INTERVAL, cancellation).await;
             }
@@ -888,26 +942,30 @@ async fn calibrate(
     }
 }
 
-fn calibration_offset(samples: &VecDeque<ClockSample>, video_started_at: Instant) -> Option<i64> {
+fn calibration_evidence(
+    samples: &VecDeque<ClockSample>,
+    video_started_at: Instant,
+) -> Option<GameCalibrationV2> {
     if samples.len() != CALIBRATION_SAMPLE_COUNT {
         return None;
     }
     let first = samples.front()?;
     let last = samples.back()?;
-    let window_span = last.received_at.checked_duration_since(first.received_at)?;
+    let window_span = last.midpoint.checked_duration_since(first.midpoint)?;
     if window_span < CALIBRATION_MIN_WINDOW_SPAN {
         return None;
     }
 
-    let tolerance_ms = CALIBRATION_CLOCK_TOLERANCE.as_secs_f64() * 1000.0;
+    let tolerance_ticks = duration_game_ticks(CALIBRATION_CLOCK_TOLERANCE);
     for (previous, current) in samples.iter().zip(samples.iter().skip(1)) {
-        let monotonic_delta_ms = current
-            .received_at
-            .checked_duration_since(previous.received_at)?
-            .as_secs_f64()
-            * 1000.0;
-        let game_delta_ms = (current.game_time_seconds - previous.game_time_seconds) * 1000.0;
-        if game_delta_ms <= 0.0 || (game_delta_ms - monotonic_delta_ms).abs() > tolerance_ms {
+        let monotonic_delta =
+            duration_game_ticks(current.midpoint.checked_duration_since(previous.midpoint)?);
+        let game_delta = current
+            .game_tick
+            .get()
+            .checked_sub(previous.game_tick.get())?;
+        if game_delta <= 0 || game_delta.unsigned_abs().abs_diff(monotonic_delta) > tolerance_ticks
+        {
             return None;
         }
     }
@@ -915,20 +973,40 @@ fn calibration_offset(samples: &VecDeque<ClockSample>, video_started_at: Instant
     let mut candidates = samples
         .iter()
         .map(|sample| {
-            let elapsed_ms = sample
-                .received_at
-                .checked_duration_since(video_started_at)?
-                .as_secs_f64()
-                * 1000.0;
-            Some((elapsed_ms - sample.game_time_seconds * 1000.0).round() as i64)
+            let elapsed_ticks = i128::from(duration_game_ticks(
+                sample.midpoint.checked_duration_since(video_started_at)?,
+            ));
+            let game_ticks = i128::from(sample.game_tick.get());
+            let intercept = elapsed_ticks
+                .checked_sub(game_ticks)?
+                .checked_mul(i128::from(REPLAY_TICKS_PER_GAME_TICK))?;
+            i64::try_from(intercept).ok()
         })
         .collect::<Option<Vec<_>>>()?;
     let minimum = *candidates.iter().min()?;
     let maximum = *candidates.iter().max()?;
-    if maximum.saturating_sub(minimum) > duration_ms(CALIBRATION_CLOCK_TOLERANCE) as i64 {
+    if maximum.saturating_sub(minimum).unsigned_abs() / REPLAY_TICKS_PER_GAME_TICK as u64
+        > tolerance_ticks
+    {
         return None;
     }
-    median(&mut candidates).ok()
+    let intercept = SignedReplayTick::new(median(&mut candidates).ok()?).ok()?;
+    let maximum_rtt_game_ticks = samples
+        .iter()
+        .map(|sample| duration_game_ticks(sample.round_trip))
+        .max()?;
+    let maximum_residual_game_ticks =
+        maximum.saturating_sub(minimum).unsigned_abs() / REPLAY_TICKS_PER_GAME_TICK as u64;
+    Some(GameCalibrationV2 {
+        status: CalibrationStatus::Available,
+        sample_count: u32::try_from(samples.len()).ok()?,
+        first_game_tick: Some(first.game_tick),
+        last_game_tick: Some(last.game_tick),
+        replay_tick_at_game_zero: Some(intercept),
+        maximum_rtt_game_ticks,
+        maximum_residual_game_ticks,
+        uncertainty_game_ticks: maximum_rtt_game_ticks / 2 + maximum_residual_game_ticks,
+    })
 }
 
 async fn fetch_initial_snapshot(
@@ -966,7 +1044,6 @@ async fn fetch_initial_snapshot(
 
 async fn event_loop(
     client: LiveClient,
-    video_offset_ms: i64,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
     writer: watch::Sender<u64>,
@@ -1002,7 +1079,7 @@ async fn event_loop(
         let (count, revision) = {
             let mut state = state.lock().await;
             state.diagnostics.observe_response(received.latency);
-            let count = reconcile_events(&mut state, received.value.events, video_offset_ms);
+            let count = reconcile_events(&mut state, received.value.events);
             let revision = (count > 0).then(|| state.mark_dirty());
             (count, revision)
         };
@@ -1015,7 +1092,7 @@ async fn event_loop(
 
 async fn snapshot_loop(
     client: LiveClient,
-    video_offset_ms: i64,
+    video_started_at: Instant,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<PollerState>>,
     writer: watch::Sender<u64>,
@@ -1062,7 +1139,7 @@ async fn snapshot_loop(
                 state.diagnostics.observe_response(received.latency);
             }
             let mut data = received.value;
-            if valid_game_time(&data.game_data).is_none() {
+            let Some(game_time_seconds) = valid_game_time(&data.game_data) else {
                 if record_failure(&mut consecutive_failures) {
                     state.lock().await.diagnostics.snapshot_failure_reason =
                         Some("snapshot game stats returned no valid gameTime".to_owned());
@@ -1073,21 +1150,45 @@ async fn snapshot_loop(
                     return Ok(());
                 }
                 continue;
-            }
+            };
+            let game_tick = match GameTick::from_seconds(game_time_seconds) {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!(%error, "snapshot game clock was outside the v2 range");
+                    continue;
+                }
+            };
 
             consecutive_failures = 0;
-            let revision = {
+            let (revision, calibration_invalidated) = {
                 let mut state = state.lock().await;
+                let calibration_invalidated =
+                    invalidate_calibration_if_clock_regressed(&mut state, game_tick);
                 update_summary(&mut state.summary, &data);
-                reconcile_events(
-                    &mut state,
-                    std::mem::take(&mut data.events.events),
-                    video_offset_ms,
-                );
-                append_snapshot(&mut state.game_log, &data, video_offset_ms)?;
-                state.mark_dirty()
+                reconcile_events(&mut state, std::mem::take(&mut data.events.events));
+                append_snapshot(&mut state.game_log, &data)?;
+                (state.mark_dirty(), calibration_invalidated)
             };
             notify_game_log_writer(&writer, revision)?;
+            if calibration_invalidated {
+                info!("Live Client clock changed; collecting a fresh calibration window");
+                let Some(calibration) =
+                    calibrate(&client, video_started_at, &mut cancellation, &state).await?
+                else {
+                    return Ok(());
+                };
+                let revision = {
+                    let mut state = state.lock().await;
+                    state.game_log.calibration = Some(calibration.evidence.clone());
+                    state.last_calibration_clock = calibration.evidence.last_game_tick;
+                    state.mark_dirty()
+                };
+                notify_game_log_writer(&writer, revision)?;
+                info!(
+                    sample_count = calibration.evidence.sample_count,
+                    "Live Client clock recalibrated"
+                );
+            }
             break;
         }
     }
@@ -1202,29 +1303,23 @@ async fn persist_latest_game_log(
     result.map(|_| ())
 }
 
-fn append_snapshot(
-    game_log: &mut GameLog,
-    raw: &RawSnapshotData,
-    video_offset_ms: i64,
-) -> Result<()> {
+fn append_snapshot(game_log: &mut GameLog, raw: &RawSnapshotData) -> Result<()> {
     if raw.all_players.is_empty() {
         return Ok(());
     }
     let first_snapshot = game_log.snapshots.is_empty();
     let snapshot = make_snapshot(raw, first_snapshot)?;
     if let Some(previous) = game_log.snapshots.last() {
-        game_log.snapshot_derived_changes.extend(diff_snapshots(
-            previous,
-            &snapshot,
-            video_offset_ms,
-        ));
+        game_log
+            .snapshot_derived_changes
+            .extend(diff_snapshots(previous, &snapshot));
     }
     game_log.snapshots.push(snapshot);
     Ok(())
 }
 
 fn make_snapshot(raw: &RawSnapshotData, include_stable_fields: bool) -> Result<Snapshot> {
-    let game_time_ms = seconds_to_ms(
+    let game_tick = game_tick(
         valid_game_time(&raw.game_data).context("snapshot does not contain a valid game time")?,
     )?;
     let active_name = raw.active_player.summoner_name.as_deref();
@@ -1296,23 +1391,15 @@ fn make_snapshot(raw: &RawSnapshotData, include_stable_fields: bool) -> Result<S
         });
     }
 
-    Ok(Snapshot {
-        game_time_ms,
-        players,
-    })
+    Ok(Snapshot { game_tick, players })
 }
 
-fn diff_snapshots(
-    previous: &Snapshot,
-    current: &Snapshot,
-    video_offset_ms: i64,
-) -> Vec<SnapshotChange> {
+fn diff_snapshots(previous: &Snapshot, current: &Snapshot) -> Vec<SnapshotChange> {
     let previous_players: HashMap<&str, &PlayerSnapshot> = previous
         .players
         .iter()
         .map(|player| (player.summoner_name.as_str(), player))
         .collect();
-    let video_time_ms = video_offset_ms.saturating_add(current.game_time_ms);
     let mut changes = Vec::new();
 
     for player in &current.players {
@@ -1325,35 +1412,32 @@ fn diff_snapshots(
         for (item_id, count) in &new_items {
             if *count > old_items.get(item_id).copied().unwrap_or_default() {
                 changes.push(SnapshotChange {
-                    game_time_ms: current.game_time_ms,
+                    game_tick: current.game_tick,
                     player: player.summoner_name.clone(),
                     change_type: SnapshotChangeType::ItemPurchased,
                     item_id: Some(*item_id),
                     new_level: None,
-                    video_time_ms,
                 });
             }
         }
         for (item_id, count) in &old_items {
             if *count > new_items.get(item_id).copied().unwrap_or_default() {
                 changes.push(SnapshotChange {
-                    game_time_ms: current.game_time_ms,
+                    game_tick: current.game_tick,
                     player: player.summoner_name.clone(),
                     change_type: SnapshotChangeType::ItemSold,
                     item_id: Some(*item_id),
                     new_level: None,
-                    video_time_ms,
                 });
             }
         }
         if player.level > previous.level {
             changes.push(SnapshotChange {
-                game_time_ms: current.game_time_ms,
+                game_tick: current.game_tick,
                 player: player.summoner_name.clone(),
                 change_type: SnapshotChangeType::LevelUp,
                 item_id: None,
                 new_level: Some(player.level),
-                video_time_ms,
             });
         }
     }
@@ -1368,12 +1452,11 @@ fn item_quantities(items: &[ItemSnapshot]) -> HashMap<u32, u32> {
     quantities
 }
 
-fn normalize_event(raw: RawEvent, video_offset_ms: i64) -> Result<GameEvent> {
-    let game_time_ms = seconds_to_ms(raw.event_time)?;
+fn normalize_event(raw: RawEvent) -> Result<GameEvent> {
+    let game_tick = game_tick(raw.event_time)?;
     Ok(GameEvent {
         event_type: raw.event_name,
-        game_time_ms,
-        video_time_ms: video_offset_ms.saturating_add(game_time_ms),
+        game_tick,
         killer: string_field(&raw.fields, "KillerName"),
         victim: string_field(&raw.fields, "VictimName"),
         assisters: string_list_field(&raw.fields, "Assisters"),
@@ -1390,17 +1473,13 @@ fn normalize_event(raw: RawEvent, video_offset_ms: i64) -> Result<GameEvent> {
     })
 }
 
-fn reconcile_events(
-    state: &mut PollerState,
-    raw_events: Vec<RawEvent>,
-    video_offset_ms: i64,
-) -> usize {
+fn reconcile_events(state: &mut PollerState, raw_events: Vec<RawEvent>) -> usize {
     let mut new_events = Vec::new();
     for raw_event in raw_events {
         if !state.seen_event_ids.insert(raw_event.event_id) {
             continue;
         }
-        match normalize_event(raw_event, video_offset_ms) {
+        match normalize_event(raw_event) {
             Ok(event) => new_events.push(event),
             Err(error) => warn!(%error, "ignoring invalid Live Client event"),
         }
@@ -1408,10 +1487,7 @@ fn reconcile_events(
     let count = new_events.len();
     if count > 0 {
         state.game_log.events.extend(new_events);
-        state
-            .game_log
-            .events
-            .sort_by_key(|event| event.game_time_ms);
+        state.game_log.events.sort_by_key(|event| event.game_tick);
     }
     count
 }
@@ -1498,19 +1574,42 @@ fn record_failure(consecutive_failures: &mut u8) -> bool {
     *consecutive_failures >= MAX_CONSECUTIVE_API_FAILURES
 }
 
-fn duration_ms(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-}
-
 fn duration_ms_f64(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
 }
 
-fn seconds_to_ms(seconds: f64) -> Result<i64> {
-    if !seconds.is_finite() || seconds < 0.0 || seconds > i64::MAX as f64 / 1000.0 {
-        bail!("invalid game time {seconds}");
+fn game_tick(seconds: f64) -> Result<GameTick> {
+    GameTick::from_seconds(seconds).map_err(|error| anyhow::anyhow!("invalid game time: {error}"))
+}
+
+fn invalidate_calibration_if_clock_regressed(state: &mut PollerState, current: GameTick) -> bool {
+    let Some(previous) = state.last_calibration_clock else {
+        state.last_calibration_clock = Some(current);
+        return false;
+    };
+    if current > previous {
+        state.last_calibration_clock = Some(current);
+        return false;
     }
-    Ok((seconds * 1000.0).round() as i64)
+    if let Some(calibration) = state.game_log.calibration.as_mut() {
+        calibration.status = CalibrationStatus::Invalidated;
+        calibration.replay_tick_at_game_zero = None;
+    }
+    state.last_calibration_clock = Some(current);
+    true
+}
+
+fn duration_game_ticks(duration: Duration) -> u64 {
+    let ticks = u128::from(duration.as_secs())
+        .saturating_mul(1_000_000)
+        .saturating_add(u128::from(duration.subsec_micros()));
+    u64::try_from(ticks).unwrap_or(u64::MAX)
+}
+
+fn request_midpoint(started_at: Instant, finished_at: Instant) -> Instant {
+    started_at
+        .checked_add(finished_at.saturating_duration_since(started_at) / 2)
+        .unwrap_or(finished_at)
 }
 
 fn median(values: &mut [i64]) -> Result<i64> {
@@ -1686,6 +1785,63 @@ struct RawEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chronobreak_replay_time::{
+        AudioTimelineV2, ContainerTimelineV2, FrameBoundary, MediaPts, ProducerEvidenceV2,
+        REPLAY_TICKS_PER_SECOND, Rational, ReplayTick, VideoTimelineV2,
+    };
+
+    fn test_calibration() -> GameCalibrationV2 {
+        GameCalibrationV2 {
+            status: CalibrationStatus::Available,
+            sample_count: 5,
+            first_game_tick: Some(GameTick::new(0).unwrap()),
+            last_game_tick: Some(GameTick::new(1_000_000).unwrap()),
+            replay_tick_at_game_zero: Some(SignedReplayTick::new(0).unwrap()),
+            maximum_rtt_game_ticks: 1,
+            maximum_residual_game_ticks: 1,
+            uncertainty_game_ticks: 1,
+        }
+    }
+
+    fn test_media_timeline(media_id: MediaId) -> MediaTimelineV2 {
+        let rational = |numerator, denominator| Rational::new(numerator, denominator).unwrap();
+        MediaTimelineV2 {
+            schema_version: 2,
+            replay_ticks_per_second: REPLAY_TICKS_PER_SECOND,
+            media_id,
+            video: VideoTimelineV2 {
+                codec: "h264".to_owned(),
+                profile: Some("High".to_owned()),
+                time_base: rational(1, 15_360),
+                first_pts: MediaPts::new(0),
+                frame_rate: rational(60, 1),
+                frame_count: FrameBoundary::new(120).unwrap(),
+                one_past_last_pts: MediaPts::new(30_720),
+                replay_end: ReplayTick::new(96_000_000).unwrap(),
+                exact_cfr: true,
+            },
+            audio: AudioTimelineV2 {
+                present: false,
+                codec: None,
+                sample_rate: None,
+                time_base: None,
+                first_pts: None,
+                replay_start: None,
+                replay_end: None,
+            },
+            container: ContainerTimelineV2 {
+                start_seconds: rational(0, 1),
+                duration_seconds: rational(2, 1),
+            },
+            producer: ProducerEvidenceV2 {
+                backend: "test".to_owned(),
+                expected_frame_rate: rational(60, 1),
+                expected_frame_count: FrameBoundary::new(120).unwrap(),
+                media_runtime_id: "test-runtime".to_owned(),
+            },
+            capture: None,
+        }
+    }
 
     const SAMPLE: &str = r#"
     {
@@ -1824,7 +1980,7 @@ mod tests {
         let mut writer = GameLogWriter::start(Arc::clone(&state), output.clone());
         let revision = {
             let mut state = state.lock().await;
-            state.game_log.game_start_video_offset_ms = Some(42);
+            state.game_log.calibration = Some(test_calibration());
             state.mark_dirty()
         };
 
@@ -1855,13 +2011,13 @@ mod tests {
 
         let first_revision = {
             let mut state = state.lock().await;
-            state.game_log.game_start_video_offset_ms = Some(1);
+            state.game_log.calibration = Some(test_calibration());
             state.mark_dirty()
         };
         notify_game_log_writer(&notifier, first_revision).unwrap();
         let second_revision = {
             let mut state = state.lock().await;
-            state.game_log.game_start_video_offset_ms = Some(2);
+            state.game_log.calibration = Some(test_calibration());
             state.mark_dirty()
         };
         notify_game_log_writer(&notifier, second_revision).unwrap();
@@ -1885,7 +2041,10 @@ mod tests {
         }
         let stored: GameLog =
             serde_json::from_slice(&tokio::fs::read(&output).await.unwrap()).unwrap();
-        assert_eq!(stored.game_start_video_offset_ms, Some(2));
+        assert_eq!(
+            stored.calibration.as_ref().map(|value| value.status),
+            Some(CalibrationStatus::Available)
+        );
         writer.flush_and_stop(second_revision).await.unwrap();
     }
 
@@ -1901,7 +2060,7 @@ mod tests {
         );
         let revision = {
             let mut state = state.lock().await;
-            state.game_log.game_start_video_offset_ms = Some(42);
+            state.game_log.calibration = Some(test_calibration());
             state.mark_dirty()
         };
         notify_game_log_writer(&writer.notifier(), revision).unwrap();
@@ -1917,7 +2076,10 @@ mod tests {
         drop(state);
         let stored: GameLog =
             serde_json::from_slice(&tokio::fs::read(output).await.unwrap()).unwrap();
-        assert_eq!(stored.game_start_video_offset_ms, Some(42));
+        assert_eq!(
+            stored.calibration.as_ref().map(|value| value.status),
+            Some(CalibrationStatus::Available)
+        );
     }
 
     #[tokio::test]
@@ -2064,8 +2226,7 @@ mod tests {
         let mut state = state.lock().await;
         state.game_log.events.push(GameEvent {
             event_type: "ChampionKill".to_owned(),
-            game_time_ms: i64::from(snapshot_index) * 10_000,
-            video_time_ms: i64::from(snapshot_index) * 10_000 + 750,
+            game_tick: GameTick::new(i64::from(snapshot_index) * 10_000_000).unwrap(),
             killer: Some(format!("Player{}", snapshot_index % 10)),
             victim: Some(format!("Player{}", (snapshot_index + 1) % 10)),
             assisters: Some(vec![format!("Player{}", (snapshot_index + 2) % 10)]),
@@ -2087,7 +2248,7 @@ mod tests {
     ) -> u64 {
         let mut state = state.lock().await;
         state.game_log.snapshots.push(Snapshot {
-            game_time_ms: i64::from(snapshot_index) * 10_000,
+            game_tick: GameTick::new(i64::from(snapshot_index) * 10_000_000).unwrap(),
             players: (0..10_u32)
                 .map(|player_index| PlayerSnapshot {
                     summoner_name: format!("Player{player_index}#TEST"),
@@ -2115,12 +2276,11 @@ mod tests {
             .game_log
             .snapshot_derived_changes
             .push(SnapshotChange {
-                game_time_ms: i64::from(snapshot_index) * 10_000,
+                game_tick: GameTick::new(i64::from(snapshot_index) * 10_000_000).unwrap(),
                 player: format!("Player{}#TEST", snapshot_index % 10),
                 change_type: SnapshotChangeType::LevelUp,
                 item_id: None,
                 new_level: Some(1 + snapshot_index / 30),
-                video_time_ms: i64::from(snapshot_index) * 10_000 + 750,
             });
         state.mark_dirty()
     }
@@ -2215,7 +2375,7 @@ mod tests {
         let raw = sample_snapshot_data();
         let snapshot = make_snapshot(&raw, true).unwrap();
 
-        assert_eq!(snapshot.game_time_ms, 220_125);
+        assert_eq!(snapshot.game_tick.get(), 220_125_000);
         assert_eq!(snapshot.players.len(), 2);
         assert_eq!(snapshot.players[0].gold, Some(578));
         assert_eq!(snapshot.players[0].hp, Some(902));
@@ -2250,7 +2410,7 @@ mod tests {
         let raw = sample_snapshot_data();
         let previous = make_snapshot(&raw, true).unwrap();
         let mut current = previous.clone();
-        current.game_time_ms = 230_000;
+        current.game_tick = GameTick::new(230_000_000).unwrap();
         current.players[0].level = 7;
         current.players[0].items = vec![ItemSnapshot {
             item_id: 3006,
@@ -2258,7 +2418,7 @@ mod tests {
             count: 1,
         }];
 
-        let changes = diff_snapshots(&previous, &current, 142_300);
+        let changes = diff_snapshots(&previous, &current);
         assert!(changes.iter().any(|change| {
             change.change_type == SnapshotChangeType::ItemPurchased && change.item_id == Some(3006)
         }));
@@ -2268,7 +2428,11 @@ mod tests {
         assert!(changes.iter().any(|change| {
             change.change_type == SnapshotChangeType::LevelUp && change.new_level == Some(7)
         }));
-        assert!(changes.iter().all(|change| change.video_time_ms == 372_300));
+        assert!(
+            changes
+                .iter()
+                .all(|change| change.game_tick == GameTick::new(230_000_000).unwrap())
+        );
     }
 
     #[test]
@@ -2285,10 +2449,9 @@ mod tests {
         )
         .unwrap();
 
-        let event = normalize_event(raw, 142_300).unwrap();
+        let event = normalize_event(raw).unwrap();
         assert_eq!(event.event_type, "ChampionKill");
-        assert_eq!(event.game_time_ms, 214_500);
-        assert_eq!(event.video_time_ms, 356_800);
+        assert_eq!(event.game_tick.get(), 214_500_000);
         assert_eq!(event.killer.as_deref(), Some("Player3"));
         assert_eq!(event.victim.as_deref(), Some("Player7"));
     }
@@ -2304,22 +2467,24 @@ mod tests {
         let video_started_at = Instant::now();
         let frozen = (0..CALIBRATION_SAMPLE_COUNT)
             .map(|index| ClockSample {
-                received_at: video_started_at
+                midpoint: video_started_at
                     + Duration::from_millis(u64::try_from(index).unwrap() * 250),
-                game_time_seconds: 0.018,
+                game_tick: GameTick::new(18_000).unwrap(),
+                round_trip: Duration::from_millis(10),
             })
             .collect();
-        assert_eq!(calibration_offset(&frozen, video_started_at), None);
+        assert_eq!(calibration_evidence(&frozen, video_started_at), None);
 
         let moving = (0..CALIBRATION_SAMPLE_COUNT)
             .map(|index| ClockSample {
-                received_at: video_started_at
+                midpoint: video_started_at
                     + Duration::from_secs(40)
                     + Duration::from_millis(u64::try_from(index).unwrap() * 250),
-                game_time_seconds: 0.050 + index as f64 * 0.250,
+                game_tick: GameTick::new(50_000 + i64::try_from(index).unwrap() * 250_000).unwrap(),
+                round_trip: Duration::from_millis(10),
             })
             .collect();
-        assert_eq!(calibration_offset(&moving, video_started_at), Some(39_950));
+        assert!(calibration_evidence(&moving, video_started_at).is_some());
     }
 
     #[test]
@@ -2327,8 +2492,9 @@ mod tests {
         let video_started_at = Instant::now();
         let mut window = CalibrationWindow::default();
         let sample = |elapsed_ms, game_time_seconds| ClockSample {
-            received_at: video_started_at + Duration::from_millis(elapsed_ms),
-            game_time_seconds,
+            midpoint: video_started_at + Duration::from_millis(elapsed_ms),
+            game_tick: game_tick(game_time_seconds).unwrap(),
+            round_trip: Duration::from_millis(10),
         };
 
         assert_eq!(window.push(sample(10_000, 0.018), video_started_at), None);
@@ -2350,14 +2516,41 @@ mod tests {
         assert_eq!(window.push(sample(21_000, 2.0), video_started_at), None);
         assert!(window.samples.is_empty());
 
-        let mut offset = None;
+        let mut calibration = None;
         for index in 0..CALIBRATION_SAMPLE_COUNT as u64 {
-            offset = window.push(
+            calibration = window.push(
                 sample(22_000 + index * 250, 3.0 + index as f64 * 0.250),
                 video_started_at,
             );
         }
-        assert_eq!(offset, Some(19_000));
+        assert!(calibration.is_some());
+    }
+    #[test]
+    fn regressed_clock_invalidates_the_fit_and_requests_recalibration() {
+        let mut state = PollerState::default();
+        state.game_log.calibration = Some(GameCalibrationV2 {
+            status: CalibrationStatus::Available,
+            sample_count: 5,
+            first_game_tick: Some(GameTick::new(1_000_000).unwrap()),
+            last_game_tick: Some(GameTick::new(2_000_000).unwrap()),
+            replay_tick_at_game_zero: Some(SignedReplayTick::new(-48_000_000).unwrap()),
+            maximum_rtt_game_ticks: 1_000,
+            maximum_residual_game_ticks: 10,
+            uncertainty_game_ticks: 510,
+        });
+        state.last_calibration_clock = Some(GameTick::new(2_000_000).unwrap());
+
+        assert!(!invalidate_calibration_if_clock_regressed(
+            &mut state,
+            GameTick::new(2_500_000).unwrap(),
+        ));
+        assert!(invalidate_calibration_if_clock_regressed(
+            &mut state,
+            GameTick::new(2_000_000).unwrap(),
+        ));
+        let calibration = state.game_log.calibration.unwrap();
+        assert_eq!(calibration.status, CalibrationStatus::Invalidated);
+        assert_eq!(calibration.replay_tick_at_game_zero, None);
     }
 
     #[test]
@@ -2381,25 +2574,15 @@ mod tests {
         };
         let mut state = PollerState::default();
 
+        assert_eq!(reconcile_events(&mut state, vec![raw_event(2, 20.0)]), 1);
         assert_eq!(
-            reconcile_events(&mut state, vec![raw_event(2, 20.0)], 100),
-            1
-        );
-        assert_eq!(
-            reconcile_events(
-                &mut state,
-                vec![raw_event(1, 10.0), raw_event(2, 20.0)],
-                100,
-            ),
+            reconcile_events(&mut state, vec![raw_event(1, 10.0), raw_event(2, 20.0)],),
             1
         );
         assert_eq!(state.game_log.events.len(), 2);
-        assert_eq!(state.game_log.events[0].game_time_ms, 10_000);
-        assert_eq!(state.game_log.events[1].game_time_ms, 20_000);
-        assert_eq!(
-            reconcile_events(&mut state, vec![raw_event(1, 10.0)], 100),
-            0
-        );
+        assert_eq!(state.game_log.events[0].game_tick.get(), 10_000_000);
+        assert_eq!(state.game_log.events[1].game_tick.get(), 20_000_000);
+        assert_eq!(reconcile_events(&mut state, vec![raw_event(1, 10.0)]), 0);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2430,9 +2613,10 @@ mod tests {
 
     #[test]
     fn metadata_keeps_unavailable_live_client_fields_null() {
+        let media_id = MediaId::new_v4();
         let metadata = RecordingMetadata::new(
-            SystemTime::UNIX_EPOCH,
-            Duration::from_millis(12_345),
+            "1970-01-01T00:00:00Z".to_owned(),
+            test_media_timeline(media_id.clone()),
             PollerSummary::default(),
             RecordingDetails {
                 encoder_used: "nvenc".to_owned(),
@@ -2442,14 +2626,14 @@ mod tests {
                 fps: 60,
                 ..RecordingDetails::default()
             },
-        )
-        .unwrap();
+        );
         let json = serde_json::to_value(metadata).unwrap();
 
         assert_eq!(json["recorded_at"], "1970-01-01T00:00:00Z");
-        assert_eq!(json["duration_ms"], 12_345);
         assert!(json["game_mode"].is_null());
-        assert!(json["video_offset_ms"].is_null());
+        assert_eq!(json["schema_version"], 2);
+        assert_eq!(json["media_id"], media_id.to_string());
+        assert_eq!(json["media_timeline"]["video"]["replay_end"], "96000000");
         assert_eq!(json["recording_codec"], "hevc");
         assert_eq!(json["recording_profile"], "high");
     }
@@ -2477,7 +2661,7 @@ mod tests {
             make_snapshot(&snapshot_data, true).unwrap();
 
             for event in snapshot_data.events.events {
-                normalize_event(event, 0).unwrap();
+                normalize_event(event).unwrap();
                 event_count += 1;
             }
         }

@@ -20,17 +20,65 @@ import type {
   StorageUsage,
   ViewerEvent,
 } from "./types";
+import {
+  createClipRange,
+  frameBoundaryToReplayTick,
+  parseFrameBoundary,
+  parseMediaId,
+  parseReplayTick,
+  parseSignedReplayTick,
+  validateMediaTimeline,
+  type ReplayTick,
+} from "./replayTime";
 
-const MOCK_VIDEO_OFFSET_MS = 42_369;
+const MOCK_TICKS_PER_MILLISECOND = 48_000;
+const mockTick = (milliseconds: number): ReplayTick =>
+  parseReplayTick(String(milliseconds * MOCK_TICKS_PER_MILLISECOND));
+const MOCK_GAME_START_REPLAY_TICK = mockTick(42_369);
+const MOCK_MEDIA_TIMELINE = validateMediaTimeline({
+  schema_version: 2,
+  replay_ticks_per_second: "48000000",
+  media_id: "f22d7d5e-0ce1-4e0f-8318-cbb0b6decb19",
+  video: {
+    codec: "h264",
+    profile: "High",
+    time_base: { numerator: "1", denominator: "60" },
+    first_pts: "0",
+    frame_rate: { numerator: "60", denominator: "1" },
+    frame_count: "108000",
+    one_past_last_pts: "108000",
+    replay_end: "86400000000",
+    exact_cfr: true,
+  },
+  audio: {
+    present: false,
+    codec: null,
+    sample_rate: null,
+    time_base: null,
+    first_pts: null,
+    replay_start: null,
+    replay_end: null,
+  },
+  container: {
+    start_seconds: { numerator: "0", denominator: "1" },
+    duration_seconds: { numerator: "1800", denominator: "1" },
+  },
+  producer: {
+    backend: "mock",
+    expected_frame_rate: { numerator: "60", denominator: "1" },
+    expected_frame_count: "108000",
+    media_runtime_id: "mock-runtime-v2",
+  },
+});
 
 const mockEvent = (
   eventType: string,
-  videoTimeMs: number,
+  replayTick: ReplayTick,
   details: Partial<ViewerEvent> = {},
 ): ViewerEvent => ({
   event_type: eventType,
-  game_time_ms: Math.max(0, videoTimeMs - MOCK_VIDEO_OFFSET_MS),
-  video_time_ms: videoTimeMs,
+  game_tick: String(Math.max(0, replayTick - MOCK_GAME_START_REPLAY_TICK)),
+  replay_tick: replayTick,
   killer: null,
   victim: null,
   assisters: [],
@@ -47,9 +95,9 @@ const mockEvent = (
 
 const mockEvents = (): ViewerEvent[] => {
   const generated = Array.from({ length: 48 }, (_, index) => {
-    const videoTimeMs = 248_000 + index * 29_500;
+    const replayTick = mockTick(248_000 + index * 29_500);
     if (index % 11 === 4) {
-      return mockEvent("DragonKill", videoTimeMs, {
+      return mockEvent("DragonKill", replayTick, {
         killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Jungler",
         assisters: ["Ally Jungler", "SUPERSTAR"],
         dragon_type: ["Air", "Fire", "Water", "Earth"][index % 4],
@@ -57,21 +105,21 @@ const mockEvents = (): ViewerEvent[] => {
       });
     }
     if (index % 13 === 7) {
-      return mockEvent("TurretKilled", videoTimeMs, {
+      return mockEvent("TurretKilled", replayTick, {
         killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Carry",
         turret: "Turret_T2_C_03_A",
         relation: index % 2 === 0 ? "ally" : "enemy",
       });
     }
     if (index % 17 === 9) {
-      return mockEvent("Multikill", videoTimeMs, {
+      return mockEvent("Multikill", replayTick, {
         killer: "SUPERSTAR",
         kill_streak: 2,
         relation: "ally",
       });
     }
     const enemyKill = index % 3 === 0 && index % 5 !== 0;
-    return mockEvent("ChampionKill", videoTimeMs, {
+    return mockEvent("ChampionKill", replayTick, {
       killer: index % 5 === 0 ? "SUPERSTAR" : enemyKill ? "Enemy Carry" : "Ally Jungler",
       victim: index % 5 === 0 ? "Enemy Carry" : enemyKill ? "SUPERSTAR" : "Enemy Jungler",
       assisters: index % 4 === 0 ? ["SUPERSTAR"] : ["Ally Support"],
@@ -80,49 +128,49 @@ const mockEvents = (): ViewerEvent[] => {
   });
 
   return [
-    mockEvent("GameStart", MOCK_VIDEO_OFFSET_MS),
-    mockEvent("MinionsSpawning", 107_000),
-    mockEvent("FirstBlood", 199_402, {
+    mockEvent("GameStart", MOCK_GAME_START_REPLAY_TICK),
+    mockEvent("MinionsSpawning", mockTick(107_000)),
+    mockEvent("FirstBlood", mockTick(199_402), {
       killer: "SUPERSTAR",
       victim: "Enemy Carry",
       relation: "ally",
     }),
-    mockEvent("ChampionKill", 199_402, {
+    mockEvent("ChampionKill", mockTick(199_402), {
       killer: "SUPERSTAR",
       victim: "Enemy Carry",
       assisters: ["Ally Jungler"],
       relation: "ally",
     }),
     ...generated,
-    mockEvent("BaronKill", 1_501_000, {
+    mockEvent("BaronKill", mockTick(1_501_000), {
       killer: "Ally Jungler",
       assisters: ["SUPERSTAR", "Ally Support"],
       relation: "ally",
     }),
-    mockEvent("GameEnd", 1_770_000, { result: "Win" }),
-  ].sort((left, right) => left.video_time_ms - right.video_time_ms);
+    mockEvent("GameEnd", mockTick(1_770_000), { result: "Win" }),
+  ].sort((left, right) => (left.replay_tick ?? 0) - (right.replay_tick ?? 0));
 };
 
 const mockPlayerTimeline = (): PlayerTimelinePoint[] =>
   Array.from({ length: 174 }, (_, index) => {
-    const gameTimeMs = 1_282 + index * 10_000;
+    const gameTick = mockTick(1_282 + index * 10_000);
     return {
-      game_time_ms: gameTimeMs,
-      video_time_ms: MOCK_VIDEO_OFFSET_MS + gameTimeMs,
-      cs: Math.min(200, Math.floor(gameTimeMs / 8_450)),
-      level: Math.min(15, 1 + Math.floor(gameTimeMs / 118_000)),
+      game_tick: String(gameTick),
+      replay_tick: parseReplayTick(String(MOCK_GAME_START_REPLAY_TICK + gameTick)),
+      cs: Math.min(200, Math.floor(Number(gameTick) / (8_450 * MOCK_TICKS_PER_MILLISECOND))),
+      level: Math.min(15, 1 + Math.floor(Number(gameTick) / (118_000 * MOCK_TICKS_PER_MILLISECOND))),
     };
   });
 
 const mockKdaTimeline = (): KdaTimelinePoint[] => [
-  { video_time_ms: 199_402, kills: 1, deaths: 0, assists: 0 },
-  { video_time_ms: 396_000, kills: 2, deaths: 0, assists: 1 },
-  { video_time_ms: 534_000, kills: 2, deaths: 1, assists: 2 },
-  { video_time_ms: 711_000, kills: 3, deaths: 1, assists: 4 },
-  { video_time_ms: 890_000, kills: 5, deaths: 2, assists: 5 },
-  { video_time_ms: 1_114_000, kills: 6, deaths: 3, assists: 8 },
-  { video_time_ms: 1_409_000, kills: 7, deaths: 4, assists: 10 },
-  { video_time_ms: 1_698_000, kills: 8, deaths: 4, assists: 11 },
+  { replay_tick: mockTick(199_402), kills: 1, deaths: 0, assists: 0 },
+  { replay_tick: mockTick(396_000), kills: 2, deaths: 0, assists: 1 },
+  { replay_tick: mockTick(534_000), kills: 2, deaths: 1, assists: 2 },
+  { replay_tick: mockTick(711_000), kills: 3, deaths: 1, assists: 4 },
+  { replay_tick: mockTick(890_000), kills: 5, deaths: 2, assists: 5 },
+  { replay_tick: mockTick(1_114_000), kills: 6, deaths: 3, assists: 8 },
+  { replay_tick: mockTick(1_409_000), kills: 7, deaths: 4, assists: 10 },
+  { replay_tick: mockTick(1_698_000), kills: 8, deaths: 4, assists: 11 },
 ];
 
 const mockParticipants = (): ReplayParticipant[] => [
@@ -327,6 +375,167 @@ export const loadClips = async (): Promise<ClipSummary[]> => {
   if (!isTauri()) return structuredClone(mockClips);
   return invoke<ClipSummary[]>("list_clips");
 };
+const exactRecord = (
+  value: unknown,
+  expectedKeys: readonly string[],
+  label: string,
+): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const actualKeys = Object.keys(record).sort();
+  const canonicalKeys = [...expectedKeys].sort();
+  if (
+    actualKeys.length !== canonicalKeys.length ||
+    actualKeys.some((key, index) => key !== canonicalKeys[index])
+  ) {
+    throw new Error(`${label} has an invalid schema`);
+  }
+  return record;
+};
+
+const recordArray = (value: unknown, label: string): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value.map((entry, index) => exactRecord(entry, Object.keys(entry ?? {}), `${label}[${index}]`));
+};
+
+const decodeMappedReplayTick = (value: unknown, label: string): ReplayTick | undefined => {
+  const mapping = value as Record<string, unknown> | null;
+  const status = mapping?.status;
+  switch (status) {
+    case "inside_media": {
+      const inside = exactRecord(value, ["status", "replay_tick"], label);
+      return parseReplayTick(inside.replay_tick, `${label}.replay_tick`);
+    }
+    case "before_media":
+    case "after_media": {
+      const outside = exactRecord(value, ["status", "replay_tick"], label);
+      parseSignedReplayTick(outside.replay_tick, `${label}.replay_tick`);
+      return undefined;
+    }
+    case "unavailable": {
+      const unavailable = exactRecord(value, ["status", "reason"], label);
+      if (
+        unavailable.reason !== "calibration_unavailable" &&
+        unavailable.reason !== "calibration_invalidated"
+      ) {
+        throw new Error(`${label}.reason is invalid`);
+      }
+      return undefined;
+    }
+    default:
+      throw new Error(`${label}.status is invalid`);
+  }
+};
+
+const decodeMappedRows = <T>(
+  value: unknown,
+  expectedKeys: readonly string[],
+  label: string,
+): T[] => {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value.map((entry, index) => {
+    const row = exactRecord(entry, expectedKeys, `${label}[${index}]`);
+    const { mapped_replay_time: mapping, ...fields } = row;
+    return {
+      ...fields,
+      replay_tick: decodeMappedReplayTick(mapping, `${label}[${index}].mapped_replay_time`),
+    } as T;
+  });
+};
+
+export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
+  const wire = exactRecord(
+    value,
+    [
+      "game",
+      "video_url",
+      "media_timeline",
+      "local_player_name",
+      "participants",
+      "player_timeline",
+      "kda_timeline",
+      "events",
+    ],
+    "playback_probe",
+  );
+  const game = exactRecord(
+    wire.game,
+    [
+      "timestamp",
+      "champion",
+      "game_mode",
+      "duration_ms",
+      "recorded_at",
+      "kills",
+      "deaths",
+      "assists",
+      "summoner_spells",
+      "keystone_id",
+      "items",
+      "saved",
+      "incomplete",
+      "video_size_bytes",
+      "video_available",
+    ],
+    "playback_probe.game",
+  );
+  const items = recordArray(game.items, "playback_probe.game.items");
+  for (const [index, item] of items.entries()) {
+    exactRecord(item, ["item_id", "slot"], `playback_probe.game.items[${index}]`);
+  }
+  const participants = recordArray(wire.participants, "playback_probe.participants");
+  for (const [index, participant] of participants.entries()) {
+    exactRecord(
+      participant,
+      ["summoner_name", "champion", "relation"],
+      `playback_probe.participants[${index}]`,
+    );
+  }
+  if (typeof wire.video_url !== "string") throw new Error("playback_probe.video_url is invalid");
+  if (wire.local_player_name !== null && typeof wire.local_player_name !== "string") {
+    throw new Error("playback_probe.local_player_name is invalid");
+  }
+  return {
+    game: game as unknown as GameSummary,
+    video_url: wire.video_url,
+    media_timeline: validateMediaTimeline(wire.media_timeline),
+    local_player_name: wire.local_player_name,
+    participants: participants as unknown as ReplayParticipant[],
+    player_timeline: decodeMappedRows<PlayerTimelinePoint>(
+      wire.player_timeline,
+      ["game_tick", "mapped_replay_time", "cs", "level"],
+      "playback_probe.player_timeline",
+    ),
+    kda_timeline: decodeMappedRows<KdaTimelinePoint>(
+      wire.kda_timeline,
+      ["mapped_replay_time", "kills", "deaths", "assists"],
+      "playback_probe.kda_timeline",
+    ),
+    events: decodeMappedRows<ViewerEvent>(
+      wire.events,
+      [
+        "event_type",
+        "game_tick",
+        "mapped_replay_time",
+        "killer",
+        "victim",
+        "assisters",
+        "dragon_type",
+        "kill_streak",
+        "acer",
+        "acing_team",
+        "turret",
+        "inhibitor",
+        "result",
+        "relation",
+      ],
+      "playback_probe.events",
+    ),
+  };
+};
+
 
 export const loadPlaybackProbe = async (gameTimestamp: string): Promise<PlaybackProbe> => {
   if (!isTauri()) {
@@ -335,8 +544,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
     return {
       game: structuredClone(game),
       video_url: "",
-      recording_fps: 60,
-      game_start_video_offset_ms: MOCK_VIDEO_OFFSET_MS,
+      media_timeline: MOCK_MEDIA_TIMELINE,
       local_player_name: "SUPERSTAR#VOID",
       participants: mockParticipants(),
       player_timeline: mockPlayerTimeline(),
@@ -344,7 +552,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
       events: mockEvents(),
     };
   }
-  return invoke<PlaybackProbe>("get_playback_probe", { gameTimestamp });
+  return decodePlaybackProbe(await invoke<unknown>("get_playback_probe", { gameTimestamp }));
 };
 
 export const setGameSaved = async (gameTimestamp: string, saved: boolean): Promise<void> => {
@@ -415,7 +623,7 @@ export const exportClip = async (
       for (const localPercent of [8, 24, 46, 69, 88, 96, 99]) {
         await pausePreview();
         onProgress({
-          stage: localPercent >= 96 ? "thumbnail" : "encoding",
+          stage: localPercent >= 99 ? "thumbnail" : localPercent >= 96 ? "validating" : "encoding",
           percent: Math.floor(((outputIndex * 100 + localPercent) / totalOutputs)),
           preset,
           completed_outputs: outputIndex,
@@ -423,8 +631,25 @@ export const exportClip = async (
         });
       }
     }
+    const range = createClipRange(
+      MOCK_MEDIA_TIMELINE,
+      parseFrameBoundary(request.start_frame, "start_frame"),
+      parseFrameBoundary(request.end_frame_exclusive, "end_frame_exclusive"),
+      parseMediaId(request.media_id),
+    );
     const firstClipTimestamp = Math.floor(Date.now() / 1_000);
-    const durationSeconds = (request.clip_end_ms - request.clip_start_ms) / 1_000;
+    const durationSeconds =
+      Number(range.endFrameExclusive - range.startFrame) /
+      Number(MOCK_MEDIA_TIMELINE.video.frameRate.numerator);
+    const validatedReplayEnd =
+      frameBoundaryToReplayTick(
+        range.endFrameExclusive,
+        MOCK_MEDIA_TIMELINE.video.frameRate,
+      ) -
+      frameBoundaryToReplayTick(
+        range.startFrame,
+        MOCK_MEDIA_TIMELINE.video.frameRate,
+      );
     const outputs = request.presets.map((preset, index) => {
       const clipTimestamp = (firstClipTimestamp + index).toString();
       const filename = `${request.game_timestamp}_${clipTimestamp}`;
@@ -438,6 +663,11 @@ export const exportClip = async (
         strategy: "full_reencode" as const,
         encoder_used: "mock-libx264",
         encode_elapsed_ms: 800,
+        validation_elapsed_ms: 15,
+        validated_frame_count: String(range.endFrameExclusive - range.startFrame),
+        validated_video_replay_end: String(validatedReplayEnd),
+        validated_audio_replay_start: "0",
+        validated_audio_replay_end: String(validatedReplayEnd),
         thumbnail_elapsed_ms: 112,
         retry_count: 0,
         attempts: [
@@ -464,7 +694,7 @@ export const exportClip = async (
         filename: output.filename,
         game_timestamp: request.game_timestamp,
         clip_timestamp: output.filename.slice(request.game_timestamp.length + 1),
-        duration_ms: request.clip_end_ms - request.clip_start_ms,
+        duration_ms: Math.round(durationSeconds * 1_000),
         file_size_bytes: output.file_size_bytes,
         thumbnail_path: null,
         thumbnail_url: null,

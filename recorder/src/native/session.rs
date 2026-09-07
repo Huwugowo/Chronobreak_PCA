@@ -5,14 +5,14 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail, ensure};
 use tokio::sync::watch;
 
-use crate::encoder::capabilities::{NVENC_SURFACE_LIMIT, WGC_FRAME_POOL_CAPACITY};
 use crate::encoder::{AudioSource, RecordingEvidence};
 use crate::platform::{CaptureTarget, instant_from_qpc_100ns};
 
 use super::{
-    NativeCfrClock, NativeCfrTelemetrySnapshot, NativeMuxPlan, NativeMuxProcess,
-    NativeMuxTelemetrySnapshot, NativeNv12Converter, NativeNv12TelemetrySnapshot,
-    NativeNvencEncoder, NativeNvencTelemetrySnapshot, NativeWgcSource, NativeWgcTelemetrySnapshot,
+    NATIVE_ENCODER_SLOT_COUNT, NATIVE_WGC_FRAME_POOL_CAPACITY, NativeCfrClock,
+    NativeCfrTelemetrySnapshot, NativeMuxPlan, NativeMuxProcess, NativeMuxTelemetrySnapshot,
+    NativeNv12Converter, NativeNv12TelemetrySnapshot, NativeNvencEncoder,
+    NativeNvencTelemetrySnapshot, NativeWgcSource, NativeWgcTelemetrySnapshot,
 };
 
 const NATIVE_FPS: u32 = 60;
@@ -47,6 +47,12 @@ struct InjectedWorkerStall {
     after_ticks: u64,
     duration: Duration,
 }
+#[cfg(feature = "native-failure-injection")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InjectedMuxFailure {
+    AfterCompletedWrites { write_count: u64 },
+    AfterCompletedFragment { minimum_write_count: u64 },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TickAdmission {
@@ -77,6 +83,8 @@ pub struct NativeRecorderSession {
     target_closed: bool,
     #[cfg(feature = "native-failure-injection")]
     injected_nvenc_failure_after_ticks: Option<u64>,
+    #[cfg(feature = "native-failure-injection")]
+    injected_mux_failure: Option<InjectedMuxFailure>,
     #[cfg(feature = "native-failure-injection")]
     injected_worker_stall: Option<InjectedWorkerStall>,
 }
@@ -111,6 +119,8 @@ impl NativeRecorderSession {
             target_closed: false,
             #[cfg(feature = "native-failure-injection")]
             injected_nvenc_failure_after_ticks: None,
+            #[cfg(feature = "native-failure-injection")]
+            injected_mux_failure: None,
             #[cfg(feature = "native-failure-injection")]
             injected_worker_stall: None,
         })
@@ -161,6 +171,39 @@ impl NativeRecorderSession {
             .as_ref()
             .context("native mux was not available for writer stall injection")?
             .inject_writer_stall_after_writes(write_index, duration)
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_mux_failure_after_writes(&mut self, write_count: u64) -> Result<()> {
+        ensure!(
+            write_count > 0,
+            "injected mux failure write count must be positive"
+        );
+        ensure!(
+            self.injected_mux_failure.is_none(),
+            "injected mux failure was already configured"
+        );
+        self.injected_mux_failure = Some(InjectedMuxFailure::AfterCompletedWrites { write_count });
+        Ok(())
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_mux_failure_after_fragment_after_writes(
+        &mut self,
+        minimum_write_count: u64,
+    ) -> Result<()> {
+        ensure!(
+            minimum_write_count > 0,
+            "injected post-fragment mux failure write count must be positive"
+        );
+        ensure!(
+            self.injected_mux_failure.is_none(),
+            "injected mux failure was already configured"
+        );
+        self.injected_mux_failure = Some(InjectedMuxFailure::AfterCompletedFragment {
+            minimum_write_count,
+        });
+        Ok(())
     }
 
     /// Record exactly `duration * 60` scheduled output ticks after the first
@@ -216,6 +259,15 @@ impl NativeRecorderSession {
                 .saturating_duration_since(now)
                 .min(MAX_SOURCE_WAIT);
             self.receive_source(timeout)?;
+        }
+        #[cfg(feature = "native-failure-injection")]
+        while self.injected_mux_failure.is_some() && Instant::now() < catch_up_deadline {
+            self.maybe_inject_mux_failure()?;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        #[cfg(feature = "native-failure-injection")]
+        if let Some(injection) = self.injected_mux_failure {
+            bail!("configured mux failure injection was not reached: {injection:?}");
         }
         Ok(())
     }
@@ -607,8 +659,67 @@ impl NativeRecorderSession {
         Ok(())
     }
 
+    #[cfg(feature = "native-failure-injection")]
+    fn maybe_inject_mux_failure(&mut self) -> Result<()> {
+        let Some(injection) = self.injected_mux_failure else {
+            return Ok(());
+        };
+        let (observed_writes, scan) = {
+            let mux = self
+                .mux
+                .as_ref()
+                .context("native mux was not available for failure injection")?;
+            let observed_writes = mux.writer_calls_for_fixture();
+            let required_writes = match injection {
+                InjectedMuxFailure::AfterCompletedWrites { write_count } => write_count,
+                InjectedMuxFailure::AfterCompletedFragment {
+                    minimum_write_count,
+                } => minimum_write_count,
+            };
+            if observed_writes < required_writes {
+                return Ok(());
+            }
+            (observed_writes, mux.scan_completed_fragment_for_fixture()?)
+        };
+
+        let detail = match injection {
+            InjectedMuxFailure::AfterCompletedWrites { write_count } => {
+                ensure!(
+                    scan.completed_fragment.is_none(),
+                    "exact mux failure trigger observed a completed fragment before termination"
+                );
+                format!(
+                    "mode=after_completed_writes requested_writes={write_count} observed_writes={observed_writes} file_length={} fragment_published=false",
+                    scan.file_length
+                )
+            }
+            InjectedMuxFailure::AfterCompletedFragment {
+                minimum_write_count,
+            } => {
+                let Some(fragment) = scan.completed_fragment else {
+                    return Ok(());
+                };
+                format!(
+                    "mode=after_completed_fragment minimum_writes={minimum_write_count} observed_writes={observed_writes} moof_offset={} mdat_offset={} fragment_end_offset={} file_length={}",
+                    fragment.moof_offset,
+                    fragment.mdat_offset,
+                    fragment.fragment_end_offset,
+                    scan.file_length
+                )
+            }
+        };
+        self.injected_mux_failure = None;
+        self.mux
+            .as_mut()
+            .context("native mux was not available for failure injection")?
+            .inject_terminal_failure_for_fixture(&detail)?;
+        unreachable!("native mux failure fixture unexpectedly returned success");
+    }
+
     fn submit_due_batch(&mut self, stop_before: Option<Instant>) -> Result<u64> {
         self.maybe_inject_worker_stall()?;
+        #[cfg(feature = "native-failure-injection")]
+        self.maybe_inject_mux_failure()?;
         let mut submissions = 0_u64;
         let mut catch_up = false;
 
@@ -756,7 +867,10 @@ impl NativeRecorderSession {
         Ok(RecordingEvidence {
             capture_ready: true,
             capture_terminal: terminal,
-            frame_pool_capacity: Some(WGC_FRAME_POOL_CAPACITY),
+            frame_pool_capacity: Some(
+                u32::try_from(NATIVE_WGC_FRAME_POOL_CAPACITY)
+                    .expect("native WGC frame-pool capacity fits u32"),
+            ),
             output_pool_capacity: Some(NATIVE_SOURCE_SNAPSHOT_CAPACITY),
             source_frames_surfaced: capture.admitted,
             source_frames_superseded: capture
@@ -792,7 +906,10 @@ impl NativeSessionTelemetrySnapshot {
         RecordingEvidence {
             capture_ready: true,
             capture_terminal: true,
-            frame_pool_capacity: Some(WGC_FRAME_POOL_CAPACITY),
+            frame_pool_capacity: Some(
+                u32::try_from(NATIVE_WGC_FRAME_POOL_CAPACITY)
+                    .expect("native WGC frame-pool capacity fits u32"),
+            ),
             output_pool_capacity: Some(NATIVE_SOURCE_SNAPSHOT_CAPACITY),
             source_frames_surfaced: self.capture.admitted,
             source_frames_superseded: self
@@ -833,10 +950,12 @@ fn native_protocol_error(
             mux.reader_errors
         ));
     }
-    if encode.max_in_flight > u64::from(NVENC_SURFACE_LIMIT) {
+    let encoder_slot_limit =
+        u64::try_from(NATIVE_ENCODER_SLOT_COUNT).expect("native encoder slot count fits u64");
+    if encode.max_in_flight > encoder_slot_limit {
         return Some(format!(
-            "native NVENC exceeded the fixed surface bound: {} > {}",
-            encode.max_in_flight, NVENC_SURFACE_LIMIT
+            "native NVENC exceeded the fixed surface bound: {} > {encoder_slot_limit}",
+            encode.max_in_flight
         ));
     }
     if capture.pending_frame_high_water_mark > 1 {

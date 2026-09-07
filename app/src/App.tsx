@@ -17,6 +17,7 @@ import {
   loadClips,
   loadDdragonStatus,
   loadGames,
+  loadPlaybackProbe,
   loadSettings,
   loadStorageUsage,
   openClipsFolder,
@@ -27,6 +28,7 @@ import {
   resolveItemName,
   setGameSaved,
 } from "./api";
+import { REPLAY_TICKS_PER_SECOND, parseReplayTick, projectReplayIntervalToClipRange } from "./replayTime";
 import {
   initializeReplayBenchmark,
   REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
@@ -237,15 +239,22 @@ function App() {
     try {
       const game = games()?.find((candidate) => candidate.timestamp === fixture.game_timestamp);
       if (!game) throw new Error("export fixture is absent from the benchmark library");
+      const probe = await loadPlaybackProbe(fixture.game_timestamp);
+      const timeline = probe.media_timeline;
       const rawStart = typeof scenario.clip_start_ms === "number" ? scenario.clip_start_ms : 10_000;
       const rawEnd =
         typeof scenario.clip_end_ms === "number"
           ? scenario.clip_end_ms
           : Math.min(game.duration_ms, rawStart + 20_000);
-      const clipStartMs = Math.max(0, Math.min(rawStart, game.duration_ms - 5_000));
-      const clipEndMs = Math.max(
-        clipStartMs + 5_000,
-        Math.min(rawEnd, game.duration_ms),
+      const ticksPerMillisecond = REPLAY_TICKS_PER_SECOND / 1_000;
+      const duration = timeline.video.replayEnd;
+      const minimumDuration = 5_000 * ticksPerMillisecond;
+      const start = Math.max(0, Math.min(rawStart * ticksPerMillisecond, duration - minimumDuration));
+      const end = Math.max(start + minimumDuration, Math.min(rawEnd * ticksPerMillisecond, duration));
+      const clipRange = projectReplayIntervalToClipRange(
+        timeline,
+        parseReplayTick(String(Math.round(start))),
+        parseReplayTick(String(Math.round(end))),
       );
       const allowedPresets = new Set<ClipExportPreset>(["horizontal", "vertical", "discord"]);
       const requestedPresets = Array.isArray(scenario.export_presets)
@@ -277,8 +286,8 @@ function App() {
         "export_requested",
         {
           fixture_alias: fixture.alias,
-          clip_start_ms: clipStartMs,
-          clip_end_ms: clipEndMs,
+          start_frame: clipRange.startFrame,
+          end_frame_exclusive: clipRange.endFrameExclusive,
           presets,
           music_mode: useBuiltInMusic ? "built_in" : "none",
           game_audio_volume: gameAudioVolume,
@@ -290,8 +299,9 @@ function App() {
       const result = await exportClip(
         {
           game_timestamp: fixture.game_timestamp,
-          clip_start_ms: clipStartMs,
-          clip_end_ms: clipEndMs,
+          media_id: clipRange.mediaId,
+          start_frame: String(clipRange.startFrame),
+          end_frame_exclusive: String(clipRange.endFrameExclusive),
           presets,
           vertical_focus: 0.72,
           vertical_position: 0.5,

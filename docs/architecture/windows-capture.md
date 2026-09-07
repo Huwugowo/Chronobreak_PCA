@@ -2,20 +2,21 @@
 
 QueueBack targets the exact League of Legends top-level HWND with Windows Graphics Capture (WGC). It does not capture the desktop, inject into League, hook DirectX, intercept input, or modify League settings. The optimized paths require Windows 10 version 1903 or newer and the pinned QueueBack media runtime.
 
-## Backend selection
+## Production backend
 
-The in-process native backend is the Windows default. At process startup, `QUEUEBACK_WINDOWS_RECORDER_BACKEND` selects the backend:
+Windows has one production recorder backend:
+`native-wgc-d3d11-nvenc`. There is no environment selector and no automatic or
+operator-selected cross-backend fallback. The supported recording plan is H.264 High,
+1920x1080 at 60 FPS on a same-adapter NVIDIA NVENC device. Unsupported codec/profile
+configuration fails during initialization rather than being silently remapped.
 
-| Value | Backend |
-| --- | --- |
-| unset, empty, or `native` | `native-wgc-d3d11-nvenc` |
-| `ffmpeg` or `ffmpeg-wgc` | `ffmpeg-wgc` |
+HEVC, non-High recording profiles, AMD/AMF, and Intel/QSV were available only through
+the retired FFmpeg-driven WGC comparison backend and had no validated production
+combination. They are unsupported by the current product architecture. Future vendor
+or codec support must extend and validate the native recorder contract rather than
+revive a parallel capture backend.
 
-An invalid value is a startup error. A native startup failure never silently switches to FFmpeg: operators must select the alternative explicitly so diagnostics and performance claims remain truthful.
-
-The native backend currently supports H.264, the high 1920x1080 60-FPS plan, and NVIDIA NVENC. The external FFmpeg backend remains the compatibility path for HEVC, other recording profiles, AMD/AMF, and Intel/QSV.
-
-## Default native frame path
+## Native frame path
 
 ```text
 League HWND
@@ -33,28 +34,29 @@ The WGC callback never waits for the GPU worker, encoder, muxer, disk, or runtim
 
 Full video frames remain GPU-resident through acquisition, resize/color conversion, and encoder submission. There is no per-frame full-surface readback, CPU pixel conversion, or raw-frame transfer. WGC, conversion, and encoder surfaces may still require bounded GPU-to-GPU copies, so the path is described as GPU-resident rather than universally zero-copy.
 
-FFmpeg remains one supervised child, but on the native path it does not capture or encode video. It receives the native H.264 bitstream, captures the selected loopback or silent audio source, encodes AAC, and owns fragmented-MP4 muxing. Pipe-write and explicit-flush latency are measured separately, including deterministic test-only stall injection.
+## FFmpeg boundary
 
-## Explicit FFmpeg alternative
-
-The retained `ffmpeg-wgc` backend keeps the vendor-neutral graph:
-
-```text
-League HWND
-  -> WGC / gfxcapture D3D11 BGRA frames
-  -> bounded latest-frame selection
-  -> scale_d3d11 NV12 conversion
-  -> same-adapter NVENC, AMF, or direct-mapped QSV
-  -> AAC audio + fragmented MP4
-```
-
-The external graph uses two WGC acquisition frames, eight gfxcapture BGRA output frames, a global 32-frame filter bound, and encoder depth 16 for NVENC or 4 for AMF/QSV. Capture and encoder adapter LUIDs must match. A missing encoder, failed direct map, or cross-adapter combination rejects that candidate rather than enabling a hidden host copy.
+The native recorder starts one supervised FFmpeg child, but FFmpeg performs no video
+capture, filtering, scaling, or encoding. It receives the already encoded native
+Annex-B H.264 packet sequence, captures the selected DirectShow loopback or silent
+audio source, encodes AAC, and muxes fragmented MP4. Packaged ffprobe performs the
+bounded common finalization probe. FFmpeg remains the correct implementation for
+muxing, probing, export/transcoding, and fixture tooling; those uses are not recorder
+backends.
 
 ## Runtime contract
 
-Both backends resolve `queueback-ffmpeg-8.1.2-windows-x86_64-r6` through the shared immutable media-runtime contract. Startup verifies file hashes, exact version/build identity, FFmpeg/ffprobe pairing, `gfxcapture`, `scale_d3d11`, D3D11 support, compiled NVENC/AMF/QSV surfaces, and QueueBack capture diagnostics ABI 1. An arbitrary executable on `PATH` is not accepted.
+The recorder resolves `queueback-ffmpeg-8.1.2-windows-x86_64-r6` through the shared
+immutable media-runtime contract. Startup verifies file hashes, exact version/build
+identity, and the FFmpeg/ffprobe pair. The currently pinned artifact still contains
+the historical WGC/D3D11 patch and compiled hardware encoders as reproducible build
+provenance, but the production recorder neither selects nor invokes those capture
+filters or FFmpeg video encoders.
 
-The r6 build pins FFmpeg 8.1.2, nv-codec-headers 12.2.72.0, AMF 1.4.36, the QueueBack WGC patch, and its exact MSYS2 toolchain. It enables ffnvcodec and links the static C++ runtime required by the current libvpl package. The whole-app build and staging scripts consume the same lock; ordinary Cargo verification does not download or rebuild FFmpeg.
+The r6 build pins FFmpeg 8.1.2, nv-codec-headers 12.2.72.0, AMF 1.4.36, the QueueBack
+WGC patch, and its exact MSYS2 toolchain. Ordinary builds and startup do not rebuild
+the runtime. Removing unused compiled capabilities requires a separately locked,
+rebuilt runtime revision; it is not part of retiring the recorder backend.
 
 The fragmented MP4 muxer flushes completed packets. Successful recording publishes only a validated private candidate as `video.mp4`. Failed startup or active-session failure preserves a recoverable partial candidate and an actionable error rather than claiming canonical success.
 
@@ -86,12 +88,15 @@ WGC may show an operating-system capture indicator. QueueBack requests cursor ex
 
 | Combination | Production path | State | Physical performance claim |
 | --- | --- | --- | --- |
-| Windows 10 1903+ / exact HWND / D3D11 | native default and FFmpeg alternative | implemented with synthetic lifecycle/media fixtures | measured adapter/backend only |
-| NVIDIA / NVENC / H.264 high 1080p60 | native default | implemented and non-League fixture-validated on RTX 3050 Ti Laptop GPU | pending valid QB-PERF-002 League matrix on the target RTX 4060 system |
-| NVIDIA / HEVC or non-high profile | explicit FFmpeg alternative | implemented | pending selected configuration evidence |
-| AMD / AMF / same adapter | explicit FFmpeg alternative | implemented planner/runtime path | optimized-unvalidated; QB-PERF-003 owns hardware validation |
-| Intel / QSV / same adapter | explicit FFmpeg alternative | implemented planner/runtime path | optimized-unvalidated; QB-PERF-004 owns hardware validation |
-| Cross-adapter encoder | neither backend selects it | deliberately unsupported | cross-adapter-unvalidated |
-| Missing WGC/runtime/direct interop | neither backend succeeds | unsupported with diagnostics | unsupported |
+| Windows 10 1903+ / exact HWND / D3D11 | native WGC/D3D11/NVENC | implemented with synthetic lifecycle/media fixtures | measured adapter/backend only |
+| NVIDIA / NVENC / H.264 High 1080p60 | native production backend | implemented and non-League fixture-validated on RTX 3050 Ti Laptop GPU | pending valid QB-PERF-002 League matrix on the target RTX 4060 system |
+| HEVC or non-High recording profile | none | unsupported | none |
+| AMD / AMF | none | unsupported by the native recorder | none |
+| Intel / QSV | none | unsupported by the native recorder | none |
+| Cross-adapter encoder | none | deliberately unsupported | cross-adapter-unvalidated |
+| Missing WGC/runtime/direct NVENC interop | none | unsupported with diagnostics | unsupported |
 
-The default change is not a vendor-wide performance claim. QueueBack remains truthful about which backend, adapter, codec, and interop path actually ran, and every physical combination must pass the common frame-pacing and resource budgets before receiving a hardware-validated label.
+The supported native combination is not a vendor-wide performance claim. Every
+future physical combination must first exist in the native architecture and pass the
+same frame-pacing, lifecycle, media-integrity, and resource budgets before receiving
+a hardware-validated label.

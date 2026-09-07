@@ -1,224 +1,111 @@
 # Chronobreak agent instructions
 
-## Mission
+Chronobreak is a League of Legends record, replay, search, and clipping application.
 
-Develop Chronobreak as a League of Legends-specific **record, replay, search, and clipping** application.
+## Mandatory bootstrap
 
-Prioritize:
-1. recording reliability;
-2. negligible measurable impact on League performance;
-3. a fast League-native replay experience;
-4. fast, simple clipping/export;
-5. local-first ownership and recoverability.
+Before planning, coding, editing canonical project state, or delegating work in a new session:
 
-Chronobreak is not a coaching platform. Descriptive game data may help users find, navigate, understand, or clip recordings. Prescriptive gameplay judgment, coaching, build/matchup advice, decision grading, and "what you should have done" features are out of scope unless the user explicitly changes the product direction.
+1. Read `docs/product/PRODUCT.md` **in full**.
+2. Read `docs/development/WORKFLOW.md` **in full**.
+3. Resolve the requested item in `feature-list.json` and read its complete entry, including dependencies, stage/status, execution paths, acceptance criteria, verification, evidence, and notes.
+4. When `execution.progress` contains a path, read that execution checkpoint **in full before the ExecPlan**. It owns the current milestone, partial work, obtained results, blockers, and next action.
+5. When `execution.plan` contains a path, read that immutable ExecPlan **in full after the checkpoint**. It owns the approved implementation design, not current repository state.
 
-## Sources of truth
+Do not substitute summaries, chat memory, git history, predecessor plans, or broad repository rediscovery for those reads.
 
-Use repository state, not chat memory, for durable project facts.
+Then apply these task-dependent reads before acting on the relevant phase:
 
-- `feature-list.json` — canonical work state and feature-specific Definition of Done.
-- `feature-list.schema.json` — structural contract for the feature list.
-- `docs/product/PRODUCT.md` — durable product boundaries.
-- `docs/development/VERIFICATION.md` — authoritative project-wide verification commands.
-- `PLANS.md` — ExecPlan contract.
-- `docs/architecture/` — durable architecture facts.
-- `docs/exec-plans/active/` — active plans.
+- For planned work with no finalized ExecPlan, read `PLANS.md` in full before creating one.
+- Before implementing or verifying product code, read `docs/development/VERIFICATION.md` in full.
+- Read only the applicable documents under `docs/architecture/` when the feature, ExecPlan, or current unit depends on durable architecture facts.
+
+When a canonical document changes materially during the session, reread the affected section before relying on it.
+
+## Authorities
+
+Use repository state, not chat memory, for durable facts:
+
+- `docs/product/PRODUCT.md` — product scope, priorities, and boundaries.
+- `feature-list.json` — feature definition, lifecycle status, Definition of Done, execution artifact paths, and concise canonical evidence.
+- `docs/execution/` — mutable per-feature implementation and verification checkpoints.
+- `docs/exec-plans/` — immutable approved designs for planned features.
+- `docs/development/WORKFLOW.md` — lifecycle, routing, resume, checkpoint, delegation, and completion process.
+- `docs/development/VERIFICATION.md` — project-wide verification commands and invariants.
+- `docs/architecture/` — durable architecture that is true now.
+- `feature-list.schema.json` and `PLANS.md` — structural and ExecPlan artifact contracts.
 
 Do not create competing sources of truth.
 
-## The work rule
+## Universal guardrails
 
-Whenever the user asks to work on an item, resolve it in `feature-list.json` and inspect its `stage`.
+- Follow `docs/development/WORKFLOW.md`; the user does not need to choose or name a workflow.
+- Work on one concrete feature at a time unless its approved design requires coordinated changes.
+- Do not opportunistically implement unrelated work. Record genuine discovered work in `feature-list.json`.
+- Prefer existing architecture over parallel mechanisms. Record substantial durable architecture facts under `docs/architecture/`.
+- Keep canonical lifecycle state and execution paths truthful throughout the work.
+- Preserve unrelated working-tree changes; never reset, discard, or silently overwrite them.
+For substantial implementation or active ExecPlan execution, apply the
+`forward-engineering` skill. It governs forward progress, focused invalidation,
+resume behavior, root-cause handling, and execution-state maintenance.
 
-### `stage: draft` -> refine
+## Delegation and context acquisition
 
-Do not implement product code.
+The root agent owns the task: reasoning, design decisions, implementation, edits, integration, canonical project state, and final verification.
 
-Work only on making the item implementable:
-- make the observable outcome clear;
-- define scope and important non-goals;
-- define specific, testable acceptance criteria;
-- define verification that can prove those criteria;
-- identify dependencies;
-- make the work small/coherent enough to implement as one feature;
-- choose `execution.workflow`.
+Use subagents primarily to keep substantial read-heavy or noisy investigation out of the root context.
 
-If the item is too broad to become one implementable feature, keep it as an epic and decompose it into concrete child features.
+### Delegate exploration
 
-A draft feature becomes `ready` only when the readiness gate above passes.
+Delegate to a read-only `scout` whenever answering the current question requires substantial repository exploration, including:
 
-An epic is never implementation-ready; it remains a parent objective and is advanced by refining/decomposing its child features.
+* searching across multiple files or modules;
+* locating implementations, consumers, tests, or related symbols whose complete relevant set is not already known;
+* understanding interactions across several components;
+* reconstructing existing behavior from code;
+* analysing a large amount of repository evidence or output.
 
-### `stage: ready` -> execute
+Do not delegate a trivial lookup or a small read of a known file when the root can obtain the needed fact directly with little context cost.
 
-A ready item must be a concrete feature.
+When several independent exploration questions are known at once, batch them into one `task` call and run the scouts in parallel.
 
-Check dependencies, then follow its `execution.workflow`.
+A scout gathers evidence only. It does not implement changes and does not delegate further. Its result should contain concise findings, relevant file/symbol/range references, important constraints, and unresolved uncertainty — not its raw search transcript.
 
-The user should not need to choose or mention the workflow.
+The root should use the returned evidence to reason and implement. It may directly inspect a small number of critical source ranges before editing when exact code is required.
 
-## Execution workflows
+### Tool discipline
 
-### `direct`
+Prefer targeted searches and bounded reads over broad repository dumps.
 
-For localized, well-understood work.
+When direct root-side investigation is necessary, batch independent reads/searches in the same turn when possible rather than making one model turn per tiny lookup.
 
-`inspect narrowly -> implement -> verify -> evidence -> completion gate`
+Do not repeatedly poll running agents. Use their completion result.
 
-No ExecPlan or subagents by default.
+Avoid injecting large command, search, test, or log outputs into the root context when a targeted excerpt or summarized result is sufficient.
 
-### `adaptive`
 
-For apparently bounded work that may hide important complexity.
-
-Start with bounded inspection.
-
-- If the work remains local, low-risk, and clear: execute as `direct`.
-- If it affects multiple subsystems/processes, persistence/migrations, concurrency/lifecycle, capture performance/reliability, backward compatibility, or has meaningful architectural tradeoffs: change the workflow to `planned` before implementation.
-
-### `planned`
-
-For complex, high-risk, cross-subsystem, performance-sensitive, persistence-sensitive, or architecturally consequential work.
-
-If `execution.plan` is `null`, this pass is planning only:
-
-1. explore the relevant architecture;
-2. use subagents where useful to isolate independent read-heavy exploration, tests/logs, benchmarks, or review;
-3. synthesize findings in the main agent;
-4. produce a candidate design;
-5. review/challenge the design for missing dependencies, edge cases, failure modes, migrations/backward compatibility, performance/reliability risk, and verification gaps;
-6. resolve material uncertainties and ask the user only for genuine product/architecture decisions;
-7. write a self-contained ExecPlan following `PLANS.md`;
-8. save its path in `execution.plan`;
-9. stop before implementation.
-
-Implementation of planned work starts from a fresh context.
-
-If `execution.plan` already contains a path, treat that ExecPlan as the implementation map: read it, inspect only what the next implementation step requires, and implement it. Do not repeat broad architecture or subsystem mapping unless a concrete repository contradiction or missing fact blocks the plan. In this state, subagents should handle bounded implementation slices, targeted uncertainties, review, or verification — not generic remapping of the system.
-
-## Delegation and subagents
-
-You are explicitly authorized to proactively use subagents without the user requesting delegation on each task. The main agent decides when delegation is worthwhile and owns orchestration, synthesis, integration, canonical state, verification, completion, and subagent lifecycle.
-
-Use subagents only when they materially improve parallelism, context efficiency, or result quality. Do not delegate for ceremony and do not fill available concurrency slots merely because they exist.
-
-### Good uses
-
-- During planning without an authoritative ExecPlan, mapping genuinely independent subsystems.
-- Targeted investigation of an unfamiliar API or concrete uncertainty.
-- Isolated test, log, fixture, or benchmark analysis.
-- A disjoint implementation slice with a clear write scope.
-- Independent review of a plan, implementation, or specific risk.
-
-Do not create subagents for overlapping edits, duplicated investigation, or work the main agent is simultaneously doing itself.
-
-### Assignment discipline
-
-Treat each subagent as a **bounded, single-assignment worker**, not as persistent memory for the project.
-
-When spawning a subagent:
-
-- give it one concrete objective with a clear deliverable;
-- name the relevant paths or subsystem and important constraints;
-- state whether it may edit files or is read-only;
-- keep its scope disjoint from other active agents;
-- by default, tell it not to spawn further subagents; allow descendants only when the main agent explicitly decides that a second level of independent decomposition is useful.
-
-Parallelize only genuinely independent work. If tasks depend on each other's findings or touch the same code, run them sequentially or keep them in the main agent.
-
-While subagents run, perform useful non-overlapping work when available. When no useful independent work remains, call `wait_agent` once with a long timeout and rely on its event-driven wakeup. Do not poll with repeated short `wait_agent` or `list_agents` calls; subagent messages and completions wake an active wait immediately.
-
-### Context inheritance
-
-Minimize inherited conversational context.
-
-- Prefer `fork_turns: none` when the assignment can be made self-contained in its spawn message.
-- Otherwise pass the smallest recent-turn slice that contains information the worker genuinely needs, typically a small positive `fork_turns` value.
-- Use `fork_turns: all` only when the full parent conversation is genuinely necessary to complete that specific assignment.
-
-Do not use full-history forks merely for convenience. Repository files, an authoritative ExecPlan, and a precise task prompt should carry durable context whenever possible.
-
-### Model routing
-
-When model overrides are available, use the lowest-capability model that is comfortably sufficient for the bounded assignment:
-
-- use Luna for narrow, mechanical, high-volume work such as focused searches, enumeration, simple transformations, and straightforward test/log triage;
-- use Terra for substantive bounded exploration, implementation, debugging, or review;
-- use Sol for a subagent only when that delegated task itself genuinely requires frontier-level reasoning or architectural synthesis.
-
-Do not accidentally inherit the main agent's Sol/max configuration for routine workers when a cheaper model is appropriate. Choose reasoning effort proportionally to the assignment rather than inheriting maximum effort by default.
-
-### Agent lifecycle
-
-A completed assignment ends that worker's lifecycle.
-
-- Use `followup_task` only to clarify, correct, or finish the **same assignment** while its existing context is directly useful.
-- Do not reuse a completed mapping/research/review worker for implementation, a new phase, or a different task. Spawn a fresh worker with a concise task instead.
-- Do not keep a large-context worker alive because it "already knows the codebase"; preserve useful knowledge in its concise handoff, code changes, tests, or durable repository artifacts.
-- After consuming a worker's final result, close it with `close_agent` when that tool is available.
-- If the current Codex runtime does not expose `close_agent`, treat the completed worker as retired and never reactivate it for later phases.
-
-A subagent's final response should be a concise handoff: findings or changes, evidence/tests, remaining uncertainty, and paths touched. Do not return large raw command output when a summary or relevant excerpt is sufficient.
-
-## Context economy
-
-Context is a working resource. These rules apply to the main agent and all subagents.
-
-- Inspect narrowly before reading broadly. Prefer targeted `rg` queries and relevant file ranges over raw dumps of large files or directories.
-- Keep terminal output bounded. Filter verbose commands, request only relevant ranges, or redirect large output to a temporary file and inspect the useful excerpts.
-- Prefer one bounded command that answers a coherent small question over many tiny tool -> model round trips, but do not batch unrelated reads into a huge output dump.
-- Do not repeatedly reread unchanged files or rediscover facts already established by the authoritative ExecPlan, repository state, or a concise subagent handoff.
-- For verbose tests or benchmarks, preserve the full output when useful but feed only the summary and relevant failures/evidence back into model context.
-- If exploration discovers durable information needed later, record it in the appropriate plan, architecture document, feature evidence, or code rather than relying on a long conversational context to remember it.
-
-## Scope
-
-Work on one concrete feature at a time unless an active ExecPlan requires coordinated changes.
-
-Do not opportunistically implement unrelated work. Add real newly discovered work to `feature-list.json` instead.
-
-Prefer existing architecture over parallel mechanisms. Record substantial durable architecture decisions under `docs/architecture/`.
-
-## Global completion gate
+## Completion gate
 
 Never mark a feature `done` merely because code was written.
 
 A feature is `done` only when:
+
 - every acceptance criterion in `feature-list.json` is satisfied;
-- required feature verification was actually run and passed;
-- applicable project-wide verification passes;
+- required feature-specific verification was actually run and passed;
+- applicable project-wide verification from `docs/development/VERIFICATION.md` passes;
 - required performance/reliability checks pass;
 - no known unresolved issue contradicts the claimed behavior;
-- relevant durable documentation/state is updated;
-- concrete evidence is recorded in `feature-list.json`.
+- relevant durable documentation and canonical state are updated;
+- detailed implementation and verification history is retained in the execution record when one exists;
+- concise concrete evidence supporting the completion claim is recorded in `feature-list.json`.
 
-If verification was not run, do not claim it passed.
+If verification was not run, do not claim it passed. If a required check cannot run, keep the feature non-done and record the reason truthfully.
 
-Do not weaken acceptance criteria after implementation merely to make a feature pass. Genuine requirement changes must be explicit.
+Do not weaken acceptance criteria after implementation merely to make a feature pass. Genuine requirement changes must be explicit and recorded in canonical feature state.
 
 ## Safety
 
-Never use real user recordings as destructive test data.
-
-Use dedicated fixtures or temporary/test libraries for destructive storage, migration, cleanup, recovery, and corruption tests.
-
-Do not delete or overwrite recordings, clip libraries, user-selected media directories, credentials, or other user data unless explicitly required and confirmed safe.
-
-Do not weaken validation, integrity checks, security, or error handling just to make tests pass.
-
-## State updates
-
-Keep `feature-list.json` truthful.
-
-Status:
-- `not-started` — no implementation/planning currently active;
-- `in-progress` — refinement, planning, or implementation is active;
-- `blocked` — progress requires an unresolved external dependency or user decision;
-- `done` — completion gate passed.
-
-For planned features:
-- `execution.plan: null` — no durable implementation plan exists yet;
-- a plan path — that ExecPlan is the authoritative implementation guide.
-
-Keep `progress.md` only as a short restart pointer, never as a second backlog.
+- Never use real user recordings as destructive test data.
+- Use dedicated fixtures or temporary/test libraries for destructive storage, migration, cleanup, recovery, and corruption tests.
+- Do not delete or overwrite recordings, clip libraries, user-selected media directories, credentials, or other user data unless explicitly required and confirmed safe.
+- Do not weaken validation, integrity checks, security, or error handling just to make tests pass.

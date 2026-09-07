@@ -9,7 +9,7 @@ The service resolves the immutable packaged media runtime and detects audio once
 League process presence remains the automatic lifecycle authority:
 
 1. appearance makes the process eligible while its visible capture HWND is discovered;
-2. an owned cancellable startup task starts the selected backend inside one 15-second deadline; the explicit FFmpeg backend tries each eligible same-adapter encoder once;
+2. an owned cancellable startup task starts the native recorder inside one 15-second deadline;
 3. PID replacement cancels/reaps startup or finalizes the old session before a new generation can start;
 4. disappearance gracefully finalizes an active recording;
 5. application shutdown cancels startup and finalizes an active recording before emitting completion.
@@ -18,30 +18,30 @@ Live Client readiness and `GameEnd` are not start/stop signals. A process with n
 
 ## Capture and finalization
 
-On Windows, the default production video path is in-process exact-HWND Windows Graphics Capture on an explicit D3D11 adapter, D3D11 resize/BGRA-to-NV12 conversion, and direct NVENC H.264 submission. `QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` selects the retained external WGC/D3D11 NVENC/AMF/QSV backend explicitly. A native failure never silently changes backend. Neither path has automatic GDI, primary-display, software, or cross-adapter fallback. See [windows-capture.md](windows-capture.md) for the complete frame/resource contract.
+On Windows, the sole production video path is in-process exact-HWND Windows Graphics Capture on an explicit D3D11 adapter, D3D11 resize/BGRA-to-NV12 conversion, and direct NVENC H.264 submission. There is no external capture-backend selector and no automatic GDI, primary-display, software, cross-adapter, codec, or vendor fallback. See [windows-capture.md](windows-capture.md) for the complete supported surface and frame/resource contract.
 
-The service wraps the selected implementation in `VideoRecordingSession`. The FFmpeg implementation owns its capture/encode/mux child. The native implementation owns a supervised GPU worker, a bounded completion thread, four NVENC slots, a diagnostics receiver, and one FFmpeg audio/mux child. Startup is announced only after a real first WGC frame and advancing encode/mux evidence. Cooperative native cleanup performs the blocking worker join off the async executor; child pipes are continuously drained and reaped under finite deadlines.
+The service owns one native implementation: a supervised GPU worker, bounded completion thread, four NVENC slots, diagnostics receiver, and one FFmpeg child restricted to audio encoding and fragmented-MP4 muxing. Startup is announced only after a real first WGC frame and advancing encode/mux evidence. Cooperative cleanup performs the blocking worker join off the async executor; child pipes are continuously drained and reaped under finite deadlines.
 
 The service validates the captured HWND/PID/adapter identity while active. A closed or replaced HWND while the League process is still present produces a failed/partial outcome. Focus loss, occlusion, and temporary minimize do not change identity; WGC may pause while minimized and resume after restore.
 
-Normal stop asks the selected backend to end capture, drain bounded native/FFmpeg work, flush the muxer, and reap every owned task/thread/child under finite deadlines. A clean result requires an intentional stop boundary, terminal WGC/encode/mux evidence, consistent frame accounting, successful mux exit, and nonempty output. The successful private candidate is then renamed to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixtures remain recoverable.
+Normal stop ends native capture, drains bounded GPU/encoder/mux work, flushes the muxer, and reaps every owned task/thread/child under finite deadlines. A clean result requires an intentional stop boundary, terminal WGC/encode/mux evidence, consistent frame accounting, successful mux exit, and nonempty output. The common finalizer validates the private candidate before renaming it to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixtures remain recoverable.
 
 ## Live Client synchronization
 
-`PollerSession` starts only after video readiness. Its monotonic epoch is the first Windows Graphics Capture `SystemRelativeTime`/QPC frame, mapped into the Rust clock, rather than FFmpeg spawn time. Calibration probes `/gamestats` until it observes five strictly advancing, clock-consistent samples and derives `game_start_video_offset_ms` from monotonic receive time and the video epoch.
+`PollerSession` starts only after video readiness. Its monotonic epoch is the first Windows Graphics Capture `SystemRelativeTime`/QPC frame, mapped into the Rust clock, rather than FFmpeg spawn time. Calibration probes `/gamestats` until it observes five strictly advancing, clock-consistent samples and records a midpoint-derived affine schema-v2 game-to-replay calibration.
 
 After calibration, independent loops:
 
-- poll cumulative `/eventdata` every second, deduplicate by event ID, normalize fields, sort chronologically, and precompute `video_time_ms`;
+- poll cumulative `/eventdata` every second, deduplicate by event ID, normalize fields, and sort integer-microsecond game-clock observations chronologically;
 - poll game, active-player, and player-list data every ten seconds, storing snapshots and deriving item/level changes. Only the one initial aggregate snapshot may also seed cumulative event data; the one-second event loop is the sole steady-state event authority.
 
 Requests are concurrent within a snapshot. Three consecutive failures stop only the affected polling task; successful requests reset the failure count. API loss never stops video. Poller cancellation and recorder-backend shutdown begin together, and diagnostic/benchmark evidence attributes their CPU and errors separately. This isolation is why the accepted pre-change data identified GDI acquisition/conversion—not polling—as the primary performance issue.
 
-## Persistence and compatibility
+## Persistence
 
-`game_log.json` is rewritten atomically during capture through a temporary sibling and rename. After stop, release-era `metadata.json` is still the canonical library metadata; no recording-state authority or strict Unknown-state UI was reintroduced. Existing recordings are not rewritten.
+`game_log.json` is rewritten atomically during capture through a temporary sibling and rename. Schema-v2 `metadata.json` is the canonical library metadata. It carries the validated media timeline and immutable `media_id`, which must match the game log before the app exposes a playable recording.
 
-New recordings add backward-compatible flat path fields and an optional nested `capture` object containing backend/ABI, adapter identities, direct interop, GPU stages, finite bounds, runtime ID, first/latest QPC values, final counters, and terminal evidence. Recording bundle IDs are Unix seconds with an optional canonical `-1` through `-999` collision suffix; application browsing, playback, save/delete, clip association, and asset routing all accept that same safe contract. Older app readers ignore additive metadata fields and continue to browse/play valid `metadata.json` plus `video.mp4` bundles.
+New recordings use only the strict schema-v2 contract; old timing fields, schema-v1 parsing, approximate fallback, and migration are intentionally absent. The optional capture object records backend/ABI, adapter identities, direct interop, GPU stages, finite bounds, runtime ID, first/latest QPC values, final counters, and terminal evidence. Recording bundle IDs are Unix seconds with an optional canonical `-1` through `-999` collision suffix; application browsing, playback, save/delete, clip association, and asset routing all accept that same safe contract.
 
 Live Client poller degradation does not invalidate otherwise healthy video. Encoder/capture failure remains an explicit recorder error while the fragmented partial output and latest atomically written game log stay recoverable. The app does not infer clean completion from the new diagnostics object.
 

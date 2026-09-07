@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronobreak.local/schemas/replay-time/golden-v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "replay_ticks_per_second",
+    "maximum_replay_tick",
+    "frame_cases",
+    "rounding_cases",
+    "invalid_unsigned_decimals",
+    "invalid_signed_decimals"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "replay_ticks_per_second": { "const": "48000000" },
+    "maximum_replay_tick": { "const": "4147200000000" },
+    "frame_cases": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "frame_rate", "frame_boundary", "expected_replay_tick"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "frame_rate": { "$ref": "#/$defs/positiveRational" },
+          "frame_boundary": { "$ref": "#/$defs/unsignedDecimal" },
+          "expected_replay_tick": { "$ref": "#/$defs/unsignedDecimal" }
+        }
+      }
+    },
+    "rounding_cases": {
+      "type": "array",
+      "minItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "value", "numerator", "denominator", "rounding", "expected"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "value": { "$ref": "#/$defs/signedDecimal" },
+          "numerator": { "$ref": "#/$defs/signedDecimal" },
+          "denominator": { "$ref": "#/$defs/positiveUnsignedDecimal" },
+          "rounding": { "enum": ["exact", "floor", "ceil", "nearest_ties_to_even"] },
+          "expected": { "$ref": "#/$defs/signedDecimal" }
+        }
+      }
+    },
+    "invalid_unsigned_decimals": { "type": "array", "items": { "type": "string" } },
+    "invalid_signed_decimals": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "unsignedDecimal": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "positiveUnsignedDecimal": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+    "signedDecimal": { "type": "string", "pattern": "^(0|-?[1-9][0-9]*)$" },
+    "positiveRational": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "denominator": { "$ref": "#/$defs/positiveUnsignedDecimal" }
+      }
+    }
+  }
+}

@@ -19,15 +19,15 @@ Path components are validated before resolution. Range responses stream file sli
 
 ## Library and viewer flow
 
-Opening a game asks Rust to parse its bundle into a playback probe containing the loopback video URL, recording FPS, sorted events, snapshots, and metadata. A single persistent video element is shared between windowed and fullscreen layouts; changing layout does not remount the decoder.
+Opening a game asks Rust to strictly parse its schema-v2 bundle into a playback probe containing the loopback video URL, validated media timeline, mapped events, snapshots, and metadata. A single persistent video element is shared between windowed and fullscreen layouts; changing layout does not remount the decoder.
 
-`requestVideoFrameCallback` is the preferred presented-frame clock. Timeline markers use stored `video_time_ms`; seeking, event cards, champion filters, and recorded player state derive from the same playback payload. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
+`requestVideoFrameCallback` is the presented-frame authority. Requested, dispatched, seeked, and presented values retain distinct generation/epoch state. Timeline markers, seeks, event cards, champion filters, and recorded player state use mapped replay ticks from the same payload; unavailable/before/after-media observations are explicit. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
 
 Data Dragon manifests/icons enrich champion and item presentation but do not gate playback. Cached versions continue to work offline; unavailable images fall back to fixed-layout placeholders.
 
 ## Clip flow
 
-A supported replay event or timeline action enters clip mode with heuristic pre/post-roll. The user can adjust frame-aligned endpoints subject to the minimum duration, choose output presets, vertical framing, music, and audio levels, then submit a request through Tauri.
+A supported replay event or timeline action enters clip mode with heuristic pre/post-roll. The user can adjust a media-bound, half-open source-frame interval subject to the minimum duration, choose output presets, vertical framing, music, and audio levels, then submit a request through Tauri.
 
 `app/src-tauri/src/clip_export.rs` validates the source bundle and request, selects H.264 hardware encoders with software fallback, and invokes ffmpeg directly without a shell. It emits progress, stages all outputs, verifies Discord size with corrective retry, generates thumbnails, and atomically exposes the completed batch. Failure removes partial outputs while preserving source media. Successful MP4/JPEG pairs become visible on the next filesystem library scan; source association comes from the MP4 filename.
 

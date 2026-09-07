@@ -3,12 +3,15 @@ use std::env;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+use tokio::task::JoinSet;
 
 pub const CONTRACT_VERSION: u32 = 3;
 pub const RUNTIME_DIRECTORY_NAME: &str = "media-runtime";
@@ -217,6 +220,66 @@ impl fmt::Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
+
+/// Failure category for a bounded media-tool child process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundedProcessErrorKind {
+    /// The child could not be created or configured.
+    Spawn,
+    /// Waiting for the child or reading one of its pipes failed.
+    Execution,
+    /// The child exceeded its absolute runtime deadline.
+    Timeout,
+    /// Combined stdout and stderr exceeded the caller's byte limit.
+    OutputLimit,
+}
+
+/// Failure produced by [`run_bounded_process`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedProcessError {
+    kind: BoundedProcessErrorKind,
+    detail: String,
+}
+
+impl BoundedProcessError {
+    fn new(kind: BoundedProcessErrorKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+
+    /// Returns the stable failure category.
+    #[must_use]
+    pub fn kind(&self) -> BoundedProcessErrorKind {
+        self.kind
+    }
+
+    /// Returns the bounded operation detail.
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+impl fmt::Display for BoundedProcessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "bounded media process failed: {}", self.detail)
+    }
+}
+
+impl std::error::Error for BoundedProcessError {}
+
+/// Raw output from a successfully supervised bounded child process.
+#[derive(Debug)]
+pub struct BoundedProcessOutput {
+    /// Exit status reported after the child was reaped.
+    pub status: std::process::ExitStatus,
+    /// Captured stdout, bounded together with stderr.
+    pub stdout: Vec<u8>,
+    /// Captured stderr, bounded together with stdout.
+    pub stderr: Vec<u8>,
+}
 
 fn error_label(kind: RuntimeErrorKind) -> &'static str {
     match kind {
@@ -603,138 +666,253 @@ async fn run_probe_with_limits(
     max_output_bytes: usize,
 ) -> Result<String, RuntimeError> {
     let mut command = Command::new(path);
+    command.args(arguments);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = run_bounded_process(command, timeout, max_output_bytes)
+        .await
+        .map_err(|error| {
+            let kind = match error.kind() {
+                BoundedProcessErrorKind::Timeout => RuntimeErrorKind::ProbeTimeout,
+                BoundedProcessErrorKind::OutputLimit => RuntimeErrorKind::IncompatibleBuild,
+                BoundedProcessErrorKind::Spawn | BoundedProcessErrorKind::Execution => {
+                    RuntimeErrorKind::ExecutionBlocked
+                }
+            };
+            RuntimeError::new(kind, format!("{}: {}", path.display(), error.detail()))
+        })?;
+    if !output.status.success() {
+        return Err(RuntimeError::new(
+            RuntimeErrorKind::IncompatibleBuild,
+            format!("{} probe exited with {}", path.display(), output.status),
+        ));
+    }
+    let mut output_text = String::from_utf8_lossy(&output.stdout).into_owned();
+    output_text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(output_text)
+}
+
+/// Runs a media-tool child with an absolute deadline and one combined output cap.
+///
+/// The child is killed and reaped if it times out, either output pipe fails, or
+/// stdout plus stderr exceeds `max_combined_output_bytes`. The byte limit is
+/// exact: output equal to the limit succeeds and the first additional byte
+/// fails the operation.
+pub async fn run_bounded_process(
+    mut command: Command,
+    timeout: Duration,
+    max_combined_output_bytes: usize,
+) -> Result<BoundedProcessOutput, BoundedProcessError> {
     command
-        .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = command.spawn().map_err(|error| {
-        RuntimeError::new(
-            RuntimeErrorKind::ExecutionBlocked,
-            format!("{} could not start: {error}", path.display()),
+        BoundedProcessError::new(
+            BoundedProcessErrorKind::Spawn,
+            format!("child could not start: {error}"),
         )
     })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        RuntimeError::new(
-            RuntimeErrorKind::ExecutionBlocked,
-            format!("{} stdout was not captured", path.display()),
-        )
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        RuntimeError::new(
-            RuntimeErrorKind::ExecutionBlocked,
-            format!("{} stderr was not captured", path.display()),
-        )
-    })?;
-    let mut stdout_task = tokio::spawn(drain_bounded(stdout, max_output_bytes));
-    let mut stderr_task = tokio::spawn(drain_bounded(stderr, max_output_bytes));
-
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(result) => result.map_err(|error| {
-            RuntimeError::new(
-                RuntimeErrorKind::ExecutionBlocked,
-                format!("{} could not be waited: {error}", path.display()),
-            )
-        })?,
-        Err(_) => {
-            let _ = child.start_kill();
-            let _ = tokio::time::timeout(PROBE_REAP_TIMEOUT, child.wait()).await;
-            stdout_task.abort();
-            stderr_task.abort();
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-            return Err(RuntimeError::new(
-                RuntimeErrorKind::ProbeTimeout,
-                format!(
-                    "{} exceeded {} seconds",
-                    path.display(),
-                    timeout.as_secs_f64()
-                ),
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            stop_bounded_process(&mut child, None).await;
+            return Err(BoundedProcessError::new(
+                BoundedProcessErrorKind::Spawn,
+                "child stdout was not captured",
             ));
         }
     };
-    if !status.success() {
-        stdout_task.abort();
-        stderr_task.abort();
-        let _ = stdout_task.await;
-        let _ = stderr_task.await;
-        return Err(RuntimeError::new(
-            RuntimeErrorKind::IncompatibleBuild,
-            format!("{} probe exited with {status}", path.display()),
-        ));
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            stop_bounded_process(&mut child, None).await;
+            return Err(BoundedProcessError::new(
+                BoundedProcessErrorKind::Spawn,
+                "child stderr was not captured",
+            ));
+        }
+    };
+
+    let total_bytes = Arc::new(AtomicUsize::new(0));
+    let mut drains = JoinSet::new();
+    let stdout_total = Arc::clone(&total_bytes);
+    drains.spawn(async move {
+        (
+            CapturedPipe::Stdout,
+            drain_bounded_combined(stdout, stdout_total, max_combined_output_bytes).await,
+        )
+    });
+    let stderr_total = Arc::clone(&total_bytes);
+    drains.spawn(async move {
+        (
+            CapturedPipe::Stderr,
+            drain_bounded_combined(stderr, stderr_total, max_combined_output_bytes).await,
+        )
+    });
+
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut status = None;
+    let mut stdout = None;
+    let mut stderr = None;
+    while status.is_none() || stdout.is_none() || stderr.is_none() {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                stop_bounded_process(&mut child, Some(&mut drains)).await;
+                return Err(BoundedProcessError::new(
+                    BoundedProcessErrorKind::Timeout,
+                    format!("child exceeded {} seconds", timeout.as_secs_f64()),
+                ));
+            }
+            wait_result = child.wait(), if status.is_none() => {
+                match wait_result {
+                    Ok(exit_status) => status = Some(exit_status),
+                    Err(error) => {
+                        stop_bounded_process(&mut child, Some(&mut drains)).await;
+                        return Err(BoundedProcessError::new(
+                            BoundedProcessErrorKind::Execution,
+                            format!("child could not be waited: {error}"),
+                        ));
+                    }
+                }
+            }
+            drain_result = drains.join_next(), if stdout.is_none() || stderr.is_none() => {
+                match drain_result {
+                    Some(Ok((pipe, Ok(bytes)))) => match pipe {
+                        CapturedPipe::Stdout if stdout.is_none() => stdout = Some(bytes),
+                        CapturedPipe::Stderr if stderr.is_none() => stderr = Some(bytes),
+                        _ => {
+                            stop_bounded_process(&mut child, Some(&mut drains)).await;
+                            return Err(BoundedProcessError::new(
+                                BoundedProcessErrorKind::Execution,
+                                "child output pipe completed more than once",
+                            ));
+                        }
+                    },
+                    Some(Ok((_, Err(DrainError::OutputLimit)))) => {
+                        stop_bounded_process(&mut child, Some(&mut drains)).await;
+                        return Err(BoundedProcessError::new(
+                            BoundedProcessErrorKind::OutputLimit,
+                            format!(
+                                "combined stdout and stderr exceeded {max_combined_output_bytes} bytes"
+                            ),
+                        ));
+                    }
+                    Some(Ok((pipe, Err(DrainError::Read(error))))) => {
+                        stop_bounded_process(&mut child, Some(&mut drains)).await;
+                        return Err(BoundedProcessError::new(
+                            BoundedProcessErrorKind::Execution,
+                            format!("child {} could not be read: {error}", pipe.label()),
+                        ));
+                    }
+                    Some(Err(error)) => {
+                        stop_bounded_process(&mut child, Some(&mut drains)).await;
+                        return Err(BoundedProcessError::new(
+                            BoundedProcessErrorKind::Execution,
+                            format!("child output task failed: {error}"),
+                        ));
+                    }
+                    None => {
+                        stop_bounded_process(&mut child, Some(&mut drains)).await;
+                        return Err(BoundedProcessError::new(
+                            BoundedProcessErrorKind::Execution,
+                            "child output tasks ended without both pipes",
+                        ));
+                    }
+                }
+            }
+        }
     }
-    let drains = match tokio::time::timeout(PROBE_REAP_TIMEOUT, async {
-        let stdout = (&mut stdout_task)
-            .await
-            .map_err(|error| error.to_string())?;
-        let stderr = (&mut stderr_task)
-            .await
-            .map_err(|error| error.to_string())?;
-        let stdout = stdout.map_err(|error| error.to_string())?;
-        let stderr = stderr.map_err(|error| error.to_string())?;
-        Ok::<_, String>((stdout, stderr))
+
+    Ok(BoundedProcessOutput {
+        status: status.expect("loop requires a child status"),
+        stdout: stdout.expect("loop requires stdout"),
+        stderr: stderr.expect("loop requires stderr"),
     })
-    .await
-    {
-        Ok(result) => result.map_err(|error| {
-            RuntimeError::new(
-                RuntimeErrorKind::ExecutionBlocked,
-                format!("{} output could not be read: {error}", path.display()),
-            )
-        })?,
-        Err(_) => {
-            if !stdout_task.is_finished() {
-                stdout_task.abort();
-                let _ = stdout_task.await;
-            }
-            if !stderr_task.is_finished() {
-                stderr_task.abort();
-                let _ = stderr_task.await;
-            }
-            return Err(RuntimeError::new(
-                RuntimeErrorKind::ExecutionBlocked,
-                format!("{} output pipes did not close", path.display()),
-            ));
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CapturedPipe {
+    Stdout,
+    Stderr,
+}
+
+impl CapturedPipe {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
         }
-    };
-    if drains.0.overflow || drains.1.overflow {
-        return Err(RuntimeError::new(
-            RuntimeErrorKind::IncompatibleBuild,
-            format!("{} probe output exceeded its bound", path.display()),
-        ));
     }
-    let mut output_text = String::from_utf8_lossy(&drains.0.bytes).into_owned();
-    output_text.push_str(&String::from_utf8_lossy(&drains.1.bytes));
-    Ok(output_text)
 }
 
-struct BoundedOutput {
-    bytes: Vec<u8>,
-    overflow: bool,
+#[derive(Debug)]
+enum DrainError {
+    OutputLimit,
+    Read(std::io::Error),
 }
 
-async fn drain_bounded<R>(mut reader: R, max_output_bytes: usize) -> std::io::Result<BoundedOutput>
+type DrainResult = (CapturedPipe, Result<Vec<u8>, DrainError>);
+
+async fn stop_bounded_process(
+    child: &mut tokio::process::Child,
+    drains: Option<&mut JoinSet<DrainResult>>,
+) {
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(PROBE_REAP_TIMEOUT, child.wait()).await;
+    if let Some(drains) = drains {
+        drains.abort_all();
+        while drains.join_next().await.is_some() {}
+    }
+}
+
+async fn drain_bounded_combined<R>(
+    mut reader: R,
+    total_bytes: Arc<AtomicUsize>,
+    max_combined_output_bytes: usize,
+) -> Result<Vec<u8>, DrainError>
 where
     R: AsyncRead + Unpin,
 {
     let mut bytes = Vec::new();
-    let mut overflow = false;
     let mut chunk = [0_u8; 16 * 1024];
     loop {
-        let read = reader.read(&mut chunk).await?;
+        let read = reader.read(&mut chunk).await.map_err(DrainError::Read)?;
         if read == 0 {
-            break;
+            return Ok(bytes);
         }
-        let remaining = max_output_bytes.saturating_sub(bytes.len());
-        let retained = remaining.min(read);
+        let retained =
+            reserve_combined_output(total_bytes.as_ref(), max_combined_output_bytes, read);
         bytes.extend_from_slice(&chunk[..retained]);
-        overflow |= retained < read;
+        if retained < read {
+            return Err(DrainError::OutputLimit);
+        }
     }
-    Ok(BoundedOutput { bytes, overflow })
+}
+
+fn reserve_combined_output(
+    total_bytes: &AtomicUsize,
+    max_combined_output_bytes: usize,
+    requested: usize,
+) -> usize {
+    let mut current = total_bytes.load(Ordering::Acquire);
+    loop {
+        let retained = max_combined_output_bytes
+            .saturating_sub(current)
+            .min(requested);
+        match total_bytes.compare_exchange_weak(
+            current,
+            current + retained,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return retained,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 fn validate_tool_identity(
@@ -965,11 +1143,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn output_drain_retains_a_fixed_bound_while_consuming_all_input() {
-        let input = vec![b'x'; 64];
-        let output = drain_bounded(input.as_slice(), 7).await.unwrap();
-        assert_eq!(output.bytes, vec![b'x'; 7]);
-        assert!(output.overflow);
+    async fn combined_output_limit_is_exact_across_pipes() {
+        let total = Arc::new(AtomicUsize::new(0));
+        let stdout = drain_bounded_combined(b"123".as_slice(), Arc::clone(&total), 7)
+            .await
+            .unwrap();
+        let stderr = drain_bounded_combined(b"4567".as_slice(), Arc::clone(&total), 7)
+            .await
+            .unwrap();
+        assert_eq!(stdout, b"123");
+        assert_eq!(stderr, b"4567");
+        assert!(matches!(
+            drain_bounded_combined(b"8".as_slice(), total, 7).await,
+            Err(DrainError::OutputLimit)
+        ));
     }
 
     #[cfg(windows)]
@@ -1001,5 +1188,32 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.kind(), RuntimeErrorKind::ExecutionBlocked);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn output_overflow_kills_and_reaps_the_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock_path = directory.path().join("overflow.lock");
+        let escaped_lock_path = lock_path.display().to_string().replace('\'', "''");
+        let script = format!(
+            "$stream=[System.IO.File]::Open('{escaped_lock_path}',\
+             [System.IO.FileMode]::Create,[System.IO.FileAccess]::ReadWrite,\
+             [System.IO.FileShare]::None);\
+             [Console]::Out.Write('1234');\
+             Start-Sleep -Seconds 30"
+        );
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+
+        let error = run_bounded_process(command, Duration::from_secs(5), 3)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), BoundedProcessErrorKind::OutputLimit);
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .expect("overflowing child must be reaped and release its file lock");
     }
 }

@@ -1,6 +1,10 @@
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
+#[cfg(feature = "native-failure-injection")]
+use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
+#[cfg(feature = "native-failure-injection")]
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -38,6 +42,13 @@ impl NativeMuxPlan {
         }
 
         let mut arguments = Vec::new();
+        #[cfg(feature = "replay-time-fixture")]
+        let audio_first = matches!(audio, AudioSource::ReplayTimeFixturePcm(_));
+        #[cfg(not(feature = "replay-time-fixture"))]
+        let audio_first = false;
+        if audio_first {
+            append_windows_audio_arguments(&mut arguments, audio);
+        }
         push_args(
             &mut arguments,
             &[
@@ -49,32 +60,50 @@ impl NativeMuxPlan {
                 "0.25",
                 "-progress",
                 "pipe:1",
-                // Raw Annex-B packets do not carry MP4 timestamps. As an input
-                // option, -r explicitly generates the configured CFR timeline.
+                // Raw Annex-B packets do not carry timestamps. The native
+                // scheduler owns frame selection and writes exactly one packet
+                // per accepted tick. Wallclock input timestamps keep FFmpeg's
+                // live demux path moving, while -r supplies the input time base
+                // and the output bitstream filter below transfers packet
+                // ordinal into the exact CFR presentation grid.
+                "-use_wallclock_as_timestamps",
+                "1",
                 "-r",
             ],
         );
         arguments.push(frames_per_second.to_string().into());
-        push_args(
-            &mut arguments,
-            &["-fflags", "+genpts", "-f", "h264", "-i", "pipe:0"],
-        );
-
-        append_windows_audio_arguments(&mut arguments, audio);
+        push_args(&mut arguments, &["-f", "h264", "-i", "pipe:0"]);
+        if !audio_first {
+            append_windows_audio_arguments(&mut arguments, audio);
+        }
+        let (video_map, audio_map) = if audio_first {
+            ("1:v:0", "0:a:0")
+        } else {
+            ("0:v:0", "1:a:0")
+        };
         push_args(
             &mut arguments,
             &[
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c:v",
-                "copy",
+                "-map", video_map, "-map", audio_map, "-c:v", "copy", "-bsf:v",
+            ],
+        );
+        arguments.push(
+            format!("setts=pts=N:dts=N:duration=1:time_base=1/{frames_per_second}:prescale=1")
+                .into(),
+        );
+        push_args(
+            &mut arguments,
+            &[
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
                 "-shortest",
+                // AAC encoder priming starts at a negative DTS. Allowing the
+                // muxer to normalize it would shift the already-normalized
+                // video grid; the MP4 stream facts retain replay zero.
+                "-avoid_negative_ts",
+                "disabled",
                 "-flush_packets",
                 "1",
                 "-movflags",
@@ -109,8 +138,37 @@ impl NativeMuxPlan {
         require_pair(&self.arguments, "-c:v", "copy")?;
         require_pair(&self.arguments, "-f", "h264")?;
         require_pair(&self.arguments, "-i", "pipe:0")?;
+        require_pair(&self.arguments, "-avoid_negative_ts", "disabled")?;
+        let frames_per_second = self.frames_per_second.to_string();
+        require_window(
+            &self.arguments,
+            &[
+                "-use_wallclock_as_timestamps",
+                "1",
+                "-r",
+                &frames_per_second,
+                "-f",
+                "h264",
+                "-i",
+                "pipe:0",
+            ],
+            "wallclock native H.264 input",
+        )?;
+        require_pair(
+            &self.arguments,
+            "-bsf:v",
+            &format!(
+                "setts=pts=N:dts=N:duration=1:time_base=1/{}:prescale=1",
+                self.frames_per_second
+            ),
+        )?;
 
         const FORBIDDEN_EXACT: &[&str] = &[
+            "-fflags",
+            "nobuffer",
+            "-probesize",
+            "-analyzeduration",
+            "-fpsprobesize",
             "-vf",
             "-filter_complex",
             "-filter_hw_device",
@@ -127,7 +185,6 @@ impl NativeMuxPlan {
         ];
         const FORBIDDEN_SUBSTRINGS: &[&str] = &[
             "gfxcapture",
-            "scale=",
             "scale_d3d11",
             "hwmap=",
             "h264_nvenc",
@@ -137,10 +194,17 @@ impl NativeMuxPlan {
         ];
         for argument in &self.arguments {
             let value = argument.to_string_lossy();
+            let contains_scale_filter = value.match_indices("scale=").any(|(index, _)| {
+                index == 0 || {
+                    let previous = value.as_bytes()[index - 1];
+                    !previous.is_ascii_alphanumeric() && previous != b'_'
+                }
+            });
             if FORBIDDEN_EXACT.iter().any(|forbidden| value == *forbidden)
                 || FORBIDDEN_SUBSTRINGS
                     .iter()
                     .any(|forbidden| value.contains(forbidden))
+                || contains_scale_filter
             {
                 bail!("native mux plan contains forbidden video work argument {value:?}");
             }
@@ -155,6 +219,8 @@ const MAX_STDERR_TAIL_LINES: usize = 64;
 const NATIVE_PIPE_BUFFER_BYTES: usize = 1024 * 1024;
 const NATIVE_PIPE_FLUSH_BYTES: usize = 256 * 1024;
 const NATIVE_PIPE_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+#[cfg(feature = "native-failure-injection")]
+const MAX_FIXTURE_TOP_LEVEL_BOXES: usize = 4096;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -175,6 +241,20 @@ pub struct NativeMuxTelemetrySnapshot {
     pub injected_mux_writer_stall_100ns: u64,
     pub progress_end: bool,
     pub reader_errors: u64,
+}
+#[cfg(feature = "native-failure-injection")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NativeMuxFragmentBoundary {
+    pub(crate) moof_offset: u64,
+    pub(crate) mdat_offset: u64,
+    pub(crate) fragment_end_offset: u64,
+}
+
+#[cfg(feature = "native-failure-injection")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NativeMuxFragmentScan {
+    pub(crate) file_length: u64,
+    pub(crate) completed_fragment: Option<NativeMuxFragmentBoundary>,
 }
 
 struct NativeMuxTelemetry {
@@ -201,6 +281,8 @@ struct NativeMuxTelemetry {
     injected_stall_duration_ns: AtomicU64,
     #[cfg(feature = "native-failure-injection")]
     injected_stall_fired: AtomicBool,
+    #[cfg(feature = "native-failure-injection")]
+    writer_calls_for_injection: AtomicU64,
     stderr_tail: Mutex<VecDeque<String>>,
 }
 
@@ -231,6 +313,8 @@ impl NativeMuxTelemetry {
             injected_stall_duration_ns: AtomicU64::new(0),
             #[cfg(feature = "native-failure-injection")]
             injected_stall_fired: AtomicBool::new(false),
+            #[cfg(feature = "native-failure-injection")]
+            writer_calls_for_injection: AtomicU64::new(0),
             stderr_tail: Mutex::new(VecDeque::with_capacity(MAX_STDERR_TAIL_LINES)),
         }
     }
@@ -364,6 +448,18 @@ impl NativeMuxTelemetry {
         ))
     }
 
+    #[cfg(feature = "native-failure-injection")]
+    fn record_writer_call_for_fixture(&self) -> u64 {
+        self.writer_calls_for_injection
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1)
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    fn writer_calls_for_fixture(&self) -> u64 {
+        self.writer_calls_for_injection.load(Ordering::Acquire)
+    }
+
     fn remember_stderr(&self, line: &str) {
         let Ok(mut tail) = self.stderr_tail.lock() else {
             self.reader_error();
@@ -470,8 +566,8 @@ impl Write for NativeMuxVideoWriter {
                 thread::sleep(duration);
                 self.timing.record_injected_stall(stall_started.elapsed());
             }
-            let written = self.writer.write(buffer)?;
-            self.unflushed_bytes = self.unflushed_bytes.saturating_add(written);
+            self.writer.write_all(buffer)?;
+            self.unflushed_bytes = self.unflushed_bytes.saturating_add(buffer.len());
             if self.unflushed_bytes >= NATIVE_PIPE_FLUSH_BYTES
                 || self.last_flush.elapsed() >= NATIVE_PIPE_FLUSH_INTERVAL
             {
@@ -479,7 +575,11 @@ impl Write for NativeMuxVideoWriter {
                 self.unflushed_bytes = 0;
                 self.last_flush = Instant::now();
             }
-            Ok(written)
+            #[cfg(feature = "native-failure-injection")]
+            if !buffer.is_empty() {
+                self.telemetry.record_writer_call_for_fixture();
+            }
+            Ok(buffer.len())
         })();
         self.timing
             .record_write(started.elapsed(), self.telemetry.frames_per_second);
@@ -618,6 +718,53 @@ impl NativeMuxProcess {
         self.telemetry.configure_writer_stall(write_index, duration)
     }
 
+    #[cfg(feature = "native-failure-injection")]
+    pub fn writer_calls_for_fixture(&self) -> u64 {
+        self.telemetry.writer_calls_for_fixture()
+    }
+    #[cfg(feature = "native-failure-injection")]
+    pub(crate) fn scan_completed_fragment_for_fixture(&self) -> Result<NativeMuxFragmentScan> {
+        let mut file = match File::open(&self.output) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(NativeMuxFragmentScan {
+                    file_length: 0,
+                    completed_fragment: None,
+                });
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "could not open live native mux output {}",
+                        self.output.display()
+                    )
+                });
+            }
+        };
+        let file_length = file
+            .metadata()
+            .with_context(|| {
+                format!(
+                    "could not inspect live native mux output {}",
+                    self.output.display()
+                )
+            })?
+            .len();
+        let completed_fragment = scan_completed_fragment(&mut file, file_length)?;
+        Ok(NativeMuxFragmentScan {
+            file_length,
+            completed_fragment,
+        })
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub(crate) fn inject_terminal_failure_for_fixture(&mut self, detail: &str) -> Result<()> {
+        self.child
+            .kill()
+            .context("could not terminate mux-only FFmpeg for failure injection")?;
+        bail!("injected terminal native mux failure {detail}")
+    }
+
     pub fn telemetry(&self) -> NativeMuxTelemetrySnapshot {
         self.telemetry.snapshot()
     }
@@ -724,6 +871,92 @@ impl Drop for NativeMuxProcess {
     }
 }
 
+#[cfg(feature = "native-failure-injection")]
+fn scan_completed_fragment<R: Read + Seek>(
+    reader: &mut R,
+    file_length: u64,
+) -> Result<Option<NativeMuxFragmentBoundary>> {
+    let mut offset = 0_u64;
+    let mut pending_moof = None;
+    let mut box_count = 0_usize;
+
+    while offset < file_length {
+        if box_count >= MAX_FIXTURE_TOP_LEVEL_BOXES {
+            bail!(
+                "native mux fragment scan exceeded {MAX_FIXTURE_TOP_LEVEL_BOXES} top-level boxes"
+            );
+        }
+        box_count += 1;
+
+        let Some(remaining) = file_length.checked_sub(offset) else {
+            return Ok(None);
+        };
+        if remaining < 8 {
+            return Ok(None);
+        }
+        reader
+            .seek(SeekFrom::Start(offset))
+            .context("could not seek live native mux output")?;
+        let mut header = [0_u8; 16];
+        if let Err(error) = reader.read_exact(&mut header[..8]) {
+            return if error.kind() == io::ErrorKind::UnexpectedEof {
+                Ok(None)
+            } else {
+                Err(error).context("could not read native mux box header")
+            };
+        }
+
+        let size_32 = u32::from_be_bytes(header[..4].try_into().expect("four-byte box size"));
+        let kind: [u8; 4] = header[4..8].try_into().expect("four-byte box kind");
+        let (box_size, header_size) = if size_32 == 1 {
+            if remaining < 16 {
+                return Ok(None);
+            }
+            if let Err(error) = reader.read_exact(&mut header[8..16]) {
+                return if error.kind() == io::ErrorKind::UnexpectedEof {
+                    Ok(None)
+                } else {
+                    Err(error).context("could not read extended native mux box header")
+                };
+            }
+            (
+                u64::from_be_bytes(
+                    header[8..16]
+                        .try_into()
+                        .expect("eight-byte extended box size"),
+                ),
+                16_u64,
+            )
+        } else {
+            (u64::from(size_32), 8_u64)
+        };
+        if box_size == 0 || box_size < header_size {
+            return Ok(None);
+        }
+        let Some(box_end) = offset.checked_add(box_size) else {
+            return Ok(None);
+        };
+        if box_end > file_length {
+            return Ok(None);
+        }
+
+        if let Some(moof_offset) = pending_moof {
+            if kind == *b"mdat" {
+                return Ok(Some(NativeMuxFragmentBoundary {
+                    moof_offset,
+                    mdat_offset: offset,
+                    fragment_end_offset: box_end,
+                }));
+            }
+            pending_moof = (kind == *b"moof").then_some(offset);
+        } else if kind == *b"moof" {
+            pending_moof = Some(offset);
+        }
+        offset = box_end;
+    }
+    Ok(None)
+}
+
 fn drain_bounded_lines<R, F>(mut reader: R, telemetry: &NativeMuxTelemetry, mut consume: F)
 where
     R: Read,
@@ -811,6 +1044,19 @@ fn require_pair(arguments: &[OsString], option: &str, value: &str) -> Result<()>
         .with_context(|| format!("native mux plan is missing {option} {value}"))
 }
 
+fn require_window(arguments: &[OsString], expected: &[&str], label: &str) -> Result<()> {
+    arguments
+        .windows(expected.len())
+        .any(|window| {
+            window
+                .iter()
+                .zip(expected)
+                .all(|(argument, expected)| argument == OsStr::new(expected))
+        })
+        .then_some(())
+        .with_context(|| format!("native mux plan is missing exact {label} arguments"))
+}
+
 fn duration_100ns(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos() / 100).unwrap_or(u64::MAX)
 }
@@ -832,10 +1078,44 @@ mod tests {
             .expect("valid mux plan");
         let arguments = strings(&plan);
 
-        assert!(arguments.windows(2).any(|pair| pair == ["-r", "60"]));
-        assert!(arguments.windows(2).any(|pair| pair == ["-f", "h264"]));
-        assert!(arguments.windows(2).any(|pair| pair == ["-i", "pipe:0"]));
+        assert!(arguments.windows(8).any(|window| {
+            window
+                == [
+                    "-use_wallclock_as_timestamps",
+                    "1",
+                    "-r",
+                    "60",
+                    "-f",
+                    "h264",
+                    "-i",
+                    "pipe:0",
+                ]
+        }));
+        for removed in [
+            "-fflags",
+            "nobuffer",
+            "-probesize",
+            "-analyzeduration",
+            "-fpsprobesize",
+        ] {
+            assert!(
+                !arguments.iter().any(|argument| argument == removed),
+                "removed native H.264 input option returned: {removed}"
+            );
+        }
         assert!(arguments.windows(2).any(|pair| pair == ["-c:v", "copy"]));
+        assert!(arguments.windows(2).any(|pair| {
+            pair == [
+                "-bsf:v",
+                "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            ]
+        }));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["-avoid_negative_ts", "disabled"])
+        );
+
         assert!(arguments.windows(2).any(|pair| pair == ["-c:a", "aac"]));
         assert!(arguments.windows(2).any(|pair| pair == ["-map", "0:v:0"]));
         assert!(arguments.windows(2).any(|pair| pair == ["-map", "1:a:0"]));
@@ -847,6 +1127,30 @@ mod tests {
         assert!(arguments.iter().any(|argument| argument == "-shortest"));
         assert_eq!(arguments.last().map(String::as_str), Some("native.mp4"));
         assert_eq!(plan.output(), Path::new("native.mp4"));
+    }
+    #[cfg(feature = "replay-time-fixture")]
+    #[test]
+    fn replay_time_fixture_pcm_is_the_first_mux_input() {
+        let endpoint = "tcp://127.0.0.1:49152";
+        let plan = NativeMuxPlan::h264(
+            60,
+            &AudioSource::ReplayTimeFixturePcm(endpoint.to_owned()),
+            Path::new("native.mp4"),
+        )
+        .expect("valid replay-time fixture mux plan");
+        let arguments = strings(&plan);
+        let audio_input = arguments
+            .windows(2)
+            .position(|pair| pair == ["-i", endpoint])
+            .expect("fixture audio input");
+        let video_input = arguments
+            .windows(2)
+            .position(|pair| pair == ["-i", "pipe:0"])
+            .expect("native video input");
+
+        assert!(audio_input < video_input);
+        assert!(arguments.windows(2).any(|pair| pair == ["-map", "1:v:0"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-map", "0:a:0"]));
     }
 
     #[test]
@@ -918,6 +1222,89 @@ mod tests {
 
         timing.record_write(Duration::from_nanos(16_666_667), 60);
         assert_eq!(timing.slow_video_writer_calls, 1);
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    fn fixture_box(kind: [u8; 4], payload_bytes: usize) -> Vec<u8> {
+        let size = u32::try_from(8_usize.saturating_add(payload_bytes))
+            .expect("fixture box size must fit u32");
+        let mut result = Vec::with_capacity(size as usize);
+        result.extend_from_slice(&size.to_be_bytes());
+        result.extend_from_slice(&kind);
+        result.resize(size as usize, 0);
+        result
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    #[test]
+    fn fragment_scan_requires_complete_adjacent_moof_and_mdat() {
+        use std::io::Cursor;
+
+        let mut header_only = fixture_box(*b"ftyp", 4);
+        header_only.extend(fixture_box(*b"moov", 8));
+        assert_eq!(
+            scan_completed_fragment(
+                &mut Cursor::new(&header_only),
+                u64::try_from(header_only.len()).unwrap()
+            )
+            .unwrap(),
+            None
+        );
+
+        let mut complete = header_only.clone();
+        let moof_offset = u64::try_from(complete.len()).unwrap();
+        complete.extend(fixture_box(*b"moof", 8));
+        let mdat_offset = u64::try_from(complete.len()).unwrap();
+        complete.extend(fixture_box(*b"mdat", 32));
+        let fragment_end_offset = u64::try_from(complete.len()).unwrap();
+        assert_eq!(
+            scan_completed_fragment(&mut Cursor::new(&complete), fragment_end_offset).unwrap(),
+            Some(NativeMuxFragmentBoundary {
+                moof_offset,
+                mdat_offset,
+                fragment_end_offset,
+            })
+        );
+
+        assert_eq!(
+            scan_completed_fragment(
+                &mut Cursor::new(&complete),
+                fragment_end_offset.saturating_sub(1)
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    #[test]
+    fn fragment_scan_rejects_malformed_extended_and_nonadjacent_boxes() {
+        use std::io::Cursor;
+
+        let malformed = [0, 0, 0, 4, b'm', b'o', b'o', b'f'];
+        assert_eq!(
+            scan_completed_fragment(&mut Cursor::new(malformed), 8).unwrap(),
+            None
+        );
+
+        let mut overflowing = Vec::from([0, 0, 0, 1, b'm', b'o', b'o', b'f']);
+        overflowing.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert_eq!(
+            scan_completed_fragment(&mut Cursor::new(&overflowing), 16).unwrap(),
+            None
+        );
+
+        let mut nonadjacent = fixture_box(*b"moof", 8);
+        nonadjacent.extend(fixture_box(*b"free", 0));
+        nonadjacent.extend(fixture_box(*b"mdat", 8));
+        assert_eq!(
+            scan_completed_fragment(
+                &mut Cursor::new(&nonadjacent),
+                u64::try_from(nonadjacent.len()).unwrap()
+            )
+            .unwrap(),
+            None
+        );
     }
 
     #[cfg(feature = "native-failure-injection")]
@@ -1032,4 +1419,9 @@ mod tests {
         telemetry.progress_end.store(true, Ordering::Release);
         telemetry.ensure_video_sink_open().unwrap();
     }
+}
+
+#[cfg(all(test, feature = "replay-time-fixture", target_os = "windows"))]
+mod replay_time_fixture_tests {
+    include!("mux_replay_time_fixture_tests.rs");
 }

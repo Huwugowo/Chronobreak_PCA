@@ -1,6 +1,6 @@
 # Chronobreak verification
 
-This is the authoritative entry point for project-wide verification. Run commands from the repository root unless a command says otherwise. Record actual results in the active feature's evidence; this file defines the checks, not a permanent claim that they pass.
+This is the authoritative entry point for project-wide verification. Run commands from the repository root unless a command says otherwise. Record detailed planned-feature results in its execution checkpoint and retain only the concise canonical status claim in feature evidence; this file defines checks, not permanent pass claims.
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ The executable is written under `app/src-tauri/target/release/`. A sandboxed Win
 
 ## Canonical feature-list validation
 
-The following command validates structure and also checks canonical invariants that JSON Schema cannot express: unique IDs, valid parents/dependencies, epic draft stage, and no dependency cycle.
+The following command validates structure, graph/lifecycle invariants, immutable current-plan shape, linked ExecPlan and checkpoint existence, exact plan/checkpoint association, stable checkpoint naming, required restart fields, and removal of the overlapping root progress file.
 
 ```powershell
 @'
@@ -65,28 +65,101 @@ from jsonschema import Draft202012Validator
 root = Path('.')
 instance = json.loads((root / 'feature-list.json').read_text(encoding='utf-8'))
 schema = json.loads((root / 'feature-list.schema.json').read_text(encoding='utf-8'))
+Draft202012Validator.check_schema(schema)
 Draft202012Validator(schema).validate(instance)
 
 features = instance['features']
 by_id = {item['id']: item for item in features}
 assert len(by_id) == len(features), 'feature IDs must be unique'
+assert not (root / 'progress.md').exists(), 'root progress.md duplicates per-feature execution checkpoints'
+
+checkpoint_headings = (
+    '## Current milestone',
+    '## Active unit',
+    '## Completed',
+    '## In flight',
+    '## Remaining',
+    '## Verification',
+    '## Deviations',
+    '## Decisions',
+    '## Blockers',
+    '## Next action',
+)
+forbidden_current_plan_lines = (
+    '## Progress',
+    '## Deviations / surprises',
+    '## Deviations and surprises',
+    '## Decision log',
+    '## Completion',
+)
+linked_plans = 0
+
 for item in features:
+    feature_id = item['id']
     parent = item.get('parent_id')
-    assert parent is None or parent in by_id, f"unknown parent for {item['id']}: {parent}"
+    assert parent is None or parent in by_id, f'unknown parent for {feature_id}: {parent}'
     if parent is not None:
-        assert by_id[parent]['kind'] == 'epic', f"parent must be an epic: {item['id']}"
+        assert by_id[parent]['kind'] == 'epic', f'parent must be an epic: {feature_id}'
     for dependency in item['dependencies']:
-        assert dependency in by_id, f"unknown dependency for {item['id']}: {dependency}"
-        assert dependency != item['id'], f"self dependency: {item['id']}"
+        assert dependency in by_id, f'unknown dependency for {feature_id}: {dependency}'
+        assert dependency != feature_id, f'self dependency: {feature_id}'
     if item['kind'] == 'epic':
-        assert item['stage'] == 'draft', f"epic cannot be ready: {item['id']}"
+        assert item['stage'] == 'draft', f'epic cannot be ready: {feature_id}'
+        continue
+
     if item['stage'] == 'ready':
-        assert item['kind'] == 'feature', f"only features can be ready: {item['id']}"
-        assert item['acceptance_criteria'], f"ready feature lacks acceptance criteria: {item['id']}"
-        assert item['verification'], f"ready feature lacks verification: {item['id']}"
+        assert item['acceptance_criteria'], f'ready feature lacks acceptance criteria: {feature_id}'
+        assert item['verification'], f'ready feature lacks verification: {feature_id}'
     if item['status'] == 'done':
-        assert item['stage'] == 'ready', f"done feature is not ready: {item['id']}"
-        assert item['evidence'], f"done feature lacks evidence: {item['id']}"
+        assert item['stage'] == 'ready', f'done feature is not ready: {feature_id}'
+        assert item['evidence'], f'done feature lacks evidence: {feature_id}'
+
+    execution = item['execution']
+    workflow = execution['workflow']
+    plan = execution['plan']
+    progress = execution.get('progress')
+    if workflow in {'direct', 'adaptive'}:
+        assert plan is None, f'{workflow} feature must not link an ExecPlan: {feature_id}'
+        assert progress is None, f'{workflow} feature must not link a planned checkpoint: {feature_id}'
+        continue
+    if plan is None:
+        assert progress is None, f'planned feature without a plan cannot link progress: {feature_id}'
+        continue
+
+    linked_plans += 1
+    assert progress is not None, f'finalized planned feature lacks progress: {feature_id}'
+    assert progress == f'docs/execution/{feature_id.lower()}.md', (
+        f'unstable checkpoint path for {feature_id}: {progress}'
+    )
+
+    plan_path = root / plan
+    progress_path = root / progress
+    assert plan_path.is_file(), f'missing ExecPlan for {feature_id}: {plan}'
+    assert progress_path.is_file(), f'missing execution checkpoint for {feature_id}: {progress}'
+
+    checkpoint_text = progress_path.read_text(encoding='utf-8')
+    checkpoint_lines = checkpoint_text.splitlines()
+    assert checkpoint_lines and checkpoint_lines[0] == f'# {feature_id} execution checkpoint', (
+        f'wrong checkpoint title for {feature_id}'
+    )
+    assert f'Feature: `{feature_id}`' in checkpoint_lines, f'checkpoint feature mismatch: {feature_id}'
+    assert f'ExecPlan: `{plan}`' in checkpoint_lines, f'checkpoint plan mismatch: {feature_id}'
+    for heading in checkpoint_headings:
+        assert heading in checkpoint_lines, f'checkpoint lacks {heading}: {feature_id}'
+    next_index = checkpoint_lines.index('## Next action')
+    assert any(line.strip() and not line.startswith('#') for line in checkpoint_lines[next_index + 1:]), (
+        f'checkpoint lacks an explicit next action: {feature_id}'
+    )
+
+    if not plan.startswith('docs/exec-plans/completed/'):
+        plan_lines = plan_path.read_text(encoding='utf-8').splitlines()
+        assert not any(line.startswith('Status:') for line in plan_lines), (
+            f'current immutable plan contains lifecycle status: {feature_id}'
+        )
+        for forbidden in forbidden_current_plan_lines:
+            assert forbidden not in plan_lines, (
+                f'current immutable plan contains mutable section {forbidden}: {feature_id}'
+            )
 
 visiting, visited = set(), set()
 def visit(feature_id):
@@ -101,7 +174,8 @@ def visit(feature_id):
     visited.add(feature_id)
 for feature_id in by_id:
     visit(feature_id)
-print(f"validated {len(features)} canonical roadmap items")
+
+print(f'validated {len(features)} canonical roadmap items and {linked_plans} plan/checkpoint pairs')
 '@ | python -
 ```
 
@@ -159,26 +233,23 @@ For controlled headless lifecycle testing, set `LEAGUE_REPLAY_PROCESS_NAME` to a
 cargo run --manifest-path recorder/Cargo.toml -- --headless
 ```
 
-### Native Windows backend
+### Native Windows recorder
 
-The native WGC/D3D11/NVENC backend is the Windows default. Set
-`QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` only when intentionally validating the
-retained external alternative; there is no automatic cross-backend fallback.
-
-Native probes require the staged r6 runtime and a dedicated target/evidence root.
-They never target League or a user recording. Run the matched-backend preflight
-before a timed A/B pair:
+The WGC/D3D11/NVENC backend is the sole Windows production recorder. There is no
+capture-backend environment selector or cross-backend fallback. Native probes require
+the staged r6 runtime and a dedicated target/evidence root; they never target League
+or a user recording:
 
 ```powershell
 $runtime = (Resolve-Path 'build/media-runtime/windows-x86_64').Path
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_wgc_source_probe.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_preliminary_backend_ab.ps1 -MediaRuntimeRoot $runtime -PreflightOnly
 ```
 
-Continue to a timed pair only after the preflight prints
-`CHRONOBREAK_PRELIMINARY_AB_PREFLIGHT=PASS`. Every run uses a fresh ignored evidence
-root. Non-League fixture evidence validates bounded lifecycle/media behavior, not
-League performance, hard driver-hang containment, or AMD/Intel hardware support.
+The matched native/external A/B results retained under `docs/archive/` are historical
+comparison evidence only; they do not imply that the retired FFmpeg-driven WGC
+capture backend remains supported. Non-League fixture evidence
+validates bounded lifecycle/media behavior, not League performance, hard driver-hang
+containment, or AMD/Intel hardware support.
 
 ## Media integrity checks
 
@@ -191,7 +262,7 @@ ffmpeg -v error -i <media-file> -f null NUL
 
 For exported clips, also verify H.264/AAC compatibility and the requested duration/size constraints. Discord outputs must remain strictly below 10,000,000 bytes. Tests that deliberately truncate or corrupt media must copy fixtures into a temporary directory first.
 
-For the default native Windows graph, run the sentinel-owned exact-HWND fixture.
+For the production native Windows graph, run the sentinel-owned exact-HWND fixture.
 These commands target only QueueBack's generated window and write under ignored
 `build/perf`:
 
@@ -211,14 +282,6 @@ Normal cases require exact scheduled/submitted/completed/muxed reconciliation.
 Target closure and injected NVENC failure must return the exact failure while
 leaving a recoverable dedicated partial recording.
 
-The retained external FFmpeg alternative has its own runner and evidence. Use
-it only when that backend is intentionally in scope:
-
-```powershell
-& .\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -DurationSeconds 10
-```
-
-Do not use the external-alternative runner as evidence for the native default.
 
 The bounded-resource acceptance soak is:
 

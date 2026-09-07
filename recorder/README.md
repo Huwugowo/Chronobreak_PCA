@@ -28,30 +28,27 @@ in `../docs/development/VERIFICATION.md` and
 cargo run -- --diagnose
 ```
 
-This validates configuration, packaged-runtime identity, an actual hardware encode,
-and the selected concrete codec/profile, and reports the runtime ID. The optimized
-Windows graph itself is selected only after League exposes its exact HWND and DXGI
-adapter. The default is the in-process WGC/D3D11/NVENC H.264 backend. Set
-`QUEUEBACK_WINDOWS_RECORDER_BACKEND=ffmpeg` to select the retained external
-WGC/D3D11 NVENC/AMF/QSV backend explicitly; `native` and `ffmpeg-wgc` are accepted
-aliases. Backend failures do not silently switch paths. Read
-`../docs/architecture/windows-capture.md` for the finite-pool, lifecycle, and
-support-label contract. With
-`profile = "auto"`, diagnostics runs the short
-encode benchmark documented in `../RECORDER.md` Section 8. It also reports whether a
-Windows loopback audio device was found.
+This validates configuration and packaged-runtime identity, reports the fixed native
+H.264 High recording plan and runtime ID, and discovers Windows loopback audio. The
+production graph is created only after League exposes its exact HWND and DXGI adapter.
+Windows has one recorder backend: in-process WGC/D3D11/NVENC video with FFmpeg used
+only for AAC audio and fragmented-MP4 muxing. There is no backend selector or
+cross-backend fallback. Read `../docs/architecture/windows-capture.md` for the
+finite-pool, lifecycle, and support-label contract. Hardware capture/encode proof is
+owned by the dedicated native fixture and live-validation procedures below, not by
+inferring support from the packaged FFmpeg encoder list.
 
 New configurations use:
 
 ```toml
 [recording]
-profile = "auto" # auto | very_low | low | medium | high | very_high
-codec = "auto"   # auto | h264 | hevc
+profile = "auto" # auto | high
+codec = "auto"   # auto | h264
 ```
 
-The native default currently accepts H.264 with the auto/high 1080p60 profile.
-HEVC and other profiles require the explicit FFmpeg backend. Until the app validates
-HEVC in its real webview, codec auto conservatively selects H.264.
+On Windows, `auto` resolves to the fixed H.264 High 1920x1080 60-FPS native plan.
+HEVC and other profile values are rejected during recorder initialization; they are
+not silently mapped to H.264 High and no external compatibility backend is retained.
 
 If neither `Stereo Mix` nor a DirectShow WASAPI loopback device is available, the
 recorder keeps the video recording alive with a silent stereo track. To select a
@@ -75,23 +72,20 @@ automatically after three seconds. It is intended for build validation only.
 development tests. The production defaults remain `League of Legends.exe` on Windows
 and `League of Legends` on macOS.
 
-The dedicated Windows fixture never targets League or a user recording:
+The dedicated native Windows fixture never targets League or a user recording:
 
 ```powershell
-& ..\tools\capture_fixture\run_wgc.ps1 -Encoder nvenc -Scenario steady -DurationSeconds 10
+& ..\tools\native_backend\run_native_fixture.ps1 -Scenario steady -DurationSeconds 10
 ```
 
-The same runner supports `resize`, `minimize_restore`, `occlusion`, and
-`close_window`, plus `-Interruption kill_encoder`. Normal and failed-partial output
-is checked with ffprobe, full decode, changing-frame hashes, ABI-1 counters, and
-finite pool values. `-CollectResources -KeepTargetVisible` adds process/GPU-memory
-sampling and keeps the generated GDI surface composited during the bounded soak;
-the separate occlusion scenario owns hidden-window behavior. Outputs stay under
-sentinel-owned `build/perf`.
-
-Native source, NVENC, MP4, lifecycle, and matched-backend probes live under
-`examples/native_*` and `../tools/native_backend/`. They require the same staged r6
-runtime and write only to dedicated evidence or temporary roots.
+The runner also covers `resize`, `minimize_restore`, `occlusion`, and `close_window`,
+plus injected `nvenc_failure`. Normal and failed-partial output is checked with
+ffprobe, full decode, changing-frame hashes, native frame accounting, and finite
+resource bounds. `-CollectResources -KeepTargetVisible` adds process/GPU-memory
+sampling and keeps the generated GDI surface composited during the bounded soak; the
+separate occlusion scenario owns hidden-window behavior. Outputs stay under
+sentinel-owned `build/perf`. Additional native source, NVENC, MP4, lifecycle, and
+matched-backend probes live under `examples/native_*` and `../tools/native_backend/`.
 
 Windows may show its normal capture indicator. QueueBack requests no captured cursor
 and public border suppression, but it does not manipulate the physical pointer or use
@@ -109,13 +103,14 @@ fallback when the optimized graph is unsupported.
 5. End the game or close League and confirm the tray returns to grey.
 6. Inspect `{output_path}/games/{timestamp}/`:
    - `video.mp4` exists and plays;
-   - `game_log.json` contains snapshots, events, and a non-null
-     `game_start_video_offset_ms`;
-   - `metadata.json` contains the local player, concrete recording profile, codec,
-     resolution/FPS, duration, and saved state;
+   - `game_log.json` and `metadata.json` both use schema version 2 and the same
+     nonzero `media_id`; the game log contains integer-microsecond game observations
+     and, when the Live Client is available, a persisted calibration;
+   - `metadata.json` contains a validated `media_timeline` with the concrete profile,
+     codec, exact frame grid, audio coverage, and saved state;
    - the tray returns to grey without a full-file conversion or system-wide I/O stall.
-7. Seek to early-, mid-, and late-game events at `video_time_ms / 1000` in VLC and
-   confirm each event occurs within approximately two seconds.
+7. Seek to early-, mid-, and late-game events through the app's schema-v2 replay-tick
+   mapping and confirm each event occurs within approximately two seconds.
 8. Note in-game FPS near 5, 15, and 25 minutes; it should not progressively degrade
    because of Live Client polling. Confirm game exit causes no multi-second PC freeze.
 9. Use the dedicated failure fixture—not a real recording—for destructive encoder
