@@ -1,11 +1,16 @@
+#[cfg(feature = "replay-benchmark")]
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(feature = "replay-benchmark")]
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::task::{Context as TaskContext, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(feature = "replay-benchmark")]
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use axum::Router;
@@ -28,6 +33,7 @@ use crate::library::{valid_clip_asset, valid_game_id};
 use crate::music;
 
 const HEVC_PROBE: &[u8] = include_bytes!("../resources/hevc-probe.mp4");
+#[cfg(feature = "replay-benchmark")]
 const BENCHMARK_REQUEST_CAPACITY: usize = 4096;
 
 #[derive(Debug, Default)]
@@ -71,6 +77,7 @@ pub enum RouteClass {
     Ddragon,
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestLifecycle {
     pub schema_version: u32,
@@ -94,6 +101,7 @@ pub struct RequestLifecycle {
     pub outcome: String,
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestTelemetrySnapshot {
     pub capacity: u64,
@@ -105,12 +113,14 @@ pub struct RequestTelemetrySnapshot {
     pub requests: Vec<RequestLifecycle>,
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[derive(Debug, Default)]
 struct RequestBuffer {
     records: VecDeque<RequestLifecycle>,
     high_water_mark: u64,
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[derive(Debug)]
 pub struct BenchmarkRequestTelemetry {
     run_id: String,
@@ -125,6 +135,7 @@ pub struct BenchmarkRequestTelemetry {
     buffer: Mutex<RequestBuffer>,
 }
 
+#[cfg(feature = "replay-benchmark")]
 impl BenchmarkRequestTelemetry {
     pub fn new(
         run_id: String,
@@ -196,6 +207,7 @@ impl BenchmarkRequestTelemetry {
     }
 }
 
+#[cfg(feature = "replay-benchmark")]
 struct PendingRequest {
     telemetry: Arc<BenchmarkRequestTelemetry>,
     request_id: u64,
@@ -205,6 +217,7 @@ struct PendingRequest {
     finished: bool,
 }
 
+#[cfg(feature = "replay-benchmark")]
 impl PendingRequest {
     fn finish(
         mut self,
@@ -266,6 +279,7 @@ impl PendingRequest {
     }
 }
 
+#[cfg(feature = "replay-benchmark")]
 impl Drop for PendingRequest {
     fn drop(&mut self) {
         if self.finished {
@@ -299,6 +313,7 @@ impl Drop for PendingRequest {
     }
 }
 
+#[cfg(feature = "replay-benchmark")]
 struct RequestTracker {
     telemetry: Arc<BenchmarkRequestTelemetry>,
     request_id: u64,
@@ -313,6 +328,7 @@ struct RequestTracker {
     finished: bool,
 }
 
+#[cfg(feature = "replay-benchmark")]
 impl RequestTracker {
     fn observe(&mut self, bytes: u64) {
         if bytes > 0 && self.first_byte_ms.is_none() {
@@ -358,6 +374,7 @@ impl RequestTracker {
     }
 }
 
+#[cfg(feature = "replay-benchmark")]
 impl Drop for RequestTracker {
     fn drop(&mut self) {
         self.finish("cancelled");
@@ -420,6 +437,7 @@ impl MediaRoots {
 struct PlaybackState {
     roots: Arc<MediaRoots>,
     metrics: Arc<PlaybackMetrics>,
+    #[cfg(feature = "replay-benchmark")]
     benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
     ddragon_cache: PathBuf,
     ddragon_client: reqwest::Client,
@@ -432,10 +450,23 @@ struct CountingReader<R> {
     expected_bytes: u64,
     consumed_bytes: u64,
     completed: bool,
+    #[cfg(feature = "replay-benchmark")]
     request: Option<RequestTracker>,
 }
 
 impl<R> CountingReader<R> {
+    #[cfg(not(feature = "replay-benchmark"))]
+    fn new(inner: R, metrics: Arc<PlaybackMetrics>, expected_bytes: u64) -> Self {
+        Self {
+            inner,
+            metrics,
+            expected_bytes,
+            consumed_bytes: 0,
+            completed: false,
+        }
+    }
+
+    #[cfg(feature = "replay-benchmark")]
     fn new(
         inner: R,
         metrics: Arc<PlaybackMetrics>,
@@ -469,6 +500,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
                     .response_bytes
                     .fetch_add(bytes_read, Ordering::Relaxed);
                 this.consumed_bytes = this.consumed_bytes.saturating_add(bytes_read);
+                #[cfg(feature = "replay-benchmark")]
                 if let Some(request) = &mut this.request {
                     request.observe(bytes_read);
                 }
@@ -477,12 +509,15 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
                     this.metrics
                         .completed_streams
                         .fetch_add(1, Ordering::Relaxed);
+                    #[cfg(feature = "replay-benchmark")]
                     if let Some(request) = &mut this.request {
                         request.complete();
                     }
                 }
             }
-            Poll::Ready(Err(_)) => {
+            Poll::Ready(Err(_)) =>
+            {
+                #[cfg(feature = "replay-benchmark")]
                 if let Some(request) = &mut this.request {
                     request.finish("error");
                 }
@@ -507,7 +542,7 @@ pub async fn start(
     roots: Arc<MediaRoots>,
     metrics: Arc<PlaybackMetrics>,
     ddragon_cache: PathBuf,
-    benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
+    #[cfg(feature = "replay-benchmark")] benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
     allow_ddragon_network: bool,
 ) -> Result<String> {
     let ddragon_client = reqwest::Client::builder()
@@ -517,6 +552,7 @@ pub async fn start(
     let state = PlaybackState {
         roots,
         metrics,
+        #[cfg(feature = "replay-benchmark")]
         benchmark_requests,
         ddragon_cache,
         ddragon_client,
@@ -678,11 +714,15 @@ async fn serve_embedded(
     route_class: RouteClass,
 ) -> Response<Body> {
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
+    #[cfg(feature = "replay-benchmark")]
     let pending = state
         .benchmark_requests
         .as_ref()
         .map(|telemetry| telemetry.begin(route_class, request.method()));
+    #[cfg(not(feature = "replay-benchmark"))]
+    let _ = route_class;
     if !valid_method(request.method()) {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             StatusCode::METHOD_NOT_ALLOWED,
@@ -696,6 +736,7 @@ async fn serve_embedded(
     }
     let total_length = bytes.len() as u64;
     let Some((status, start, end)) = response_range(&state, &request, total_length) else {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             StatusCode::RANGE_NOT_SATISFIABLE,
@@ -717,11 +758,13 @@ async fn serve_embedded(
             .fetch_add(response_length, Ordering::Relaxed);
         Body::from(bytes[start as usize..=end as usize].to_vec())
     };
+    #[cfg(feature = "replay-benchmark")]
     let delivered = if request.method() == Method::HEAD {
         0
     } else {
         response_length
     };
+    #[cfg(feature = "replay-benchmark")]
     finish_immediate(
         pending,
         status,
@@ -742,11 +785,15 @@ async fn serve_file(
     route_class: RouteClass,
 ) -> Response<Body> {
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
+    #[cfg(feature = "replay-benchmark")]
     let pending = state
         .benchmark_requests
         .as_ref()
         .map(|telemetry| telemetry.begin(route_class, request.method()));
+    #[cfg(not(feature = "replay-benchmark"))]
+    let _ = route_class;
     if !valid_method(request.method()) {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             StatusCode::METHOD_NOT_ALLOWED,
@@ -760,10 +807,12 @@ async fn serve_file(
     }
 
     let Ok(mut file) = File::open(path).await else {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(pending, StatusCode::NOT_FOUND, None, 0, 0, false, "error");
         return empty_response(StatusCode::NOT_FOUND, content_type);
     };
     let Ok(metadata) = file.metadata().await else {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -777,10 +826,12 @@ async fn serve_file(
     };
     let total_length = metadata.len();
     if total_length == 0 {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(pending, StatusCode::OK, None, 0, 0, false, "completed");
         return build_empty_file_response(content_type);
     }
     let Some((status, start, end)) = response_range(&state, &request, total_length) else {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             StatusCode::RANGE_NOT_SATISFIABLE,
@@ -795,6 +846,7 @@ async fn serve_file(
     let response_length = end - start + 1;
 
     if start > 0 && file.seek(SeekFrom::Start(start)).await.is_err() {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -808,6 +860,7 @@ async fn serve_file(
     }
 
     let body = if request.method() == Method::HEAD {
+        #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
             status,
@@ -819,18 +872,27 @@ async fn serve_file(
         );
         Body::empty()
     } else {
+        #[cfg(feature = "replay-benchmark")]
         let request = pending.map(|pending| pending.stream(status, (start, end), response_length));
+        #[cfg(feature = "replay-benchmark")]
         let reader = CountingReader::new(
             file.take(response_length),
             Arc::clone(&state.metrics),
             response_length,
             request,
         );
+        #[cfg(not(feature = "replay-benchmark"))]
+        let reader = CountingReader::new(
+            file.take(response_length),
+            Arc::clone(&state.metrics),
+            response_length,
+        );
         Body::from_stream(ReaderStream::new(reader))
     };
     build_response(body, status, start, end, total_length, content_type)
 }
 
+#[cfg(feature = "replay-benchmark")]
 fn finish_immediate(
     pending: Option<PendingRequest>,
     status: StatusCode,
@@ -1004,6 +1066,7 @@ mod tests {
         let state = PlaybackState {
             roots: Arc::new(MediaRoots::new(directory.path().to_path_buf())),
             metrics: Arc::new(PlaybackMetrics::default()),
+            #[cfg(feature = "replay-benchmark")]
             benchmark_requests: None,
             ddragon_cache: directory.path().join("ddragon"),
             ddragon_client: reqwest::Client::new(),
@@ -1028,6 +1091,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
+    #[cfg(feature = "replay-benchmark")]
     #[tokio::test]
     async fn head_request_declares_the_file_without_claiming_body_delivery() {
         let directory = tempfile::tempdir().unwrap();
@@ -1072,6 +1136,9 @@ mod tests {
     async fn counts_only_bytes_consumed_from_a_response() {
         let metrics = Arc::new(PlaybackMetrics::default());
         let source = tokio::io::repeat(7).take(16);
+        #[cfg(not(feature = "replay-benchmark"))]
+        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 16);
+        #[cfg(feature = "replay-benchmark")]
         let mut reader = CountingReader::new(source, Arc::clone(&metrics), 16, None);
         let mut consumed = [0_u8; 6];
 
@@ -1086,6 +1153,9 @@ mod tests {
     async fn counts_completed_streams() {
         let metrics = Arc::new(PlaybackMetrics::default());
         let source = tokio::io::repeat(7).take(8);
+        #[cfg(not(feature = "replay-benchmark"))]
+        let mut reader = CountingReader::new(source, Arc::clone(&metrics), 8);
+        #[cfg(feature = "replay-benchmark")]
         let mut reader = CountingReader::new(source, Arc::clone(&metrics), 8, None);
         let mut consumed = [0_u8; 8];
 
@@ -1095,6 +1165,7 @@ mod tests {
         assert_eq!(metrics.snapshot().cancelled_streams, 0);
     }
 
+    #[cfg(feature = "replay-benchmark")]
     #[tokio::test]
     async fn benchmark_request_telemetry_reconciles_a_completed_stream() {
         let telemetry = Arc::new(BenchmarkRequestTelemetry::new(
@@ -1128,6 +1199,7 @@ mod tests {
         assert!(request.completed_ms >= request.started_ms);
     }
 
+    #[cfg(feature = "replay-benchmark")]
     #[test]
     fn benchmark_request_cancelled_before_response_is_not_reported_as_an_error() {
         let telemetry = Arc::new(BenchmarkRequestTelemetry::new(

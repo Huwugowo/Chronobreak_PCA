@@ -34,6 +34,7 @@ impl DdragonStatus {
         }
     }
 
+    #[cfg(feature = "replay-benchmark")]
     pub fn offline(cache_directory: &Path) -> Self {
         match newest_cached_status(cache_directory) {
             Ok(Some(mut cached)) => {

@@ -1,3 +1,4 @@
+#[cfg(feature = "replay-benchmark")]
 mod benchmark;
 mod clip_export;
 mod config;
@@ -10,21 +11,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
+#[cfg(feature = "replay-benchmark")]
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+#[cfg(feature = "replay-benchmark")]
 use benchmark::{
     BenchmarkEventInput, BenchmarkLaunch, BenchmarkSession, BenchmarkSessionInfo,
     BenchmarkTerminalInput, QueueStats, RecordEventsResult,
 };
-use clip_export::{ClipExportProgress, ClipExportRequest, ClipExportResult, ClipMusicSource};
+#[cfg(feature = "replay-benchmark")]
+use clip_export::ClipMusicSource;
+use clip_export::{ClipExportProgress, ClipExportRequest, ClipExportResult};
 use config::{Config, Settings, SettingsUpdate};
 use ddragon::DdragonStatus;
 use library::{AutoDeleteResult, ClipSummary, GameSummary, PlaybackProbe, StorageUsage};
 use music::BuiltInMusicTrack;
-use playback_server::{
-    BenchmarkRequestTelemetry, MediaRoots, PlaybackMetrics, RequestTelemetrySnapshot, ServerMetrics,
-};
+#[cfg(feature = "replay-benchmark")]
+use playback_server::{BenchmarkRequestTelemetry, RequestTelemetrySnapshot};
+use playback_server::{MediaRoots, PlaybackMetrics, ServerMetrics};
 use queueback_media_runtime::{MediaTools, RuntimeError};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -43,7 +48,9 @@ struct AppState {
     ddragon_status: Arc<RwLock<DdragonStatus>>,
     music_directory: PathBuf,
     media_runtime: MediaRuntimeState,
+    #[cfg(feature = "replay-benchmark")]
     benchmark: Option<Arc<BenchmarkSession>>,
+    #[cfg(feature = "replay-benchmark")]
     benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
 }
 
@@ -84,13 +91,16 @@ struct HevcProbeMarker {
 
 #[tauri::command(async)]
 fn list_games(state: State<'_, AppState>) -> Result<Vec<GameSummary>, String> {
+    #[cfg(feature = "replay-benchmark")]
     let started = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event("library_games_requested", serde_json::json!({}))
             .map_err(error_string)?;
     }
     let result = library::list_games(&state.roots.output_directory());
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -108,7 +118,9 @@ fn list_games(state: State<'_, AppState>) -> Result<Vec<GameSummary>, String> {
 
 #[tauri::command(async)]
 fn list_clips(state: State<'_, AppState>) -> Result<Vec<ClipSummary>, String> {
+    #[cfg(feature = "replay-benchmark")]
     let started = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event("library_clips_requested", serde_json::json!({}))
@@ -119,6 +131,7 @@ fn list_clips(state: State<'_, AppState>) -> Result<Vec<ClipSummary>, String> {
         &state.playback_origin,
         state.media_runtime.available().map(MediaTools::ffprobe),
     );
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -139,7 +152,9 @@ fn get_playback_probe(
     state: State<'_, AppState>,
     game_timestamp: String,
 ) -> Result<PlaybackProbe, String> {
+    #[cfg(feature = "replay-benchmark")]
     let started = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -153,6 +168,7 @@ fn get_playback_probe(
         &state.playback_origin,
         &game_timestamp,
     );
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -216,13 +232,16 @@ async fn export_clip(
     request: ClipExportRequest,
     progress: Channel<ClipExportProgress>,
 ) -> Result<ClipExportResult, String> {
+    #[cfg(feature = "replay-benchmark")]
     if state.benchmark.is_some() && matches!(&request.music, ClipMusicSource::File { .. }) {
         return Err("file-based music is disabled in replay benchmark mode".to_owned());
     }
     let output_directory = state.roots.output_directory();
     let music_directory = state.music_directory.clone();
     let media_tools = state.media_runtime.require()?;
+    #[cfg(feature = "replay-benchmark")]
     let started = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -246,6 +265,7 @@ async fn export_clip(
         progress,
     )
     .await;
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         let (kind, payload) = match &result {
             Ok(result) => (
@@ -278,13 +298,16 @@ async fn export_clip(
 
 #[tauri::command(async)]
 fn get_storage_usage(state: State<'_, AppState>) -> Result<StorageUsage, String> {
+    #[cfg(feature = "replay-benchmark")]
     let started = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event("library_storage_requested", serde_json::json!({}))
             .map_err(error_string)?;
     }
     let result = library::storage_usage(&state.roots.output_directory());
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -368,9 +391,13 @@ fn record_hevc_probe_result(
     state: State<'_, AppState>,
     supported: bool,
 ) -> Result<HevcProbeStatus, String> {
+    #[cfg(not(feature = "replay-benchmark"))]
+    ensure_user_mutation_allowed(&state)?;
+    #[cfg(feature = "replay-benchmark")]
     if state.benchmark.is_none() {
         ensure_user_mutation_allowed(&state)?;
     }
+
     let marker = HevcProbeMarker {
         version: HEVC_PROBE_VERSION,
         supported,
@@ -382,6 +409,22 @@ fn record_hevc_probe_result(
     }
     config::write_atomic(&state.hevc_probe_path, &bytes).map_err(error_string)?;
 
+    #[cfg(not(feature = "replay-benchmark"))]
+    {
+        let mut next = state
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        next.app.hevc_playback_supported = supported;
+        config::save(&state.config_path, &next).map_err(error_string)?;
+        *state
+            .config
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+    }
+
+    #[cfg(feature = "replay-benchmark")]
     if state.benchmark.is_none() {
         let mut next = state
             .config
@@ -396,6 +439,7 @@ fn record_hevc_probe_result(
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
     }
 
+    #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
             .record_app_event(
@@ -447,6 +491,7 @@ fn get_playback_server_metrics(state: State<'_, AppState>) -> ServerMetrics {
     state.playback_metrics.snapshot()
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[tauri::command]
 fn get_replay_benchmark_session(
     state: State<'_, AppState>,
@@ -463,6 +508,13 @@ fn get_replay_benchmark_session(
     Ok(Some(session.info()))
 }
 
+#[cfg(not(feature = "replay-benchmark"))]
+#[tauri::command]
+fn get_replay_benchmark_session() -> Result<Option<()>, String> {
+    Ok(None)
+}
+
+#[cfg(feature = "replay-benchmark")]
 #[tauri::command]
 fn record_replay_benchmark_events(
     state: State<'_, AppState>,
@@ -473,11 +525,13 @@ fn record_replay_benchmark_events(
         .map_err(error_string)
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[tauri::command]
 fn get_replay_benchmark_queue_stats(state: State<'_, AppState>) -> Result<QueueStats, String> {
     Ok(benchmark_session(&state)?.queue_stats())
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[tauri::command]
 fn flush_replay_benchmark_server_requests(
     state: State<'_, AppState>,
@@ -494,6 +548,7 @@ fn flush_replay_benchmark_server_requests(
     Ok(snapshot)
 }
 
+#[cfg(feature = "replay-benchmark")]
 #[tauri::command]
 async fn complete_replay_benchmark(
     app: tauri::AppHandle,
@@ -533,6 +588,7 @@ async fn complete_replay_benchmark(
     Ok(())
 }
 
+#[cfg(feature = "replay-benchmark")]
 fn benchmark_session(state: &AppState) -> Result<&Arc<BenchmarkSession>, String> {
     state
         .benchmark
@@ -541,9 +597,12 @@ fn benchmark_session(state: &AppState) -> Result<&Arc<BenchmarkSession>, String>
 }
 
 fn ensure_user_mutation_allowed(state: &AppState) -> Result<(), String> {
+    #[cfg(feature = "replay-benchmark")]
     if state.benchmark.is_some() {
         return Err("user-directed mutations are disabled in replay benchmark mode".to_owned());
     }
+    #[cfg(not(feature = "replay-benchmark"))]
+    let _ = state;
     Ok(())
 }
 
@@ -601,12 +660,22 @@ fn open_folder(_path: &Path) -> Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(feature = "replay-benchmark")]
     let process_started_at = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     let harness_started = Instant::now();
+    #[cfg(feature = "replay-benchmark")]
     let benchmark_launch = BenchmarkLaunch::from_process_args()
         .unwrap_or_else(|error| panic!("invalid replay benchmark launch: {error:#}"));
+    #[cfg(feature = "replay-benchmark")]
     let harness_initialization_ms = harness_started.elapsed().as_secs_f64() * 1_000.0;
+
+    #[cfg(feature = "replay-benchmark")]
     let mut tauri_context = tauri::generate_context!();
+    #[cfg(not(feature = "replay-benchmark"))]
+    let tauri_context = tauri::generate_context!();
+
+    #[cfg(feature = "replay-benchmark")]
     let benchmark_webview = benchmark_launch.as_ref().map(|launch| {
         let window_config = tauri_context
             .config()
@@ -623,10 +692,14 @@ pub fn run() {
             launch.app_data_root().join("webview2-user-data"),
         )
     });
-    tauri::Builder::default()
+
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            #[cfg(feature = "replay-benchmark")]
             let launch = benchmark_launch.clone();
+
+            #[cfg(feature = "replay-benchmark")]
             let (config_path, config, output_directory, app_data) = match &launch {
                 Some(launch) => {
                     let config_path = launch.config_path().to_path_buf();
@@ -664,6 +737,19 @@ pub fn run() {
                     (config_path, config, output_directory, app_data)
                 }
             };
+
+            #[cfg(not(feature = "replay-benchmark"))]
+            let (config_path, config, output_directory, app_data) = {
+                let config_path = config::default_config_path()?;
+                let config = Config::load_or_create(&config_path)?;
+                let output_directory = config.resolved_output_path()?;
+                let app_data = app
+                    .path()
+                    .app_local_data_dir()
+                    .context("could not resolve the app data directory")?;
+                (config_path, config, output_directory, app_data)
+            };
+
             ensure_output_directories(&output_directory)?;
             if let Err(error) =
                 library::run_auto_delete(&output_directory, config.storage.auto_delete_days)
@@ -694,15 +780,19 @@ pub fn run() {
                     MediaRuntimeState::Unavailable(Arc::new(error))
                 }
             };
+
             let music_directory = music::install(&app_data)?;
             let ddragon_cache = app_data.join("ddragon");
             let roots = Arc::new(MediaRoots::new(output_directory.clone()));
             let playback_metrics = Arc::new(PlaybackMetrics::default());
+
+            #[cfg(feature = "replay-benchmark")]
             let benchmark = launch
                 .map(|launch| {
                     BenchmarkSession::start(launch, harness_initialization_ms, process_started_at)
                 })
                 .transpose()?;
+            #[cfg(feature = "replay-benchmark")]
             let benchmark_requests = benchmark
                 .as_ref()
                 .map(|session| -> Result<_> {
@@ -715,6 +805,8 @@ pub fn run() {
                     )))
                 })
                 .transpose()?;
+
+            #[cfg(feature = "replay-benchmark")]
             let playback_origin = tauri::async_runtime::block_on(playback_server::start(
                 Arc::clone(&roots),
                 Arc::clone(&playback_metrics),
@@ -722,19 +814,37 @@ pub fn run() {
                 benchmark_requests.as_ref().map(Arc::clone),
                 benchmark.is_none(),
             ))?;
+            #[cfg(not(feature = "replay-benchmark"))]
+            let playback_origin = tauri::async_runtime::block_on(playback_server::start(
+                Arc::clone(&roots),
+                Arc::clone(&playback_metrics),
+                ddragon_cache.clone(),
+                true,
+            ))?;
 
             let hevc_probe_path = app_data.join("hevc-probe-v1.json");
+
+            #[cfg(feature = "replay-benchmark")]
             let ddragon_status = Arc::new(RwLock::new(if benchmark.is_some() {
                 DdragonStatus::offline(&ddragon_cache)
             } else {
                 DdragonStatus::loading(&ddragon_cache)
             }));
+            #[cfg(feature = "replay-benchmark")]
             if benchmark.is_none() {
                 tauri::async_runtime::spawn(ddragon::initialize(
                     ddragon_cache.clone(),
                     Arc::clone(&ddragon_status),
                 ));
             }
+
+            #[cfg(not(feature = "replay-benchmark"))]
+            let ddragon_status = Arc::new(RwLock::new(DdragonStatus::loading(&ddragon_cache)));
+            #[cfg(not(feature = "replay-benchmark"))]
+            tauri::async_runtime::spawn(ddragon::initialize(
+                ddragon_cache.clone(),
+                Arc::clone(&ddragon_status),
+            ));
 
             #[cfg(debug_assertions)]
             eprintln!(
@@ -754,83 +864,121 @@ pub fn run() {
                 ddragon_status,
                 music_directory,
                 media_runtime,
+                #[cfg(feature = "replay-benchmark")]
                 benchmark: benchmark.clone(),
+                #[cfg(feature = "replay-benchmark")]
                 benchmark_requests,
             });
-            if let Some(benchmark) = &benchmark {
-                benchmark.record_app_event(
-                    "app_state_ready",
-                    serde_json::json!({
-                        "playback_origin_ready": true,
-                        "ddragon_mode": "offline",
-                    }),
-                )?;
-            }
-            if let Some((window_config, data_directory)) = &benchmark_webview {
-                fs::create_dir_all(data_directory).with_context(|| {
-                    format!(
-                        "failed to create benchmark WebView data directory {}",
-                        data_directory.display()
-                    )
-                })?;
-                let page_load_benchmark = benchmark.clone();
-                tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
-                    .data_directory(data_directory.clone())
-                    .always_on_top(true)
-                    .on_page_load(move |_window, payload| {
-                        let Some(benchmark) = &page_load_benchmark else {
-                            return;
-                        };
-                        if let Err(error) = benchmark.record_app_event(
-                            "benchmark_page_load",
-                            serde_json::json!({
-                                "event": format!("{:?}", payload.event()).to_ascii_lowercase(),
-                                "url": payload.url().as_str(),
-                            }),
-                        ) {
-                            eprintln!("League Replay: could not record benchmark page load: {error}");
-                        }
-                    })
-                    .build()?;
+
+            #[cfg(feature = "replay-benchmark")]
+            {
                 if let Some(benchmark) = &benchmark {
                     benchmark.record_app_event(
-                        "benchmark_webview_created",
+                        "app_state_ready",
                         serde_json::json!({
-                            "data_directory": data_directory,
-                            "window_label": window_config.label,
+                            "playback_origin_ready": true,
+                            "ddragon_mode": "offline",
                         }),
                     )?;
                 }
+                if let Some((window_config, data_directory)) = &benchmark_webview {
+                    fs::create_dir_all(data_directory).with_context(|| {
+                        format!(
+                            "failed to create benchmark WebView data directory {}",
+                            data_directory.display()
+                        )
+                    })?;
+                    let page_load_benchmark = benchmark.clone();
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                        .data_directory(data_directory.clone())
+                        .always_on_top(true)
+                        .on_page_load(move |_window, payload| {
+                            let Some(benchmark) = &page_load_benchmark else {
+                                return;
+                            };
+                            if let Err(error) = benchmark.record_app_event(
+                                "benchmark_page_load",
+                                serde_json::json!({
+                                    "event": format!("{:?}", payload.event()).to_ascii_lowercase(),
+                                    "url": payload.url().as_str(),
+                                }),
+                            ) {
+                                eprintln!(
+                                    "League Replay: could not record benchmark page load: {error}"
+                                );
+                            }
+                        })
+                        .build()?;
+                    if let Some(benchmark) = &benchmark {
+                        benchmark.record_app_event(
+                            "benchmark_webview_created",
+                            serde_json::json!({
+                                "data_directory": data_directory,
+                                "window_label": window_config.label,
+                            }),
+                        )?;
+                    }
+                }
             }
+
             Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            list_games,
-            list_clips,
-            get_playback_probe,
-            save_game,
-            delete_game,
-            delete_clip,
-            list_built_in_music,
-            prepare_imported_music_preview,
-            export_clip,
-            get_storage_usage,
-            run_auto_delete,
-            get_settings,
-            save_settings,
-            open_output_folder,
-            open_clips_folder,
-            get_hevc_probe_status,
-            record_hevc_probe_result,
-            get_ddragon_status,
-            resolve_item_name,
-            get_playback_server_metrics,
-            get_replay_benchmark_session,
-            record_replay_benchmark_events,
-            get_replay_benchmark_queue_stats,
-            flush_replay_benchmark_server_requests,
-            complete_replay_benchmark
-        ])
+        });
+
+    #[cfg(feature = "replay-benchmark")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        list_games,
+        list_clips,
+        get_playback_probe,
+        save_game,
+        delete_game,
+        delete_clip,
+        list_built_in_music,
+        prepare_imported_music_preview,
+        export_clip,
+        get_storage_usage,
+        run_auto_delete,
+        get_settings,
+        save_settings,
+        open_output_folder,
+        open_clips_folder,
+        get_hevc_probe_status,
+        record_hevc_probe_result,
+        get_ddragon_status,
+        resolve_item_name,
+        get_playback_server_metrics,
+        get_replay_benchmark_session,
+        record_replay_benchmark_events,
+        get_replay_benchmark_queue_stats,
+        flush_replay_benchmark_server_requests,
+        complete_replay_benchmark
+    ]);
+
+    #[cfg(not(feature = "replay-benchmark"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        list_games,
+        list_clips,
+        get_playback_probe,
+        save_game,
+        delete_game,
+        delete_clip,
+        list_built_in_music,
+        prepare_imported_music_preview,
+        export_clip,
+        get_storage_usage,
+        run_auto_delete,
+        get_settings,
+        save_settings,
+        open_output_folder,
+        open_clips_folder,
+        get_hevc_probe_status,
+        record_hevc_probe_result,
+        get_ddragon_status,
+        resolve_item_name,
+        get_playback_server_metrics,
+        get_replay_benchmark_session
+    ]);
+
+    builder
         .run(tauri_context)
         .expect("error while running League Replay");
 }
