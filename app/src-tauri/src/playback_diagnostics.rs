@@ -141,8 +141,15 @@ impl Monitor {
 
     fn bind(&mut self, binding: Binding) -> Result<(), String> {
         binding.validate()?;
-        if self.binding.as_ref() == Some(&binding) {
-            return Ok(());
+        if let Some(current) = &self.binding {
+            if binding.generation < current.generation || *current == binding {
+                return Ok(());
+            }
+            if binding.generation == current.generation {
+                return Err(
+                    "conflicting playback diagnostic binding for current generation".into(),
+                );
+            }
         }
         self.snapshot.session_token = Some(binding.session_token.clone());
         self.snapshot.media_id = Some(binding.media_id.clone());
@@ -281,10 +288,8 @@ impl Monitor {
                         }
                     }
                 }
-                "Media.playerErrorsRaised" => {
-                    if self.matches(id) {
-                        self.invalidate("associated player reported a media error");
-                    }
+                "Media.playerErrorsRaised" if self.matches(id) => {
+                    self.invalidate("associated player reported a media error");
                 }
                 _ => {}
             }
@@ -452,6 +457,50 @@ mod tests {
     }
     fn decoder(monitor: &mut Monitor, name: &str, platform: bool) {
         monitor.ingest("Media.playerPropertiesChanged", &json!({"playerId":"p", "properties":[{"name":"kVideoDecoderName", "value":name}, {"name":"kIsPlatformVideoDecoder", "value":platform.to_string()}]}).to_string());
+    }
+    #[test]
+    fn binding_is_monotonic_idempotent_and_rejects_same_generation_conflicts() {
+        let mut monitor = Monitor::new("owner".into());
+        let mut current = binding();
+        current.generation = 2;
+        current.session_token = current.session_token.replace("11111111", "99999999");
+        current.url = current.url.replace("11111111", "99999999");
+        monitor.bind(current.clone()).unwrap();
+        let snapshot = monitor.snapshot.clone();
+        let acquired_at = monitor.acquired_at;
+
+        monitor.bind(binding()).unwrap();
+        monitor.bind(current.clone()).unwrap();
+        let mut conflict = binding();
+        conflict.generation = 2;
+        assert!(monitor.bind(conflict).is_err());
+        let mut conflict = current.clone();
+        conflict.profile = Some("Main".into());
+        assert!(monitor.bind(conflict).is_err());
+        assert_eq!(monitor.binding, Some(current.clone()));
+        assert_eq!(monitor.snapshot, snapshot);
+        assert_eq!(monitor.acquired_at, acquired_at);
+
+        monitor.ingest(
+            "Media.playerCreated",
+            r#"{"player":{"playerId":"p","domNodeId":7}}"#,
+        );
+        load(&mut monitor, "p", &current.url);
+        decoder(&mut monitor, "D3D11VideoDecoder", true);
+        monitor.candidates.get_mut("p").unwrap().marker = Some(true);
+        monitor.reconcile();
+        assert_eq!(monitor.snapshot.generation, Some(2));
+        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+        assert!(monitor.snapshot.associated);
+
+        current.generation = 3;
+        current.session_token = current.session_token.replace("99999999", "aaaaaaaa");
+        current.url = current.url.replace("99999999", "aaaaaaaa");
+        monitor.bind(current.clone()).unwrap();
+        assert_eq!(monitor.binding, Some(current));
+        assert_eq!(monitor.snapshot.generation, Some(3));
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        assert!(!monitor.snapshot.associated);
     }
     #[test]
     fn only_exact_associated_decoder_proves_hardware_and_later_fallback_is_retained() {

@@ -66,7 +66,6 @@ export function createHtmlVideoPlaybackAdapter(video: HTMLVideoElement): Playbac
       return null;
     }
   };
-  video.dataset.qbPrimaryPlayback = "true";
   video.preload = "auto";
   video.playsInline = true;
   video.preservesPitch = true;

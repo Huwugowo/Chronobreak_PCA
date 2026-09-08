@@ -99,7 +99,7 @@ unsafe fn take_bounded(raw: PWSTR) -> Option<String> {
     let mut length = 0;
     // SAFETY: ParameterObjectAsJson returned a live NUL-terminated allocation;
     // reads stop at NUL or our bound, and the allocation is freed exactly once.
-    let value = unsafe {
+    unsafe {
         while length < 4096 && *raw.0.add(length) != 0 {
             length += 1;
         }
@@ -110,8 +110,7 @@ unsafe fn take_bounded(raw: PWSTR) -> Option<String> {
         };
         CoTaskMemFree(Some(raw.0.cast()));
         value
-    };
-    value
+    }
 }
 
 fn call(

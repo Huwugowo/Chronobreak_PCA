@@ -21,6 +21,23 @@ Path components are validated before resolution. Range responses stream file sli
 
 Opening a game asks Rust to strictly parse its schema-v2 bundle into a playback probe containing the loopback video URL, validated media timeline, mapped events, snapshots, and metadata. A single persistent video element is shared between windowed and fullscreen layouts; changing layout does not remount the decoder.
 
+`playbackController.ts` owns the primary media lifecycle through
+`htmlVideoPlaybackAdapter.ts`: source/load, native play/pause, seek scheduling,
+presentation callbacks, recovery, preferences, metrics and disposal. The viewer
+retains layout and clip-selection policy and routes benchmark actions through the
+same controller. Public play completion and internal presentation nudges have
+separate ownership; seeks explicitly settle superseded play operations. Invalid
+open inputs are rejected before the current generation changes.
+
+The primary JSX video carries `data-qb-primary-playback="true"`. The bounded native
+WebView2 Media diagnostic associates its exact per-generation loopback load URL
+and checks that marker when a DOM node ID is available. Binding generations are
+monotonic within each diagnostic owner; equal conflicting bindings are rejected.
+Recovery rotates the session query token on the same element and invalidates old
+decoder evidence. Disposal closes the native owner and removes its subscriptions.
+Only associated `D3D11VideoDecoder` plus the platform flag proves the supported
+Windows hardware path; software and unknown outcomes remain explicit.
+
 `requestVideoFrameCallback` is the presented-frame authority. Requested, dispatched, seeked, and presented values retain distinct generation/epoch state. Timeline markers, seeks, event cards, champion filters, and recorded player state use mapped replay ticks from the same payload; unavailable/before/after-media observations are explicit. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
 
 Data Dragon manifests/icons enrich champion and item presentation but do not gate playback. Cached versions continue to work offline; unavailable images fall back to fixed-layout placeholders.

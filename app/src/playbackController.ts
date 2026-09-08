@@ -138,6 +138,7 @@ export function createPlaybackController(
   let frameVersion = 0;
   let frameHandle: number | undefined;
   let playToken = 0;
+  let nudgeToken = 0;
   let finishPlay: ((value: PlaybackOutcome) => void) | undefined;
   let finishOpen: ((value: PlaybackOutcome) => void) | undefined;
   let nudge: PendingSeek | undefined;
@@ -215,9 +216,16 @@ export function createPlaybackController(
     if (!nudge) return;
     nudge = undefined;
     clearTimer("nudge");
-    playToken++;
+    nudgeToken++;
     if (!desiredPlaying) media.pause();
     applyEffectiveRate();
+  };
+  const cancelPlay = (outcome: PlaybackOutcome = { status: "superseded" }) => {
+    playToken++;
+    clearTimer("play");
+    const finish = finishPlay;
+    finishPlay = undefined;
+    finish?.(outcome);
   };
   const cancelWork = (status: SeekOutcome["status"] = "superseded", reason = "Media generation ended") => {
     for (const name of [...timers.keys()]) clearTimer(name);
@@ -229,9 +237,7 @@ export function createPlaybackController(
     settle(waiter, status, reason);
     active = pending = waiter = undefined;
     lastDispatchAt = -Infinity;
-    playToken++;
-    finishPlay?.({ status: status === "failed" ? "failed" : "superseded", reason });
-    finishPlay = undefined;
+    cancelPlay({ status: status === "failed" ? "failed" : "superseded", reason });
     finishOpen?.({ status: status === "failed" ? "failed" : "superseded", reason });
     finishOpen = undefined;
     loadStarted = metadataReady = false;
@@ -256,23 +262,23 @@ export function createPlaybackController(
   };
 
   function startPlay(actionId?: string): Promise<PlaybackOutcome> {
-    finishPlay?.({ status: "superseded" });
-    clearTimer("play");
+    cancelPlay();
     const token = ++playToken;
     const generation = state.generation;
     if (readiness !== "ready") return Promise.resolve({ status: "unavailable", reason: "Media is not ready" });
     let resolve!: (value: PlaybackOutcome) => void;
     const result = new Promise<PlaybackOutcome>((done) => { resolve = done; });
     finishPlay = resolve;
+    const current = () => token === playToken && generation === state.generation && finishPlay === resolve && isLive();
     const complete = (outcome: PlaybackOutcome) => {
-      if (token !== playToken || generation !== state.generation || !isLive()) return;
+      if (!current()) return;
       clearTimer("play");
       finishPlay = undefined;
       resolve(outcome);
       publish();
     };
     const rejected = (reason: unknown) => {
-      if (token !== playToken || generation !== state.generation || !isLive()) return;
+      if (!current()) return;
       const name = reason instanceof Error ? reason.name : "unknown";
       activationRequired = name === "NotAllowedError";
       emit("play_rejected", { name, reason: failureText(reason) }, { actionId });
@@ -280,6 +286,7 @@ export function createPlaybackController(
       if (media.read().error) recover("Native media error after play rejection");
     };
     later("play", 5_000, () => {
+      if (!current()) return;
       complete({ status: "failed", reason: "Playback start timed out" });
       recover("Playback start timed out");
     });
@@ -287,7 +294,7 @@ export function createPlaybackController(
     try {
       const native = media.play();
       native.then(() => {
-        if (token !== playToken || generation !== state.generation || !isLive()) return;
+        if (!current()) return;
         activationRequired = false;
         complete({ status: media.read().paused ? "failed" : "playing" });
       }, rejected);
@@ -390,6 +397,7 @@ export function createPlaybackController(
     const frame = Math.max(loop?.startFrame ?? 0, Math.min((loop?.endFrameExclusive ?? timeline.video.frameCount) - 1,
       replayTickToFrameBoundary(preview, timeline.video.frameRate, "nearest_ties_to_even"))) as FrameBoundary;
     const dispatched = frameBoundaryToReplayTick(frame, timeline.video.frameRate);
+    cancelPlay({ status: "superseded", reason: "Newer seek intent" });
     if (settings.playAfter !== undefined) desiredPlaying = settings.playAfter;
     settle(active, "superseded", "Newer seek intent");
     settle(waiter, "superseded", "Newer seek intent");
@@ -441,12 +449,12 @@ export function createPlaybackController(
       emit("nudge_unavailable", { reason: "Native playback rejected the temporary nudge rate" });
       publish(); return;
     }
-    const version = ++playToken;
+    const version = ++nudgeToken;
     const generation = state.generation;
     later("nudge", 750, stopNudge);
     try {
       void media.play().catch((reason: unknown) => {
-        if (version !== playToken || generation !== state.generation || waiter !== request) return;
+        if (version !== nudgeToken || generation !== state.generation || waiter !== request) return;
         if (reason instanceof Error && reason.name === "NotAllowedError") activationRequired = true;
         stopNudge(); publish();
       });
@@ -583,15 +591,18 @@ export function createPlaybackController(
     },
     open(input: { url: string; mediaId: MediaId; timeline: MediaTimelineV2; muted?: boolean; volume?: number }): Promise<PlaybackOutcome> {
       if (readiness === "disposed") return Promise.resolve({ status: "unavailable" });
-      if (input.mediaId !== input.timeline.mediaId) throw new Error("Playback media identity mismatch");
-      new URL(input.url);
+      const nextTimeline = input.timeline;
+      const nextUrl = new URL(input.url).href;
+      const nextMuted = input.muted ?? false;
+      const nextVolume = input.volume ?? 1;
+      if (input.mediaId !== nextTimeline.mediaId) throw new Error("Playback media identity mismatch");
+      if (!Number.isFinite(nextVolume) || nextVolume < 0 || nextVolume > 1) throw new RangeError("Volume must be between 0 and 1");
       cancelWork();
       state = createViewerSeekState(state.generation + 1);
-      timeline = input.timeline; originalUrl = input.url;
+      timeline = nextTimeline; originalUrl = nextUrl;
       desiredPlaying = false; activationRequired = false; error = null; loop = null;
       recoveryCount = consecutiveFailures = 0; recoveryAttempts = []; recoveryTarget = null;
-      muted = input.muted ?? false; volume = input.volume ?? 1;
-      if (!Number.isFinite(volume) || volume < 0 || volume > 1) throw new RangeError("Volume must be between 0 and 1");
+      muted = nextMuted; volume = nextVolume;
       rate = { selected: 1, applied: 1, effective: 1, observed: null, outcome: "pending", limitation: null };
       readiness = "loading";
       const result = new Promise<PlaybackOutcome>((resolve) => { finishOpen = resolve; });
@@ -605,9 +616,8 @@ export function createPlaybackController(
     },
     pause(): PlaybackOutcome {
       if (!isLive()) return { status: "unavailable" };
-      desiredPlaying = false; playToken++;
-      finishPlay?.({ status: "superseded" }); finishPlay = undefined;
-      clearTimer("play"); stopNudge(); media.pause(); publish(); return { status: "paused" };
+      desiredPlaying = false; cancelPlay();
+      stopNudge(); media.pause(); publish(); return { status: "paused" };
     },
     seek,
     setRate(selected: PlaybackRate) {

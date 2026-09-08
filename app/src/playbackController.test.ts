@@ -246,6 +246,59 @@ describe("concrete playback controller", () => {
     expect(media.opens).toHaveLength(1);
   });
 
+  it.each(["resolve", "reject"] as const)("supersedes pending public play before a paused seek and ignores late native %s", async (completion) => {
+    const { media, controller, events } = setup(); media.metadata();
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const native = new Promise<void>((done, fail) => { resolve = done; reject = fail; });
+    media.playResult = () => {
+      // Native play changes paused synchronously; its promise settles separately.
+      media.update({ paused: false }); media.emit("play"); return native;
+    };
+    const playing = controller.play();
+    const settled = vi.fn(); void playing.then(settled);
+    media.playResult = undefined;
+    const seeking = controller.seek(tick(20), { playAfter: false });
+    await Promise.resolve();
+    expect(settled).toHaveBeenCalledWith({ status: "superseded", reason: "Newer seek intent" });
+    media.seeked(); media.frame(tick(20));
+    expect(await seeking).toMatchObject({ status: "presented" });
+    expect(vi.getTimerCount()).toBe(1); // Only the periodic metrics timer remains.
+    const generation = controller.snapshot().generation;
+    vi.advanceTimersByTime(5_001);
+    const beforeLate = controller.snapshot();
+    if (completion === "resolve") resolve();
+    else reject(Object.assign(new Error("obsolete native play"), { name: "NotAllowedError" }));
+    await Promise.resolve();
+    expect(controller.snapshot()).toEqual(beforeLate);
+    expect(controller.snapshot()).toMatchObject({ generation, readiness: "ready", desiredPlaying: false, recoveryCount: 0 });
+    expect(media.state.paused).toBe(true);
+    expect(media.opens).toHaveLength(1);
+    expect(events.some((event) => event.kind === "recovery_started")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([NaN, Infinity, -0.1, 1.1])("rejects invalid open volume %s without changing the working session", async (volume) => {
+    const { media, controller, opening } = setup(); media.metadata(); await opening;
+    await controller.play(); media.frame(tick(2));
+    const before = controller.snapshot();
+    const handlers = [...media.handlers].map(([event, set]) => [event, [...set]]);
+    const callbacks = [...media.callbacks];
+    const nextTimeline = { ...timeline, mediaId: parseMediaId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee") };
+    expect(() => controller.open({ url: "http://127.0.0.1:123/games/2/video.mp4", mediaId: nextTimeline.mediaId,
+      timeline: nextTimeline, muted: true, volume })).toThrow(RangeError);
+    expect(controller.snapshot()).toEqual(before);
+    expect([...media.handlers].map(([event, set]) => [event, [...set]])).toEqual(handlers);
+    expect([...media.callbacks]).toEqual(callbacks);
+    expect(media.opens).toHaveLength(1);
+    media.frame(tick(3));
+    expect(controller.snapshot().seek.presented).toBe(tick(3));
+    controller.pause(); expect(await controller.play()).toMatchObject({ status: "playing" });
+    const seeking = controller.seek(tick(10), { playAfter: false });
+    media.seeked(); media.frame(tick(10));
+    expect(await seeking).toMatchObject({ status: "presented" });
+  });
+
   it("reports approximate fallback without settling authoritative frame success", async () => {
     const { media, controller } = setup(false); media.metadata();
     const frames: ReplayTick[] = []; controller.subscribeFrames((value) => frames.push(value));

@@ -1252,6 +1252,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             data-fullscreen={isFullscreen()}
           >
             <video
+              data-qb-primary-playback="true"
               ref={(element) => { primaryVideo = element; }}
               playsinline
               preload="auto"

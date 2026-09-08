@@ -5,8 +5,8 @@ import solid from "vite-plugin-solid";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
-  plugins: [solid()],
+export default defineConfig(async ({ mode }) => ({
+  plugins: [solid({ hot: mode !== "test" })],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
