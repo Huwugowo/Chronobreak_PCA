@@ -1082,6 +1082,31 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::OK);
 
+        for token in ["first-session", "second-session"] {
+            let response = game_video(
+                State(state.clone()),
+                AxumPath("1786000000-1".to_owned()),
+                Request::builder()
+                    .uri(format!(
+                        "/games/1786000000-1/video.mp4?qb_playback_session={token}"
+                    ))
+                    .header(RANGE, "bytes=1-3")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-3/5");
+            assert_eq!(response.headers()[CONTENT_LENGTH], "3");
+            assert_eq!(
+                axum::body::to_bytes(response.into_body(), 5)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                b"ide"
+            );
+        }
+
         let response = game_video(
             State(state),
             AxumPath("../1786000000-1".to_owned()),

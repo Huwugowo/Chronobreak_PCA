@@ -14,6 +14,7 @@ export type ViewerSeekState = Readonly<{
   nextEpoch: number;
   requestedPreview: ReplayTick | null;
   dispatched: SeekRequest | null;
+  lastDispatched: SeekRequest | null;
   seekedObservation: ReplayTick | null;
   presented: ReplayTick | null;
 }>;
@@ -23,6 +24,7 @@ export const createViewerSeekState = (generation = 0): ViewerSeekState => ({
   nextEpoch: 0,
   requestedPreview: null,
   dispatched: null,
+  lastDispatched: null,
   seekedObservation: null,
   presented: null,
 });
@@ -47,6 +49,7 @@ export const dispatchSeek = (
     nextEpoch: epoch,
     requestedPreview: target,
     dispatched: { generation: state.generation, epoch, target, toleranceTicks },
+    lastDispatched: { generation: state.generation, epoch, target, toleranceTicks },
     seekedObservation: null,
   };
 };
@@ -60,7 +63,7 @@ export const observeSeeked = (
   epoch: number,
   observed: ReplayTick,
 ): ViewerSeekState => {
-  const request = state.dispatched;
+  const request = state.dispatched ?? state.lastDispatched;
   if (!request || request.epoch !== epoch || !qualifying(request, generation, observed)) return state;
   return { ...state, seekedObservation: observed };
 };
@@ -90,6 +93,7 @@ export const beginRecovery = (state: ViewerSeekState): ViewerSeekState => ({
   nextEpoch: 0,
   requestedPreview: state.requestedPreview,
   dispatched: null,
+  lastDispatched: null,
   seekedObservation: null,
   presented: null,
 });

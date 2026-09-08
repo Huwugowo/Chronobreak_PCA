@@ -28,6 +28,7 @@ type Props = {
   events: readonly ViewerEvent[];
   mediaTimeline: MediaTimelineV2;
   replayTick: ReplayTick;
+  presentedTick: ReplayTick | null;
   gameTick: string;
   beforeGameStart: boolean;
   currentKda: KdaTimelinePoint | undefined;
@@ -112,10 +113,10 @@ function FullscreenOverlay(props: Props) {
       position: clamp((value / replayEnd()) * 100, 0, 100),
     }));
 
-  const nearestEventIndex = createMemo(() => nearestIndexAt(mappedEvents(), props.replayTick));
+  const nearestEventIndex = createMemo(() => props.presentedTick === null ? -1 : nearestIndexAt(mappedEvents(), props.presentedTick));
   const proximityEventIndex = createMemo(() => {
     const index = nearestEventIndex();
-    return index >= 0 && Math.abs(mappedEvents()[index].replay_tick - props.replayTick) <= REPLAY_TICKS_PER_SECOND
+    return index >= 0 && Math.abs(mappedEvents()[index].replay_tick - (props.presentedTick ?? 0)) <= REPLAY_TICKS_PER_SECOND
       ? index
       : -1;
   });

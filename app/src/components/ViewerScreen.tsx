@@ -17,8 +17,6 @@ import {
 import {
   buildScenarioActions,
   emitReplayBenchmarkEvent,
-  isCurrentMediaGeneration,
-  isLatestBenchmarkAction,
   REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
   replayBenchmarkObserver,
   type ScenarioAction,
@@ -35,8 +33,6 @@ import type {
 } from "../types";
 import {
   REPLAY_TICKS_PER_SECOND,
-  browserSecondsForReplayTick,
-  replayTickForBrowserSeconds,
   type FrameBoundary,
   type ReplayTick,
 } from "../replayTime";
@@ -47,21 +43,15 @@ import {
   defaultClipRange,
   eventInvolvesPlayer,
   eventTitle,
-  frameBoundaryAt,
   latestIndexAt,
   moveClipEndpoint,
   nearestIndexAt,
   replayTickAtFrameBoundary,
   timelineValue,
 } from "../viewerUtils";
-import {
-  beginRecovery as beginSeekRecovery,
-  createViewerSeekState,
-  dispatchSeek,
-  observePresentation,
-  observeSeeked,
-  requestPreview,
-} from "../viewerSeekState";
+import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot } from "../playbackController";
+import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
+import { createPlaybackDiagnostics, type DecoderSnapshot } from "../playbackDiagnostics";
 import ChampionFilter from "./ChampionFilter";
 import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
@@ -71,10 +61,6 @@ type Props = {
   onBack: () => void;
   initialClipDraft?: ClipDraft;
   onExportClip: (draft: ClipDraft) => void;
-};
-
-type ChromiumPerformance = Performance & {
-  memory?: { usedJSHeapSize: number };
 };
 
 type ClipEndpoint = "start" | "end";
@@ -89,22 +75,6 @@ type SeekReason =
   | "recovery"
   | "event-jump"
   | "benchmark";
-
-type ScheduledSeek = {
-  generation: number;
-  target: ReplayTick;
-  seekEpoch?: number;
-  reason: SeekReason;
-  playAfter: boolean;
-  benchmark?: {
-    actionId: string;
-    requestedAtMs: number;
-    fromMs: number;
-    settle: () => void;
-    cancelled: boolean;
-    onDispatch?: () => void;
-  };
-};
 
 type MediaDiagnosticEvent = {
   at: number;
@@ -122,14 +92,8 @@ type EndpointHoldState = {
 };
 
 const ENDPOINT_HOLD_THRESHOLD_MS = 200;
-const SEEK_INTERVAL_MS = 100;
 const SEEK_TIMEOUT_MS = 1_500;
-const SEEK_PRESENTATION_NUDGE_MS = 750;
-const SEEK_PRESENTATION_NUDGE_RATE = 1 / 16;
-const BROWSER_MEDIA_TIME_QUANTIZATION_TICKS = REPLAY_TICKS_PER_SECOND / 1_000_000;
 const BENCHMARK_MEDIA_READY_TIMEOUT_MS = 30_000;
-const MAX_DIAGNOSTIC_EVENTS = 50;
-const UNTRACKED_SEEK_COMPLETION = Promise.resolve();
 
 type MappedViewerEvent = ViewerEvent & { replay_tick: ReplayTick };
 type MappedPlayerTimelinePoint = PlayerTimelinePoint & { replay_tick: ReplayTick };
@@ -141,9 +105,6 @@ const hasReplayTick = <T extends { replay_tick?: ReplayTick }>(
 
 const replayTickToMilliseconds = (tick: ReplayTick): number =>
   (tick * 1_000) / REPLAY_TICKS_PER_SECOND;
-
-const replayTickDeltaToMilliseconds = (ticks: number): number =>
-  (ticks * 1_000) / REPLAY_TICKS_PER_SECOND;
 
 const millisecondsToReplayTick = (milliseconds: number, replayEnd: ReplayTick): ReplayTick =>
   Math.round(
@@ -217,47 +178,22 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const mediaTimeline = props.probe.media_timeline;
   const replayEnd = mediaTimeline.video.replayEnd;
   const durationMs = replayTickToMilliseconds(replayEnd);
-  const frameDurationTicks = replayTickAtFrameBoundary(
-    1 as FrameBoundary,
-    mediaTimeline,
-  );
-  const seekToleranceTicks = Math.ceil(frameDurationTicks / 2);
-  const presentedFrameToleranceTicks =
-    frameDurationTicks + BROWSER_MEDIA_TIME_QUANTIZATION_TICKS;
-  let video!: HTMLVideoElement;
+  let primaryVideo: HTMLVideoElement | undefined;
+  let controller!: PlaybackController;
+  let decoderDiagnostics: ReturnType<typeof createPlaybackDiagnostics> | undefined;
   let windowedRail!: HTMLDivElement;
-  let frameCallbackId: number | undefined;
-  let animationFrameId: number | undefined;
   let metricsIntervalId: number | undefined;
-  let seekDispatchTimerId: number | undefined;
-  let seekTimeoutId: number | undefined;
-  let recoveryTimerId: number | undefined;
   let benchmarkMediaReadyTimerId: number | undefined;
-  let frameSampleStartedAt = performance.now();
-  let lastSeekDispatchedAt = Number.NEGATIVE_INFINITY;
   let mediaGeneration = replayBenchmarkObserver()?.nextMediaGeneration() ?? 0;
-  let seekState = createViewerSeekState();
-  let recoveryTarget = 0 as ReplayTick;
-  let inFlightSeek: ScheduledSeek | undefined;
-  let pendingSeek: ScheduledSeek | undefined;
-  let recoveryAttempts: number[] = [];
-  let presentedFrames = 0;
   let disposed = false;
-  let clipLoopSeekPending = false;
   let endpointHold: EndpointHoldState | undefined;
-  let pendingBenchmarkPlayActionId: string | undefined;
-  let pendingBenchmarkPauseActionId: string | undefined;
-  let latestBenchmarkSeekActionId: string | undefined;
-  let awaitingPresentedSeek: ScheduledSeek | undefined;
-  let seekNudgePlaybackRate: number | undefined;
-  let seekNudgeRequest: ScheduledSeek | undefined;
-  let seekPresentationNudgeTimerId: number | undefined;
   let firstPresentedGeneration = -1;
   let canPlayGeneration = -1;
   let benchmarkScenarioStarted = false;
   let benchmarkScenarioFinished = false;
   let benchmarkEndpointSequence = 0;
   const benchmarkAbortController = new AbortController();
+  const dispatchObservers = new Map<string, () => void>();
 
   const events: MappedViewerEvent[] = props.probe.events
     .filter(hasReplayTick)
@@ -271,6 +207,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
+  const [presentedPosition, setPresentedPosition] = createSignal<ReplayTick | null>(null);
+  const [playback, setPlayback] = createSignal<PlaybackSnapshot>();
+  const [decoder, setDecoder] = createSignal<DecoderSnapshot>();
   const [replayPosition, setReplayPosition] = createSignal<ReplayTick>(0 as ReplayTick);
   const [isPlaying, setIsPlaying] = createSignal(false);
   const [mediaState, setMediaState] = createSignal<MediaPreviewState>("loading");
@@ -331,10 +270,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const currentGameTick = createMemo(() =>
     replayTickAtGameZero === null
       ? "0"
-      : ((BigInt(replayPosition()) - replayTickAtGameZero) / 48n).toString(),
+      : ((BigInt(presentedPosition() ?? 0) - replayTickAtGameZero) / 48n).toString(),
   );
   const beforeGameStart = createMemo(
-    () => replayTickAtGameZero === null || BigInt(currentGameTick()) < 0n,
+    () => presentedPosition() === null || replayTickAtGameZero === null || BigInt(currentGameTick()) < 0n,
   );
   const gameClockSecond = createMemo(() =>
     Math.max(0, Math.floor(gameTickToMilliseconds(currentGameTick()) / 1_000)),
@@ -360,16 +299,16 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const clipEndPosition = createMemo(() =>
     clipRange() ? clamp((clipEndTick(clipRange()!) / replayEnd) * 100, 0, 100) : 100,
   );
-  const activeEventIndex = createMemo(() => latestIndexAt(visibleEvents(), replayPosition()));
+  const activeEventIndex = createMemo(() => presentedPosition() === null ? -1 : latestIndexAt(visibleEvents(), presentedPosition()!));
   const activeEvent = createMemo(() => {
     const index = activeEventIndex();
     return index < 0 ? undefined : visibleEvents()[index];
   });
   const currentPlayer = createMemo<PlayerTimelinePoint | undefined>(() =>
-    timelineValue(playerTimeline, replayPosition()),
+    presentedPosition() === null ? undefined : timelineValue(playerTimeline, presentedPosition()!),
   );
   const currentKda = createMemo<KdaTimelinePoint | undefined>(() =>
-    timelineValue(kdaTimeline, replayPosition()),
+    presentedPosition() === null ? undefined : timelineValue(kdaTimeline, presentedPosition()!),
   );
   const lastDiagnostic = createMemo(() => {
     const events = diagnosticEvents();
@@ -383,556 +322,68 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     );
   };
 
-  const sampleFrame = () => {
-    presentedFrames += 1;
-    const now = performance.now();
-    const elapsed = now - frameSampleStartedAt;
-    if (elapsed >= 1_000) {
-      setPresentedFps((presentedFrames * 1_000) / elapsed);
-      frameSampleStartedAt = now;
-      presentedFrames = 0;
-    }
+  const syncSnapshot = (value: PlaybackSnapshot) => {
+    setPlayback(value);
+    if (value.readiness === "disposed") { decoderDiagnostics?.dispose(); setDecoder(undefined); }
+    else decoderDiagnostics?.bind(value, mediaTimeline);
+    mediaGeneration = value.generation;
+    setMediaState(value.readiness === "closed" || value.readiness === "disposed" ? "degraded" : value.readiness);
+    setIsPlaying(value.desiredPlaying && !value.media.paused);
+    setMediaError(value.error);
+    setSeekQueueLabel(value.queue);
+    setRecoveryCount(value.recoveryCount);
+    setPresentedFps(value.presentedFps);
+    setDroppedFrames(value.quality.droppedFrames ?? 0);
+    setTotalFrames(value.quality.totalFrames ?? 0);
+    setHeapBytes(value.quality.heapBytes);
+    setSeekLatencyMs(value.seekLatencyMs);
+    setClockSource(value.authority === "rvfc" ? "VIDEO FRAME" : "ANIMATION FRAME");
+    setDiagnosticEvents(value.diagnostics.map((event) => ({ at: event.atMs, kind: event.kind, detail: JSON.stringify(event.payload) })));
+    if (value.seek.presented === null) setPresentedPosition(null);
+    if (value.queue !== "IDLE" && value.seek.requestedPreview !== null) setReplayPosition(value.seek.requestedPreview);
   };
 
-  const replayTickForBrowserObservation = (browserSeconds: number): ReplayTick | null => {
-    try {
-      const observed = replayTickForBrowserSeconds(mediaTimeline, browserSeconds);
-      return observed <= replayEnd ? observed : null;
-    } catch {
-      return null;
+  const onPlaybackEvent = (event: PlaybackEvent) => {
+    mediaGeneration = event.generation;
+    emitReplayBenchmarkEvent(event.kind, { ...event.payload }, { generation: event.generation, actionId: event.actionId, required: true });
+    if (event.actionId && (event.kind === "seek_dispatched" || event.kind === "seek_deduped")) {
+      dispatchObservers.get(event.actionId)?.(); dispatchObservers.delete(event.actionId);
     }
-  };
-
-  const observePresentedFrame = (
-    presentedTick: ReplayTick,
-    authority: "rvfc" | "media-clock-approximate",
-  ) => {
-    const dispatched = seekState.dispatched;
-    const nextSeekState = observePresentation(
-      seekState,
-      seekState.generation,
-      dispatched?.epoch ?? null,
-      presentedTick,
-      authority,
-    );
-    const accepted = authority === "rvfc" && nextSeekState !== seekState;
-    seekState = nextSeekState;
-    const presentedTimeMs = replayTickToMilliseconds(presentedTick);
-    if (
-      (accepted || authority === "media-clock-approximate") &&
-      firstPresentedGeneration !== mediaGeneration
-    ) {
-      firstPresentedGeneration = mediaGeneration;
-      emitReplayBenchmarkEvent(
-        "first_presented_frame",
-        {
-          media_time_ms: presentedTimeMs,
-          ready_state: video.readyState,
-          presentation_clock: clockSource(),
-          authoritative: typeof video.requestVideoFrameCallback === "function",
-        },
-        { generation: mediaGeneration, required: true },
-      );
-      queueMicrotask(() => void runBenchmarkScenario());
-    }
-    const completed = awaitingPresentedSeek;
-    const benchmark = completed?.benchmark;
-    if (
-      completed &&
-      Math.abs(completed.target - presentedTick) <= presentedFrameToleranceTicks &&
-      isCurrentMediaGeneration(completed.generation, mediaGeneration) &&
-      (authority === "rvfc" ||
-        (!benchmark && typeof video.requestVideoFrameCallback !== "function")) &&
-      (!benchmark ||
-        isLatestBenchmarkAction(
-          benchmark.actionId,
-          latestBenchmarkSeekActionId,
-          benchmark.cancelled,
-        ))
-    ) {
-      awaitingPresentedSeek = undefined;
-      if (benchmark) {
-        emitReplayBenchmarkEvent(
-          "seek_presented",
-          {
-            target_ms: replayTickToMilliseconds(completed.target),
-            presented_media_time_ms: presentedTimeMs,
-            target_error_ms: replayTickDeltaToMilliseconds(presentedTick - completed.target),
-            request_to_presented_ms: performance.now() - benchmark.requestedAtMs,
-            reason: completed.reason,
-            presentation_clock: clockSource(),
-            authoritative: true,
-          },
-          {
-            generation: completed.generation,
-            actionId: benchmark.actionId,
-            required: true,
-          },
-        );
-        benchmark.settle();
-      }
-      clearSeekPresentationNudge(completed);
-      if (completed.playAfter && completed.generation === mediaGeneration) {
-        void playNativeVideo();
-      } else if (!video.paused) {
-        video.pause();
-      }
-    }
-    if (
-      accepted ||
-      (authority === "media-clock-approximate" &&
-        (seekState.dispatched === null || seekState.seekedObservation !== null))
-    ) {
-      syncPresentedTime(presentedTick);
-    }
-  };
-
-  const syncPresentedTime = (presentedTick: ReplayTick) => {
-    if (editingEndpoint()) return;
-    const range = clipRange();
-    if (range && !video.paused && presentedTick >= clipEndTick(range)) {
-      if (!clipLoopSeekPending) {
-        clipLoopSeekPending = true;
-        seekTo(clipStartTick(range), { reason: "clip-loop" });
-      }
-      return;
-    }
-    setReplayPosition(
-      (range
-        ? clamp(presentedTick, clipStartTick(range), clipEndTick(range))
-        : clamp(presentedTick, 0, replayEnd)) as ReplayTick,
-    );
-  };
-
-  const onVideoFrame: VideoFrameRequestCallback = (_now, frame) => {
-    if (disposed) return;
-    const presentedTick = replayTickForBrowserObservation(frame.mediaTime);
-    if (presentedTick !== null) observePresentedFrame(presentedTick, "rvfc");
-    sampleFrame();
-    frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
-  };
-
-  const onAnimationFrame = () => {
-    animationFrameId = undefined;
-    const presentedTick = replayTickForBrowserObservation(video.currentTime);
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      if (presentedTick !== null) {
-        observePresentedFrame(presentedTick, "media-clock-approximate");
-      }
-    }
-    sampleFrame();
-    if (!video.paused) animationFrameId = requestAnimationFrame(onAnimationFrame);
+    if (event.kind === "first_presented_frame") firstPresentedGeneration = event.generation;
+    if (event.kind === "media_canplay") canPlayGeneration = event.generation;
+    if (event.kind === "first_presented_frame" || event.kind === "media_canplay") queueMicrotask(() => void runBenchmarkScenario());
   };
 
   const updateMetrics = async () => {
-    if (typeof video.getVideoPlaybackQuality === "function") {
-      const quality = video.getVideoPlaybackQuality();
-      setDroppedFrames(quality.droppedVideoFrames);
-      setTotalFrames(quality.totalVideoFrames);
-    }
-    setHeapBytes((performance as ChromiumPerformance).memory?.usedJSHeapSize ?? null);
+    if (!controller || disposed) return;
+    syncSnapshot(controller.sampleMetrics());
     try {
-      setServerMetrics(await loadServerMetrics());
-    } catch {
-      // Diagnostics must never interrupt playback.
-    }
+      const metrics = await loadServerMetrics();
+      if (!disposed) setServerMetrics(metrics);
+    } catch { /* Server diagnostics must not interrupt playback. */ }
   };
 
-  const addDiagnostic = (kind: string, detail: string) => {
-    setDiagnosticEvents((events) => [
-      ...events.slice(-(MAX_DIAGNOSTIC_EVENTS - 1)),
-      { at: Date.now(), kind, detail },
-    ]);
-  };
-
-  const mediaErrorDescription = () => {
-    const error = video.error;
-    if (!error) return "The local preview encountered an unknown media error.";
-    const label =
-      error.code === MediaError.MEDIA_ERR_ABORTED
-        ? "Playback aborted"
-        : error.code === MediaError.MEDIA_ERR_NETWORK
-          ? "Local stream error"
-          : error.code === MediaError.MEDIA_ERR_DECODE
-            ? "Decode error"
-            : error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
-              ? "Unsupported recording"
-              : "Media error";
-    return `${label} (${error.code})${error.message ? `: ${error.message}` : ""}`;
-  };
-
-  const describeTimeRanges = (ranges: TimeRanges) => {
-    const values: string[] = [];
-    for (let index = 0; index < Math.min(ranges.length, 3); index += 1) {
-      values.push(`${ranges.start(index).toFixed(2)}-${ranges.end(index).toFixed(2)}`);
-    }
-    return values.length > 0 ? values.join(",") : "none";
-  };
-
-  const mediaSnapshot = () =>
-    `time=${video.currentTime.toFixed(3)}; ready=${video.readyState}; network=${video.networkState}; buffered=${describeTimeRanges(video.buffered)}; seekable=${describeTimeRanges(video.seekable)}`;
-
-  const clearSeekDispatchTimer = () => {
-    if (seekDispatchTimerId === undefined) return;
-    window.clearTimeout(seekDispatchTimerId);
-    seekDispatchTimerId = undefined;
-  };
-
-  const clearSeekTimeout = () => {
-    if (seekTimeoutId === undefined) return;
-    window.clearTimeout(seekTimeoutId);
-    seekTimeoutId = undefined;
-  };
-  const restoreSeekNudgeRate = () => {
-    if (seekNudgePlaybackRate === undefined) return;
-    video.playbackRate = seekNudgePlaybackRate;
-    seekNudgePlaybackRate = undefined;
-  };
-
-  const clearSeekPresentationNudge = (request?: ScheduledSeek) => {
-    if (request && seekNudgeRequest !== request) return;
-    if (seekPresentationNudgeTimerId !== undefined) {
-      window.clearTimeout(seekPresentationNudgeTimerId);
-      seekPresentationNudgeTimerId = undefined;
-    }
-    restoreSeekNudgeRate();
-    seekNudgeRequest = undefined;
-  };
-
-  const resetSeekScheduler = () => {
-    clearSeekDispatchTimer();
-    clearSeekTimeout();
-    clearSeekPresentationNudge();
-    inFlightSeek?.benchmark?.settle();
-    pendingSeek?.benchmark?.settle();
-    awaitingPresentedSeek?.benchmark?.settle();
-    inFlightSeek = undefined;
-    pendingSeek = undefined;
-    awaitingPresentedSeek = undefined;
-    latestBenchmarkSeekActionId = undefined;
-    clipLoopSeekPending = false;
-    setSeekQueueLabel("IDLE");
-  };
-
-  const handlePlayRejection = (reason?: unknown) => {
-    addDiagnostic(
-      "play-rejected",
-      `${reason instanceof Error ? reason.name : "unknown"}; mediaError=${video.error?.code ?? "none"}`,
-    );
-    // Pausing for a new endpoint edit intentionally rejects an outstanding
-    // Chromium play() promise with AbortError. A MediaError is the source of
-    // truth for an actual loading or decoding failure.
-    if (video.error !== null) attemptRecovery(mediaErrorDescription());
+  const seekTo = (target: ReplayTick, options: { reason?: SeekReason; playAfter?: boolean; onBenchmarkDispatch?: () => void } = {}): Promise<void> => {
+    if (!controller) return Promise.resolve();
+    controller.setLoopRange(clipRange());
+    const observer = replayBenchmarkObserver();
+    const actionId = observer?.nextActionId("seek");
+    if (actionId && options.onBenchmarkDispatch) dispatchObservers.set(actionId, options.onBenchmarkDispatch);
+    const operation = controller.seek(target, { reason: options.reason, playAfter: options.playAfter, actionId });
+    const preview = controller.snapshot().seek.requestedPreview;
+    if (preview !== null) setReplayPosition(preview);
+    return operation.then((result) => {
+      if (actionId) dispatchObservers.delete(actionId);
+      if (observer && (result.status === "failed" || result.status === "unavailable")) throw new Error(result.reason ?? result.status);
+    });
   };
 
   const playNativeVideo = async (propagateFailure = false) => {
-    if (!props.probe.video_url || mediaState() !== "ready") {
-      if (propagateFailure) throw new Error("media is not ready for playback");
-      return;
-    }
-    try {
-      await video.play();
-    } catch (error) {
-      handlePlayRejection(error);
-      if (propagateFailure) throw error;
-    }
+    const result = await controller.play();
+    if (propagateFailure && result.status !== "playing") throw new Error(result.reason ?? result.status);
   };
-
-  const cancelBenchmarkSeek = (
-    request: ScheduledSeek | undefined,
-    replacementTarget: ReplayTick,
-    phase: string,
-    kind = "action_cancelled_superseded",
-  ) => {
-    const benchmark = request?.benchmark;
-    if (!request || !benchmark || benchmark.cancelled) return;
-    benchmark.cancelled = true;
-    emitReplayBenchmarkEvent(
-      kind,
-      {
-        phase,
-        target_ms: replayTickToMilliseconds(request.target),
-        replacement_target_ms: replayTickToMilliseconds(replacementTarget),
-      },
-      {
-        generation: request.generation,
-        actionId: benchmark.actionId,
-        required: true,
-      },
-    );
-    benchmark.settle();
-  };
-
-  const dispatchPendingSeek = () => {
-    clearSeekDispatchTimer();
-    if (inFlightSeek || !pendingSeek || mediaState() !== "ready" || video.readyState === 0) {
-      return;
-    }
-    const delay = Math.max(0, lastSeekDispatchedAt + SEEK_INTERVAL_MS - performance.now());
-    if (delay > 0) {
-      seekDispatchTimerId = window.setTimeout(dispatchPendingSeek, delay);
-      return;
-    }
-
-    const request = pendingSeek;
-    pendingSeek = undefined;
-    const benchmark = request.benchmark;
-    const currentBrowserTick = replayTickForBrowserObservation(video.currentTime);
-    if (
-      currentBrowserTick !== null &&
-      Math.abs(currentBrowserTick - request.target) <= seekToleranceTicks
-    ) {
-      addDiagnostic(
-        "seek-deduped",
-        `${request.reason}@${replayTickToMilliseconds(request.target).toFixed(1)}`,
-      );
-      if (benchmark && !benchmark.cancelled) {
-        emitReplayBenchmarkEvent(
-          "seek_deduped",
-          {
-            target_ms: replayTickToMilliseconds(request.target),
-            actual_media_time_ms: video.currentTime * 1_000,
-            reason: request.reason,
-          },
-          { generation: request.generation, actionId: benchmark.actionId, required: true },
-        );
-      }
-      if (request.playAfter && request.generation === mediaGeneration) void playNativeVideo();
-      benchmark?.settle();
-      setSeekQueueLabel("IDLE");
-      dispatchPendingSeek();
-      return;
-    }
-
-    inFlightSeek = request;
-    seekState = dispatchSeek(seekState, request.target, presentedFrameToleranceTicks);
-    request.seekEpoch = seekState.dispatched?.epoch;
-    setSeekQueueLabel("1 ACTIVE");
-    lastSeekDispatchedAt = performance.now();
-    addDiagnostic(
-      "seek-start",
-      `${request.reason}@${replayTickToMilliseconds(request.target).toFixed(1)}`,
-    );
-    if (benchmark && !benchmark.cancelled) {
-      const targetMs = replayTickToMilliseconds(request.target);
-      const distanceMs = targetMs - benchmark.fromMs;
-      emitReplayBenchmarkEvent(
-        "seek_dispatched",
-        {
-          target_ms: targetMs,
-          from_ms: benchmark.fromMs,
-          distance_ms: distanceMs,
-          direction: distanceMs < 0 ? "backward" : "forward",
-          distance_class: Math.abs(distanceMs) <= 10_000 ? "near" : "far",
-          request_to_dispatch_ms: performance.now() - benchmark.requestedAtMs,
-          reason: request.reason,
-        },
-        { generation: request.generation, actionId: benchmark.actionId, required: true },
-      );
-    }
-    if (request.playAfter && !video.paused) video.pause();
-    if (typeof video.requestVideoFrameCallback === "function") {
-      if (frameCallbackId !== undefined) video.cancelVideoFrameCallback(frameCallbackId);
-      frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
-    }
-    try {
-      video.currentTime = browserSecondsForReplayTick(mediaTimeline, request.target);
-      benchmark?.onDispatch?.();
-    } catch (error) {
-      inFlightSeek = undefined;
-      if (benchmark && !benchmark.cancelled) {
-        emitReplayBenchmarkEvent(
-          "action_failed",
-          {
-            phase: "seek_assignment",
-            reason: String(error),
-            target_ms: replayTickToMilliseconds(request.target),
-          },
-          { generation: request.generation, actionId: benchmark.actionId, required: true },
-        );
-      }
-      benchmark?.settle();
-      addDiagnostic("seek-assignment-failed", String(error));
-      attemptRecovery("The local preview rejected a seek request.");
-      return;
-    }
-    clearSeekTimeout();
-    seekTimeoutId = window.setTimeout(() => {
-      const timedOut = inFlightSeek;
-      if (!timedOut || timedOut.generation !== mediaGeneration) return;
-      addDiagnostic(
-        "seek-timeout",
-        `${timedOut.reason}@${replayTickToMilliseconds(timedOut.target).toFixed(1)}`,
-      );
-      const timedOutBenchmark = timedOut.benchmark;
-      if (timedOutBenchmark && !timedOutBenchmark.cancelled) {
-        emitReplayBenchmarkEvent(
-          "seek_timeout",
-          { target_ms: replayTickToMilliseconds(timedOut.target), reason: timedOut.reason },
-          {
-            generation: timedOut.generation,
-            actionId: timedOutBenchmark.actionId,
-            required: true,
-          },
-        );
-      }
-      attemptRecovery(`Preview seek timed out after ${SEEK_TIMEOUT_MS} ms.`);
-    }, SEEK_TIMEOUT_MS);
-  };
-
-  const seekTo = (
-    requestedTick: ReplayTick,
-    options: {
-      reason?: SeekReason;
-      playAfter?: boolean;
-      onBenchmarkDispatch?: () => void;
-    } = {},
-  ): Promise<void> => {
-    const range = clipRange();
-    const previewTarget = (range
-      ? clamp(requestedTick, clipStartTick(range), clipEndTick(range))
-      : clamp(requestedTick, 0, replayEnd)) as ReplayTick;
-    const minimumFrame = range?.startFrame ?? (0 as FrameBoundary);
-    const maximumFrame = (range?.endFrameExclusive ?? mediaTimeline.video.frameCount) - 1;
-    const targetFrame = clamp(
-      frameBoundaryAt(previewTarget, mediaTimeline, "nearest_ties_to_even"),
-      minimumFrame,
-      maximumFrame,
-    ) as FrameBoundary;
-    const target = replayTickAtFrameBoundary(targetFrame, mediaTimeline);
-    seekState = requestPreview(seekState, previewTarget);
-    setReplayPosition(previewTarget);
-    const reason = options.reason ?? "navigation";
-    const observer = replayBenchmarkObserver();
-
-    const enqueue = (settle?: () => void) => {
-      const benchmark = observer && settle
-        ? {
-            actionId: observer.nextActionId("seek"),
-            requestedAtMs: performance.now(),
-            fromMs: replayTickToMilliseconds(
-              replayTickForBrowserObservation(video.currentTime) ?? replayPosition(),
-            ),
-            settle,
-            cancelled: false,
-            onDispatch: options.onBenchmarkDispatch,
-          }
-        : undefined;
-      const playAfter =
-        options.playAfter ??
-        ((!video.paused && seekNudgeRequest === undefined) ||
-          inFlightSeek?.playAfter === true ||
-          pendingSeek?.playAfter === true ||
-          awaitingPresentedSeek?.playAfter === true);
-      cancelBenchmarkSeek(inFlightSeek, target, "native_seek_in_flight");
-      cancelBenchmarkSeek(awaitingPresentedSeek, target, "awaiting_presented_frame");
-      if (awaitingPresentedSeek) {
-        clearSeekPresentationNudge(awaitingPresentedSeek);
-        awaitingPresentedSeek = undefined;
-      }
-      if (benchmark) {
-        latestBenchmarkSeekActionId = benchmark.actionId;
-        emitReplayBenchmarkEvent(
-          "seek_requested",
-          {
-            requested_preview_ms: replayTickToMilliseconds(previewTarget),
-            raw_requested_ms: replayTickToMilliseconds(requestedTick),
-            from_ms: benchmark.fromMs,
-            reason,
-          },
-          { generation: mediaGeneration, actionId: benchmark.actionId, required: true },
-        );
-      }
-      if (!props.probe.video_url) {
-        setSeekLatencyMs(0);
-        clipLoopSeekPending = false;
-        if (benchmark) {
-          emitReplayBenchmarkEvent(
-            "action_failed",
-            { phase: "seek_request", reason: "recording has no playback URL" },
-            { generation: mediaGeneration, actionId: benchmark.actionId, required: true },
-          );
-          benchmark.settle();
-        }
-        return;
-      }
-      if (pendingSeek) {
-        cancelBenchmarkSeek(pendingSeek, target, "pending_dispatch", "seek_pending_replaced");
-      }
-      pendingSeek = {
-        generation: mediaGeneration,
-        target,
-        reason,
-        playAfter,
-        benchmark,
-      };
-      setSeekQueueLabel(inFlightSeek ? "1 ACTIVE + LATEST" : "1 PENDING");
-      dispatchPendingSeek();
-    };
-
-    if (!observer) {
-      enqueue();
-      return UNTRACKED_SEEK_COMPLETION;
-    }
-    return new Promise<void>((settle) => enqueue(settle));
-  };
-
-  const attemptRecovery = (reason: string, manual = false) => {
-    if (!props.probe.video_url || disposed) return;
-    const now = performance.now();
-    recoveryAttempts = manual
-      ? []
-      : recoveryAttempts.filter((attempt) => now - attempt <= 10_000);
-    if (recoveryAttempts.length >= 2) {
-      resetSeekScheduler();
-      setMediaState("degraded");
-      setMediaError(reason);
-      addDiagnostic("preview-degraded", reason);
-      emitReplayBenchmarkEvent(
-        "preview_degraded",
-        { reason },
-        { generation: mediaGeneration, required: true },
-      );
-      return;
-    }
-
-    recoveryAttempts.push(now);
-    setRecoveryCount(recoveryAttempts.length);
-    recoveryTarget = replayPosition();
-    mediaGeneration = replayBenchmarkObserver()?.nextMediaGeneration() ?? mediaGeneration + 1;
-    seekState = beginSeekRecovery(seekState);
-    firstPresentedGeneration = -1;
-    canPlayGeneration = -1;
-    resetSeekScheduler();
-    video.pause();
-    setReplayPosition(recoveryTarget);
-    setMediaState("recovering");
-    setMediaError(reason);
-    addDiagnostic(
-      "recovery-start",
-      `attempt=${recoveryAttempts.length}; target=${replayTickToMilliseconds(recoveryTarget).toFixed(1)}; ${reason}; ${mediaSnapshot()}`,
-    );
-    emitReplayBenchmarkEvent(
-      "recovery_started",
-      {
-        attempt: recoveryAttempts.length,
-        target_ms: replayTickToMilliseconds(recoveryTarget),
-        reason,
-      },
-      { generation: mediaGeneration, required: true },
-    );
-    if (recoveryTimerId !== undefined) window.clearTimeout(recoveryTimerId);
-    recoveryTimerId = window.setTimeout(() => {
-      recoveryTimerId = undefined;
-      try {
-        video.load();
-      } catch (error) {
-        attemptRecovery(`Preview reload failed: ${String(error)}`);
-      }
-    }, 0);
-  };
-
-  const retryPreview = () => attemptRecovery("Manual preview retry requested.", true);
+  const retryPreview = () => controller.retry();
+  createEffect(() => { const range = clipRange(); if (controller) controller.setLoopRange(range); });
 
   const clipRangeForAnchor = (anchor: ReplayTick, anchorEvent?: ViewerEvent) =>
     defaultClipRange(anchor, mediaTimeline, events, anchorEvent);
@@ -969,7 +420,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     if (!range) return;
     clearEndpointHold();
     setEditingEndpoint(null);
-    video.pause();
+    controller.pause();
     setIsFullscreen(false);
     props.onExportClip({
       gameTimestamp: props.probe.game.timestamp,
@@ -1008,7 +459,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     if (!range) return;
     clearEndpointHold();
     setEditingEndpoint(endpoint);
-    video.pause();
+    controller.pause();
     const previewTick = clipEndpointPreviewTick(range, endpoint, mediaTimeline);
     seekTo(previewTick, { reason: "endpoint-edit" });
   };
@@ -1149,7 +600,6 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const cancelClipMode = () => {
     clearEndpointHold();
     setEditingEndpoint(null);
-    clipLoopSeekPending = false;
     setClipRange(null);
   };
 
@@ -1178,8 +628,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
   const togglePlayback = async () => {
     if (!props.probe.video_url || mediaState() !== "ready") return;
-    if (!video.paused) {
-      video.pause();
+    if (!controller.snapshot().media.paused) {
+      controller.pause();
       return;
     }
     const range = clipRange();
@@ -1239,9 +689,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     });
 
   const releaseBenchmarkMedia = async () => {
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
+    controller.dispose();
     await waitForBenchmark(100);
   };
 
@@ -1298,22 +746,22 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         const actionId = observer.nextActionId("play");
         emitReplayBenchmarkEvent(
           "play_requested",
-          { media_time_ms: video.currentTime * 1_000 },
+          { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
           { generation: mediaGeneration, actionId, required: true },
         );
         try {
-          pendingBenchmarkPlayActionId = actionId;
+          
           await playNativeVideo(true);
-          if (video.paused || video.ended) throw new Error("native playback did not start");
+          if (controller.snapshot().media.paused || controller.snapshot().media.ended) throw new Error("native playback did not start");
           emitReplayBenchmarkEvent(
             "play_complete",
-            { media_time_ms: video.currentTime * 1_000 },
+            { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
             { generation: mediaGeneration, actionId, required: true },
           );
-          pendingBenchmarkPlayActionId = undefined;
+          
           return;
         } catch (error) {
-          pendingBenchmarkPlayActionId = undefined;
+          
           if (!benchmarkAbortController.signal.aborted) failBenchmarkAction("play", actionId, error);
           throw error;
         }
@@ -1324,22 +772,22 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         const actionId = observer.nextActionId("pause");
         emitReplayBenchmarkEvent(
           "pause_requested",
-          { media_time_ms: video.currentTime * 1_000 },
+          { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
           { generation: mediaGeneration, actionId, required: true },
         );
         try {
-          pendingBenchmarkPauseActionId = actionId;
-          video.pause();
-          if (!video.paused) throw new Error("native playback did not pause");
+          
+          controller.pause();
+          if (!controller.snapshot().media.paused) throw new Error("native playback did not pause");
           emitReplayBenchmarkEvent(
             "pause_complete",
-            { media_time_ms: video.currentTime * 1_000 },
+            { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
             { generation: mediaGeneration, actionId, required: true },
           );
-          pendingBenchmarkPauseActionId = undefined;
+          
           return;
         } catch (error) {
-          pendingBenchmarkPauseActionId = undefined;
+          
           if (!benchmarkAbortController.signal.aborted) failBenchmarkAction("pause", actionId, error);
           throw error;
         }
@@ -1347,31 +795,31 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       case "stable-playback": {
         const generation = mediaGeneration;
         const startedAt = performance.now();
-        const startingMediaTime = video.currentTime;
-        const startingQuality = video.getVideoPlaybackQuality?.();
+        const startingMediaTime = controller.snapshot().media.browserSeconds;
+        const startingQuality = controller.sampleMetrics().quality;
         await waitForBenchmark(action.durationMs);
-        const mediaDeltaMs = (video.currentTime - startingMediaTime) * 1_000;
+        const mediaDeltaMs = (controller.snapshot().media.browserSeconds - startingMediaTime) * 1_000;
         if (
           generation !== mediaGeneration ||
-          video.paused ||
-          video.ended ||
+          controller.snapshot().media.paused ||
+          controller.snapshot().media.ended ||
           mediaDeltaMs < Math.min(100, action.durationMs * 0.1)
         ) {
           throw new Error("stable playback window did not advance current media");
         }
-        const quality = video.getVideoPlaybackQuality?.();
+        const quality = controller.sampleMetrics().quality;
         emitReplayBenchmarkEvent(
           "steady_playback",
           {
             duration_ms: performance.now() - startedAt,
             media_advance_ms: mediaDeltaMs,
             total_frame_delta:
-              quality && startingQuality
-                ? quality.totalVideoFrames - startingQuality.totalVideoFrames
+              quality.totalFrames !== null && startingQuality.totalFrames !== null
+                ? quality.totalFrames - startingQuality.totalFrames
                 : null,
             dropped_frame_delta:
-              quality && startingQuality
-                ? quality.droppedVideoFrames - startingQuality.droppedVideoFrames
+              quality.droppedFrames !== null && startingQuality.droppedFrames !== null
+                ? quality.droppedFrames - startingQuality.droppedFrames
                 : null,
             presentation_clock: clockSource(),
           },
@@ -1385,40 +833,40 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         const actionId = observer.nextActionId("rate");
         const generation = mediaGeneration;
         const startedAt = performance.now();
-        const startingMediaTime = video.currentTime;
-        const startingQuality = video.getVideoPlaybackQuality?.();
+        const startingMediaTime = controller.snapshot().media.browserSeconds;
+        const startingQuality = controller.sampleMetrics().quality;
         emitReplayBenchmarkEvent(
           "rate_requested",
           { rate: action.rate },
           { generation, actionId, required: true },
         );
         try {
-          if (video.paused || video.ended) throw new Error("rate action requires active playback");
-          video.playbackRate = action.rate;
+          if (controller.snapshot().media.paused || controller.snapshot().media.ended) throw new Error("rate action requires active playback");
+          controller.setRate(action.rate as PlaybackSnapshot["rate"]["selected"]);
           emitReplayBenchmarkEvent(
             "rate_applied",
-            { requested_rate: action.rate, actual_rate: video.playbackRate },
+            { requested_rate: action.rate, actual_rate: controller.snapshot().rate.applied },
             { generation, actionId, required: true },
           );
           await waitForBenchmark(action.durationMs);
           const wallSeconds = (performance.now() - startedAt) / 1_000;
-          const mediaAdvance = video.currentTime - startingMediaTime;
-          if (generation !== mediaGeneration || video.paused || video.ended || mediaAdvance <= 0) {
+          const mediaAdvance = controller.snapshot().media.browserSeconds - startingMediaTime;
+          if (generation !== mediaGeneration || controller.snapshot().media.paused || controller.snapshot().media.ended || mediaAdvance <= 0) {
             throw new Error("rate window ended without advancing current media");
           }
-          const quality = video.getVideoPlaybackQuality?.();
+          const quality = controller.sampleMetrics().quality;
           emitReplayBenchmarkEvent(
             "rate_observed",
             {
               requested_rate: action.rate,
-              actual_rate: video.playbackRate,
+              actual_rate: controller.snapshot().rate.applied,
               effective_rate: wallSeconds > 0 ? mediaAdvance / wallSeconds : null,
-              muted: video.muted,
-              volume: video.volume,
-              dropped_frames: quality?.droppedVideoFrames ?? null,
+              muted: controller.snapshot().muted,
+              volume: controller.snapshot().volume,
+              dropped_frames: quality?.droppedFrames ?? null,
               dropped_frame_delta:
-                quality && startingQuality
-                  ? quality.droppedVideoFrames - startingQuality.droppedVideoFrames
+                quality.droppedFrames !== null && startingQuality.droppedFrames !== null
+                  ? quality.droppedFrames - startingQuality.droppedFrames
                   : null,
             },
             { generation, actionId, required: true },
@@ -1502,7 +950,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         await withBenchmarkTimeout(settle, "scrub settle");
         emitReplayBenchmarkEvent(
           "scrub_settled",
-          { request_count: action.targetsMs.length, media_time_ms: video.currentTime * 1_000 },
+          { request_count: action.targetsMs.length, media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
           { generation: mediaGeneration, required: true },
         );
         return;
@@ -1530,7 +978,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       case "clip-mode":
         if (action.enabled) {
           const anchor = action.anchorMs === undefined
-            ? replayTickForBrowserObservation(video.currentTime) ?? replayPosition()
+            ? controller.snapshot().media.tick ?? replayPosition()
             : millisecondsToReplayTick(action.anchorMs, replayEnd);
           setClipRange(clipRangeForAnchor(anchor));
         } else {
@@ -1565,9 +1013,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       const scenario = observer.scenario();
       const actions = buildScenarioActions(scenario, durationMs);
       for (const action of actions) await runBenchmarkAction(action);
-      video.pause();
+      controller.pause();
       await updateMetrics();
-      const quality = video.getVideoPlaybackQuality?.();
+      const quality = controller.sampleMetrics().quality;
       const completionKind =
         scenario.kind === "warm_open" ||
         (scenario.kind === "lifecycle" && typeof scenario.duration_seconds !== "number")
@@ -1575,12 +1023,12 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
           : "scenario_completed";
       const completionPayload = {
         kind: scenario.kind,
-        media_time_ms: video.currentTime * 1_000,
-        ready_state: video.readyState,
-        network_state: video.networkState,
-        playback_rate: video.playbackRate,
-        total_frames: quality?.totalVideoFrames ?? null,
-        dropped_frames: quality?.droppedVideoFrames ?? null,
+        media_time_ms: controller.snapshot().media.browserSeconds * 1_000,
+        ready_state: controller.snapshot().media.readyState,
+        network_state: controller.snapshot().media.networkState,
+        playback_rate: controller.snapshot().rate.applied,
+        total_frames: quality?.totalFrames ?? null,
+        dropped_frames: quality?.droppedFrames ?? null,
         server_metrics: serverMetrics(),
       };
       await releaseBenchmarkMedia();
@@ -1605,7 +1053,6 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         { reason },
         { generation: mediaGeneration, required: true },
       );
-      resetSeekScheduler();
       await releaseBenchmarkMedia().catch(() => undefined);
       benchmarkScenarioFinished = true;
       await observer.complete("failed", reason);
@@ -1642,7 +1089,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       previousFullscreen = fullscreen;
       emitReplayBenchmarkEvent(
         "fullscreen_applied",
-        { enabled: fullscreen, media_time_ms: video.currentTime * 1_000 },
+        { enabled: fullscreen, media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
         { generation: mediaGeneration, required: benchmarkFullscreenEventRequired },
       );
       benchmarkFullscreenEventRequired = false;
@@ -1650,273 +1097,38 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   });
 
   onMount(() => {
-    emitReplayBenchmarkEvent(
-      "viewer_mounted",
-      {
-        duration_ms: durationMs,
-        frame_rate_numerator: mediaTimeline.video.frameRate.numerator.toString(),
-        frame_rate_denominator: mediaTimeline.video.frameRate.denominator.toString(),
-        has_video_url: Boolean(props.probe.video_url),
-      },
-      { generation: mediaGeneration, required: true },
-    );
-    const updateTime = () => {
-      if (typeof video.requestVideoFrameCallback === "function") return;
-      const observed = replayTickForBrowserObservation(video.currentTime);
-      if (observed !== null) observePresentedFrame(observed, "media-clock-approximate");
-    };
-    const onLoadStart = () =>
-      emitReplayBenchmarkEvent(
-        "media_loadstart",
-        { network_state: video.networkState },
-        { generation: mediaGeneration, required: true },
-      );
-    const onLoadedData = () =>
-      emitReplayBenchmarkEvent(
-        "media_loadeddata",
-        { ready_state: video.readyState },
-        { generation: mediaGeneration },
-      );
-    const onCanPlay = () => {
-      canPlayGeneration = mediaGeneration;
-      emitReplayBenchmarkEvent(
-        "media_canplay",
-        { ready_state: video.readyState },
-        { generation: mediaGeneration, required: true },
-      );
-      if (clockSource() === "ANIMATION FRAME" && animationFrameId === undefined) {
-        animationFrameId = requestAnimationFrame(onAnimationFrame);
+    if (!primaryVideo) return;
+    controller = createPlaybackController(createHtmlVideoPlaybackAdapter(primaryVideo), { generation: mediaGeneration, eventSink: onPlaybackEvent });
+    primaryVideo = undefined;
+    decoderDiagnostics = createPlaybackDiagnostics((value) => {
+      setDecoder(value);
+      emitReplayBenchmarkEvent("decoder_observation", { status: value.status, reason: value.reason,
+        decoder_name: value.decoder_name, platform_decoder: value.platform_decoder, runtime: value.runtime,
+        protocol: value.protocol, associated: value.associated, transitions: value.transitions },
+        { generation: value.generation ?? mediaGeneration, required: true });
+    });
+    const unsubscribe = controller.subscribe(syncSnapshot);
+    const unsubscribeFrames = controller.subscribeFrames((tick, authority) => {
+      if (authority === "rvfc") setPresentedPosition(tick);
+      if (!editingEndpoint()) {
+        const range = clipRange();
+        setReplayPosition((range ? clamp(tick, clipStartTick(range), clipEndTick(range)) : tick) as ReplayTick);
       }
-      queueMicrotask(() => void runBenchmarkScenario());
+    });
+    const openMedia = () => {
+      if (disposed || !props.probe.video_url) return;
+      void controller.open({ url: props.probe.video_url, mediaId: mediaTimeline.mediaId, timeline: mediaTimeline });
+      const initial = clipRange();
+      if (initial) { controller.setLoopRange(initial); void seekTo(clipStartTick(initial)); }
     };
-    const onLoadedMetadata = () => {
-      const recovered = mediaState() === "recovering";
-      setMediaState("ready");
-      setMediaError(null);
-      addDiagnostic(
-        recovered ? "recovery-ready" : "metadata-ready",
-        `duration=${(video.duration * 1_000).toFixed(1)}; readyState=${video.readyState}`,
-      );
-      emitReplayBenchmarkEvent(
-        recovered ? "recovery_ready" : "metadata_ready",
-        {
-          duration_ms: video.duration * 1_000,
-          ready_state: video.readyState,
-          video_width: video.videoWidth,
-          video_height: video.videoHeight,
-        },
-        { generation: mediaGeneration, required: true },
-      );
-      const range = clipRange();
-      if (recovered) {
-        seekTo(recoveryTarget, { reason: "recovery" });
-      } else if (pendingSeek) {
-        dispatchPendingSeek();
-      } else if (range) {
-        seekTo(clipStartTick(range));
-      } else {
-        updateTime();
-      }
-    };
-    const onPlay = () => {
-      setIsPlaying(true);
-      if (clockSource() === "ANIMATION FRAME" && animationFrameId === undefined) {
-        animationFrameId = requestAnimationFrame(onAnimationFrame);
-      }
-      emitReplayBenchmarkEvent(
-        "native_play",
-        { media_time_ms: video.currentTime * 1_000, rate: video.playbackRate },
-        {
-          generation: mediaGeneration,
-          actionId: pendingBenchmarkPlayActionId,
-          required: true,
-        },
-      );
-      pendingBenchmarkPlayActionId = undefined;
-    };
-    const onPause = () => {
-      clearSeekPresentationNudge();
-      setIsPlaying(false);
-      if (!editingEndpoint() && mediaState() !== "recovering") updateTime();
-      emitReplayBenchmarkEvent(
-        "native_pause",
-        { media_time_ms: video.currentTime * 1_000 },
-        {
-          generation: mediaGeneration,
-          actionId: pendingBenchmarkPauseActionId,
-          required: true,
-        },
-      );
-      pendingBenchmarkPauseActionId = undefined;
-    };
-    const onSeeking = () => {
-      if (inFlightSeek) {
-        addDiagnostic(
-          "media-seeking",
-          `${inFlightSeek.reason}@${replayTickToMilliseconds(inFlightSeek.target).toFixed(1)}`,
-        );
-        const benchmark = inFlightSeek.benchmark;
-        if (benchmark && !benchmark.cancelled) {
-          emitReplayBenchmarkEvent(
-            "native_seeking",
-            {
-              target_ms: replayTickToMilliseconds(inFlightSeek.target),
-              reason: inFlightSeek.reason,
-            },
-            {
-              generation: inFlightSeek.generation,
-              actionId: benchmark.actionId,
-              required: true,
-            },
-          );
-        }
-      }
-    };
-    const onSeeked = () => {
-      const completed = inFlightSeek;
-      if (!completed) {
-        updateTime();
-        return;
-      }
-      const observed = replayTickForBrowserObservation(video.currentTime);
-      const previousSeekState = seekState;
-      if (observed !== null && completed.seekEpoch !== undefined) {
-        seekState = observeSeeked(
-          seekState,
-          seekState.generation,
-          completed.seekEpoch,
-          observed,
-        );
-      }
-      const acceptedSeeked =
-        observed !== null &&
-        (seekState !== previousSeekState ||
-          (previousSeekState.dispatched === null &&
-            Math.abs(observed - completed.target) <= presentedFrameToleranceTicks));
-      if (!acceptedSeeked) {
-        addDiagnostic(
-          "seeked-off-target",
-          `${completed.reason}@${replayTickToMilliseconds(completed.target).toFixed(1)}; ${mediaSnapshot()}`,
-        );
-        return;
-      }
-      clipLoopSeekPending = false;
-      clearSeekTimeout();
-      inFlightSeek = undefined;
-      setSeekQueueLabel(pendingSeek ? "1 PENDING" : "IDLE");
-      if (!editingEndpoint() && typeof video.requestVideoFrameCallback !== "function") updateTime();
-      {
-        const latency = performance.now() - lastSeekDispatchedAt;
-        const benchmark = completed.benchmark;
-        setSeekLatencyMs(latency);
-        addDiagnostic(
-          "seek-complete",
-          `${completed.reason}@${replayTickToMilliseconds(completed.target).toFixed(1)} in ${latency.toFixed(0)}ms`,
-        );
-        if (benchmark && !benchmark.cancelled) {
-          emitReplayBenchmarkEvent(
-            "seeked",
-            {
-              target_ms: replayTickToMilliseconds(completed.target),
-              actual_media_time_ms: video.currentTime * 1_000,
-              request_to_seeked_ms: performance.now() - benchmark.requestedAtMs,
-              dispatch_to_seeked_ms: latency,
-              reason: completed.reason,
-            },
-            {
-              generation: completed.generation,
-              actionId: benchmark.actionId,
-              required: true,
-            },
-          );
-        }
-        if (!benchmark || !benchmark.cancelled) {
-          awaitingPresentedSeek = completed;
-        } else if (completed.playAfter && !pendingSeek) {
-          void playNativeVideo();
-        }
-        if (
-          awaitingPresentedSeek === completed &&
-          typeof video.requestVideoFrameCallback !== "function"
-        ) {
-          if (benchmark) {
-            addDiagnostic(
-              "seek-presentation-unavailable",
-              `${completed.reason}@${replayTickToMilliseconds(completed.target).toFixed(1)}`,
-            );
-            emitReplayBenchmarkEvent(
-              "action_failed",
-              {
-                phase: "seek_presentation",
-                reason: "requestVideoFrameCallback is unavailable",
-                target_ms: replayTickToMilliseconds(completed.target),
-              },
-              {
-                generation: completed.generation,
-                actionId: benchmark.actionId,
-                required: true,
-              },
-            );
-            awaitingPresentedSeek = undefined;
-            benchmark.settle();
-            if (completed.playAfter && !pendingSeek) void playNativeVideo();
-          }
-          requestAnimationFrame(() => {
-            const observed = replayTickForBrowserObservation(video.currentTime);
-            if (observed !== null) {
-              observePresentedFrame(observed, "media-clock-approximate");
-            }
-          });
-        } else if (awaitingPresentedSeek === completed && video.paused) {
-          clearSeekPresentationNudge();
-          seekNudgeRequest = completed;
-          seekNudgePlaybackRate = video.playbackRate;
-          video.playbackRate = SEEK_PRESENTATION_NUDGE_RATE;
-          void playNativeVideo().then(() => {
-            if (
-              seekNudgeRequest !== completed ||
-              awaitingPresentedSeek !== completed ||
-              video.paused
-            ) {
-              clearSeekPresentationNudge(completed);
-              return;
-            }
-            seekPresentationNudgeTimerId = window.setTimeout(() => {
-              seekPresentationNudgeTimerId = undefined;
-              if (awaitingPresentedSeek === completed && !video.paused) video.pause();
-              clearSeekPresentationNudge(completed);
-            }, SEEK_PRESENTATION_NUDGE_MS);
-          });
-        }
-      }
-      dispatchPendingSeek();
-    };
-    const onEnded = () => {
-      const range = clipRange();
-      if (!range) {
-        onPause();
-        return;
-      }
-      clipLoopSeekPending = false;
-      seekTo(clipStartTick(range), { reason: "clip-loop", playAfter: true });
-    };
-    const onError = () => {
-      const description = mediaErrorDescription();
-      addDiagnostic(
-        "media-error",
-        `${description}; ${mediaSnapshot()}`,
-      );
-      emitReplayBenchmarkEvent(
-        "media_error",
-        {
-          description,
-          code: video.error?.code ?? null,
-          message: video.error?.message ?? null,
-        },
-        { generation: mediaGeneration, required: true },
-      );
-      attemptRecovery(description);
-    };
+    // Targeted production decoder checks subscribe before opening their media.
+    // Ordinary user opening remains independent of diagnostic readiness.
+    if (replayBenchmarkObserver()) void decoderDiagnostics.ready.then(openMedia);
+    else openMedia();
+    emitReplayBenchmarkEvent("viewer_mounted", { duration_ms: durationMs,
+      frame_rate_numerator: mediaTimeline.video.frameRate.numerator.toString(),
+      frame_rate_denominator: mediaTimeline.video.frameRate.denominator.toString(), has_video_url: Boolean(props.probe.video_url) },
+      { generation: mediaGeneration, required: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
@@ -1966,89 +1178,33 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       }
     };
 
-    video.addEventListener("loadstart", onLoadStart);
-    video.addEventListener("loadeddata", onLoadedData);
-    video.addEventListener("canplay", onCanPlay);
-    video.addEventListener("loadedmetadata", onLoadedMetadata);
-    video.addEventListener("pause", onPause);
-    video.addEventListener("play", onPlay);
-    video.addEventListener("ended", onEnded);
-    video.addEventListener("seeking", onSeeking);
-    video.addEventListener("seeked", onSeeked);
-    video.addEventListener("error", onError);
     window.addEventListener("keydown", onKeyDown);
-    if (typeof video.requestVideoFrameCallback === "function") {
-      if (props.probe.video_url) frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
-    } else {
-      setClockSource("ANIMATION FRAME");
-      video.addEventListener("timeupdate", updateTime);
-      if (props.probe.video_url) animationFrameId = requestAnimationFrame(onAnimationFrame);
-    }
     metricsIntervalId = window.setInterval(() => void updateMetrics(), 1_000);
     const observer = replayBenchmarkObserver();
     if (observer && props.probe.video_url) {
       benchmarkMediaReadyTimerId = window.setTimeout(() => {
-        benchmarkMediaReadyTimerId = undefined;
         if (benchmarkScenarioStarted || benchmarkScenarioFinished || disposed) return;
         benchmarkScenarioFinished = true;
-        const reason =
-          `media readiness timed out after ${BENCHMARK_MEDIA_READY_TIMEOUT_MS} ms`;
-        observer.emit(
-          "scenario_failed",
-          { phase: "media_readiness", reason },
-          { generation: mediaGeneration, required: true },
-        );
-        void releaseBenchmarkMedia()
-          .catch(() => undefined)
-          .then(() => observer.complete("failed", reason, { phase: "media_readiness" }));
+        const reason = "media readiness timed out";
+        observer.emit("scenario_failed", { phase: "media_readiness", reason }, { generation: mediaGeneration, required: true });
+        void releaseBenchmarkMedia().then(() => observer.complete("failed", reason));
       }, BENCHMARK_MEDIA_READY_TIMEOUT_MS);
     }
-    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) onLoadedMetadata();
-    if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) onCanPlay();
-
     onCleanup(() => {
       disposed = true;
-      const observer = replayBenchmarkObserver();
       if (observer && !benchmarkScenarioFinished) {
-        const reason = "viewer disposed before benchmark scenario completion";
         benchmarkScenarioFinished = true;
-        observer.emit(
-          "scenario_failed",
-          { phase: "viewer_disposed", reason },
-          { generation: mediaGeneration, required: true },
-        );
-        void observer.complete("failed", reason, { phase: "viewer_disposed" });
+        void observer.complete("failed", "viewer disposed before benchmark completion");
       }
       benchmarkAbortController.abort();
-      emitReplayBenchmarkEvent(
-        "viewer_disposed",
-        { media_time_ms: video.currentTime * 1_000 },
-        { generation: mediaGeneration, required: true },
-      );
-      video.removeEventListener("loadstart", onLoadStart);
-      video.removeEventListener("loadeddata", onLoadedData);
-      video.removeEventListener("canplay", onCanPlay);
-      video.removeEventListener("loadedmetadata", onLoadedMetadata);
-      video.removeEventListener("pause", onPause);
-      video.removeEventListener("play", onPlay);
-      video.removeEventListener("ended", onEnded);
-      video.removeEventListener("seeking", onSeeking);
-      video.removeEventListener("seeked", onSeeked);
-      video.removeEventListener("error", onError);
-      video.removeEventListener("timeupdate", updateTime);
+      dispatchObservers.clear();
+      unsubscribe(); unsubscribeFrames(); controller.dispose();
+      decoderDiagnostics?.dispose();
       window.removeEventListener("keydown", onKeyDown);
       document.body.classList.remove("replay-fullscreen");
-      if (frameCallbackId !== undefined && typeof video.cancelVideoFrameCallback === "function") {
-        video.cancelVideoFrameCallback(frameCallbackId);
-      }
-      if (animationFrameId !== undefined) cancelAnimationFrame(animationFrameId);
       clearEndpointHold();
-      resetSeekScheduler();
-      if (recoveryTimerId !== undefined) window.clearTimeout(recoveryTimerId);
       if (metricsIntervalId !== undefined) window.clearInterval(metricsIntervalId);
-      if (benchmarkMediaReadyTimerId !== undefined) {
-        window.clearTimeout(benchmarkMediaReadyTimerId);
-      }
+      if (benchmarkMediaReadyTimerId !== undefined) window.clearTimeout(benchmarkMediaReadyTimerId);
     });
   });
 
@@ -2096,8 +1252,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             data-fullscreen={isFullscreen()}
           >
             <video
-              ref={video}
-              src={props.probe.video_url || undefined}
+              ref={(element) => { primaryVideo = element; }}
               playsinline
               preload="auto"
               aria-label={`${props.probe.game.champion} replay video`}
@@ -2140,6 +1295,9 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 </Show>
               </div>
             </Show>
+            <Show when={playback()?.activationRequired}>
+              <button type="button" onClick={() => void controller.play()}>Click to resume playback</button>
+            </Show>
             <Show when={!isFullscreen()}>
               <div class={styles.videoClock}>
                 <span>{beforeGameStart() ? "PRE-GAME" : "GAME TIME"}</span>
@@ -2153,6 +1311,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 events={visibleEvents()}
                 mediaTimeline={mediaTimeline}
                 replayTick={replayPosition()}
+                presentedTick={presentedPosition()}
                 gameTick={currentGameTick()}
                 beforeGameStart={beforeGameStart()}
                 currentKda={currentKda()}
@@ -2359,13 +1518,17 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
         </section>
         </Show>
 
-        <Show when={import.meta.env.DEV && !isFullscreen()}>
+        <Show when={!isFullscreen()}>
           <details class={styles.diagnostics}>
             <summary>
               <span>PLAYBACK DIAGNOSTICS</span>
               <strong>{presentedFps().toFixed(1)} FPS</strong>
             </summary>
             <dl>
+              <div>
+                <dt>DECODER</dt>
+                <dd title={decoder()?.reason}>{decoder()?.status ?? "unknown"}: {decoder()?.decoder_name ?? "unobserved"}</dd>
+              </div>
               <div>
                 <dt>CLOCK</dt>
                 <dd>{clockSource()}</dd>

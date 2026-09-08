@@ -1803,7 +1803,7 @@
       "description": "Move browser-media lifecycle, authoritative presented-frame timing, bounded seeking, recovery, playback rate, basic audio control, and decoder-path diagnostics behind one narrow HTML-video-backed boundary and expose the required replay speed ladder without remounting or replacing the WebView decoder.",
       "priority": "P0",
       "area": "playback",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-REPLAY",
       "dependencies": [
         "QB-REPLAY-006",

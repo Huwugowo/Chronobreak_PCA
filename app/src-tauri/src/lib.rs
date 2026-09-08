@@ -5,6 +5,7 @@ mod config;
 mod ddragon;
 mod library;
 mod music;
+mod playback_diagnostics;
 mod playback_server;
 
 use std::fs;
@@ -946,6 +947,9 @@ pub fn run() {
         get_ddragon_status,
         resolve_item_name,
         get_playback_server_metrics,
+        playback_diagnostics::open_playback_diagnostics,
+        playback_diagnostics::bind_playback_diagnostics,
+        playback_diagnostics::close_playback_diagnostics,
         get_replay_benchmark_session,
         record_replay_benchmark_events,
         get_replay_benchmark_queue_stats,
@@ -975,6 +979,9 @@ pub fn run() {
         get_ddragon_status,
         resolve_item_name,
         get_playback_server_metrics,
+        playback_diagnostics::open_playback_diagnostics,
+        playback_diagnostics::bind_playback_diagnostics,
+        playback_diagnostics::close_playback_diagnostics,
         get_replay_benchmark_session
     ]);
 
