@@ -1,21 +1,53 @@
 # QB-REPLAY-009 execution checkpoint
 
 Feature: `QB-REPLAY-009`
-ExecPlan: `docs/exec-plans/qb-replay-009-playback-boundary-and-speed-ladder-v2.md`
+ExecPlan: `docs/exec-plans/qb-replay-009-playback-boundary-and-speed-ladder-v3.md`
 Updated: 2026-09-09
 
 ## Current milestone
 
-M4 implementation and production checks are complete. M5 automated, production
-build, targeted functional and resource checks are obtained. Feature remains ready / in-progress because required audible/A/V
-observations are unreported. M3 commit `0fe1f4f` remains immutable.
+M5 completion gates on `qb-replay-009-wip` over `78da82b`: controlled production
+hardware-decoder acceptance is satisfied under the user's approved v3 clarification.
+The ordinary production source is exactly restored and its fresh build passed.
+M1-M5 functional/resource evidence and corrective audit r2 remain settled.
+Only human audible/A-V observations remain. At the user's request, they are
+deferred / not performed because no suitable audio fixture is currently available.
+The requirement remains unchanged; feature stays ready / in-progress.
 
 ## Active unit
 
-Obtain the required listening observations before making the feature completion
-decision. Implementation and targeted automated/production work are complete.
+No implementation or automated measurement remains. The human listening/A-V gate
+is deferred as recorded below. No further decoder experiment or runtime mechanism
+is needed; normal current-load status remains Unknown without trustworthy provenance.
 
 ## Completed
+
+- 2026-09-09 approved decoder clarification: self-contained reviewed v3 linked;
+  v1/v2 preserved. Canonical criteria 3/4 and decoder verification explicitly allow
+  controlled production proof while preserving conservative runtime status.
+- Controlled `...-controlled-decoder-20260909-r2` proves the hardware-normal path
+  for the canonical H.264 fixture/device/runtime/load: one fresh profile, marked
+  primary video and load; D3D11VideoDecoder/platform=true; RVFC advancement; no
+  loss, competing load, error, recovery or contradictory decoder observation.
+  Detailed result: `docs/performance/evidence/qb-replay-009-controlled-decoder-20260909.md`.
+- Temporary acceptance taps detached byte-for-byte; ordinary release build passed,
+  SHA256 `8c7e6f72dc500f675d72f9fd8f7f7fca532ea86f2a5f4384d99d3ad4a4482840`.
+  No permanent product code, benchmark tool/schema, tracing or runtime overhead added.
+
+
+- 2026-09-09 audit corrections over `78da82b`: CDP properties are explicitly
+  player-scoped and cannot establish current-load decoder status. Exact load URL
+  and marker still establish player association, but path stays Unknown with no
+  current decoder name/platform value. No arrival-order rule, timer, retry or
+  remount is used. Regression covers `kLoad(g2)` delivered before stale decoder(g1),
+  load-before-bind, repeated URLs and replayed player discovery. Earlier hardware
+  and software path claims from this channel are withdrawn, including initial
+  acquisition: the protocol has no property-to-load identity.
+- Shared audio controls render `snapshot.media.muted/volume`; snapshot reads the
+  element once, while top-level mute/volume retain recovery intent. Volume input
+  resets its native thumb to the applied value even when that value is unchanged.
+  Rendered controller/HTML-adapter tests cover ignored mute and ignored, rejected,
+  transformed volume, repeated rejected input and intent restored on recovery.
 
 - M4: shared six-rate/mute/volume controls in both layouts; selected/applied/
   observed rate and independent audio intent; finite verification, fallback and
@@ -30,12 +62,13 @@ decision. Implementation and targeted automated/production work are complete.
   editing; existing exported-clip playback and source preservation. Temporary
   probes are detached. Analyzer limitations are explicitly retained below.
 
-- 2026-09-09 independent M3 finding fixed at `kLoad`: candidate properties are
+- Superseded attempt, not an ownership proof: 2026-09-09 M3 change at `kLoad`: candidate properties were
   cleared before a new URL is reconciled. Candidates remain across bindings.
   Reused-player g1 -> bind g2 -> load g2 stays unknown until fresh decoder and
   platform properties arrive; repeated identical-URL loads also invalidate.
   A separate regression preserves fresh load-before-bind evidence. The earlier
-  generation's hardware evidence is no longer reusable for a later load.
+  generation's hardware evidence could still cross a load under reordered delivery;
+  the new correction above supersedes this conclusion and its decoder claims.
 
 - M3 audit correction on `qb-replay-009-wip` over `1900c75`: public play operation
   tokens and nudge lifetime are independent. `cancelPlay` settles superseded
@@ -96,21 +129,153 @@ decision. Implementation and targeted automated/production work are complete.
 
 ## In flight
 
-No product edits or production runs remain active. The required human listening
-observations are the only unfinished completion work.
-Ignored M4/M5 procedures and results remain available for focused follow-up;
-`ViewerScreen.tsx` and final builds contain no probe imports/calls.
+None. Temporary raw decoder/frontend/adapter taps are detached; all three files
+match their session-start bytes. The ordinary executable was rebuilt successfully.
+Ignored temporary patch, source snapshots and raw evidence are retained for review.
+No permanent product or benchmark code was added by this resumed unit.
 
 ## Remaining
 
-- Obtain audible behavior at each selected rate, mute/volume and failed-rate/
-  fallback sound behavior, plus viewer/export A/V synchronization. Property
-  assignments and AAC stream presence do not establish these observations.
-- After those observations, make the completion decision and validate canonical
-  state. Do not repeat accepted 008/012 campaigns, completed M4 checks or
-  analyzer-only rejected procedures.
+**2026-09-09: deferred / not performed (`not run`), not PASS.** The user reports
+that no suitable audio fixture is currently available and explicitly requests
+postponing the remaining human audible/A-V validation. All observations below
+remain required; none is completed or waived. Existing AAC, rate/control and
+video-presentation evidence cannot establish audible output or A/V synchronization.
+
+Retain this checklist for a later human session with a suitable audible recording
+and exported clip containing recognizable paired visual/audio cues. Use the
+ordinary release executable. The existing dedicated fixture and optional ignored
+`build/perf/qb-replay-009/manual-audio.ps1` launcher do not establish fixture
+suitability. Do not run this checklist now, create generic import/test-fixture
+infrastructure, or rerun automated M1-M5 or decoder work for this deferred gate.
+
+1. Play a known audible section at `0.25x`, `0.5x`, `1x`, `2x`, `4x`, `8x`, about
+   10 seconds per selection (seek back as needed). For each, report audible / silent /
+   distorted and the displayed applied rate or limitation. Rate property evidence
+   already exists; the missing evidence is what is heard.
+2. At 1x, test mute/unmute and volume `100% -> 25% -> 0% -> 100%` in windowed and
+   fullscreen layouts. Report whether mute/zero are silent, 25% is quieter and
+   unmute/100% restores sound without an unexpected jump. Check sound continuity
+   when entering/exiting fullscreen.
+3. Select 8x once. If it limits/falls back, report sound before and after fallback,
+   displayed fallback rate and approximate recovery time. Then choose 1x and report
+   whether normal sound resumes. If 8x works and no fallback occurs, report
+   `fallback not triggered`; do not repeat attempts to manufacture a failure and
+   do not count unobserved fallback audio as passed.
+4. At 1x, compare a recognizable visible/audible cue early and late in the viewer,
+   then in its existing exported clip. Report in sync / audio leads / audio lags,
+   approximate offset if perceptible, and whether it grows. A test pattern/tone
+   without a recognizable paired cue is `not assessable`, not a pass; identify a
+   suitable existing representative clip instead. No new export benchmark is needed.
+
+Report the recording/clip name, audio output device, and the four results. Missing
+or not-assessable observations remain open. After the report, reconcile acceptance
+and canonical completion without rerunning unaffected technical checks.
 
 ## Verification
+
+2026-09-09 manual gate: **deferred / not performed (`not run`), not PASS**, at the
+user's request because no suitable audio fixture is currently available. This
+covers human rate/mute/volume/layout/fallback audibility and viewer/export A/V
+observations. Automated and controlled production results below remain valid;
+this deferral changes neither acceptance criteria nor required verification.
+
+Documentation-only deferral checks passed: canonical validation of 60 roadmap
+items and six plan/checkpoint pairs, plus scoped whitespace checks. Only this
+feature's concise evidence changed in the roadmap; all criteria, verification,
+lifecycle fields, other features, product code, plans and the controlled evidence
+report are unchanged from this deferral session's start. No app test, build or
+production measurement was invalidated or rerun.
+
+Final canonical validation passed for 60 roadmap items and six plan/checkpoint
+pairs. Session-start comparison confirms only QB-REPLAY-009 changed in the
+roadmap, the immutable v2 hash is unchanged, and all temporarily touched product
+sources match their original bytes. Ordinary assets contain no capture/audit tap
+markers. Scoped diff/new-document whitespace checks passed. The optional manual
+launcher passed PowerShell parsing only; it has not been launched and supplies no
+human evidence. Existing unrelated `.agents`/`.codex` changes remain preserved.
+
+2026-09-09 final controlled result and limitations are recorded in
+[`qb-replay-009-controlled-decoder-20260909.md`](../performance/evidence/qb-replay-009-controlled-decoder-20260909.md).
+The native transcript has ten contiguous records/4233 bytes, one player and one
+load; the ready-before-source dependency is explicit, while native/frontend clock
+estimates are not used to invent event ordering. `playerCreated` exposes no node
+ID in this capture: association uses the exact unique URL plus the independent
+marked-singleton source observation, not an unobserved DOM.describeNode result.
+All eight focused diagnostic tests passed, including native queue/loss coverage;
+benchmark and detached ordinary production builds passed TypeScript/Vite/Tauri.
+The ignored direct isolation verifier passed. Runner/analyzer accepted the normal
+play_pause scenario (15006.5691 ms, 67 records, zero drops, preserved hashes).
+Runtime remained Unknown; this independent proof does not restore historical
+player-property-to-generation claims or label recovered generations.
+
+Verification limitations/failures retained: preflight caught the fresh profile's
+wrong cache root before launch; corrected preflight passed. Sandbox r1 created no
+WebView/frontend, timed out after 30 seconds and supplies no decoder evidence.
+R2 was the sole completed capture after correcting Windows execution access.
+Post-exit WMI supplied no live command lines; launch configuration/environment and
+actual D3D11 selection are separately recorded. Temporary frontend field typo was
+fixed before building. A formatting attempt selected Rust 2021 for this Rust 2024
+source and did not run; detachment restores the already-verified source bytes.
+The local logging hook required escalation for focused test logs. The optional
+attachment review agent failed due service quota; root reviewed the patch, fixed
+its close-marker drain race before r2, and checked the complete raw assertions.
+No required technical check is being waived; no audible/A-V observation is invented.
+
+2026-09-09 task A inspected the existing
+`results/qb-replay-009-audit-fixes-20260909-r2` before any rerun. All eight
+`audit_direct_check` assertions passed: initial associated decoder stays Unknown,
+native mute/volume controls, controlled ignored mute, repeated rejected and
+transformed volume input, fullscreen applied state, same-element recovery restoring
+intent with Unknown decoder, and disposal with all owned counts zero. Both initial
+and recovered current decoder name/platform fields remained absent; none of the
+observed snapshots claimed hardware/software confirmation. These injected audio
+faults prove truthful controls, not a spontaneous WebView failure or audible output.
+
+The app completed in 6099.4373 ms; 87 accepted event records, zero drops. Collection
+completed with exit code 0, no forced termination/timeouts, reconciled telemetry
+and unchanged fixture/source hashes. Instrumented binary SHA256:
+`4c56270dcbb09a4023cd595135e0494b76c46b83e34d3475053e1330e88643a4`.
+The analyzer rejected only missing `pause_requested` / `pause_complete`: the
+tagged direct procedure does not run the ordinary `play_pause` scenario's two
+transition cycles (`tools/replay_benchmark/analyze.py`, scenario evidence gate).
+Its early rejection is not analyzer acceptance; direct assertions, terminal,
+collection and hashes were inspected separately. Retain the failed analyzer files
+unchanged. The v2 plan explicitly permits direct documented validation, so the
+smallest validation correction is this separate disposition, with no analyzer or
+product change and no r3. `audit_probe.ts` remains ignored and detached from
+`ViewerScreen.tsx`.
+
+Task A final `npm.cmd run desktop:build --prefix app` passed, including TypeScript,
+Vite and optimized Tauri compilation. Ordinary executable SHA256:
+`a04f99db856e644aac0bfdfe8840bccbd861b3c97085c64e240266b5b5a13097`.
+Source and built assets contain none of `runAuditProbe`, `audit_direct_check`,
+`Controlled rejected volume`, or `direct_audit`. No product code changed in this
+resume, and the already-passed focused frontend/Rust/fmt/Clippy results remain
+applicable. The linker emitted its Windows import-library creation warning;
+the build exited 0.
+
+Task A/B canonical validation passed for 60 roadmap items and six plan/checkpoint
+pairs. This resume changes only the checkpoint and the 009 evidence entry;
+acceptance criteria, verification definitions and immutable v2 design are preserved.
+The v2 hash still matches the session-start value. A broader comparison against
+HEAD could not prove session preservation because four other roadmap entries
+already differ in the shared working tree (`QB-CLIP-004`, `QB-REPLAY-016`,
+`EPIC-AUDIO`, `QB-AUDIO-001`); they were not edited by this task. Within 009, only
+evidence differs from HEAD. Scoped whitespace checks passed; unrelated changes
+remain intact.
+
+2026-09-09 audit unit: the focused frontend command `npm.cmd run test --prefix app
+-- PlaybackControls.test.tsx playbackController.test.ts htmlVideoPlaybackAdapter.test.ts
+ViewerScreen.test.tsx` passed 52 tests / 4 files; log
+`.codex/logs/command-20260909-110029.log`. `npm.cmd run check --prefix app` passed.
+`cargo test --manifest-path app/src-tauri/Cargo.toml playback_diagnostics` passed
+8 tests; log `command-20260909-110202.log`. Rust fmt check passed. Clippy found the
+two now-unconstructible positive status variants after removing unproven decoder
+promotion; they were removed from this native producer. Clippy rerun passed
+(`.codex/logs/command-20260909-110429.log`). The first frontend attempt was blocked by
+the logging hook's protected `.codex/logs` write and then passed with escalation;
+no configuration changed.
 
 Final canonical validation passed for 60 roadmap items and six plan/checkpoint
 pairs on 2026-09-09. Scoped whitespace checks passed; the immutable v2 plan and
@@ -415,6 +580,133 @@ playback success or evidence of an actual corrupt-media/driver fault.
 
 ## Decisions
 
+### 2026-09-09 user-directed manual verification deferral
+
+Postpone only the remaining human audible/A-V observations because no suitable
+audio fixture is currently available. Record them as deferred / not performed;
+do not infer PASS, weaken the requirement, or mark QB-REPLAY-009 done. The current
+checkpoint and roadmap identify no remaining engineering task. Stop at this gate;
+preserve completed automated/production evidence and immutable plans. No generic
+import/test-fixture infrastructure or repeat M1-M5/corrective r2 campaign is needed.
+
+### 2026-09-09 adopted user clarification
+
+The user explicitly adopted the prior recommendation: hardware remains the normal
+production requirement; Unknown never proves it; runtime decoder status stays
+conservative without current-load provenance. Continuous identification of every
+reload/recovery is not required. Controlled safely attributed production evidence
+may establish the hardware path. No tracing/ETW/polling/timing heuristic or new
+hot-path/runtime overhead is justified for proof. The requirement change is
+recorded in canonical criteria 3/4 and verification. Reviewed self-contained v3
+supersedes v2's decoder prescription; v1/v2 are preserved unchanged. Read-only plan
+review found no material issue. Implementation and measurement are authorized by
+the same user request; this is a resumed execution, not a new planning-only pass.
+Historical proposals and withdrawn claims below retain their original context;
+this adoption supersedes their not-yet-adopted wording.
+
+
+### 2026-09-09 task B: decoder proof decision
+
+**Decision: no new runtime decoder mechanism is justified.** Preserve Unknown
+and absent current decoder name/platform fields. Do not add tracing, ETW,
+per-frame instrumentation, polling, CDP refresh traffic, settling delays or
+same-player heuristics. Investigation used the current implementation, current
+official CDP/WebView2 contracts and Chromium source; it did not execute a new
+decoder experiment. No alternative's overhead was measured, so none is claimed
+negligible. This is the bounded stopping point for B.
+
+The source provides two different facts: `kLoad.url` plus the primary DOM marker
+associates a player; decoder properties identify a decoder for that player.
+Neither `PlayerProperty` nor the containing property event supplies a load ID,
+generation or property timestamp. Chronological order inside an events batch
+does not order that batch against a separate property message. `playerCreated`
+can replay active-player discovery. Awaiting enable or describing the DOM node
+does not create missing decoder provenance. See the
+[Media protocol](https://chromedevtools.github.io/devtools-protocol/tot/Media/).
+Chromium defines decoder name and hardware flag separately from the document
+`kFrameUrl`; the latter is not the media URL. See
+[media properties](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/media/base/media_log_properties.h).
+
+The existing implementation already has five Media subscriptions, initial
+`Browser.getVersion` / `Media.enable`, a DOM description per candidate needing a
+marker, and `Media.disable` on close (`playback_diagnostics/native.rs`). It also
+has a 100 ms worker tick, a 16-event queue, 64 KiB queued payload limit, eight
+concurrent candidates and 64 properties per candidate. There is no per-frame CDP
+request. These are existing costs, not evidence of negligible isolated overhead;
+this task adds none. `reconcile` in `playback_diagnostics.rs` correctly separates
+association from decoder provenance.
+
+| Candidate | What it proves | Correlation to this load | Runtime cost | False-positive risk | Sufficient? |
+| --- | --- | --- | --- | --- | --- |
+| Existing CDP Media properties + exact load URL/DOM marker | Player association and player-scoped decoder declaration | No property-to-load key across opens/recovery | Existing bounded subscription/worker described above | Stale decoder properties can be paired with a later load | No current-load confirmation |
+| HTML capability/quality signals, MediaCapabilities, CDP SystemInfo | Format/acceleration capability predictions or playback progress | No selected-decoder identity for this load | Small one-shot query or existing metrics; no benefit to polling | Capable GPU or smooth playback can coexist with software decode | No |
+| Fresh single-load production acceptance capture using CDP Media | That the selected hardware decoder was observed for the sole controlled load | Isolation must independently exclude every other load for the matched primary player | Short bounded raw-event retention only in an acceptance build; no added normal cost; collection cost unmeasured | Low only when all isolation conditions below are demonstrated; otherwise unproven | Conditionally sufficient for that observed load/interval, not obtained here or transferable to a reload |
+| CDP Tracing / Perfetto media events | Internal pipeline/decoder activity | No supported complete join from decoder trace identity to this element's load found | Trace production, buffers and flush/I/O; extra collection cost unmeasured | Temporal/track guesses can attribute another pipeline or decoder initialization | No supported current-load proof found; no trace experiment justified |
+| ETW / GPUView / GPU engine activity | GPU/kernel/video work, sometimes attributable to a process/context | No documented join to the HTML load/generation | System collection and ETL I/O; unmeasured here | Other video, compositor or driver work; decoder creation is not proof of this stream | No |
+| WebView2 CDP host API or DevTools Media UI | Access to the same protocol/diagnostic data | Adds no missing load key | Method/event transport or open debugging UI | Same provenance limitation | No independent proof source |
+
+Capability claims follow [Media Capabilities](https://w3c.github.io/media-capabilities/)
+and [SystemInfo](https://chromedevtools.github.io/devtools-protocol/tot/SystemInfo/).
+[Tracing](https://chromedevtools.github.io/devtools-protocol/tot/Tracing/) supports
+bounded start/end, category filters, trace buffers/streams and loss reporting; its
+public contract does not provide the required join. Internal decoder trace events
+are implementation details, as illustrated by Chromium's
+[decoder stream](https://chromium.googlesource.com/chromium/src/+/master/media/filters/decoder_stream.cc).
+[GPUView](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/using-gpuview)
+collects system video/kernel events, not HTML load ownership.
+[WebView2's CDP integration](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/chromium-devtools-protocol)
+provides protocol access, not additional decoder semantics. CDP Media remains
+experimental and [tip-of-tree compatibility is not guaranteed](https://chromedevtools.github.io/devtools-protocol/);
+source inspection is not proof that a specific Edge build emits every trace field.
+
+The conditional acceptance candidate is an inference from controlled isolation,
+not a new API guarantee. It would use a fresh app/WebView context and the ordinary
+primary video, subscription completed before its first source assignment, a
+recorded single controller/adapter load with unique session URL, matching player
+and DOM marker, and a reviewed hardware decoder name (expected Windows
+`D3D11VideoDecoder`) plus `kIsPlatformVideoDecoder=true`. Retain complete
+bounded lifecycle/raw events and presentation evidence; exclude pre-existing or
+ambiguous players, competing loads, source changes, reloads, recovery, navigation,
+event loss and contradictory decoder observations from that interval. An unknown
+decoder name/wrapper or missing data remains inconclusive. This proves hardware
+use during that controlled load, not a label valid indefinitely or after reload.
+No replacement video/decoder enters normal replay to make isolation true.
+
+Existing r2 does not satisfy that candidate: its decoder snapshots intentionally
+omit raw names/platform values; it exercises recovery; it does not retain a full
+raw CDP/lifecycle isolation transcript. Earlier derived D3D11 confirmations do not
+retroactively acquire these prerequisites. Their withdrawal remains in force.
+
+Requirement reading and smallest honest adjustment (recommendation, **not an
+adopted acceptance change or passing result**):
+
+- Canonical acceptance criterion 3 asks for production validation of the expected
+  hardware path; it does not explicitly require a permanent per-generation
+  runtime decoder identity. Criterion 4 still requires hardware as normal path
+  and software as diagnosed compatibility fallback. Neither permits Unknown to
+  count as hardware-normal performance evidence. Criteria 5/8 and manual
+  verification permit truthful stale/unknown diagnostic outcomes.
+- The v2 plan's `Decoder identity and canonical media` prescription to promote
+  matched player properties, retain decoder transitions, and prove the path
+  through recovery assumes more provenance than the protocol supplies. That
+  positive-confirmation claim must change. Preserve the immutable v2 plan;
+  any adopted replacement design must explicitly supersede that portion rather
+  than silently editing it or restoring the invalid heuristic.
+- Proposed canonical clarification for criteria 3/4 and decoder verification:
+  **Hardware remains the required normal path for canonical supported media.
+  Demonstrate it with load-correlated, controlled production acceptance evidence
+  for the recorded fixture/runtime/device and observed interval. Runtime decoder
+  identity is best-effort and remains Unknown whenever current-load provenance
+  is absent, including after reload/recovery. Diagnose a proven software fallback;
+  Unknown is neither software proof nor hardware confirmation. Neither software
+  nor Unknown supports hardware-normal performance claims. Permanent decoder
+  identity and guaranteed detection of every fallback are not required.**
+- Recovery acceptance would prove evidence invalidation and truthful Unknown,
+  while hardware-path acceptance would use the isolated load above. No existing
+  hardware gate is marked passed. If that bounded capture cannot demonstrate its
+  prerequisites, stop with hardware unverified; do not progress to tracing/ETW or
+  an expanding series of probes merely to recover HardwareConfirmed.
+
 - M5 combined after blocks use the existing App viewer-cycle event from temporary
   ignored instrumentation, not a new runner/schema. M1's isolated lifecycle/layout/
   scrub runs remain the shared before reference; they are not an exact combined
@@ -463,16 +755,18 @@ playback success or evidence of an actual corrupt-media/driver fault.
 
 ## Blockers
 
-Required audible output/A/V observation has not been reported by a human. The
-feature remains non-done. No product blocker is established by the targeted
-functional evidence. Retain direct-run and presentation-before-seeked analyzer
-rejections as evidence limitations, not passes or playback defects.
+Only required human audible output and viewer/export A/V observations remain,
+deferred / not performed because no suitable audio fixture is currently available.
+Hardware-normal evidence is obtained for the controlled canonical
+production load; arbitrary-load provenance is not required under approved v3.
+No unresolved product defect or technical acceptance blocker is established.
+Keep non-done until the remaining human evidence is reported and assessed.
 
 ## Next action
 
-Obtain a listening pass on the existing sentinel fixture: 0.25x/0.5x/1x/2x/4x/8x, mute and volume, failed-rate/fallback,
-and viewer/export A/V. Record the actual observed sound or runtime limitation;
-keep unobserved cases non-passing. Reuse the retained M4/M5 procedures only for
-missing observations, without redoing capability/resource work. If those checks
-satisfy acceptance, update canonical status and validate it. Preserve `0fe1f4f`,
-the immutable v2 plan, and unrelated `.agents`/`.codex` changes.
+Stop engineering work here. Resume the deferred checklist under Remaining when
+a suitable audio fixture and human verification are available. If those checks
+pass, record the actual results and reconcile final completion/canonical validation.
+If they reveal a concrete defect, investigate only that dependency cone. Do not
+build generic fixture/import infrastructure or rerun controlled decoder capture,
+corrective r2 or completed M1-M5 work merely for confidence.

@@ -34,13 +34,20 @@ WebView2 Media diagnostic associates its exact per-generation loopback load URL
 and checks that marker when a DOM node ID is available. Binding generations are
 monotonic within each diagnostic owner; equal conflicting bindings are rejected.
 Recovery rotates the session query token on the same element and invalidates old
-decoder evidence. Candidate decoder properties are scoped to each `kLoad` and
-cleared before reconciling its URL, including when WebMediaPlayer reuses a player
-ID. Candidates remain available across binding/load races, so fresh properties
-received after a load but before its binding retain their correct ownership.
+decoder evidence. CDP decoder properties have only player scope: there is no load
+identity on a property, and delivery can cross `kLoad` boundaries. `playerCreated`
+can also report an already active player. The monitor retains these bounded
+player observations separately and never promotes them to current-load evidence.
+Even an exact URL/marker association reports `unknown`, with current decoder name
+and platform flag absent. A hardware/software claim requires a source that can
+prove load ownership; the current CDP source cannot satisfy that requirement.
 Disposal closes the native owner and removes its subscriptions.
-Only associated `D3D11VideoDecoder` plus the platform flag proves the supported
-Windows hardware path; software and unknown outcomes remain explicit.
+Hardware remains the required normal production path. Acceptance can establish
+it through controlled production load isolation with raw decoder and presentation
+evidence; that conclusion is scoped to the observed fixture/runtime/device/load.
+It does not change runtime Unknown or label arbitrary reload/recovery generations.
+Continuous decoder identification is not required where trustworthy provenance is
+absent. No additional normal runtime observer is introduced for acceptance proof.
 
 Shared windowed/fullscreen controls expose 0.25x, 0.5x, 1x, 2x, 4x and 8x,
 plus independent mute and volume intent. The controller keeps selected rate,
@@ -53,7 +60,11 @@ Failure selects the last verified usable rate or 1x, with at most one reload if
 fallback also fails; recovery retains the original selection and limitation
 without automatically reapplying the failed rate. Rate changes never emulate
 speed with seeks. Audio property failures are diagnosed separately from user mute
-and zero volume; successful property assignments do not prove audible output.
+and zero volume. Snapshot `muted`/`volume` retain recovery intent; the single
+snapshot `media` observation supplies applied mute/volume to both control layouts.
+Rejected or transformed requests display the element's adopted values, including
+resetting the native volume thumb after a no-op request. Successful property
+assignments do not prove audible output.
 
 `requestVideoFrameCallback` is the presented-frame authority. Requested, dispatched, seeked, and presented values retain distinct generation/epoch state. Timeline markers, seeks, event cards, champion filters, and recorded player state use mapped replay ticks from the same payload; unavailable/before/after-media observations are explicit. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
 

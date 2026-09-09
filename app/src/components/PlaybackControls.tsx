@@ -3,7 +3,9 @@ import { PLAYBACK_RATES, type PlaybackRate, type PlaybackSnapshot } from "../pla
 import styles from "./PlaybackControls.module.css";
 
 export type PlaybackControlsProps = {
-  state: Pick<PlaybackSnapshot, "rate" | "muted" | "volume" | "audio" | "desiredPlaying" | "readiness"> | undefined;
+  state: (Pick<PlaybackSnapshot, "rate" | "audio" | "desiredPlaying" | "readiness"> & {
+    media: Pick<PlaybackSnapshot["media"], "muted" | "volume">;
+  }) | undefined;
   onRate: (rate: PlaybackRate) => void;
   onMuted: (muted: boolean) => void;
   onVolume: (volume: number) => void;
@@ -12,6 +14,8 @@ export type PlaybackControlsProps = {
 
 export default function PlaybackControls(props: PlaybackControlsProps) {
   const rate = () => props.state?.rate;
+  const muted = () => props.state?.media.muted ?? false;
+  const volumePercent = () => Math.round((props.state?.media.volume ?? 1) * 100);
   const unavailable = () => !props.state || props.state.readiness === "closed" || props.state.readiness === "disposed";
   const rateDescription = () => {
     const value = rate();
@@ -36,15 +40,20 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
           <For each={PLAYBACK_RATES}>{(value) => <option value={value}>{value}x</option>}</For>
         </select>
       </label>
-      <button type="button" aria-label={props.state?.muted ? "Unmute replay" : "Mute replay"}
-        aria-pressed={props.state?.muted ?? false} disabled={unavailable()}
-        onClick={() => props.onMuted(!props.state?.muted)}>{props.state?.muted ? "Unmute" : "Mute"}</button>
+      <button type="button" aria-label={muted() ? "Unmute replay" : "Mute replay"}
+        aria-pressed={muted()} disabled={unavailable()}
+        onClick={() => props.onMuted(!muted())}>{muted() ? "Unmute" : "Mute"}</button>
       <label class={styles.volume}>Volume
         <input type="range" min="0" max="100" step="1" aria-label="Replay volume"
-          aria-valuetext={`${Math.round((props.state?.volume ?? 1) * 100)}%`}
-          value={Math.round((props.state?.volume ?? 1) * 100)} disabled={unavailable()}
-          onInput={(event) => props.onVolume(Number(event.currentTarget.value) / 100)} />
-        <span>{Math.round((props.state?.volume ?? 1) * 100)}%</span>
+          aria-valuetext={`${volumePercent()}%`}
+          value={volumePercent()} disabled={unavailable()}
+          onInput={(event) => {
+            props.onVolume(Number(event.currentTarget.value) / 100);
+            // The browser moved the thumb before input. Restore the applied value
+            // even when rejection leaves reactive state unchanged.
+            event.currentTarget.value = String(volumePercent());
+          }} />
+        <span>{volumePercent()}%</span>
       </label>
       <span classList={{ [styles.status]: true, [styles.limited]: Boolean(rate()?.limitation) }}
         role="status" title={rate()?.limitation ?? undefined}>{rateDescription()}</span>

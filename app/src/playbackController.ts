@@ -57,6 +57,7 @@ export type PlaybackSnapshot = Readonly<{
   activationRequired: boolean;
   error: string | null;
   rate: RateState;
+  // Durable audio intent; media.muted/volume report the element's applied state.
   muted: boolean;
   volume: number;
   audio: "user-muted" | "zero-volume" | "available-but-unverified" | "runtime-limited" | "unknown";
@@ -193,20 +194,23 @@ export function createPlaybackController(
     diagnostics = [...diagnostics.slice(-49), event];
     options.eventSink?.(event);
   };
-  const snapshot = (): PlaybackSnapshot => Object.freeze({
-    readiness, mediaId: timeline?.mediaId ?? null, generation: state.generation, sessionToken, sourceUrl,
-    seek: Object.freeze({ ...state }), media: Object.freeze(media.read()), desiredPlaying,
-    activationRequired, error, rate: Object.freeze({ ...rate }), muted, volume,
-    audio: muteAssignmentFailed || volumeAssignmentFailed || media.read().muted !== muted || media.read().volume !== volume
-      ? "runtime-limited" : muted ? "user-muted" : volume === 0 ? "zero-volume"
-        : !timeline?.audio.present ? "unknown" : "available-but-unverified",
-    quality, presentedFps, seekLatencyMs, recoveryCount,
-    queue: active ? pending ? "1 ACTIVE + LATEST" : "1 ACTIVE" : pending ? "1 PENDING" : waiter ? "AWAITING FRAME" : "IDLE",
-    authority: media.hasVideoFrameCallback ? "rvfc" : "media-clock-approximate",
-    diagnostics: Object.freeze([...diagnostics]),
-    owned: Object.freeze({ timers: timers.size, listeners: listeners.length, frames: frameHandle === undefined ? 0 : 1,
-      activeSeeks: active ? 1 : 0, pendingSeeks: pending ? 1 : 0 }),
-  });
+  const snapshot = (): PlaybackSnapshot => {
+    const observed = Object.freeze(media.read());
+    return Object.freeze({
+      readiness, mediaId: timeline?.mediaId ?? null, generation: state.generation, sessionToken, sourceUrl,
+      seek: Object.freeze({ ...state }), media: observed, desiredPlaying,
+      activationRequired, error, rate: Object.freeze({ ...rate }), muted, volume,
+      audio: muteAssignmentFailed || volumeAssignmentFailed || observed.muted !== muted || observed.volume !== volume
+        ? "runtime-limited" : muted ? "user-muted" : volume === 0 ? "zero-volume"
+          : !timeline?.audio.present ? "unknown" : "available-but-unverified",
+      quality, presentedFps, seekLatencyMs, recoveryCount,
+      queue: active ? pending ? "1 ACTIVE + LATEST" : "1 ACTIVE" : pending ? "1 PENDING" : waiter ? "AWAITING FRAME" : "IDLE",
+      authority: media.hasVideoFrameCallback ? "rvfc" : "media-clock-approximate",
+      diagnostics: Object.freeze([...diagnostics]),
+      owned: Object.freeze({ timers: timers.size, listeners: listeners.length, frames: frameHandle === undefined ? 0 : 1,
+        activeSeeks: active ? 1 : 0, pendingSeeks: pending ? 1 : 0 }),
+    });
+  };
   const publish = () => { const value = snapshot(); subscribers.forEach((subscriber) => subscriber(value)); };
   const settle = (request: PendingSeek | undefined, status: SeekOutcome["status"], reason?: string) => {
     if (!request || request.settled) return;

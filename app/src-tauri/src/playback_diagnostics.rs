@@ -61,8 +61,6 @@ impl Binding {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum DecoderPath {
-    HardwareConfirmed,
-    SoftwareFallback,
     Unknown,
     Unsupported,
 }
@@ -117,7 +115,9 @@ struct Candidate {
     url: Option<String>,
     node: Option<u64>,
     marker: Option<bool>,
-    properties: BTreeMap<String, String>,
+    // CDP PlayerProperty identifies only a player, not a load. Never attach these
+    // observations to a Binding's generation, even after a matching kLoad.
+    player_properties: BTreeMap<String, String>,
 }
 
 struct Monitor {
@@ -253,16 +253,16 @@ impl Monitor {
                                 return;
                             };
                             if name.len() > 128
-                                || (!candidate.properties.contains_key(name)
-                                    && candidate.properties.len() >= MAX_PROPERTIES)
+                                || (!candidate.player_properties.contains_key(name)
+                                    && candidate.player_properties.len() >= MAX_PROPERTIES)
                             {
                                 self.invalidate("player property budget exceeded");
                                 return;
                             }
                             if let Some(value) = value {
-                                candidate.properties.insert(name.into(), value);
+                                candidate.player_properties.insert(name.into(), value);
                             } else {
-                                candidate.properties.remove(name);
+                                candidate.player_properties.remove(name);
                             }
                         }
                     }
@@ -279,11 +279,8 @@ impl Monitor {
                             if event["event"].as_str() == Some("kLoad") {
                                 let url = bounded(event.get("url"));
                                 if let Some(candidate) = self.candidate(id) {
-                                    // A WebMediaPlayer ID can survive a source reload. Its
-                                    // decoder evidence belongs to this load, not the player.
-                                    // Keep candidates across bind/load races; invalidate at
-                                    // the actual load boundary before URL reconciliation.
-                                    candidate.properties.clear();
+                                    // URL establishes player association only. Properties
+                                    // may arrive out of order across this load boundary.
                                     candidate.url = url;
                                 }
                             }
@@ -348,32 +345,19 @@ impl Monitor {
             );
             return;
         }
-        let decoder = candidate.properties.get("kVideoDecoderName").cloned();
-        let platform = candidate
-            .properties
-            .get("kIsPlatformVideoDecoder")
-            .and_then(|value| match value.as_str() {
-                "true" => Some(true),
-                "false" => Some(false),
-                _ => None,
-            });
-        let (status, reason) = match (decoder.as_deref(), platform) {
-            (Some("D3D11VideoDecoder"), Some(true)) => (
-                DecoderPath::HardwareConfirmed,
-                "associated D3D11 hardware video decoder",
-            ),
-            (Some("FFmpegVideoDecoder" | "VpxVideoDecoder" | "Dav1dVideoDecoder"), Some(false)) => {
-                (
-                    DecoderPath::SoftwareFallback,
-                    "software decoder compatibility fallback",
-                )
-            }
-            _ => (
-                DecoderPath::Unknown,
-                "decoder properties do not prove the underlying path",
-            ),
-        };
-        self.set_path(status, reason, decoder, platform, true);
+        // Neither PlayerProperty nor playerCreated carries a load identity;
+        // playerCreated can also replay discovery of an already active player.
+        // Matching a separate kLoad URL (or a DOM marker) cannot promote these
+        // player-scoped values to current-load evidence. In particular, g1's
+        // decoder property delivered after kLoad(g2) must never confirm g2.
+        // A positive path requires a source that actually owns load provenance.
+        self.set_path(
+            DecoderPath::Unknown,
+            "player associated; CDP decoder properties cannot prove current-load provenance",
+            None,
+            None,
+            true,
+        );
     }
 }
 
@@ -463,6 +447,13 @@ mod tests {
     fn decoder(monitor: &mut Monitor, name: &str, platform: bool) {
         monitor.ingest("Media.playerPropertiesChanged", &json!({"playerId":"p", "properties":[{"name":"kVideoDecoderName", "value":name}, {"name":"kIsPlatformVideoDecoder", "value":platform.to_string()}]}).to_string());
     }
+    fn assert_unproven_current_decoder(monitor: &Monitor) {
+        assert!(monitor.snapshot.associated);
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        assert_eq!(monitor.snapshot.decoder_name, None);
+        assert_eq!(monitor.snapshot.platform_decoder, None);
+        assert!(monitor.snapshot.reason.contains("current-load provenance"));
+    }
     #[test]
     fn binding_is_monotonic_idempotent_and_rejects_same_generation_conflicts() {
         let mut monitor = Monitor::new("owner".into());
@@ -495,7 +486,7 @@ mod tests {
         monitor.candidates.get_mut("p").unwrap().marker = Some(true);
         monitor.reconcile();
         assert_eq!(monitor.snapshot.generation, Some(2));
-        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         assert!(monitor.snapshot.associated);
 
         current.generation = 3;
@@ -508,26 +499,24 @@ mod tests {
         assert!(!monitor.snapshot.associated);
     }
     #[test]
-    fn only_exact_associated_decoder_proves_hardware_and_later_fallback_is_retained() {
+    fn player_properties_do_not_prove_a_load_even_with_exact_association() {
         let mut monitor = Monitor::new("owner".into());
         monitor.bind(binding()).unwrap();
         decoder(&mut monitor, "D3D11VideoDecoder", true);
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         load(&mut monitor, "p", &binding().url);
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
-        decoder(&mut monitor, "D3D11VideoDecoder", true);
-        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
-        decoder(&mut monitor, "FFmpegVideoDecoder", false);
-        assert_eq!(monitor.snapshot.status, DecoderPath::SoftwareFallback);
-        assert!(
-            monitor
-                .snapshot
-                .transitions
-                .iter()
-                .any(|entry| entry.contains("HardwareConfirmed"))
-        );
-        decoder(&mut monitor, "MojoVideoDecoder", true);
-        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        for (name, platform) in [
+            ("D3D11VideoDecoder", true),
+            ("FFmpegVideoDecoder", false),
+            ("MojoVideoDecoder", true),
+        ] {
+            decoder(&mut monitor, name, platform);
+            assert_unproven_current_decoder(&monitor);
+        }
+        assert!(!monitor.snapshot.transitions.iter().any(|entry| {
+            entry.contains("HardwareConfirmed") || entry.contains("SoftwareFallback")
+        }));
     }
     #[test]
     fn old_token_wrong_origin_ambiguous_player_and_overflow_invalidate_evidence() {
@@ -558,7 +547,7 @@ mod tests {
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         monitor.candidates.get_mut("p").unwrap().marker = Some(true);
         monitor.reconcile();
-        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+        assert_unproven_current_decoder(&monitor);
         let mut next = binding();
         next.session_token = next.session_token.replace("11111111", "99999999");
         next.url = next.url.replace("11111111", "99999999");
@@ -567,12 +556,12 @@ mod tests {
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
     }
     #[test]
-    fn reused_player_requires_fresh_decoder_properties_after_each_load() {
+    fn reordered_old_decoder_delivery_cannot_establish_a_new_generation() {
         let mut monitor = Monitor::new("owner".into());
         monitor.bind(binding()).unwrap();
         load(&mut monitor, "p", &binding().url);
         decoder(&mut monitor, "D3D11VideoDecoder", true);
-        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+        assert_unproven_current_decoder(&monitor);
 
         let mut next = binding();
         next.generation = 2;
@@ -585,6 +574,8 @@ mod tests {
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         assert_eq!(monitor.snapshot.decoder_name, None);
         assert_eq!(monitor.snapshot.platform_decoder, None);
+        // Chromium produced decoder(g1) BEFORE kLoad(g2), but delivers the
+        // property AFTER kLoad(g2). There is no load ID on this property.
         monitor.ingest(
             "Media.playerPropertiesChanged",
             r#"{"playerId":"p","properties":[{"name":"kVideoDecoderName","value":"D3D11VideoDecoder"}]}"#,
@@ -592,16 +583,26 @@ mod tests {
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         assert_eq!(monitor.snapshot.platform_decoder, None);
         decoder(&mut monitor, "D3D11VideoDecoder", true);
-        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+        assert_unproven_current_decoder(&monitor);
 
-        // Even a repeated load of the identical URL needs new decoder evidence.
+        // Another property notification cannot fix the missing provenance, nor
+        // can a repeated identical-URL load or late active-player discovery.
         load(&mut monitor, "p", &next.url);
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         decoder(&mut monitor, "FFmpegVideoDecoder", false);
-        assert_eq!(monitor.snapshot.status, DecoderPath::SoftwareFallback);
+        assert_unproven_current_decoder(&monitor);
+        monitor.ingest("Media.playersCreated", r#"{"players":["p"]}"#);
+        assert_unproven_current_decoder(&monitor);
+        monitor.ingest(
+            "Media.playerCreated",
+            r#"{"player":{"playerId":"p","domNodeId":7}}"#,
+        );
+        monitor.candidates.get_mut("p").unwrap().marker = Some(true);
+        monitor.reconcile();
+        assert_unproven_current_decoder(&monitor);
     }
     #[test]
-    fn fresh_load_evidence_survives_a_later_generation_binding() {
+    fn load_before_binding_cannot_relabel_player_properties_as_generation_evidence() {
         let mut monitor = Monitor::new("owner".into());
         monitor.bind(binding()).unwrap();
         load(&mut monitor, "p", &binding().url);
@@ -617,11 +618,9 @@ mod tests {
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         monitor.bind(next).unwrap();
         assert_eq!(monitor.snapshot.generation, Some(2));
-        assert_eq!(monitor.snapshot.status, DecoderPath::SoftwareFallback);
-        assert_eq!(
-            monitor.snapshot.decoder_name.as_deref(),
-            Some("FFmpegVideoDecoder")
-        );
+        assert_unproven_current_decoder(&monitor);
+        decoder(&mut monitor, "D3D11VideoDecoder", true);
+        assert_unproven_current_decoder(&monitor);
     }
     #[test]
     fn acquisition_deadline_and_dropped_events_are_not_success() {
