@@ -441,7 +441,8 @@
   transition: opacity 120ms ease, transform 180ms ease;
 }
 
-.scrubberZoneActive .fullscreenControls {
+.scrubberZoneActive .fullscreenControls,
+.scrubberZone:focus-within .fullscreenControls {
   transform: translateY(0);
   opacity: 1;
   pointer-events: auto;

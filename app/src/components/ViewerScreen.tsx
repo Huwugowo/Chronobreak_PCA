@@ -54,6 +54,7 @@ import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
 import { createPlaybackDiagnostics, type DecoderSnapshot } from "../playbackDiagnostics";
 import ChampionFilter from "./ChampionFilter";
 import FullscreenOverlay from "./FullscreenOverlay";
+import PlaybackControls from "./PlaybackControls";
 import styles from "./ViewerScreen.module.css";
 
 type Props = {
@@ -1317,6 +1318,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 beforeGameStart={beforeGameStart()}
                 currentKda={currentKda()}
                 isPlaying={isPlaying()}
+                playback={playback()}
+                onRate={(rate) => controller?.setRate(rate)}
+                onMuted={(muted) => controller?.setMuted(muted)}
+                onVolume={(volume) => controller?.setVolume(volume)}
                 mediaAvailable={Boolean(props.probe.video_url) && mediaState() === "ready"}
                 participants={props.probe.participants}
                 selectedPlayers={selectedPlayers()}
@@ -1491,6 +1496,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 </button>
               </div>
             </Show>
+            <PlaybackControls state={playback()}
+              onRate={(rate) => controller?.setRate(rate)}
+              onMuted={(muted) => controller?.setMuted(muted)}
+              onVolume={(volume) => controller?.setVolume(volume)} />
             <div class={styles.timeReadout} data-testid="time-readout">
               <strong>{formatDuration(videoSecond() * 1_000)}</strong>
               <span>/</span>
@@ -1534,6 +1543,14 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 <dt>CLOCK</dt>
                 <dd>{clockSource()}</dd>
               </div>
+              <div>
+                <dt>RATE</dt>
+                <dd title={playback()?.rate.limitation ?? undefined}>
+                  {playback()?.rate.selected}x selected / {playback()?.rate.applied}x applied /
+                  {playback()?.rate.observed?.toFixed(2) ?? "unknown"} observed ({playback()?.rate.outcome})
+                </dd>
+              </div>
+              <div><dt>AUDIO</dt><dd>{playback()?.audio ?? "unknown"}</dd></div>
               <div>
                 <dt>DROPPED</dt>
                 <dd>{droppedFrames()} / {totalFrames()}</dd>

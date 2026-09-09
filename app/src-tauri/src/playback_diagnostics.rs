@@ -279,6 +279,11 @@ impl Monitor {
                             if event["event"].as_str() == Some("kLoad") {
                                 let url = bounded(event.get("url"));
                                 if let Some(candidate) = self.candidate(id) {
+                                    // A WebMediaPlayer ID can survive a source reload. Its
+                                    // decoder evidence belongs to this load, not the player.
+                                    // Keep candidates across bind/load races; invalidate at
+                                    // the actual load boundary before URL reconciliation.
+                                    candidate.properties.clear();
                                     candidate.url = url;
                                 }
                             }
@@ -509,6 +514,8 @@ mod tests {
         decoder(&mut monitor, "D3D11VideoDecoder", true);
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
         load(&mut monitor, "p", &binding().url);
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        decoder(&mut monitor, "D3D11VideoDecoder", true);
         assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
         decoder(&mut monitor, "FFmpegVideoDecoder", false);
         assert_eq!(monitor.snapshot.status, DecoderPath::SoftwareFallback);
@@ -558,6 +565,63 @@ mod tests {
         next.generation += 1;
         monitor.bind(next).unwrap();
         assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+    }
+    #[test]
+    fn reused_player_requires_fresh_decoder_properties_after_each_load() {
+        let mut monitor = Monitor::new("owner".into());
+        monitor.bind(binding()).unwrap();
+        load(&mut monitor, "p", &binding().url);
+        decoder(&mut monitor, "D3D11VideoDecoder", true);
+        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+
+        let mut next = binding();
+        next.generation = 2;
+        next.session_token = next.session_token.replace("11111111", "99999999");
+        next.url = next.url.replace("11111111", "99999999");
+        monitor.bind(next.clone()).unwrap();
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        load(&mut monitor, "p", &next.url);
+        assert_eq!(monitor.snapshot.generation, Some(2));
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        assert_eq!(monitor.snapshot.decoder_name, None);
+        assert_eq!(monitor.snapshot.platform_decoder, None);
+        monitor.ingest(
+            "Media.playerPropertiesChanged",
+            r#"{"playerId":"p","properties":[{"name":"kVideoDecoderName","value":"D3D11VideoDecoder"}]}"#,
+        );
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        assert_eq!(monitor.snapshot.platform_decoder, None);
+        decoder(&mut monitor, "D3D11VideoDecoder", true);
+        assert_eq!(monitor.snapshot.status, DecoderPath::HardwareConfirmed);
+
+        // Even a repeated load of the identical URL needs new decoder evidence.
+        load(&mut monitor, "p", &next.url);
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        decoder(&mut monitor, "FFmpegVideoDecoder", false);
+        assert_eq!(monitor.snapshot.status, DecoderPath::SoftwareFallback);
+    }
+    #[test]
+    fn fresh_load_evidence_survives_a_later_generation_binding() {
+        let mut monitor = Monitor::new("owner".into());
+        monitor.bind(binding()).unwrap();
+        load(&mut monitor, "p", &binding().url);
+        decoder(&mut monitor, "D3D11VideoDecoder", true);
+
+        let mut next = binding();
+        next.generation = 2;
+        next.session_token = next.session_token.replace("11111111", "99999999");
+        next.url = next.url.replace("11111111", "99999999");
+        load(&mut monitor, "p", &next.url);
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        decoder(&mut monitor, "FFmpegVideoDecoder", false);
+        assert_eq!(monitor.snapshot.status, DecoderPath::Unknown);
+        monitor.bind(next).unwrap();
+        assert_eq!(monitor.snapshot.generation, Some(2));
+        assert_eq!(monitor.snapshot.status, DecoderPath::SoftwareFallback);
+        assert_eq!(
+            monitor.snapshot.decoder_name.as_deref(),
+            Some("FFmpegVideoDecoder")
+        );
     }
     #[test]
     fn acquisition_deadline_and_dropped_events_are_not_success() {

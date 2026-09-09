@@ -2,20 +2,40 @@
 
 Feature: `QB-REPLAY-009`
 ExecPlan: `docs/exec-plans/qb-replay-009-playback-boundary-and-speed-ladder-v2.md`
-Updated: 2026-09-08
+Updated: 2026-09-09
 
 ## Current milestone
 
-M3 complete - primary playback integration at 1x and bounded decoder diagnostics,
-including the four WIP audit corrections and real Windows verification. Stopped
-at the requested M3 boundary. M4 has not started; feature remains ready / in-progress.
+M4 implementation and production checks are complete. M5 automated, production
+build, targeted functional and resource checks are obtained. Feature remains ready / in-progress because required audible/A/V
+observations are unreported. M3 commit `0fe1f4f` remains immutable.
 
 ## Active unit
 
-None. M3 implementation and verification are complete. Do not begin M4 in this
-session. Unrelated skill and `.codex/` working-tree changes are preserved.
+Obtain the required listening observations before making the feature completion
+decision. Implementation and targeted automated/production work are complete.
 
 ## Completed
+
+- M4: shared six-rate/mute/volume controls in both layouts; selected/applied/
+  observed rate and independent audio intent; finite verification, fallback and
+  recovery; non-renewable capability deadline after the production r1 buffering
+  finding; regression and focused review corrections. Production r2 exercised
+  every native rate, paused rapid changes, focused fullscreen controls, recovery,
+  short loop, EOF and disposal. Separate controlled slow-8x evidence proved the
+  visible fallback without rate-emulating seeks or failed-rate reapplication.
+- M5: 80 frontend and 45 Rust tests; applicable formatting/Clippy; clean ordinary
+  and benchmark production builds; targeted seek/scrub comparison; two equal
+  resource blocks and 30-second settling; champion filter and clip endpoint
+  editing; existing exported-clip playback and source preservation. Temporary
+  probes are detached. Analyzer limitations are explicitly retained below.
+
+- 2026-09-09 independent M3 finding fixed at `kLoad`: candidate properties are
+  cleared before a new URL is reconciled. Candidates remain across bindings.
+  Reused-player g1 -> bind g2 -> load g2 stays unknown until fresh decoder and
+  platform properties arrive; repeated identical-URL loads also invalidate.
+  A separate regression preserves fresh load-before-bind evidence. The earlier
+  generation's hardware evidence is no longer reusable for a later load.
 
 - M3 audit correction on `qb-replay-009-wip` over `1900c75`: public play operation
   tokens and nudge lifetime are independent. `cancelPlay` settles superseded
@@ -76,19 +96,164 @@ session. Unrelated skill and `.codex/` working-tree changes are preserved.
 
 ## In flight
 
-None. The temporary direct probe attachment is removed from product source.
-Final ordinary and benchmark production builds passed on the final product tree.
+No product edits or production runs remain active. The required human listening
+observations are the only unfinished completion work.
+Ignored M4/M5 procedures and results remain available for focused follow-up;
+`ViewerScreen.tsx` and final builds contain no probe imports/calls.
 
 ## Remaining
 
-- M4: shared rate/audio controls and truthful observed-rate/8x fallback behavior.
-- M5: final targeted comparison and applicable viewer/clip/export/A/V smoke after
-  M4, including the two equal combined resource blocks with 30-second settling.
-  M1's isolated lifecycle/layout runs did not provide those combined blocks.
-  Audible behavior, rate capability/fallback and export playback remain unclaimed.
-  Do not repeat the accepted 008/012 campaigns or expand benchmark infrastructure.
+- Obtain audible behavior at each selected rate, mute/volume and failed-rate/
+  fallback sound behavior, plus viewer/export A/V synchronization. Property
+  assignments and AAC stream presence do not establish these observations.
+- After those observations, make the completion decision and validate canonical
+  state. Do not repeat accepted 008/012 campaigns, completed M4 checks or
+  analyzer-only rejected procedures.
 
 ## Verification
+
+Final canonical validation passed for 60 roadmap items and six plan/checkpoint
+pairs on 2026-09-09. Scoped whitespace checks passed; the immutable v2 plan and
+M3 HEAD remain unchanged, nothing is staged, and unrelated `.agents`/`.codex`
+working-tree changes were preserved. No listening/A/V pass is recorded.
+
+M5 resources passed the bounded settling/ownership check. Using the final ten
+one-second samples before each settled marker, block 1 -> block 2 medians were:
+private memory 389.8 -> 385.1 MiB; working set 535.6 -> 536.7 MiB; CPU 2.28 ->
+2.41%; handles 3906.5 -> 3891; threads 225 -> 215; eight processes in both.
+Private memory, handles and threads did not accumulate across equal blocks; the
+1.1 MiB working-set difference does not establish sustained growth. Each settled
+controller owned one frame callback, 17 listeners, two timers and no active/pending
+seek; every disposed controller released all counts. Server requests increased
+6 -> 11 for the five expected reloads, with zero cancellations/recoveries/errors.
+Final per-player quality was 38/1970 and 39/1973 dropped/total frames; these are
+different mounted players, so their counters must not be subtracted as one stream.
+No exact combined before baseline exists; this proves bounded after settling,
+with M1's isolated runs as context, not a matched combined resource delta.
+
+R1's 60-second ordinary interval added 3599 frames and 11 drops (0.31%), with
+no new seek epoch, recovery or server request. Its last-ten-second medians were
+376.8 MiB private, 539.8 MiB working set, 7.31% CPU, 3875 handles, 212 threads and
+eight processes. Controller ownership remained 1 frame / 17 listeners / 2 timers,
+with no outstanding seek. The run's later planned-navigation terminal failure
+does not erase these interval observations and is not a successful whole-run claim.
+M1 ordinary playback recorded 1201 drops/3938 frames and zero seeks/recoveries;
+the after interval shows no new drop/seek/recovery regression. Different startup/
+recovery boundaries preclude a precise whole-run improvement claim.
+
+Final clean ordinary and benchmark production builds passed on 2026-09-09,
+including frontend typecheck/build. Both exclude every temporary probe import/call.
+Clean benchmark binary SHA256:
+`85fa3487d691a55cf1e2990765497adb8ae7c2df45fd524666fb732c62c3b164`.
+Ordinary binary SHA256:
+`e86b5ba56f97382b14ef7a16155ba3fa0a88a933ebf37d8bc32e590f57b9d260`.
+The required Rust formatting/Clippy results from the decoder-fix unit remain valid;
+no Rust edits followed those checks.
+
+Final clean comparison uses `results/qb-replay-009-m5-seek-20260909-r1` and
+`qb-replay-009-m5-scrub-20260909-r1`, with unchanged fixture/runtime and preserved
+source hashes. Concise numbers: `build/perf/qb-replay-009/m5-comparison.json`.
+Seek passed with analyzer acceptance: five requests/dispatches/presentations,
+69–99.2 ms request-to-presentation versus M1's 72.6–162.9 ms. Scrub completed all
+five bursts at their latest target, with 40 requests / 14 native dispatches / 26
+pending replacements, matching M1's request/dispatch/replacement counts. Latest
+presentation latency was 89.3–236.8 ms versus M1's 16.6–492.4 ms. Supersession
+observations differ after extraction (35 explicit cancellations versus eight in
+M1); do not compare those counts as equivalent scheduler work. Neither final case
+had media errors or recoveries, and scrub terminal reported one dropped frame of
+279 total. No material regression is established by this bounded comparison.
+
+The scrub analyzer rejected seek-41 solely because RVFC presentation arrived at
+4572.0566 ms before `seeked` at 4575.0566 ms. Dispatch preceded both (4563.7566 ms),
+all phases exist, and presentation was within the accepted one-frame tolerance.
+`analyze.py:924-929` assumes dispatch -> seeked -> presented. The controller's
+approved contract and existing regression explicitly allow presentation before
+seeked while retaining the native slot until seeked. This is an analyzer ordering
+limitation, not a product defect; retain its rejection and direct evidence, without
+changing playback ordering or expanding benchmark infrastructure to obtain a pass.
+
+M5 direct r2 (`results/qb-replay-009-m5-direct-20260909-r2`) used binary SHA256
+`d6479c2d02857c230423ccba3f35a1c486cfebaa38b87cdae66a612c6ae3b93e`.
+All 19 direct checks passed: two equal five-remount blocks, twenty total layout
+transitions, directed/latest-scrub presentation, 30-second settling after each
+block, champion-filter toggle/restore, both clip endpoint controls with keyboard
+preview, existing exported clip playback, and final disposal with all owned counts
+zero. The five-second 1080p clip `1787904000_1788167913.mp4` presented 270 frames
+(media time 0.016667 to 4.983333) without media error and reached `ended`.
+R2 had 11 mounts/disposals, zero media errors/recoveries, 114 seek requests / 31
+native dispatches with latest presentation verified per burst, and associated
+D3D11/platform evidence on Edg/152.0.4191.66. It ran on the same Dell G15/i7-11800H,
+Windows 10 build 19045, Intel UHD/RTX 3050 Ti configuration and r6 media runtime.
+No GPU-disable flag or optional unbounded GPU CIM collection was introduced.
+Terminal completed in 105.88 seconds; source hashes and telemetry reconciled,
+843 accepted records / zero drops. The ordinary play_pause analyzer rejected
+missing pause_requested/pause_complete events, as expected for this direct
+procedure. The probe bypassed only the exact expected planned-navigation terminal
+reason; all other failures retained their existing handling. It is now detached.
+
+2026-09-09 final product-tree frontend suite passed 80 tests in 11 files, and the
+complete Rust app suite passed 45 tests. Logs: `.codex/logs/command-20260909-094407.log`
+and `command-20260909-094405.log`. No product code changed after these suites;
+temporary procedure attachments still require removal and fresh final builds.
+
+M5 direct r1 (`results/qb-replay-009-m5-direct-20260909-r1`) used binary SHA256
+`aa91ac495ef7aa514d4d73fffcb6939ad6df938e155876e81f3776e8d088b0d5`.
+An ignored controlled adapter fault reported an accepted 8x property while real
+video continued at 1x. Real RVFC evidence triggered the visible 1x fallback with
+no rate-emulating seeks, then reload retained selected 8x/applied 1x. This proves
+limitation handling, not native 8x incapability. The following 60-second ordinary
+segment completed its start/end observations. At the first planned viewer close,
+the unchanged ordinary scenario failed with `viewer disposed before benchmark
+completion`; no combined-block or terminal success is claimed. R1 is retained,
+with zero observer queue drops. Its remaining checks require the repaired direct
+procedure; it does not establish a product defect.
+
+2026-09-09 M4 r2 actually ran against the decoder-fixed benchmark binary SHA256
+`59a49158de5f2b700301fcbf02ad9a649b0bbd604cfb2a2334838cacccc4e34d`.
+Root: `results/qb-replay-009-m4-direct-20260908-r2` under the existing sentinel
+(run ID retained from its prepared manifest). All ten direct assertions passed:
+six native selections; paused rapid rate/recovery preferences; short loop; EOF;
+disposal with every owned count zero. Selected/applied matched all six rates;
+observed was 0.24862, 0.49997, 0.99997, 2.00000, 3.98320, 7.99947x. This run's
+8x capability success is separate from r1's repeated-buffering failure, and does
+not itself prove visible failed-8x handling. R2 confirmed associated D3D11/platform
+hardware at g1 and fresh g2 after recovery with the fixed load ownership.
+App/runner terminal was complete; source post-hashes and telemetry reconciled.
+The unchanged ordinary play_pause analyzer rejected the direct procedure because
+it deliberately completed before the normal scenario's pause_requested /
+pause_complete events. This is direct-check evidence, not analyzer acceptance.
+Windowed screenshots: ignored `build/perf/qb-replay-009/m4-r2-window.png` and
+`m4-r2-fullscreen.png` (the latter was captured after fullscreen had already exited).
+
+Decoder-fix Clippy `--all-targets -- -D warnings` and benchmark production build
+also passed. No unrelated M3/M4 suite was replayed for this narrow native change.
+
+2026-09-09 decoder ownership fix: `cargo test --manifest-path
+app/src-tauri/Cargo.toml playback_diagnostics` passed 8 tests; `cargo fmt
+--manifest-path app/src-tauri/Cargo.toml -- --check` passed. This supersedes the
+old test assumption that properties received before `kLoad` can prove that load.
+The fixed M4 r2 build subsequently confirmed recovered-generation hardware
+evidence; unrelated completed M3/M4 evidence remains accepted.
+
+2026-09-08 M4 initial focused validation: 41 controller tests passed (including
+the six deterministic rate windows, freeze/slow/rejected fallback, buffering,
+hidden/loop/end/no-RVFC cases and preference retention); frontend typecheck passed.
+The first pass exposed watchdog removal of a just-completed window's observed
+result when the next window had fewer than three samples. The missing-evidence
+branch now applies only before any measured result; all six regressions pass.
+The local logging hook needed sandbox escalation for its `.codex/logs` output;
+no hook/configuration file was changed. Subsequent UI/timer edits still need checks.
+
+M4 later validation: full frontend suite passed (76 tests / 11 files) and frontend
+production build/typecheck passed with shared UI integration. Focused review found
+the first buffering timeout incorrectly delayed reload until a second five-second
+window and audio assignments could throw/misreport ignored mute. Both were fixed;
+missing RVFC callbacks now trigger an explicitly unknown evidence timeout with
+finite fallback/reload, while an unavailable RVFC API remains unknown without
+invented presentation. That focused controller suite passed 44 tests; the later capability-deadline
+regression brought it to 45, included in the final 80-test frontend suite. New
+controller events use `playback_rate_observed`, preserving the existing benchmark
+`rate_observed` payload meanings. Final ordinary production checks remain pending.
 
 2026-09-08 M3 audit-fix verification on the current working tree:
 
@@ -250,6 +415,19 @@ playback success or evidence of an actual corrupt-media/driver fault.
 
 ## Decisions
 
+- M5 combined after blocks use the existing App viewer-cycle event from temporary
+  ignored instrumentation, not a new runner/schema. M1's isolated lifecycle/layout/
+  scrub runs remain the shared before reference; they are not an exact combined
+  process-resource baseline. Assess retained work and settling across equal after
+  blocks, with no manufactured matched combined resource claim.
+
+- M4 production r1 exposed repeated brief buffering at 8x, renewing the two-second
+  settling/three-second measurement window indefinitely. The attempt now has a
+  ten-second evidence deadline that buffering cannot renew; intentional seeks,
+  pauses, hidden documents, loops and reloads restart eligibility. Failure is
+  explicitly unknown/unverified with the same bounded fallback, never a measured
+  stall or 8x success. No tolerance or native-rate emulation changed.
+
 - Accepted QB-REPLAY-008 and QB-REPLAY-012 evidence is authoritative input. Do not
   reopen predecessor plans/reports or reproduce their proof by default. Use
   current exact replay-time and seek-state helpers.
@@ -275,7 +453,7 @@ playback success or evidence of an actual corrupt-media/driver fault.
   preview and alternate playback backends remain outside 009.
 - Apply the repository `forward-engineering` skill for substantial implementation
   and the available Rust skill for Rust changes. Preserve unrelated working-tree
-  changes; this pass changed only the M3 implementation/tests and related evidence.
+  changes; M4/M5 work follows the immutable M3 checkpoint.
 - Focused review found no further demonstrated product defect. Its suggestion to
   pause from an obsolete fulfilled play callback was not applied: the concrete
   HTML adapter changes `paused` during the synchronous play call, independently
@@ -285,13 +463,16 @@ playback success or evidence of an actual corrupt-media/driver fault.
 
 ## Blockers
 
-No product blocker established in M3. The early normal seek run was rejected by
-the process telemetry contract despite complete seek/decoder events; retain that
-limitation and do not use it for a process-resource claim. The unchanged analyzer
-rejects deliberately injected media errors, so direct fault-run assertions and
-actual decoder snapshots are retained separately from normal benchmark results.
+Required audible output/A/V observation has not been reported by a human. The
+feature remains non-done. No product blocker is established by the targeted
+functional evidence. Retain direct-run and presentation-before-seeked analyzer
+rejections as evidence limitations, not passes or playback defects.
 
 ## Next action
 
-Stop at completed M3. Wait for a new request before starting M4; its first unit is
-the approved shared rate/audio controls and bounded observed-rate limitation work.
+Obtain a listening pass on the existing sentinel fixture: 0.25x/0.5x/1x/2x/4x/8x, mute and volume, failed-rate/fallback,
+and viewer/export A/V. Record the actual observed sound or runtime limitation;
+keep unobserved cases non-passing. Reuse the retained M4/M5 procedures only for
+missing observations, without redoing capability/resource work. If those checks
+satisfy acceptance, update canonical status and validate it. Preserve `0fe1f4f`,
+the immutable v2 plan, and unrelated `.agents`/`.codex` changes.

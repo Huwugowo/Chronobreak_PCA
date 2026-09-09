@@ -35,7 +35,7 @@ export type RateState = Readonly<{
   applied: number;
   effective: PlaybackRate;
   observed: number | null;
-  outcome: "pending" | "verified" | "limited" | "unsupported" | "suspended";
+  outcome: "pending" | "verified" | "limited" | "unsupported" | "suspended" | "unknown";
   limitation: string | null;
 }>;
 export type PlaybackEvent = Readonly<{
@@ -127,6 +127,8 @@ export function createPlaybackController(
   let error: string | null = null;
   let muted = false;
   let volume = 1;
+  let muteAssignmentFailed = false;
+  let volumeAssignmentFailed = false;
   let rate: RateState = { selected: 1, applied: 1, effective: 1, observed: null, outcome: "pending", limitation: null };
   let quality: PlaybackQuality = { totalFrames: null, droppedFrames: null, heapBytes: null };
   let diagnostics: PlaybackEvent[] = [];
@@ -158,6 +160,15 @@ export function createPlaybackController(
   let seekLatencyMs: number | null = null;
   let firstPresented = false;
   let waitingSince: number | null = null;
+  let rateToken = 0;
+  let lastVerifiedRate: PlaybackRate | null = null;
+  let fallbackReloaded = false;
+  let limitedWindows = 0;
+  let capabilityStartedAt: number | null = null;
+  let rateWindow: {
+    token: number; startedAt: number; progressAt: number; lastTick: ReplayTick | null;
+    first: { tick: ReplayTick; at: number } | null; samples: number;
+  } | null = null;
 
   const isLive = () => readiness !== "disposed" && readiness !== "closed";
   const currentSource = () => media.read().source === sourceUrl;
@@ -186,8 +197,9 @@ export function createPlaybackController(
     readiness, mediaId: timeline?.mediaId ?? null, generation: state.generation, sessionToken, sourceUrl,
     seek: Object.freeze({ ...state }), media: Object.freeze(media.read()), desiredPlaying,
     activationRequired, error, rate: Object.freeze({ ...rate }), muted, volume,
-    audio: muted ? "user-muted" : volume === 0 ? "zero-volume" : !timeline?.audio.present ? "unknown"
-      : rate.limitation ? "runtime-limited" : "available-but-unverified",
+    audio: muteAssignmentFailed || volumeAssignmentFailed || media.read().muted !== muted || media.read().volume !== volume
+      ? "runtime-limited" : muted ? "user-muted" : volume === 0 ? "zero-volume"
+        : !timeline?.audio.present ? "unknown" : "available-but-unverified",
     quality, presentedFps, seekLatencyMs, recoveryCount,
     queue: active ? pending ? "1 ACTIVE + LATEST" : "1 ACTIVE" : pending ? "1 PENDING" : waiter ? "AWAITING FRAME" : "IDLE",
     authority: media.hasVideoFrameCallback ? "rvfc" : "media-clock-approximate",
@@ -209,8 +221,24 @@ export function createPlaybackController(
     frameHandle = undefined;
   };
   const applyEffectiveRate = () => {
-    media.setRate(rate.effective);
-    rate = { ...rate, applied: media.read().rate };
+    try {
+      media.setRate(rate.effective);
+      rate = { ...rate, applied: media.read().rate };
+      if (rate.applied !== rate.effective) failRate("unsupported", "The browser did not apply the requested speed");
+    } catch (reason) {
+      rate = { ...rate, applied: media.read().rate };
+      failRate("unsupported", `The browser rejected this speed: ${failureText(reason)}`);
+    }
+  };
+  const applyMuted = () => {
+    muteAssignmentFailed = false;
+    try { media.setMuted(muted); }
+    catch (reason) { muteAssignmentFailed = true; emit("audio_control_limited", { control: "mute", reason: failureText(reason) }); }
+  };
+  const applyVolume = () => {
+    volumeAssignmentFailed = false;
+    try { media.setVolume(volume); }
+    catch (reason) { volumeAssignmentFailed = true; emit("audio_control_limited", { control: "volume", reason: failureText(reason) }); }
   };
   const stopNudge = () => {
     if (!nudge) return;
@@ -219,6 +247,7 @@ export function createPlaybackController(
     nudgeToken++;
     if (!desiredPlaying) media.pause();
     applyEffectiveRate();
+    resetRateObservation();
   };
   const cancelPlay = (outcome: PlaybackOutcome = { status: "superseded" }) => {
     playToken++;
@@ -242,6 +271,11 @@ export function createPlaybackController(
     finishOpen = undefined;
     loadStarted = metadataReady = false;
     waitingSince = healthySince = null;
+    rateWindow = null;
+    capabilityStartedAt = null;
+    limitedWindows = 0;
+    rateToken++;
+    rate = { ...rate, observed: null, outcome: rate.limitation ? rate.outcome : "suspended" };
     lastFrameTick = null;
     firstPresented = false;
     intent++;
@@ -256,6 +290,113 @@ export function createPlaybackController(
   };
   const frameTicks = () => timeline ? frameBoundaryToReplayTick(1 as FrameBoundary, timeline.video.frameRate) : 1;
   const tolerance = () => frameTicks() + REPLAY_TICKS_PER_SECOND / 1_000_000;
+
+  function resetRateObservation(preserveCapabilityAttempt = false) {
+    clearTimer("rate");
+    rateWindow = null;
+    if (!preserveCapabilityAttempt) capabilityStartedAt = null;
+    limitedWindows = 0;
+    rateToken++;
+    rate = { ...rate, observed: null, outcome: rate.limitation ? rate.outcome : "suspended" };
+  }
+
+  function failRate(outcome: "limited" | "unsupported" | "unknown", reason: string) {
+    if (rate.limitation) {
+      // A failed fallback gets one reload in this capability attempt, then stops.
+      if (fallbackReloaded) { degrade(`Fallback playback failed: ${reason}`); return; }
+      fallbackReloaded = true;
+      recover(`Fallback playback did not advance: ${reason}`);
+      return;
+    }
+    const fallback = lastVerifiedRate !== null && lastVerifiedRate !== rate.effective ? lastVerifiedRate : 1;
+    emit("rate_limited", { selected: rate.selected, applied: rate.applied, observed: rate.observed, outcome, fallback, reason });
+    resetRateObservation();
+    rate = { ...rate, effective: fallback, outcome, limitation: reason };
+    applyEffectiveRate();
+    cancelFrames(); armFrame();
+    publish();
+  }
+
+  function rateEligible() {
+    const observed = media.read();
+    if (!timeline || readiness !== "ready" || !metadataReady || !currentSource() || !desiredPlaying
+      || activationRequired || observed.paused || observed.ended || observed.hidden || observed.seeking
+      || active || pending || waiter || nudge || waitingSince !== null || observed.readyState < 3) return false;
+    const end = loop ? frameBoundaryToReplayTick(loop.endFrameExclusive, timeline.video.frameRate) : timeline.video.replayEnd;
+    // There must be room for a full window before an intentional discontinuity.
+    return observed.tick !== null && end - observed.tick > rate.effective * 3 * REPLAY_TICKS_PER_SECOND + 2 * frameTicks();
+  }
+
+  function watchRate() {
+    clearTimer("rate");
+    if (!rateEligible()) {
+      if (rateWindow || (!rate.limitation && rate.outcome !== "suspended")) {
+        resetRateObservation(waitingSince !== null || media.read().readyState < 3);
+      }
+      return;
+    }
+    if (!media.hasVideoFrameCallback) {
+      rate = { ...rate, observed: null, outcome: rate.limitation ? rate.outcome : "unknown" };
+      return;
+    }
+    const now = clock.now();
+    if (rate.observed === null) capabilityStartedAt ??= now;
+    if (capabilityStartedAt !== null && now - capabilityStartedAt >= 10_000) {
+      failRate("unknown", "Speed could not be verified within 10 seconds of interrupted playback");
+      return;
+    }
+    if (!rateWindow) {
+      rateWindow = { token: rateToken, startedAt: now, progressAt: now, lastTick: null, first: null, samples: 0 };
+      if (!rate.limitation) rate = { ...rate, outcome: "pending" };
+    }
+    const window = rateWindow;
+    if (now - window.startedAt >= 2_000 && window.lastTick !== null && now - window.progressAt >= 1_500) {
+      failRate("limited", "Presented video stopped advancing for 1500 ms");
+    } else if (now - window.startedAt >= 5_000 && window.samples < 3 && rate.observed === null) {
+      // Missing evidence is unknown, not a measured stall. It still has a finite
+      // deadline so a failed fallback cannot wait forever for its first callback.
+      failRate("unknown", "Speed could not be verified: no presented-frame evidence within 5000 ms");
+    }
+    if (readiness === "ready" && rateEligible()) {
+      const token = rateToken;
+      later("rate", 250, () => {
+        if (token !== rateToken) return;
+        const before = rate;
+        watchRate();
+        if (rate !== before) publish();
+      });
+    }
+  }
+
+  function observeRateFrame(tick: ReplayTick, at: number, token: number) {
+    if (token !== rateToken || !rateEligible()) return;
+    if (!rateWindow) watchRate();
+    const window = rateWindow;
+    if (!window || window.token !== token) return;
+    if (window.lastTick !== null && tick < window.lastTick) {
+      failRate("limited", "Presented video moved backwards during continuous playback"); return;
+    }
+    if (window.lastTick === null || tick > window.lastTick) window.progressAt = at;
+    window.lastTick = tick;
+    if (at - window.startedAt < 2_000) return;
+    window.first ??= { tick, at };
+    window.samples++;
+    const elapsed = at - window.first.at;
+    if (elapsed < 3_000 || window.samples < 3) return;
+    const advancement = tick - window.first.tick;
+    const expected = elapsed / 1_000 * REPLAY_TICKS_PER_SECOND * rate.effective;
+    const observed = advancement / REPLAY_TICKS_PER_SECOND / (elapsed / 1_000);
+    const verified = advancement > 0 && Math.abs(advancement - expected) <= Math.max(expected * 0.1, 2 * frameTicks());
+    rate = { ...rate, observed, outcome: rate.limitation ? rate.outcome : verified ? "verified" : "pending" };
+    emit("playback_rate_observed", { selected: rate.selected, applied: rate.applied, effective: rate.effective, observed, verified,
+      samples: window.samples, window_ms: elapsed });
+    if (verified) { lastVerifiedRate = rate.effective; limitedWindows = 0; capabilityStartedAt = null; }
+    else if (++limitedWindows >= 2) {
+      failRate("limited", "Presented video could not sustain this speed in two observation windows"); return;
+    }
+    window.first = { tick, at }; window.samples = 1;
+    publish();
+  }
   const resumeDesired = () => {
     if (desiredPlaying && readiness === "ready") void startPlay();
     else if (!nudge) media.pause();
@@ -296,6 +437,7 @@ export function createPlaybackController(
       native.then(() => {
         if (!current()) return;
         activationRequired = false;
+        watchRate();
         complete({ status: media.read().paused ? "failed" : "playing" });
       }, rejected);
     } catch (reason) { rejected(reason); }
@@ -307,6 +449,7 @@ export function createPlaybackController(
     const generation = state.generation;
     const version = frameVersion;
     const owner = intent;
+    const rateOwner = rateToken;
     const epoch = state.dispatched?.epoch ?? null;
     frameHandle = media.requestFrame((tick, at) => {
       if (generation !== state.generation || version !== frameVersion || owner !== intent || !isLive()) return;
@@ -343,6 +486,7 @@ export function createPlaybackController(
               if (at - healthySince >= 10_000) consecutiveFailures = 0;
             } else if (lastFrameTick !== null && tick < lastFrameTick) healthySince = null;
             lastFrameTick = tick;
+            if (!request) observeRateFrame(tick, at, rateOwner);
             maybeLoop(tick);
           }
         }
@@ -408,6 +552,7 @@ export function createPlaybackController(
     cancelFrames();
     intent++;
     healthySince = null;
+    resetRateObservation();
     state = requestPreview(state, preview);
     const result = new Promise<SeekOutcome>((resolve) => {
       pending = { target: dispatched, preview, reason, actionId: settings.actionId, generation: state.generation,
@@ -477,9 +622,20 @@ export function createPlaybackController(
         const tick = media.read().tick;
         if (tick !== null) frameSubscribers.forEach((subscriber) => subscriber(tick, "media-clock-approximate"));
       }
-      if (waitingSince !== null && clock.now() - Math.max(waitingSince, lastAdvancingAt) >= 5_000 && desiredPlaying) {
-        recover("Buffering did not recover within 5000 ms"); return;
+      const observed = media.read();
+      if (metadataReady && desiredPlaying && !observed.hidden && !observed.paused && observed.readyState < 3) waitingSince ??= clock.now();
+      if (waitingSince !== null && clock.now() - Math.max(waitingSince, lastAdvancingAt) >= 5_000
+        && desiredPlaying && !observed.hidden && !active && !pending && !waiter && !nudge) {
+        const reason = "Buffering did not recover within 5000 ms";
+        if (rate.limitation) { failRate("limited", reason); return; }
+        if (rate.selected !== 1 && rate.selected !== lastVerifiedRate) {
+          failRate("limited", reason);
+          if (readiness !== "ready") return;
+          fallbackReloaded = true;
+        }
+        recover(reason); return;
       }
+      watchRate();
       publish(); scheduleMetrics();
     });
   }
@@ -510,9 +666,9 @@ export function createPlaybackController(
       case "canplay": case "playing":
         waitingSince = null; emit(event === "canplay" ? "media_canplay" : "native_playing", { ready_state: observed.readyState }); break;
       case "loadeddata": emit("media_loadeddata", { ready_state: observed.readyState }); break;
-      case "waiting": case "stalled": waitingSince ??= clock.now(); healthySince = null; break;
+      case "waiting": case "stalled": waitingSince ??= clock.now(); healthySince = null; resetRateObservation(true); break;
       case "play": emit("native_play", { media_time_ms: observed.browserSeconds * 1_000, rate: observed.rate }); break;
-      case "pause": emit("native_pause", { media_time_ms: observed.browserSeconds * 1_000 }); healthySince = null; break;
+      case "pause": emit("native_pause", { media_time_ms: observed.browserSeconds * 1_000 }); healthySince = null; resetRateObservation(); break;
       case "ended":
         if (loop && desiredPlaying) maybeLoop(observed.tick ?? timeline!.video.replayEnd);
         else desiredPlaying = false;
@@ -530,7 +686,9 @@ export function createPlaybackController(
         }
         return;
       case "ratechange": if (!nudge) rate = { ...rate, applied: observed.rate }; break;
+      case "visibilitychange": waitingSince = null; resetRateObservation(); break;
     }
+    watchRate();
     publish();
   }
 
@@ -553,7 +711,7 @@ export function createPlaybackController(
     try {
       media.pause();
       media.open(sourceUrl, timeline);
-      applyEffectiveRate(); media.setMuted(muted); media.setVolume(volume);
+      applyEffectiveRate(); applyMuted(); applyVolume();
       armFrame();
     } catch (reason) { recover(`Media open failed: ${failureText(reason)}`); }
     publish();
@@ -604,6 +762,7 @@ export function createPlaybackController(
       recoveryCount = consecutiveFailures = 0; recoveryAttempts = []; recoveryTarget = null;
       muted = nextMuted; volume = nextVolume;
       rate = { selected: 1, applied: 1, effective: 1, observed: null, outcome: "pending", limitation: null };
+      lastVerifiedRate = null; fallbackReloaded = false;
       readiness = "loading";
       const result = new Promise<PlaybackOutcome>((resolve) => { finishOpen = resolve; });
       beginLoad(); return result;
@@ -623,18 +782,21 @@ export function createPlaybackController(
     setRate(selected: PlaybackRate) {
       if (!PLAYBACK_RATES.includes(selected)) throw new RangeError("Unsupported replay speed selection");
       if (!isLive()) return;
+      resetRateObservation(); fallbackReloaded = false;
       rate = { selected, applied: rate.applied, effective: selected, observed: null, outcome: "pending", limitation: null };
       if (!nudge) applyEffectiveRate();
+      cancelFrames(); armFrame(); watchRate();
       publish();
     },
-    setMuted(value: boolean) { if (isLive()) { muted = value; media.setMuted(value); publish(); } },
+    setMuted(value: boolean) { if (isLive()) { muted = value; applyMuted(); publish(); } },
     setVolume(value: number) {
       if (!Number.isFinite(value) || value < 0 || value > 1) throw new RangeError("Volume must be between 0 and 1");
-      if (isLive()) { volume = value; media.setVolume(value); publish(); }
+      if (isLive()) { volume = value; applyVolume(); publish(); }
     },
     setLoopRange(range: ClipRange | null) {
       if (!timeline || !isLive()) return;
       loop = range ? createClipRange(timeline, range.startFrame, range.endFrameExclusive, range.mediaId) : null;
+      resetRateObservation(); watchRate(); publish();
     },
     retry() { return recover("Manual preview retry requested", true); },
     dispose() {

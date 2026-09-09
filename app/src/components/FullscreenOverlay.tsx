@@ -20,6 +20,7 @@ import {
   type ReplayTick,
 } from "../replayTime";
 import ChampionFilter from "./ChampionFilter";
+import PlaybackControls, { type PlaybackControlsProps } from "./PlaybackControls";
 import styles from "./FullscreenOverlay.module.css";
 
 type Props = {
@@ -33,6 +34,10 @@ type Props = {
   beforeGameStart: boolean;
   currentKda: KdaTimelinePoint | undefined;
   isPlaying: boolean;
+  playback: PlaybackControlsProps["state"];
+  onRate: PlaybackControlsProps["onRate"];
+  onMuted: PlaybackControlsProps["onMuted"];
+  onVolume: PlaybackControlsProps["onVolume"];
   mediaAvailable: boolean;
   participants: readonly ReplayParticipant[];
   selectedPlayers: readonly string[];
@@ -274,6 +279,8 @@ function FullscreenOverlay(props: Props) {
         classList={{ [styles.scrubberZone]: true, [styles.scrubberZoneActive]: scrubberActive() }}
         onPointerEnter={() => setScrubberActive(true)}
         onPointerLeave={() => setScrubberActive(false)}
+        onFocusIn={noteActivity}
+        onKeyDown={noteActivity}
         aria-label="Fullscreen replay controls"
         data-testid="fullscreen-scrubber-zone"
       >
@@ -361,6 +368,7 @@ function FullscreenOverlay(props: Props) {
             </button>
           </Show>
           <span class={styles.controlsDivider} />
+          <PlaybackControls dark state={props.playback} onRate={props.onRate} onMuted={props.onMuted} onVolume={props.onVolume} />
           <span class={styles.fullscreenTime}><strong>{formatDuration(replaySecond() * 1_000)}</strong> / {formatDuration(replayTickToMilliseconds(replayEnd()))}</span>
         </div>
         <span class={styles.ambientTime}>{formatDuration(replaySecond() * 1_000)}</span>

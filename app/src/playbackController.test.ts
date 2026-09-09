@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createPlaybackController, type PlaybackClock, type PlaybackEvent } from "./playbackController";
+import { createPlaybackController, PLAYBACK_RATES, type PlaybackClock, type PlaybackEvent } from "./playbackController";
 import type { MediaObservation, PlaybackMediaAdapter, PlaybackMediaEvent } from "./htmlVideoPlaybackAdapter";
 import { type FrameBoundary, type MediaTimelineV2, parseMediaId, type ReplayTick } from "./replayTime";
 
@@ -28,6 +28,7 @@ class FakeVideo implements PlaybackMediaAdapter {
   playCalls = 0;
   playResult: (() => Promise<void>) | undefined;
   seekError = false;
+  rejectRate: number | null = null;
   read = () => this.state;
   quality = () => ({ totalFrames: 100, droppedFrames: 2, heapBytes: null });
   update(change: Partial<MediaObservation>) { this.state = { ...this.state, ...change }; }
@@ -51,7 +52,11 @@ class FakeVideo implements PlaybackMediaAdapter {
   seeked(target = this.state.tick!) {
     this.update({ tick: target, browserSeconds: 1 + target / 48_000_000, seeking: false }); this.emit("seeked");
   }
-  setRate(value: number) { this.rates.push(value); this.update({ rate: value }); this.emit("ratechange"); }
+  setRate(value: number) {
+    this.rates.push(value);
+    if (value === this.rejectRate) throw new DOMException("Rate rejected", "NotSupportedError");
+    this.update({ rate: value }); this.emit("ratechange");
+  }
   setMuted(value: boolean) { this.update({ muted: value }); }
   setVolume(value: number) { this.update({ volume: value }); }
   listen(event: PlaybackMediaEvent, handler: () => void) {
@@ -348,5 +353,173 @@ describe("concrete playback controller", () => {
     const { media, controller } = setup(); media.metadata();
     for (let i = 0; i < 200; i++) media.emit("canplay");
     expect(controller.snapshot().diagnostics).toHaveLength(50);
+  });
+});
+
+// Real elapsed time and presented video are independently controlled. Native
+// currentTime/rate assignment alone never supplies a successful observation.
+function presentFor(media: FakeVideo, speed: number, durationMs = 6_000) {
+  let seconds = (media.state.tick ?? 0) / 48_000_000;
+  for (let elapsed = 0; elapsed < durationMs; elapsed += 250) {
+    vi.advanceTimersByTime(250);
+    seconds += speed / 4;
+    media.frame(tick(seconds));
+  }
+}
+
+describe("presented rate capability and audio intent", () => {
+  it.each(PLAYBACK_RATES)("verifies %sx only after settling and a full presented-time window", async (selected) => {
+    const { media, controller, events } = setup(); media.metadata();
+    controller.setRate(selected);
+    expect(controller.snapshot().rate).toMatchObject({ selected, applied: selected, observed: null, outcome: "suspended" });
+    await controller.play();
+    presentFor(media, selected, 4_500);
+    expect(controller.snapshot().rate.outcome).not.toBe("verified");
+    presentFor(media, selected, 1_500);
+    expect(controller.snapshot().rate).toMatchObject({ selected, applied: selected, observed: selected, outcome: "verified" });
+    expect(events.some((event) => event.kind === "playback_rate_observed" && (event.payload.samples as number) >= 3)).toBe(true);
+    expect(media.seeks).toHaveLength(0);
+    controller.dispose(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("diagnoses a frozen 8x then verifies the last usable fallback without a seek", async () => {
+    const { media, controller } = setup(); media.metadata(); await controller.play();
+    controller.setRate(2); presentFor(media, 2);
+    controller.setRate(8); presentFor(media, 0, 2_500);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 2, applied: 2, outcome: "limited" });
+    expect(controller.snapshot().rate.limitation).toContain("stopped advancing");
+    presentFor(media, 2);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 2, observed: 2, outcome: "limited" });
+    expect(media.seeks).toHaveLength(0); expect(media.opens).toHaveLength(1);
+  });
+
+  it("requires two slow-positive windows before falling back, and allows a new selection", async () => {
+    const { media, controller } = setup(); media.metadata(); await controller.play();
+    controller.setRate(8); presentFor(media, 4);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, applied: 8, observed: 4, outcome: "pending" });
+    presentFor(media, 4, 3_000);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, applied: 1, outcome: "limited" });
+    controller.setRate(4); presentFor(media, 4);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 4, observed: 4, outcome: "verified", limitation: null });
+  });
+
+  it("catches rejected rates and preserves independent mute/volume through recovery", async () => {
+    const { media, controller } = setup(); media.metadata();
+    controller.setMuted(true); controller.setVolume(0.37); media.rejectRate = 8;
+    expect(() => controller.setRate(8)).not.toThrow();
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, applied: 1, effective: 1, outcome: "unsupported" });
+    controller.retry(); media.metadata();
+    expect(media.rates.filter((value) => value === 8)).toHaveLength(1);
+    expect(controller.snapshot()).toMatchObject({ muted: true, volume: 0.37, audio: "user-muted" });
+    controller.setMuted(false); controller.setVolume(0);
+    expect(controller.snapshot().audio).toBe("zero-volume");
+    controller.setVolume(0.5);
+    expect(controller.snapshot().audio).toBe("available-but-unverified");
+    expect(media.read()).toMatchObject({ muted: false, volume: 0.5 });
+  });
+
+  it("gives a frozen fallback one same-element reload, never reapplying failed 8x", async () => {
+    const { media, controller } = setup(); media.metadata(); await controller.play();
+    controller.setRate(8); presentFor(media, 0, 5_000);
+    expect(media.opens).toHaveLength(2);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, outcome: "limited" });
+    media.metadata(); await Promise.resolve();
+    presentFor(media, 0, 3_000);
+    expect(controller.snapshot().readiness).toBe("degraded");
+    expect(media.rates.filter((value) => value === 8)).toHaveLength(1);
+    expect(media.opens).toHaveLength(2);
+    vi.advanceTimersByTime(20_000); expect(media.opens).toHaveLength(2);
+    controller.dispose(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps audio intent but diagnoses ignored or rejected controls without reloading video", () => {
+    const { media, controller } = setup(); media.metadata();
+    media.setMuted = () => {};
+    controller.setMuted(true);
+    expect(controller.snapshot()).toMatchObject({ muted: true, audio: "runtime-limited" });
+    media.setVolume = () => { throw new Error("unsupported volume"); };
+    expect(() => controller.setVolume(0)).not.toThrow();
+    expect(controller.snapshot()).toMatchObject({ volume: 0, audio: "runtime-limited", readiness: "ready" });
+    expect(media.opens).toHaveLength(1);
+  });
+
+  it("suspends paused/hidden/short-loop/near-end windows without rate failures", async () => {
+    const { media, controller } = setup(); media.metadata(); controller.setRate(8);
+    vi.advanceTimersByTime(6_000); expect(controller.snapshot().rate.outcome).toBe("suspended");
+    await controller.play(); media.update({ hidden: true }); media.emit("visibilitychange");
+    vi.advanceTimersByTime(6_000); expect(controller.snapshot().rate.limitation).toBeNull();
+    media.update({ hidden: false }); media.emit("visibilitychange");
+    controller.setLoopRange({ mediaId: timeline.mediaId, startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary });
+    presentFor(media, 0, 6_000); expect(controller.snapshot().rate.outcome).toBe("suspended");
+    controller.setLoopRange(null); media.update({ tick: tick(239) });
+    presentFor(media, 0, 6_000); expect(controller.snapshot().rate.limitation).toBeNull();
+    media.update({ ended: true }); media.emit("ended");
+    expect(controller.snapshot().desiredPlaying).toBe(false); expect(media.opens).toHaveLength(1);
+  });
+
+  it("bounds buffering, labels the failed rate, and retains the fallback after reload", async () => {
+    const { media, controller } = setup(); media.metadata(); await controller.play(); controller.setRate(8);
+    media.update({ readyState: 2 }); media.emit("waiting");
+    vi.advanceTimersByTime(5_000);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, outcome: "limited" });
+    expect(media.opens).toHaveLength(2);
+    media.metadata(); await Promise.resolve(); presentFor(media, 1);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, observed: 1, outcome: "limited" });
+    expect(media.rates.filter((value) => value === 8)).toHaveLength(1);
+  });
+
+  it("enters recovery at the first five-second buffering deadline at ordinary 1x", async () => {
+    const { media, controller } = setup(); media.metadata(); await controller.play();
+    media.update({ readyState: 2 }); media.emit("waiting");
+    vi.advanceTimersByTime(4_999); expect(media.opens).toHaveLength(1);
+    vi.advanceTimersByTime(1); expect(media.opens).toHaveLength(2);
+    expect(controller.snapshot().readiness).toBe("recovering");
+  });
+
+  it("does not let repeated brief buffering renew a capability attempt forever", async () => {
+    const { media, controller } = setup(); media.metadata(); controller.setRate(8); await controller.play();
+    for (let burst = 0; burst < 3; burst++) {
+      presentFor(media, 6, 3_250);
+      media.update({ readyState: 2 }); media.emit("waiting");
+      vi.advanceTimersByTime(100); media.update({ readyState: 4 }); media.emit("playing");
+    }
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, outcome: "unknown" });
+    expect(controller.snapshot().rate.limitation).toContain("interrupted playback");
+    expect(media.opens).toHaveLength(1); expect(media.seeks).toHaveLength(0);
+    presentFor(media, 1);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, observed: 1, outcome: "unknown" });
+  });
+
+  it("reports unavailable RVFC as unknown without invented success", async () => {
+    const { media, controller } = setup(false); media.metadata(); controller.setRate(8); await controller.play();
+    vi.advanceTimersByTime(6_000);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, applied: 8, observed: null, outcome: "unknown" });
+    expect(media.seeks).toHaveLength(0); expect(media.opens).toHaveLength(1); controller.dispose();
+  });
+
+  it("bounds missing callbacks for both a requested rate and its fallback without claiming a measured stall", async () => {
+    const { media, controller } = setup(); media.metadata(); controller.setRate(8); await controller.play();
+    vi.advanceTimersByTime(5_000);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 8, applied: 1, observed: null, outcome: "unknown" });
+    expect(controller.snapshot().rate.limitation).toContain("no presented-frame evidence");
+    vi.advanceTimersByTime(6_000); expect(media.opens).toHaveLength(2);
+    media.metadata(); await Promise.resolve();
+    vi.advanceTimersByTime(6_000); expect(controller.snapshot().readiness).toBe("degraded");
+    expect(media.opens).toHaveLength(2); controller.dispose();
+  });
+
+  it("rejects rate samples owned by an obsolete selection and restores the latest nudge intent", async () => {
+    const { media, controller } = setup(); media.metadata(); await controller.play();
+    controller.setRate(8);
+    const obsolete = media.allCallbacks[media.allCallbacks.length - 1]!;
+    controller.setRate(2); obsolete(tick(100), performance.now());
+    expect(controller.snapshot().rate.observed).toBeNull();
+    const seek = controller.seek(tick(10), { playAfter: false }); media.seeked();
+    controller.setRate(4); controller.setRate(0.5);
+    expect(media.read().rate).toBe(1 / 16);
+    media.frame(tick(10)); await seek;
+    expect(controller.snapshot().rate).toMatchObject({ selected: 0.5, applied: 0.5, observed: null, outcome: "suspended" });
+    await controller.play(); presentFor(media, 0.5);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 0.5, observed: 0.5, outcome: "verified" });
   });
 });

@@ -34,9 +34,26 @@ WebView2 Media diagnostic associates its exact per-generation loopback load URL
 and checks that marker when a DOM node ID is available. Binding generations are
 monotonic within each diagnostic owner; equal conflicting bindings are rejected.
 Recovery rotates the session query token on the same element and invalidates old
-decoder evidence. Disposal closes the native owner and removes its subscriptions.
+decoder evidence. Candidate decoder properties are scoped to each `kLoad` and
+cleared before reconciling its URL, including when WebMediaPlayer reuses a player
+ID. Candidates remain available across binding/load races, so fresh properties
+received after a load but before its binding retain their correct ownership.
+Disposal closes the native owner and removes its subscriptions.
 Only associated `D3D11VideoDecoder` plus the platform flag proves the supported
 Windows hardware path; software and unknown outcomes remain explicit.
+
+Shared windowed/fullscreen controls expose 0.25x, 0.5x, 1x, 2x, 4x and 8x,
+plus independent mute and volume intent. The controller keeps selected rate,
+accepted native property and observed presentation advancement separate. Rate
+verification uses settled RVFC windows; intentional seeks, loops, pauses and
+hidden documents suspend measurement. Repeated buffering cannot renew an
+unverified capability attempt beyond its ten-second deadline. Missing evidence
+remains unknown, while measured slow/stalled playback is explicitly limited.
+Failure selects the last verified usable rate or 1x, with at most one reload if
+fallback also fails; recovery retains the original selection and limitation
+without automatically reapplying the failed rate. Rate changes never emulate
+speed with seeks. Audio property failures are diagnosed separately from user mute
+and zero volume; successful property assignments do not prove audible output.
 
 `requestVideoFrameCallback` is the presented-frame authority. Requested, dispatched, seeked, and presented values retain distinct generation/epoch state. Timeline markers, seeks, event cards, champion filters, and recorded player state use mapped replay ticks from the same payload; unavailable/before/after-media observations are explicit. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
 
