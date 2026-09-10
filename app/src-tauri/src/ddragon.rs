@@ -121,16 +121,31 @@ pub async fn ensure_asset(
     }
 
     let remote_url = asset_remote_url(cache_directory, version, kind, asset)?;
-    let bytes = client
+    let mut response = client
         .get(&remote_url)
         .send()
         .await
         .with_context(|| format!("failed to download Data Dragon {kind} icon"))?
         .error_for_status()
-        .with_context(|| format!("Data Dragon {kind} icon returned an error"))?
-        .bytes()
+        .with_context(|| format!("Data Dragon {kind} icon returned an error"))?;
+    const MAX_ICON_BYTES: usize = 2 * 1024 * 1024;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_ICON_BYTES as u64)
+    {
+        bail!("Data Dragon icon exceeds the download limit");
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .with_context(|| format!("failed to read Data Dragon {kind} icon"))?;
+        .context("failed to read Data Dragon icon")?
+    {
+        if chunk.len() > MAX_ICON_BYTES.saturating_sub(bytes.len()) {
+            bail!("Data Dragon icon exceeds the download limit");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         bail!("Data Dragon {kind} icon was not a PNG");
     }

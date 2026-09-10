@@ -1919,17 +1919,21 @@
       "description": "Define and enforce a production least-privilege contract for loopback media delivery before adding more replay-derived artifact routes.",
       "priority": "P1",
       "area": "playback-security",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-REPLAY",
       "dependencies": [
         "QB-REPLAY-006"
       ],
       "evidence": [
-        "The server binds loopback and validates lexical identifiers, but all routes are unauthenticated, return wildcard CORS, the CSP trusts every 127.0.0.1 port, imported-preview tokens are predictable, and there is no documented origin/DNS-rebinding/local-process or junction/reparse-point threat model."
+        "2026-09-10: all delivery routes share random process capabilities, exact Host/Origin/CSP, Windows opened-handle containment and bounded HTTP/1 ownership; imported previews are independently random and revocable. Reviewed boundary and simpler rejected mechanisms are documented in docs/architecture/local-playback-security.md.",
+        "Passed 55 normal/67 benchmark-enabled Rust tests, 86 frontend tests, 82 benchmark-tool fixtures, typecheck/build/fmt and both Clippy configurations. Production WebView passed seven route variants under http://tauri.localhost; no capability URLs appeared in eleven retained post-change artifact bundles.",
+        "Twenty matched seek/scrub trials are valid. No latency, cancellation, CPU/memory or new sustained-growth regression requires a product change. Accepted sole aggregate Job I/O write flag (+9,571,239 bytes, 33.12%) with unresolved process/destination attribution: request shape unchanged, delivered median +3.08%, write-operation median +0.83%, source hashes preserved. Complete reports and disposition: docs/performance/evidence/qb-replay-011-20260910/README.md.",
+        "Range and scrub presentation tail samples remain explicitly limited; HEVC HTTP delivery passed but native probe load was unavailable. QB-REPLAY-009 manual audible/A-V observation remains deferred and non-blocking. Detailed engineering history: docs/execution/qb-replay-011.md."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-replay-011-local-playback-server-hardening.md",
+        "progress": "docs/execution/qb-replay-011.md"
       },
       "acceptance_criteria": [
         "A durable threat model defines in-scope local origins/processes, DNS rebinding, capability leakage, symlink/junction/reparse traversal, request exhaustion, imported files, and supported development/runtime origins without claiming protection outside the chosen boundary.",

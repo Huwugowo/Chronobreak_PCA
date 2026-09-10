@@ -788,6 +788,27 @@ class ReplayAnalyzerTests(unittest.TestCase):
             report = analyze.analyze(builder.persist())
             self.assertEqual(report["status"], "valid")
 
+    def test_presentation_before_seeked_preserves_both_measured_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            builder = BundleBuilder(Path(temporary))
+            presented = next(event for event in builder.events if event['kind'] == 'seek_presented')
+            seeked = next(event for event in builder.events if event['kind'] == 'seeked')
+            presented['monotonic_ms'], seeked['monotonic_ms'] = (
+                seeked['monotonic_ms'], presented['monotonic_ms'])
+            builder.events.sort(key=lambda event: event['monotonic_ms'])
+            self.assertEqual(analyze.analyze(builder.persist())['status'], 'valid')
+
+    def test_completion_before_dispatch_is_still_rejected(self) -> None:
+        for phase in ('seek_presented', 'seeked'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as temporary:
+                builder = BundleBuilder(Path(temporary))
+                completion = next(event for event in builder.events if event['kind'] == phase)
+                dispatched = next(event for event in builder.events if event['kind'] == 'seek_dispatched')
+                completion['monotonic_ms'] = dispatched['monotonic_ms'] - 0.1
+                builder.events.sort(key=lambda event: event['monotonic_ms'])
+                with self.assertRaisesRegex(analyze.InvalidData, 'incomplete/impossible'):
+                    analyze.analyze(builder.persist())
+
     def test_incomplete_action_and_generation_mismatch_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             builder = BundleBuilder(Path(temporary))
