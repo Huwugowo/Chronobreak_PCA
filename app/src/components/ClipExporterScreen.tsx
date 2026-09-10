@@ -15,7 +15,9 @@ import {
   loadBuiltInMusic,
   loadPlaybackProbe,
   prepareImportedMusicPreview,
+  releaseImportedMusicPreview,
 } from "../api";
+import { createImportedMusicPreview } from "../importedMusicPreview";
 import { formatBytes, formatDuration } from "../format";
 import type {
   BuiltInMusicTrack,
@@ -362,6 +364,16 @@ function ClipExporterScreen(props: Props) {
     musicPreview.load();
   });
 
+  const importedPreview = createImportedMusicPreview({
+    prepare: prepareImportedMusicPreview,
+    release: releaseImportedMusicPreview,
+    changed: setImportedPreviewUrl,
+    failed: (error) => setMusicPreviewError(
+      error instanceof Error ? error.message : "Imported music preview is unavailable.",
+    ),
+  });
+  createEffect(() => importedPreview.select(musicMode() === "file" ? importedPath() : ""));
+
   createEffect(() => {
     if (previewVideo) {
       previewVideo.volume = musicMode() === "none" ? 1 : gameVolume();
@@ -383,10 +395,12 @@ function ClipExporterScreen(props: Props) {
 
   onCleanup(() => {
     pausePreview();
+    importedPreview.dispose();
     if (previewSeekTimerId !== undefined) window.clearTimeout(previewSeekTimerId);
     previewVideo?.removeAttribute("src");
     previewBackdropVideo?.removeAttribute("src");
     musicPreview?.removeAttribute("src");
+    musicPreview?.load();
   });
 
   const chooseImport = async () => {
@@ -395,15 +409,7 @@ function ClipExporterScreen(props: Props) {
     pausePreview();
     setImportedPath(path);
     setMusicMode("file");
-    setImportedPreviewUrl("");
     setMusicPreviewError(null);
-    try {
-      setImportedPreviewUrl(await prepareImportedMusicPreview(path));
-    } catch (error) {
-      setMusicPreviewError(
-        error instanceof Error ? error.message : "Imported music preview is unavailable.",
-      );
-    }
   };
 
   const beginFocusDrag = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {

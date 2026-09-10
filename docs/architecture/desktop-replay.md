@@ -17,6 +17,12 @@ SolidJS `app/src/App.tsx` owns screen navigation and resources for games, clips,
 
 Path components are validated before resolution. Range responses stream file slices through Tokio and count requests, bytes, completed streams, and cancellations for diagnostics. This keeps memory use independent of whole-file size and lets the webview's native `<video>` element own decode, buffering, seeking, rate, and audio.
 
+All delivery routes share the capability, Host/Origin, exact-port CSP and opened-file
+containment policy described in [local playback security](local-playback-security.md).
+The HTTP/1 connection bound also bounds concurrent handlers and file streams.
+Imported preview tokens are random, independently revocable and released when the
+exporter's source changes or its preview is disposed.
+
 ## Library and viewer flow
 
 Opening a game asks Rust to strictly parse its schema-v2 bundle into a playback probe containing the loopback video URL, validated media timeline, mapped events, snapshots, and metadata. A single persistent video element is shared between windowed and fullscreen layouts; changing layout does not remount the decoder.

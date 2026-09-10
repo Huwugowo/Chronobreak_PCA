@@ -1,0 +1,73 @@
+{
+  "feature": "QB-REPLAY-011",
+  "date": "2026-09-10",
+  "status": "passed",
+  "app_sha256": "e150e2394b0d048eb0da2fe0fc2e1b41a7767d64cd4b7aa9f4fa2994c4d59d9f",
+  "production_webview": {
+    "origin": "http://tauri.localhost",
+    "routes": [
+      {
+        "content_type": "video/mp4",
+        "head_status": 200,
+        "length": 7973362,
+        "native_loaded": true,
+        "range_status": 206,
+        "route": "game"
+      },
+      {
+        "content_type": "video/mp4",
+        "head_status": 200,
+        "length": 7973362,
+        "native_loaded": true,
+        "range_status": 206,
+        "route": "clip"
+      },
+      {
+        "content_type": "image/jpeg",
+        "head_status": 200,
+        "length": 12461,
+        "native_loaded": true,
+        "range_status": 206,
+        "route": "thumbnail"
+      },
+      {
+        "content_type": "audio/mpeg",
+        "head_status": 200,
+        "length": 193389,
+        "native_loaded": true,
+        "range_status": 206,
+        "route": "music"
+      },
+      {
+        "content_type": "audio/mpeg",
+        "head_status": 200,
+        "length": 193389,
+        "native_loaded": true,
+        "range_status": 206,
+        "route": "import"
+      },
+      {
+        "content_type": "video/mp4",
+        "head_status": 200,
+        "length": 32722,
+        "native_loaded": false,
+        "range_status": 206,
+        "route": "probe"
+      },
+      {
+        "content_type": "image/png",
+        "head_status": 200,
+        "length": 70,
+        "native_loaded": true,
+        "range_status": 206,
+        "route": "ddragon"
+      }
+    ]
+  },
+  "source_integrity": "prepared bundle/clip post-hashes and separate JPEG SHA-256 unchanged",
+  "limitations": [
+    "HEVC native load returned unsupported; HTTP delivery passed.",
+    "Audio metadata loading does not claim manual audible/A-V verification.",
+    "This isolated cold-open route probe is compatibility evidence, not a resource soak or performance comparison."
+  ]
+}

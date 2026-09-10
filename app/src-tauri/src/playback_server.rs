@@ -1,6 +1,5 @@
 #[cfg(feature = "replay-benchmark")]
 use std::collections::VecDeque;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 #[cfg(feature = "replay-benchmark")]
@@ -14,11 +13,10 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::header::{
-    ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE,
-    CONTENT_TYPE, RANGE,
+    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use axum::routing::any;
@@ -26,13 +24,17 @@ use serde::Serialize;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf, SeekFrom};
 use tokio::net::TcpListener;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::io::ReaderStream;
 
 use crate::ddragon;
 use crate::library::{valid_clip_asset, valid_game_id};
 use crate::music;
+use crate::playback_file::{self, ApprovedRoot, FileScope};
+use crate::playback_policy::{self, BoundServer, DeliveryPolicy};
 
 const HEVC_PROBE: &[u8] = include_bytes!("../resources/hevc-probe.mp4");
+const MAX_CONNECTIONS: usize = 64;
 #[cfg(feature = "replay-benchmark")]
 const BENCHMARK_REQUEST_CAPACITY: usize = 4096;
 
@@ -43,6 +45,12 @@ pub struct PlaybackMetrics {
     response_bytes: AtomicU64,
     completed_streams: AtomicU64,
     cancelled_streams: AtomicU64,
+    active_connections: AtomicU64,
+    peak_connections: AtomicU64,
+    rejected_connections: AtomicU64,
+    rejected_requests: AtomicU64,
+    active_streams: AtomicU64,
+    peak_streams: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -52,6 +60,12 @@ pub struct ServerMetrics {
     pub response_bytes: u64,
     pub completed_streams: u64,
     pub cancelled_streams: u64,
+    pub active_connections: u64,
+    pub peak_connections: u64,
+    pub rejected_connections: u64,
+    pub rejected_requests: u64,
+    pub active_streams: u64,
+    pub peak_streams: u64,
 }
 
 impl PlaybackMetrics {
@@ -62,6 +76,12 @@ impl PlaybackMetrics {
             response_bytes: self.response_bytes.load(Ordering::Relaxed),
             completed_streams: self.completed_streams.load(Ordering::Relaxed),
             cancelled_streams: self.cancelled_streams.load(Ordering::Relaxed),
+            active_connections: self.active_connections.load(Ordering::Relaxed),
+            peak_connections: self.peak_connections.load(Ordering::Relaxed),
+            rejected_connections: self.rejected_connections.load(Ordering::Relaxed),
+            rejected_requests: self.rejected_requests.load(Ordering::Relaxed),
+            active_streams: self.active_streams.load(Ordering::Relaxed),
+            peak_streams: self.peak_streams.load(Ordering::Relaxed),
         }
     }
 }
@@ -381,46 +401,58 @@ impl Drop for RequestTracker {
     }
 }
 
-#[derive(Debug)]
 pub struct MediaRoots {
-    output_directory: RwLock<PathBuf>,
+    output_directory: RwLock<ApprovedRoot>,
     imported_music_preview: RwLock<Option<(String, PathBuf)>>,
-    imported_music_token: AtomicU64,
 }
 
 impl MediaRoots {
-    pub fn new(output_directory: PathBuf) -> Self {
-        Self {
-            output_directory: RwLock::new(output_directory),
+    pub fn new(output_directory: PathBuf) -> Result<Self> {
+        Ok(Self {
+            output_directory: RwLock::new(ApprovedRoot::new(&output_directory)?),
             imported_music_preview: RwLock::new(None),
-            imported_music_token: AtomicU64::new(0),
-        }
+        })
     }
 
     pub fn output_directory(&self) -> PathBuf {
+        self.output_root().path().to_path_buf()
+    }
+
+    fn output_root(&self) -> ApprovedRoot {
         self.output_directory
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
-    pub fn set_output_directory(&self, output_directory: PathBuf) {
+    pub(crate) fn set_output_root(&self, root: ApprovedRoot) {
         *self
             .output_directory
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = output_directory;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = root;
     }
 
-    pub fn register_imported_music_preview(&self, path: PathBuf) -> String {
-        let token = format!(
-            "{:016x}",
-            self.imported_music_token.fetch_add(1, Ordering::Relaxed) + 1
-        );
+    pub fn register_imported_music_preview(&self, path: PathBuf) -> Result<String> {
+        let path = playback_file::approve_import(&path)?;
+        let token = playback_policy::random_capability()?;
         *self
             .imported_music_preview
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((token.clone(), path));
-        token
+        Ok(token)
+    }
+
+    pub fn release_imported_music_preview(&self, token: &str) {
+        let mut preview = self
+            .imported_music_preview
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if preview
+            .as_ref()
+            .is_some_and(|(current, _)| current == token)
+        {
+            *preview = None;
+        }
     }
 
     fn imported_music_preview(&self, token: &str) -> Option<PathBuf> {
@@ -428,7 +460,7 @@ impl MediaRoots {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
-            .filter(|(registered, path)| registered == token && path.is_file())
+            .filter(|(registered, _)| registered == token)
             .map(|(_, path)| path.clone())
     }
 }
@@ -440,6 +472,7 @@ struct PlaybackState {
     #[cfg(feature = "replay-benchmark")]
     benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
     ddragon_cache: PathBuf,
+    ddragon_root: ApprovedRoot,
     ddragon_client: reqwest::Client,
     allow_ddragon_network: bool,
 }
@@ -457,6 +490,7 @@ struct CountingReader<R> {
 impl<R> CountingReader<R> {
     #[cfg(not(feature = "replay-benchmark"))]
     fn new(inner: R, metrics: Arc<PlaybackMetrics>, expected_bytes: u64) -> Self {
+        Self::stream_started(&metrics);
         Self {
             inner,
             metrics,
@@ -473,6 +507,7 @@ impl<R> CountingReader<R> {
         expected_bytes: u64,
         request: Option<RequestTracker>,
     ) -> Self {
+        Self::stream_started(&metrics);
         Self {
             inner,
             metrics,
@@ -481,6 +516,11 @@ impl<R> CountingReader<R> {
             completed: false,
             request,
         }
+    }
+
+    fn stream_started(metrics: &PlaybackMetrics) {
+        let active = metrics.active_streams.fetch_add(1, Ordering::Relaxed) + 1;
+        metrics.peak_streams.fetch_max(active, Ordering::Relaxed);
     }
 }
 
@@ -530,6 +570,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
 
 impl<R> Drop for CountingReader<R> {
     fn drop(&mut self) {
+        self.metrics.active_streams.fetch_sub(1, Ordering::Relaxed);
         if !self.completed && self.consumed_bytes < self.expected_bytes {
             self.metrics
                 .cancelled_streams
@@ -539,6 +580,7 @@ impl<R> Drop for CountingReader<R> {
 }
 
 pub async fn start(
+    bound: BoundServer,
     roots: Arc<MediaRoots>,
     metrics: Arc<PlaybackMetrics>,
     ddragon_cache: PathBuf,
@@ -549,37 +591,127 @@ pub async fn start(
         .timeout(Duration::from_secs(12))
         .build()
         .context("failed to build the Data Dragon asset client")?;
+    std::fs::create_dir_all(&ddragon_cache).context("could not create Data Dragon cache")?;
+    let ddragon_root = ApprovedRoot::new(&ddragon_cache)?;
     let state = PlaybackState {
         roots,
         metrics,
         #[cfg(feature = "replay-benchmark")]
         benchmark_requests,
         ddragon_cache,
+        ddragon_root,
         ddragon_client,
         allow_ddragon_network,
     };
-    let router = Router::new()
+    let base_url = bound.policy.base_url();
+    let metrics = Arc::clone(&state.metrics);
+    let router = media_router(state);
+    let policy = Arc::new(bound.policy);
+    let admission = (policy, Arc::clone(&metrics));
+    // Router layers run after route matching. This outer fallback authenticates
+    // and strips the capability before the inner media router chooses a route.
+    let router =
+        Router::new()
+            .fallback_service(router)
+            .layer(axum::middleware::from_fn_with_state(
+                admission,
+                admit_request,
+            ));
+    let listener = TcpListener::from_std(bound.listener)?;
+    tauri::async_runtime::spawn(serve_connections(listener, router, metrics));
+    Ok(base_url)
+}
+
+fn media_router(state: PlaybackState) -> Router {
+    Router::new()
         .route("/games/{timestamp}/video.mp4", any(game_video))
         .route("/clips/{filename}", any(clip_asset))
         .route("/music/{filename}", any(built_in_music))
         .route("/music-preview/{token}", any(imported_music_preview))
         .route("/probe/hevc.mp4", any(hevc_probe))
         .route("/ddragon/{version}/{kind}/{asset}", any(ddragon_asset))
-        .with_state(state);
-    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .await
-        .context("failed to bind the local playback server")?;
-    let address = listener
-        .local_addr()
-        .context("failed to read the local playback server address")?;
+        .with_state(state)
+}
 
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = axum::serve(listener, router).await {
-            eprintln!("local playback server stopped: {error}");
+async fn admit_request(
+    State((policy, metrics)): State<(Arc<DeliveryPolicy>, Arc<PlaybackMetrics>)>,
+    mut request: Request<Body>,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    let (mut response, origin) = match policy.admit(&mut request) {
+        Ok(origin) => {
+            let response = if request.method() == Method::OPTIONS {
+                empty_response(StatusCode::NO_CONTENT, "application/octet-stream")
+            } else {
+                next.run(request).await
+            };
+            (response, origin)
         }
-    });
+        Err(status) => {
+            metrics.rejected_requests.fetch_add(1, Ordering::Relaxed);
+            (empty_response(status, "application/octet-stream"), None)
+        }
+    };
+    playback_policy::response_headers(&mut response, origin);
+    response
+}
 
-    Ok(format!("http://{address}"))
+struct ConnectionGuard {
+    _permit: OwnedSemaphorePermit,
+    metrics: Arc<PlaybackMetrics>,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.metrics
+            .active_connections
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+async fn serve_connections(listener: TcpListener, router: Router, metrics: Arc<PlaybackMetrics>) {
+    use hyper::server::conn::http1;
+    use hyper_util::{
+        rt::{TokioIo, TokioTimer},
+        service::TowerToHyperService,
+    };
+    let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    loop {
+        let (socket, _) = match listener.accept().await {
+            Ok(connection) => connection,
+            Err(_) => {
+                // Avoid a hot loop on resource exhaustion; no request data is logged.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+            metrics.rejected_connections.fetch_add(1, Ordering::Relaxed);
+            drop(socket);
+            continue;
+        };
+        let active = metrics.active_connections.fetch_add(1, Ordering::Relaxed) + 1;
+        metrics
+            .peak_connections
+            .fetch_max(active, Ordering::Relaxed);
+        let guard = ConnectionGuard {
+            _permit: permit,
+            metrics: Arc::clone(&metrics),
+        };
+        let service = TowerToHyperService::new(router.clone());
+        tokio::spawn(async move {
+            let _guard = guard;
+            // HTTP/1 owns at most one handler/response body on each admitted connection.
+            // Do not impose a total lifetime: a valid recording can play for hours.
+            let _ = http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(Duration::from_secs(10))
+                .max_headers(32)
+                .max_buf_size(16 * 1024)
+                .serve_connection(TokioIo::new(socket), service)
+                .await;
+        });
+    }
 }
 
 async fn game_video(
@@ -590,13 +722,17 @@ async fn game_video(
     if !valid_game_id(&timestamp) {
         return empty_response(StatusCode::NOT_FOUND, "video/mp4");
     }
-    let path = state
-        .roots
-        .output_directory()
-        .join("games")
-        .join(timestamp)
-        .join("video.mp4");
-    serve_file(state, request, &path, "video/mp4", RouteClass::GameVideo).await
+    let root = state.roots.output_root();
+    let path = root.path().join("games").join(timestamp).join("video.mp4");
+    serve_file(
+        state,
+        request,
+        &path,
+        FileScope::Root(&root),
+        "video/mp4",
+        RouteClass::GameVideo,
+    )
+    .await
 }
 
 async fn clip_asset(
@@ -612,8 +748,17 @@ async fn clip_asset(
     } else {
         "video/mp4"
     };
-    let path = state.roots.output_directory().join("clips").join(filename);
-    serve_file(state, request, &path, content_type, RouteClass::Clip).await
+    let root = state.roots.output_root();
+    let path = root.path().join("clips").join(filename);
+    serve_file(
+        state,
+        request,
+        &path,
+        FileScope::Root(&root),
+        content_type,
+        RouteClass::Clip,
+    )
+    .await
 }
 
 async fn hevc_probe(State(state): State<PlaybackState>, request: Request<Body>) -> Response<Body> {
@@ -668,6 +813,7 @@ async fn imported_music_preview(
         state,
         request,
         &path,
+        FileScope::Exact(&path),
         content_type,
         RouteClass::ImportedMusic,
     )
@@ -698,12 +844,16 @@ async fn ddragon_asset(
             return empty_response(StatusCode::NOT_FOUND, "image/png");
         }
     };
-    let mut response = serve_file(state, request, &path, "image/png", RouteClass::Ddragon).await;
-    response.headers_mut().insert(
-        CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
-    response
+    let root = state.ddragon_root.clone();
+    serve_file(
+        state,
+        request,
+        &path,
+        FileScope::Root(&root),
+        "image/png",
+        RouteClass::Ddragon,
+    )
+    .await
 }
 
 async fn serve_embedded(
@@ -756,7 +906,7 @@ async fn serve_embedded(
             .metrics
             .response_bytes
             .fetch_add(response_length, Ordering::Relaxed);
-        Body::from(bytes[start as usize..=end as usize].to_vec())
+        Body::from(Bytes::from_static(bytes).slice(start as usize..=end as usize))
     };
     #[cfg(feature = "replay-benchmark")]
     let delivered = if request.method() == Method::HEAD {
@@ -781,6 +931,7 @@ async fn serve_file(
     state: PlaybackState,
     request: Request<Body>,
     path: &Path,
+    scope: FileScope<'_>,
     content_type: &'static str,
     route_class: RouteClass,
 ) -> Response<Body> {
@@ -806,11 +957,12 @@ async fn serve_file(
         return empty_response(StatusCode::METHOD_NOT_ALLOWED, content_type);
     }
 
-    let Ok(mut file) = File::open(path).await else {
+    let Ok(file) = playback_file::open_file(path, scope) else {
         #[cfg(feature = "replay-benchmark")]
         finish_immediate(pending, StatusCode::NOT_FOUND, None, 0, 0, false, "error");
         return empty_response(StatusCode::NOT_FOUND, content_type);
     };
+    let mut file = File::from_std(file);
     let Ok(metadata) = file.metadata().await else {
         #[cfg(feature = "replay-benchmark")]
         finish_immediate(
@@ -826,6 +978,20 @@ async fn serve_file(
     };
     let total_length = metadata.len();
     if total_length == 0 {
+        if request.headers().contains_key(RANGE) {
+            state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
+            #[cfg(feature = "replay-benchmark")]
+            finish_immediate(
+                pending,
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                None,
+                0,
+                0,
+                false,
+                "error",
+            );
+            return range_not_satisfiable(0, content_type);
+        }
         #[cfg(feature = "replay-benchmark")]
         finish_immediate(pending, StatusCode::OK, None, 0, 0, false, "completed");
         return build_empty_file_response(content_type);
@@ -922,6 +1088,9 @@ fn response_range(
     match request.headers().get(RANGE) {
         Some(value) => {
             state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
+            if request.headers().get_all(RANGE).iter().count() != 1 {
+                return None;
+            }
             let (start, end) = value
                 .to_str()
                 .ok()
@@ -993,7 +1162,6 @@ fn valid_method(method: &Method) -> bool {
 fn insert_common_headers(headers: &mut HeaderMap, content_type: &'static str) {
     headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
-    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 
@@ -1017,6 +1185,10 @@ fn range_not_satisfiable(total_length: u64, content_type: &'static str) -> Respo
     }
     response
 }
+
+#[cfg(test)]
+#[path = "playback_server_tests.rs"]
+mod wire_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1046,15 +1218,29 @@ mod tests {
         let second = directory.path().join("second.wav");
         std::fs::write(&first, b"first").unwrap();
         std::fs::write(&second, b"second").unwrap();
-        let roots = MediaRoots::new(directory.path().to_path_buf());
+        let roots = MediaRoots::new(directory.path().to_path_buf()).unwrap();
 
-        let first_token = roots.register_imported_music_preview(first.clone());
-        assert_eq!(roots.imported_music_preview(&first_token), Some(first));
+        let first_token = roots
+            .register_imported_music_preview(first.clone())
+            .unwrap();
+        assert_eq!(
+            roots.imported_music_preview(&first_token),
+            Some(first.canonicalize().unwrap())
+        );
 
-        let second_token = roots.register_imported_music_preview(second.clone());
+        let second_token = roots
+            .register_imported_music_preview(second.clone())
+            .unwrap();
         assert_ne!(first_token, second_token);
         assert_eq!(roots.imported_music_preview(&first_token), None);
-        assert_eq!(roots.imported_music_preview(&second_token), Some(second));
+        assert_eq!(
+            roots.imported_music_preview(&second_token),
+            Some(second.canonicalize().unwrap())
+        );
+        roots.release_imported_music_preview(&first_token);
+        assert!(roots.imported_music_preview(&second_token).is_some());
+        roots.release_imported_music_preview(&second_token);
+        assert!(roots.imported_music_preview(&second_token).is_none());
     }
 
     #[tokio::test]
@@ -1064,11 +1250,12 @@ mod tests {
         std::fs::create_dir_all(&game_directory).unwrap();
         std::fs::write(game_directory.join("video.mp4"), b"video").unwrap();
         let state = PlaybackState {
-            roots: Arc::new(MediaRoots::new(directory.path().to_path_buf())),
+            roots: Arc::new(MediaRoots::new(directory.path().to_path_buf()).unwrap()),
             metrics: Arc::new(PlaybackMetrics::default()),
             #[cfg(feature = "replay-benchmark")]
             benchmark_requests: None,
             ddragon_cache: directory.path().join("ddragon"),
+            ddragon_root: ApprovedRoot::new(directory.path()).unwrap(),
             ddragon_client: reqwest::Client::new(),
             allow_ddragon_network: true,
         };
@@ -1130,10 +1317,11 @@ mod tests {
             0.0,
         ));
         let state = PlaybackState {
-            roots: Arc::new(MediaRoots::new(directory.path().to_path_buf())),
+            roots: Arc::new(MediaRoots::new(directory.path().to_path_buf()).unwrap()),
             metrics: Arc::new(PlaybackMetrics::default()),
             benchmark_requests: Some(Arc::clone(&telemetry)),
             ddragon_cache: directory.path().join("ddragon"),
+            ddragon_root: ApprovedRoot::new(directory.path()).unwrap(),
             ddragon_client: reqwest::Client::new(),
             allow_ddragon_network: true,
         };

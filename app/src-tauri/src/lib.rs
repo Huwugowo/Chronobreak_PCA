@@ -6,6 +6,8 @@ mod ddragon;
 mod library;
 mod music;
 mod playback_diagnostics;
+mod playback_file;
+mod playback_policy;
 mod playback_server;
 
 use std::fs;
@@ -220,11 +222,30 @@ fn list_built_in_music(state: State<'_, AppState>) -> Result<Vec<BuiltInMusicTra
 fn prepare_imported_music_preview(
     state: State<'_, AppState>,
     path: String,
-) -> Result<String, String> {
+) -> Result<ImportedMusicPreview, String> {
     ensure_user_mutation_allowed(&state)?;
     let path = music::resolve_imported(&path).map_err(error_string)?;
-    let token = state.roots.register_imported_music_preview(path);
-    Ok(format!("{}/music-preview/{token}", state.playback_origin))
+    let token = state
+        .roots
+        .register_imported_music_preview(path)
+        .map_err(error_string)?;
+    Ok(ImportedMusicPreview {
+        url: format!("{}/music-preview/{token}", state.playback_origin),
+        token,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct ImportedMusicPreview {
+    url: String,
+    token: String,
+}
+
+#[tauri::command]
+fn release_imported_music_preview(state: State<'_, AppState>, token: String) -> Result<(), String> {
+    ensure_user_mutation_allowed(&state)?;
+    state.roots.release_imported_music_preview(&token);
+    Ok(())
 }
 
 #[tauri::command]
@@ -355,8 +376,9 @@ fn save_settings(state: State<'_, AppState>, settings: SettingsUpdate) -> Result
     next.apply_settings(settings).map_err(error_string)?;
     let output_directory = next.resolved_output_path().map_err(error_string)?;
     ensure_output_directories(&output_directory).map_err(error_string)?;
+    let output_root = playback_file::ApprovedRoot::new(&output_directory).map_err(error_string)?;
     config::save(&state.config_path, &next).map_err(error_string)?;
-    state.roots.set_output_directory(output_directory);
+    state.roots.set_output_root(output_root);
     *state
         .config
         .write()
@@ -490,6 +512,106 @@ fn resolve_item_name(
 #[tauri::command]
 fn get_playback_server_metrics(state: State<'_, AppState>) -> ServerMetrics {
     state.playback_metrics.snapshot()
+}
+
+/// Acceptance-only seam: fixed fixture routes, no caller-supplied paths or evaluation.
+#[cfg(feature = "replay-benchmark")]
+#[tauri::command]
+fn benchmark_delivery_probe(
+    state: State<'_, AppState>,
+    release_token: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let session = state
+        .benchmark
+        .as_ref()
+        .ok_or("delivery probe requires a benchmark session")?;
+    let manifest = session.launch().manifest();
+    let scenario = &manifest.scenarios[0];
+    if scenario["id"] != "delivery-route-probe" || scenario["kind"] != "cold_open" {
+        return Err("delivery probe requires its explicit acceptance scenario".to_owned());
+    }
+    if let Some(token) = release_token {
+        state.roots.release_imported_music_preview(&token);
+        return Ok(serde_json::Value::Null);
+    }
+    let fixture_id = scenario["fixture_ids"][0]
+        .as_str()
+        .ok_or("missing probe fixture")?;
+    let fixture = manifest
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.id == fixture_id)
+        .ok_or("unknown probe fixture")?;
+    let game = &fixture.game_timestamp;
+    let clip = format!("{game}_9999999999");
+    let sentinel =
+        playback_file::ApprovedRoot::new(&manifest.sentinel_root).map_err(error_string)?;
+    for path in [
+        state
+            .roots
+            .output_directory()
+            .join("games")
+            .join(game)
+            .join("video.mp4"),
+        state
+            .roots
+            .output_directory()
+            .join("clips")
+            .join(format!("{clip}.mp4")),
+        state
+            .roots
+            .output_directory()
+            .join("clips")
+            .join(format!("{clip}.jpg")),
+        state.ddragon_cache.join("0.0.0/icons/item/1.png"),
+        state.music_directory.join("momentum.mp3"),
+    ] {
+        playback_file::open_file(&path, playback_file::FileScope::Root(&sentinel))
+            .map_err(error_string)?;
+    }
+    let token = state
+        .roots
+        .register_imported_music_preview(state.music_directory.join("momentum.mp3"))
+        .map_err(error_string)?;
+    let routes = [
+        (
+            "game",
+            format!("/games/{game}/video.mp4"),
+            "video/mp4",
+            "video",
+        ),
+        ("clip", format!("/clips/{clip}.mp4"), "video/mp4", "video"),
+        (
+            "thumbnail",
+            format!("/clips/{clip}.jpg"),
+            "image/jpeg",
+            "image",
+        ),
+        (
+            "music",
+            "/music/momentum.mp3".to_owned(),
+            "audio/mpeg",
+            "audio",
+        ),
+        (
+            "import",
+            format!("/music-preview/{token}"),
+            "audio/mpeg",
+            "audio",
+        ),
+        ("probe", "/probe/hevc.mp4".to_owned(), "video/mp4", "video"),
+        (
+            "ddragon",
+            "/ddragon/0.0.0/item/1".to_owned(),
+            "image/png",
+            "image",
+        ),
+    ];
+    Ok(
+        serde_json::json!({"imported_token": token, "targets": routes.into_iter().map(|(label, route, content_type, kind)|
+        serde_json::json!({"label": label, "url": format!("{}{route}", state.playback_origin), "content_type": content_type, "kind": kind})
+    ).collect::<Vec<_>>() }),
+    )
 }
 
 #[cfg(feature = "replay-benchmark")]
@@ -671,10 +793,16 @@ pub fn run() {
     #[cfg(feature = "replay-benchmark")]
     let harness_initialization_ms = harness_started.elapsed().as_secs_f64() * 1_000.0;
 
-    #[cfg(feature = "replay-benchmark")]
     let mut tauri_context = tauri::generate_context!();
-    #[cfg(not(feature = "replay-benchmark"))]
-    let tauri_context = tauri::generate_context!();
+    let bound_server =
+        playback_policy::BoundServer::bind().expect("could not reserve local playback server");
+    let origin = bound_server.policy.origin();
+    let security = &mut tauri_context.config_mut().app.security;
+    playback_policy::restrict_csp(&mut security.csp, &origin).expect("invalid local playback CSP");
+    if security.dev_csp.is_some() {
+        playback_policy::restrict_csp(&mut security.dev_csp, &origin)
+            .expect("invalid development playback CSP");
+    }
 
     #[cfg(feature = "replay-benchmark")]
     let benchmark_webview = benchmark_launch.as_ref().map(|launch| {
@@ -784,7 +912,7 @@ pub fn run() {
 
             let music_directory = music::install(&app_data)?;
             let ddragon_cache = app_data.join("ddragon");
-            let roots = Arc::new(MediaRoots::new(output_directory.clone()));
+            let roots = Arc::new(MediaRoots::new(output_directory.clone())?);
             let playback_metrics = Arc::new(PlaybackMetrics::default());
 
             #[cfg(feature = "replay-benchmark")]
@@ -809,6 +937,7 @@ pub fn run() {
 
             #[cfg(feature = "replay-benchmark")]
             let playback_origin = tauri::async_runtime::block_on(playback_server::start(
+                bound_server,
                 Arc::clone(&roots),
                 Arc::clone(&playback_metrics),
                 ddragon_cache.clone(),
@@ -817,6 +946,7 @@ pub fn run() {
             ))?;
             #[cfg(not(feature = "replay-benchmark"))]
             let playback_origin = tauri::async_runtime::block_on(playback_server::start(
+                bound_server,
                 Arc::clone(&roots),
                 Arc::clone(&playback_metrics),
                 ddragon_cache.clone(),
@@ -846,13 +976,6 @@ pub fn run() {
                 ddragon_cache.clone(),
                 Arc::clone(&ddragon_status),
             ));
-
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "League Replay: serving {} from {}",
-                playback_origin,
-                output_directory.display()
-            );
 
             app.manage(AppState {
                 config_path,
@@ -935,6 +1058,7 @@ pub fn run() {
         delete_clip,
         list_built_in_music,
         prepare_imported_music_preview,
+        release_imported_music_preview,
         export_clip,
         get_storage_usage,
         run_auto_delete,
@@ -951,6 +1075,7 @@ pub fn run() {
         playback_diagnostics::bind_playback_diagnostics,
         playback_diagnostics::close_playback_diagnostics,
         get_replay_benchmark_session,
+        benchmark_delivery_probe,
         record_replay_benchmark_events,
         get_replay_benchmark_queue_stats,
         flush_replay_benchmark_server_requests,
@@ -967,6 +1092,7 @@ pub fn run() {
         delete_clip,
         list_built_in_music,
         prepare_imported_music_preview,
+        release_imported_music_preview,
         export_clip,
         get_storage_usage,
         run_auto_delete,
