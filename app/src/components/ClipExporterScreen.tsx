@@ -98,7 +98,8 @@ function ClipExporterScreen(props: Props) {
   const [verticalPosition, setVerticalPosition] = createSignal(0.5);
   const [musicMode, setMusicMode] = createSignal<MusicMode>("none");
   const [builtInFilename, setBuiltInFilename] = createSignal("");
-  const [importedPath, setImportedPath] = createSignal("");
+  // Each accepted picker selection must prepare again, including same-path retries.
+  const [importedPath, setImportedPath] = createSignal("", { equals: false });
   const [importedPreviewUrl, setImportedPreviewUrl] = createSignal("");
   const [gameVolume, setGameVolume] = createSignal(0.8);
   const [musicVolume, setMusicVolume] = createSignal(1);

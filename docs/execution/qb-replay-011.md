@@ -6,14 +6,13 @@ Updated: 2026-09-14
 
 ## Current milestone
 
-M1-M4, both original review corrections and the PR #2 P2 offloading correction
-complete, with the existing verification limitations retained below.
+M1-M4 and all review corrections complete, including imported-music same-path
+retry. Existing verification limitations remain below.
 
 ## Active unit
 
-None. P2 implementation, focused regressions, both Rust suites, formatting,
-Clippy, production build and independent diff review passed. Prior WebView/
-performance evidence is retained, not a new measurement of this correction.
+None. Imported retry implementation, regression, frontend verification and focused
+independent review passed.
 
 ## Completed
 
@@ -44,10 +43,14 @@ performance evidence is retained, not a new measurement of this correction.
 - PR #2 P2: offloaded file admission preserves the validated handle and retains
   the existing connection permit until blocking work finishes after cancellation.
   Focused regressions, affected checks, production build and fix review complete.
+- Imported-music retry: every accepted picker selection notifies the existing
+  preview effect, including the same path after failure. Actual exporter UI test
+  proves retry, cancelled-picker behavior, audio-source publication and release
+  on disposal; existing manager stale-result/disposal tests still pass.
 
 ## In flight
 
-None. P2 build completed. The retained probe r3 completed cleanly; failed r2 is
+None. The retained probe r3 completed cleanly; failed r2 is
 preserved. The current probe sentinel
 is `build/perf/qb-replay-011-delivery-probe-r3/.chronobreak-replay-benchmark`; its JPEG
 support asset has a separate SHA-256 receipt alongside prepared bundle/clip/cache
@@ -55,13 +58,33 @@ identities. The unrelated sibling debug app was left alone.
 
 ## Remaining
 
-None for the P2 correction. The real case-sensitive NTFS fixture is environment-blocked;
+No implementation or verification remains for the retry correction.
+The real case-sensitive NTFS fixture is environment-blocked;
 the deterministic fallback requested by the user passed. QB-REPLAY-009 audible/A-V
 observation remains intentionally deferred; range/scrub tail sample limits and
 optional GPU absence remain explicit.
 
 ## Verification
 
+- Fresh independent retry-diff review found no correctness, cancellation,
+  stale-result, cleanup or scope issue. Root inspected the complete product/test
+  delta and verification output; the unchanged manager remains the sole owner of
+  preparation and revocation. Canonical validation and diff whitespace check passed.
+- Imported retry, 2026-09-14: the new actual-component test failed against the old
+  signal because the second same-path selection left preparation calls at one
+  (`.codex/logs/command-20260914-142509.log`). With `equals: false` on the imported
+  path signal, the UI regression and two existing manager lifecycle tests passed
+  3/3 (`command-20260914-142612.log`). Full frontend suite passed 87/87 in 13 files
+  (`command-20260914-142632.log`); `npm.cmd run build --prefix app` passed its
+  `tsc --noEmit` and Vite production build (`command-20260914-142629.log`). The
+  first sandboxed test attempt could not write the configured `.codex/logs`;
+  escalated runs produced these results. Rust, packaged WebView and performance
+  results below remain retained prior evidence, not reruns for this UI correction.
+- Final PR review at `487bba4` confirmed same-path retry failure with the actual
+  preview manager and Solid signals: one preparation call after two selections;
+  the second selection cleared the error without retrying. Review stopped with
+  no code or PR-state changes. The user now authorizes this fix and commit/push,
+  explicitly excluding PR merge and QB-REPLAY-012.
 - P2 production `npm.cmd run desktop:build:benchmark --prefix app` passed,
   including typecheck/frontend build and the optimized native build (1m04s; usual
   linker-output warning only). Executable at
@@ -263,6 +286,11 @@ scrub retain the planned measurement boundary.
 
 ## Decisions
 
+- Imported retry uses the existing selection effect and manager: disable equality
+  suppression only for the imported-path signal. A cancelled picker still returns
+  before state changes. No automatic retry, manager queue change or second lifecycle
+  mechanism is added. Verification covers the actual Browse event and frontend
+  dependencies; native delivery, controller and benchmark behavior are unchanged.
 - P2 keeps the existing 64 connection permits: each blocking admission holds a
   clone of its connection guard through completion, including after disconnect.
   No separate semaphore, timeout, pathname reopen or filesystem fallback is added.
@@ -310,6 +338,5 @@ Chronobreak-ui is unrelated and must not be stopped or modified.
 
 ## Next action
 
-No implementation or verification action remains. Commit/push the reviewed P2
-correction to `qb-replay-011-local-playback-hardening` as authorized. Do not merge
-PR #2 or start QB-REPLAY-012; await a separate request for further work.
+Commit/push the reviewed retry correction to `qb-replay-011-local-playback-hardening`.
+Do not merge PR #2 or start QB-REPLAY-012; further work requires a separate request.
