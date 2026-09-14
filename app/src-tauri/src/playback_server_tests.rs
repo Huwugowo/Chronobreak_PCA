@@ -337,6 +337,116 @@ async fn until(mut predicate: impl FnMut() -> bool) {
     .unwrap();
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn blocking_open_yields_runtime_and_retains_slot_after_request_cancellation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("video.mp4");
+    std::fs::write(&path, b"fixture").unwrap();
+    let root = ApprovedRoot::new(directory.path()).unwrap();
+    let permits = Arc::new(Semaphore::new(1));
+    let metrics = Arc::new(PlaybackMetrics::default());
+    metrics.active_connections.store(1, Ordering::Relaxed);
+    let connection = Arc::new(ConnectionGuard {
+        _permit: Arc::clone(&permits).try_acquire_owned().unwrap(),
+        metrics: Arc::clone(&metrics),
+    });
+    let runtime_thread = std::thread::current().id();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let task = tokio::spawn(open_file_blocking(
+        Some(Arc::clone(&connection)),
+        move || {
+            started
+                .send(std::thread::current().id() != runtime_thread)
+                .unwrap();
+            // A finite watchdog prevents an offloading regression from hanging the suite.
+            blocked.recv_timeout(Duration::from_secs(5))?;
+            playback_file::open_file(&path, FileScope::Root(&root))
+        },
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), ready)
+            .await
+            .unwrap()
+            .unwrap(),
+        "file admission must not execute on the runtime worker"
+    );
+    // This async task and timer must advance while the synchronous opener waits.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    })
+    .await
+    .unwrap();
+    assert!(!task.is_finished());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    drop(connection);
+    assert_eq!(metrics.snapshot().active_connections, 1);
+    assert!(Arc::clone(&permits).try_acquire_owned().is_err());
+    release.send(()).unwrap();
+    until(|| metrics.snapshot().active_connections == 0 && permits.available_permits() == 1).await;
+    assert_eq!(permits.available_permits(), 1);
+}
+
+#[tokio::test]
+#[cfg(windows)]
+async fn blocking_open_streams_the_validated_handle_after_path_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("video.mp4");
+    let previous = directory.path().join("previous.mp4");
+    std::fs::write(&path, b"validated original").unwrap();
+    let root = ApprovedRoot::new(directory.path()).unwrap();
+    let (mut file, length) = open_file_blocking(None, move || {
+        let file = playback_file::open_file(&path, FileScope::Root(&root))?;
+        std::fs::rename(&path, previous)?;
+        std::fs::write(&path, b"replacement")?;
+        Ok(file)
+    })
+    .await
+    .unwrap();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(bytes, b"validated original");
+    assert_eq!(length, bytes.len() as u64);
+}
+
+#[tokio::test]
+async fn blocking_open_fails_closed_on_containment_errors_and_task_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let library = directory.path().join("library");
+    std::fs::create_dir(&library).unwrap();
+    let root = ApprovedRoot::new(&library).unwrap();
+    let outside = directory.path().join("outside.wav");
+    std::fs::write(&outside, b"outside").unwrap();
+    let candidate = outside.clone();
+    assert_eq!(
+        open_file_blocking(None, move || {
+            playback_file::open_file(&candidate, FileScope::Root(&root))
+        })
+        .await
+        .unwrap_err(),
+        StatusCode::NOT_FOUND
+    );
+    let approved = library.join("approved.wav");
+    std::fs::write(&approved, b"approved").unwrap();
+    let exact = playback_file::approve_import(&approved).unwrap();
+    assert_eq!(
+        open_file_blocking(None, move || {
+            playback_file::open_file(&outside, FileScope::Exact(&exact))
+        })
+        .await
+        .unwrap_err(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        open_file_blocking(None, || panic!("injected file-admission task failure"))
+            .await
+            .unwrap_err(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
 #[tokio::test]
 async fn connection_limit_rejects_excess_and_reclaims_disconnected_slots() {
     let fixture = WireFixture::start().await;

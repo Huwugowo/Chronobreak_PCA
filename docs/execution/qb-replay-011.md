@@ -6,15 +6,14 @@ Updated: 2026-09-14
 
 ## Current milestone
 
-M1-M4 and both independent review corrections complete, with the case-sensitive
-filesystem fixture limitation recorded below.
+M1-M4, both original review corrections and the PR #2 P2 offloading correction
+complete, with the existing verification limitations retained below.
 
 ## Active unit
 
-None. Both findings are corrected and the affected checks and production route
-probe passed. Final product diff inspection found no unresolved defect. The prior
-performance baseline was built from `e030161`; its matched comparison remains
-retained evidence, not a new measurement of the review corrections.
+None. P2 implementation, focused regressions, both Rust suites, formatting,
+Clippy, production build and independent diff review passed. Prior WebView/
+performance evidence is retained, not a new measurement of this correction.
 
 ## Completed
 
@@ -42,23 +41,61 @@ retained evidence, not a new measurement of the review corrections.
   separately stored logical/security output paths; deterministic regression,
   logical-path publication/failure tests, both Rust configurations, frontend
   checks, fmt/Clippy and fresh packaged WebView probe complete.
+- PR #2 P2: offloaded file admission preserves the validated handle and retains
+  the existing connection permit until blocking work finishes after cancellation.
+  Focused regressions, affected checks, production build and fix review complete.
 
 ## In flight
 
-None. Probe r3 completed cleanly; failed r2 is preserved. The current probe sentinel
+None. P2 build completed. The retained probe r3 completed cleanly; failed r2 is
+preserved. The current probe sentinel
 is `build/perf/qb-replay-011-delivery-probe-r3/.chronobreak-replay-benchmark`; its JPEG
 support asset has a separate SHA-256 receipt alongside prepared bundle/clip/cache
 identities. The unrelated sibling debug app was left alone.
 
 ## Remaining
 
-None for these findings. The real case-sensitive NTFS fixture is environment-blocked;
+None for the P2 correction. The real case-sensitive NTFS fixture is environment-blocked;
 the deterministic fallback requested by the user passed. QB-REPLAY-009 audible/A-V
 observation remains intentionally deferred; range/scrub tail sample limits and
 optional GPU absence remain explicit.
 
 ## Verification
 
+- P2 production `npm.cmd run desktop:build:benchmark --prefix app` passed,
+  including typecheck/frontend build and the optimized native build (1m04s; usual
+  linker-output warning only). Executable at
+  `app/src-tauri/target/release/league-replay-app.exe`, SHA-256
+  `3f0c138036b4b659f7bfa19b5a73165dcad3e8b9f150442701fca64cbcd52813`.
+  This is a build result, not a new WebView probe or seek/scrub measurement.
+- P2 final Rust checks, 2026-09-14: `cargo test --manifest-path
+  app/src-tauri/Cargo.toml` passed 61 registered tests and the same command with
+  `--features replay-benchmark` passed 73; the prior real case-sensitive fixture
+  limitation still applies. `cargo fmt --manifest-path app/src-tauri/Cargo.toml
+  -- --check` and both `cargo clippy --manifest-path app/src-tauri/Cargo.toml
+  --all-targets [--features replay-benchmark] -- -D warnings` passed. Logs:
+  `.codex/logs/command-20260914-094948.log`, `command-20260914-095034.log`,
+  `command-20260914-095122.log`. Canonical validation passed 60 items/seven
+  plan/checkpoint pairs, and `git diff --check` passed.
+- Fresh independent review of the P2 diff found no introduced correctness,
+  containment, lifetime or resource-bound defect. Root reviewed the complete
+  server/test/documentation delta. The cancellation regression directly exercises
+  the shared helper and permit lifetime; per-connection `Extension` wiring is
+  verified by code inspection, not a new socket-level cancellation fixture.
+- P2 focused tests passed 3/3: blocking admission allows progress on a single-thread
+  runtime, aborted waiters retain the existing connection permit until the job ends,
+  Tokio reads the original validated handle after path replacement, and containment
+  errors/task failures remain fail-closed. Log:
+  `.codex/logs/command-20260914-094827.log`. Initial compile required an explicit
+  `StatusCode` error type for the nested blocking-task result (E0282/E0283); fixed
+  without changing error policy. Ownership scout confirmed the existing permit
+  must be captured inside the blocking closure; no second semaphore is needed.
+- PR #2 review at `6cf1aed` identified synchronous `playback_file::open_file` on
+  the async HTTP handler, replacing the earlier Tokio-offloaded open. Slow storage
+  can occupy runtime workers before containment finishes. Review stopped; no PR
+  ready/merge action occurred. The user authorized this focused fix and commit/push,
+  explicitly excluding merge and QB-REPLAY-012. Earlier test results remain
+  historical evidence; they do not verify this correction.
 - Final pre-commit review, 2026-09-14: inspected the complete uncommitted diff,
   including both corrections and the new sanitized route report. Independent
   read-only containment, output-path consumer and evidence reviews found no
@@ -226,6 +263,18 @@ scrub retain the planned measurement boundary.
 
 ## Decisions
 
+- P2 keeps the existing 64 connection permits: each blocking admission holds a
+  clone of its connection guard through completion, including after disconnect.
+  No separate semaphore, timeout, pathname reopen or filesystem fallback is added.
+  Admission snapshots stay immutable; errors keep 404 for open/validation and 500
+  for metadata/task failure. The OS can still stall an open; the guarantee is
+  bounded ownership and an available async executor, not forced OS cancellation.
+- P2 verification is focused on runtime progress, cancellation ownership, exact
+  handle transfer, all wire routes and both Rust configurations plus a production
+  build. The retained WebView route probe, matched seek/scrub matrix and frontend/
+  harness test results are historical, not rerun for this correction. No new
+  seek-latency, SMB timeout or storage-performance claim is made. Frontend, policy,
+  containment semantics, range parsing, streaming and benchmark harness are unchanged.
 - Review correction verification scope: rerun the packaged `delivery-route-probe`
   because opened-file admission changed. Do not regenerate the matched seek/scrub
   matrix: range parsing, file opening/final-path queries, streaming, cancellation,
@@ -253,7 +302,7 @@ scrub retain the planned measurement boundary.
 
 ## Blockers
 
-No completion blocker. Real case-sensitive NTFS fixture creation is unsupported
+No P2 completion blocker. Real case-sensitive NTFS fixture creation is unsupported
 on this host; the explicitly requested deterministic regression is the fallback
 evidence, not a claim that the real fixture ran. The r2 missing-cache probe setup
 failure is resolved by complete r3 preparation. The live debug app in sibling
@@ -261,7 +310,6 @@ Chronobreak-ui is unrelated and must not be stopped or modified.
 
 ## Next action
 
-No implementation or verification action remains. The user authorized committing
-the complete reviewed QB-REPLAY-011 state and pushing
-`qb-replay-011-local-playback-hardening`. Retain the evidence and do not start
-QB-REPLAY-012; await a separate request for further feature work.
+No implementation or verification action remains. Commit/push the reviewed P2
+correction to `qb-replay-011-local-playback-hardening` as authorized. Do not merge
+PR #2 or start QB-REPLAY-012; await a separate request for further work.

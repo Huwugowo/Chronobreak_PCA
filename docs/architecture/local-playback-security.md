@@ -77,8 +77,11 @@ comparison. NTFS supports per-directory case sensitivity: case folding could
 approve a distinct sibling or imported file. Unexpected spelling differences deny
 delivery; no ad-hoc prefix stripping or string-prefix containment is used.
 The candidate must be a regular file. A failing handle query or containment
-check denies delivery. The exact validated handle becomes the Tokio streaming
-file; its pathname is never reopened after validation.
+check denies delivery. HTTP file opening, metadata and final-path validation run
+in Tokio's blocking pool, using an owned snapshot of the request's path and scope.
+The exact validated handle becomes the Tokio streaming file; its pathname is
+never reopened after validation. Open/validation failures deny delivery; a failed
+blocking task returns an empty server error without exposing paths or capabilities.
 
 `MediaRoots` keeps the configured/logical output directory separately for library,
 export and folder-opening operations. Only HTTP delivery uses its `ApprovedRoot`
@@ -131,8 +134,13 @@ connections, drops excess sockets without task/queue growth, bounds headers to
 32 entries and a 16 KiB buffer, and gives headers a ten-second deadline. One active
 handler/response body per HTTP/1 connection means that the same permit also bounds
 active streams; a separate stream queue is unnecessary. Permits live through the
-connection and are released on disconnect/error. A stalled body reader may occupy
-one bounded slot until it disconnects. There is no total playback lifetime timeout.
+connection. A blocking file-admission job shares that connection's permit and
+retains it after disconnect until the job finishes, because a started blocking
+operation cannot be aborted. Disconnect/reconnect churn therefore cannot queue
+unbounded detached admissions. Connection counters count these retained slots,
+including disconnected connections whose file admission is still running.
+A stalled body reader may occupy one bounded slot until it disconnects. There is
+no total playback lifetime timeout or claim of interrupting a stalled OS file open.
 
 File bodies retain the existing bounded ReaderStream chunks and range slices.
 Embedded assets use borrowed static byte slices rather than full-asset copies per
@@ -145,6 +153,9 @@ rejections before the policy layer are not counted as policy-rejected requests.
 Wire tests cover each route with authorization, GET/HEAD, single ranges, 206 and
 416, unsupported paths/types, origins/Host, imports and connection/header recovery.
 Dedicated temporary Windows junction and replacement fixtures exercise containment.
+A single-thread runtime regression holds file admission open while proving async
+progress and permit retention after waiter cancellation. Handoff tests read the
+validated file after pathname replacement and verify fail-closed task errors.
 A case-sensitive NTFS fixture tests distinct case-only siblings, an escaping
 junction and exact imported-file approval when the OS/filesystem permits it;
 unsupported/permission-denied setup is reported explicitly. A separate deterministic

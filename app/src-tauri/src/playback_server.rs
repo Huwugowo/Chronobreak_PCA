@@ -12,7 +12,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::header::{
@@ -20,6 +19,7 @@ use axum::http::header::{
 };
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use axum::routing::any;
+use axum::{Extension, Router};
 use serde::Serialize;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf, SeekFrom};
@@ -713,11 +713,11 @@ async fn serve_connections(listener: TcpListener, router: Router, metrics: Arc<P
         metrics
             .peak_connections
             .fetch_max(active, Ordering::Relaxed);
-        let guard = ConnectionGuard {
+        let guard = Arc::new(ConnectionGuard {
             _permit: permit,
             metrics: Arc::clone(&metrics),
-        };
-        let service = TowerToHyperService::new(router.clone());
+        });
+        let service = TowerToHyperService::new(router.clone().layer(Extension(Arc::clone(&guard))));
         tokio::spawn(async move {
             let _guard = guard;
             // HTTP/1 owns at most one handler/response body on each admitted connection.
@@ -976,26 +976,32 @@ async fn serve_file(
         return empty_response(StatusCode::METHOD_NOT_ALLOWED, content_type);
     }
 
-    let Ok(file) = playback_file::open_file(path, scope) else {
-        #[cfg(feature = "replay-benchmark")]
-        finish_immediate(pending, StatusCode::NOT_FOUND, None, 0, 0, false, "error");
-        return empty_response(StatusCode::NOT_FOUND, content_type);
+    let connection = request.extensions().get::<Arc<ConnectionGuard>>().cloned();
+    let path = path.to_path_buf();
+    let opened = match scope {
+        FileScope::Root(root) => {
+            let root = root.clone();
+            open_file_blocking(connection, move || {
+                playback_file::open_file(&path, FileScope::Root(&root))
+            })
+            .await
+        }
+        FileScope::Exact(expected) => {
+            let expected = expected.to_path_buf();
+            open_file_blocking(connection, move || {
+                playback_file::open_file(&path, FileScope::Exact(&expected))
+            })
+            .await
+        }
     };
-    let mut file = File::from_std(file);
-    let Ok(metadata) = file.metadata().await else {
-        #[cfg(feature = "replay-benchmark")]
-        finish_immediate(
-            pending,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            None,
-            0,
-            0,
-            false,
-            "error",
-        );
-        return empty_response(StatusCode::INTERNAL_SERVER_ERROR, content_type);
+    let (mut file, total_length) = match opened {
+        Ok(opened) => opened,
+        Err(status) => {
+            #[cfg(feature = "replay-benchmark")]
+            finish_immediate(pending, status, None, 0, 0, false, "error");
+            return empty_response(status, content_type);
+        }
     };
-    let total_length = metadata.len();
     if total_length == 0 {
         if request.headers().contains_key(RANGE) {
             state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
@@ -1075,6 +1081,27 @@ async fn serve_file(
         Body::from_stream(ReaderStream::new(reader))
     };
     build_response(body, status, start, end, total_length, content_type)
+}
+
+async fn open_file_blocking(
+    connection: Option<Arc<ConnectionGuard>>,
+    open: impl FnOnce() -> Result<std::fs::File> + Send + 'static,
+) -> Result<(File, u64), StatusCode> {
+    let (file, length) = tokio::task::spawn_blocking(move || {
+        // A started blocking job cannot be aborted. Retain the connection's existing
+        // slot until it finishes, even if the HTTP request disconnects in the meantime.
+        let _connection = connection;
+        let file = open().map_err(|_| StatusCode::NOT_FOUND)?;
+        let length = file
+            .metadata()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .len();
+        Ok::<_, StatusCode>((file, length))
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    // Transfer the opened and validated handle; never reopen its pathname.
+    Ok((File::from_std(file), length))
 }
 
 #[cfg(feature = "replay-benchmark")]
