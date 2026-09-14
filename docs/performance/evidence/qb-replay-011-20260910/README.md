@@ -24,6 +24,16 @@ CPU/memory or new sustained-growth gate requires a product change.
 The execution record at [QB-REPLAY-011](../../../execution/qb-replay-011.md)
 owns commands, test results, failure diagnoses and ignored raw artifact roots.
 
+Independent review corrections on the same date passed a fresh
+[production route probe](route-probe-review.json) using exact final-path comparison
+and separate logical/security output paths. All seven routes passed; source hashes
+matched. The first fresh attempt lacked the required cached icon; its failed
+artifacts remain preserved. The complete replacement fixture passed with the same
+binary. The seek/scrub reports below are retained from the earlier build: streaming,
+range handling, cancellation and playback control did not change, and no new
+performance claim is made. Real case-sensitive NTFS fixture creation was unsupported
+on this host; the deterministic case-exact regression passed.
+
 ## Measured delivery result
 
 These are medians across five trials per phase, using the same generated

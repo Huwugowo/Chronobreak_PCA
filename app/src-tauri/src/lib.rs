@@ -32,7 +32,7 @@ use library::{AutoDeleteResult, ClipSummary, GameSummary, PlaybackProbe, Storage
 use music::BuiltInMusicTrack;
 #[cfg(feature = "replay-benchmark")]
 use playback_server::{BenchmarkRequestTelemetry, RequestTelemetrySnapshot};
-use playback_server::{MediaRoots, PlaybackMetrics, ServerMetrics};
+use playback_server::{MediaRoots, OutputDirectory, PlaybackMetrics, ServerMetrics};
 use queueback_media_runtime::{MediaTools, RuntimeError};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -376,9 +376,9 @@ fn save_settings(state: State<'_, AppState>, settings: SettingsUpdate) -> Result
     next.apply_settings(settings).map_err(error_string)?;
     let output_directory = next.resolved_output_path().map_err(error_string)?;
     ensure_output_directories(&output_directory).map_err(error_string)?;
-    let output_root = playback_file::ApprovedRoot::new(&output_directory).map_err(error_string)?;
+    let output_directory = OutputDirectory::new(output_directory).map_err(error_string)?;
     config::save(&state.config_path, &next).map_err(error_string)?;
-    state.roots.set_output_root(output_root);
+    state.roots.set_output_directory(output_directory);
     *state
         .config
         .write()

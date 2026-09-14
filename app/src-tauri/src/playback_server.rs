@@ -401,35 +401,54 @@ impl Drop for RequestTracker {
     }
 }
 
+pub(crate) struct OutputDirectory {
+    path: PathBuf,
+    root: ApprovedRoot,
+}
+
+impl OutputDirectory {
+    pub(crate) fn new(path: PathBuf) -> Result<Self> {
+        let root = ApprovedRoot::new(&path)?;
+        Ok(Self { path, root })
+    }
+}
+
 pub struct MediaRoots {
-    output_directory: RwLock<ApprovedRoot>,
+    output_directory: RwLock<OutputDirectory>,
     imported_music_preview: RwLock<Option<(String, PathBuf)>>,
 }
 
 impl MediaRoots {
     pub fn new(output_directory: PathBuf) -> Result<Self> {
         Ok(Self {
-            output_directory: RwLock::new(ApprovedRoot::new(&output_directory)?),
+            output_directory: RwLock::new(OutputDirectory::new(output_directory)?),
             imported_music_preview: RwLock::new(None),
         })
     }
 
     pub fn output_directory(&self) -> PathBuf {
-        self.output_root().path().to_path_buf()
+        self.output_directory
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .path
+            .clone()
     }
 
     fn output_root(&self) -> ApprovedRoot {
         self.output_directory
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .root
             .clone()
     }
 
-    pub(crate) fn set_output_root(&self, root: ApprovedRoot) {
+    pub(crate) fn set_output_directory(&self, directory: OutputDirectory) {
+        // Publish the logical path and validated delivery snapshot together, after
+        // the caller has successfully persisted settings.
         *self
             .output_directory
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = root;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = directory;
     }
 
     pub fn register_imported_music_preview(&self, path: PathBuf) -> Result<String> {
@@ -1209,6 +1228,48 @@ mod tests {
         assert_eq!(parse_range("bytes=100-10", 1_000), None);
         assert_eq!(parse_range("bytes=0-1,4-5", 1_000), None);
         assert_eq!(parse_range("bytes=-0", 1_000), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn output_directory_preserves_logical_path_and_publishes_validated_pair() {
+        let fixture = tempfile::tempdir().unwrap();
+        let first = fixture.path().join("FirstLibrary");
+        let second = fixture.path().join("SecondLibrary");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let roots = MediaRoots::new(first.clone()).unwrap();
+        let previous = roots.output_root();
+        assert_eq!(roots.output_directory(), first);
+        assert_eq!(previous.path(), first.canonicalize().unwrap());
+        assert_ne!(roots.output_directory(), previous.path());
+
+        let next = OutputDirectory::new(second.clone()).unwrap();
+        // Preparation/validation does not publish anything before settings save.
+        assert_eq!(roots.output_directory(), first);
+        assert_eq!(roots.output_root().path(), previous.path());
+        roots.set_output_directory(next);
+        assert_eq!(roots.output_directory(), second);
+        assert_eq!(roots.output_root().path(), second.canonicalize().unwrap());
+        assert_eq!(previous.path(), first.canonicalize().unwrap());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn invalid_output_directory_leaves_both_current_paths_unchanged() {
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().to_path_buf();
+        let roots = MediaRoots::new(path.clone()).unwrap();
+        let approved = roots.output_root();
+        let file = path.join("file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        for invalid in [path.join("missing"), file] {
+            let update = OutputDirectory::new(invalid)
+                .map(|directory| roots.set_output_directory(directory));
+            assert!(update.is_err());
+            assert_eq!(roots.output_directory(), path);
+            assert_eq!(roots.output_root().path(), approved.path());
+        }
     }
 
     #[test]

@@ -2,17 +2,19 @@
 
 Feature: `QB-REPLAY-011`
 ExecPlan: `docs/exec-plans/qb-replay-011-local-playback-server-hardening.md`
-Updated: 2026-09-10
+Updated: 2026-09-14
 
 ## Current milestone
 
-M1-M4 complete: implementation, review, app checks and production verification.
+M1-M4 and both independent review corrections complete, with the case-sensitive
+filesystem fixture limitation recorded below.
 
 ## Active unit
 
-None. All acceptance gates are satisfied with the explicit aggregate I/O
-disposition below. The baseline was built from `e030161`; after baseline capture,
-the staged executable was replaced with the verified hardened production build.
+None. Both findings are corrected and the affected checks and production route
+probe passed. Final product diff inspection found no unresolved defect. The prior
+performance baseline was built from `e030161`; its matched comparison remains
+retained evidence, not a new measurement of the review corrections.
 
 ## Completed
 
@@ -36,22 +38,106 @@ the staged executable was replaced with the verified hardened production build.
   accepted with its attribution limit and measured evidence preserved.
 - Sanitized reports, exact route observations, range extraction and disposition:
   `docs/performance/evidence/qb-replay-011-20260910/README.md`.
+- Independent review corrections: exact final-path component comparison and
+  separately stored logical/security output paths; deterministic regression,
+  logical-path publication/failure tests, both Rust configurations, frontend
+  checks, fmt/Clippy and fresh packaged WebView probe complete.
 
 ## In flight
 
-None. All benchmark processes ended cleanly; the unrelated sibling debug app was
-left alone. The probe sentinel is
-`build/perf/qb-replay-011-delivery-probe/.chronobreak-replay-benchmark`; its JPEG
+None. Probe r3 completed cleanly; failed r2 is preserved. The current probe sentinel
+is `build/perf/qb-replay-011-delivery-probe-r3/.chronobreak-replay-benchmark`; its JPEG
 support asset has a separate SHA-256 receipt alongside prepared bundle/clip/cache
-identities.
+identities. The unrelated sibling debug app was left alone.
 
 ## Remaining
 
-None for QB-REPLAY-011. QB-REPLAY-009 audible/A-V observation remains intentionally
-deferred; range/scrub tail sample limits and optional GPU absence remain explicit.
+None for these findings. The real case-sensitive NTFS fixture is environment-blocked;
+the deterministic fallback requested by the user passed. QB-REPLAY-009 audible/A-V
+observation remains intentionally deferred; range/scrub tail sample limits and
+optional GPU absence remain explicit.
 
 ## Verification
 
+- Final pre-commit review, 2026-09-14: inspected the complete uncommitted diff,
+  including both corrections and the new sanitized route report. Independent
+  read-only containment, output-path consumer and evidence reviews found no
+  unresolved QB-REPLAY-011 finding or unrelated change. No product code changed
+  during this review. The base hardening is already committed as `5a0e7ff`.
+- Fresh normal/benchmark-enabled Rust suites passed 58/70 registered tests;
+  frontend tests passed 86/86; typecheck, frontend build, formatting and both
+  Clippy configurations passed. Focused containment suite passed five registered
+  tests, with the real case-sensitive fixture still unavailable (0x80070032);
+  deterministic comparison and actual junction/replacement checks passed.
+  Logs: `.codex/logs/command-20260914-092621.log`,
+  `command-20260914-092811.log`, `command-20260914-092640.log` and
+  `command-20260914-092913.log`. Initial sandboxed test attempts could not write
+  the configured `.codex/logs`; escalated reruns produced these results.
+- Retained production build/probe, matched performance and 82 harness-fixture
+  results were reviewed, not rerun. Raw r3 receipts confirm the recorded binary,
+  all seven route results, clean exit and matching source hashes. Existing HEVC,
+  case-sensitive filesystem, performance attribution/tail and audible-observation
+  limitations remain unchanged. Canonical validation passed for 60 items/seven
+  plan/checkpoint pairs; `git diff --check` passed.
+- Save-error behavior is verified by inspection of `config::save(...)?` before
+  pair publication; tests cover pair publication and validation failure, without
+  injecting a config-save failure. The potential concurrent settings transaction
+  concern predates this diff and normal frontend settings controls serialize saves;
+  it is not a regression introduced by either correction.
+- Review correction pass, 2026-09-10: exact `OsStr` component equality replaces
+  allocating UTF-16 case-folded comparisons for containment and exact imports;
+  removed the now-unused Win32 Globalization feature. `OutputDirectory` validates
+  and holds the logical path plus `ApprovedRoot` as one lock-protected value.
+  Settings validates and persists before publishing that value. Read-only focused
+  review found no concrete defect; root inspected the product diff against both
+  findings. No range/parser/stream/controller/telemetry implementation changed.
+- Focused `cargo test --manifest-path app/src-tauri/Cargo.toml playback_file::tests
+  -- --nocapture` passed 5 registered tests. The real case-sensitive fixture could
+  not execute: `SetFileInformationByHandle(FileCaseSensitiveInfo)` returned
+  `ERROR_NOT_SUPPORTED` (50 / 0x80070032); an unsandboxed `fsutil.exe file
+  setCaseSensitiveInfo <fresh empty build fixture> enable` independently returned
+  the same unsupported result. Deterministic case-only root/ancestor/exact-file
+  comparisons and existing real junction/replacement checks passed. Do not claim
+  the real case-sensitive sibling/reparse fixture ran on this host.
+- Normal Rust suite passed 58 registered tests (same case-sensitive fixture
+  limitation); frontend suite passed all 86 tests. Logs:
+  `.codex/logs/command-20260910-170134.log` and `command-20260910-165749.log`.
+  Initial sandboxed test attempts failed because the configured logger could not
+  write `.codex/logs`; unsandboxed reruns produced the results above.
+- Review correction full checks: `cargo test --manifest-path app/src-tauri/Cargo.toml
+  --features replay-benchmark` passed 70 registered tests (same fixture limitation;
+  `command-20260910-170513.log`). `npm.cmd run check --prefix app` and
+  `npm.cmd run build --prefix app` passed (`command-20260910-170527.log`).
+  `cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check` and both
+  `cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets
+  [--features replay-benchmark] -- -D warnings` passed (`command-20260910-170701.log`).
+- Review production build `npm.cmd run desktop:build:benchmark --prefix app`
+  passed (optimized, 1m03s); staged SHA-256
+  `bff66a7715d9ce6c5b6b932ab7e2ee56f31786cc5cd636c0f4a9d3a8b59893a6`.
+  Fresh r2 preparation copied both generated fixtures with matching hashes and
+  separately verified the original JPEG. r2 `run.ps1` failed before any route
+  checks because the required cached item PNG was absent. A read-only native
+  `GetFinalPathNameByHandleW` check proved exact containment for game/clip/JPEG/music
+  and returned Win32 error 3 for that icon. This is incomplete probe setup, not
+  evidence of a product containment failure; do not change validation or the app.
+  Preserve r2 at `build/perf/qb-replay-011-delivery-probe-r2/.chronobreak-replay-benchmark`.
+- Complete r3 fixture seeded the original 70-byte cached PNG before preparation,
+  preserving cache fingerprint `sha256:614e9be2a42536c6031b046507594825f648542a06b5a437553d2d5f9dfb4f2a`.
+  `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.ps1
+  -Manifest <r3 sentinel>/manifests/qb-replay-011-delivery-probe-r3.json` passed:
+  clean app exit, analyzer accepted, bundle/clip/config/cache hashes matched;
+  separate JPEG hash unchanged. All seven routes passed HEAD 200 and range GET 206
+  under `http://tauri.localhost`; native loads passed except HEVC, as before.
+  Sanitized observations: `docs/performance/evidence/qb-replay-011-20260910/route-probe-review.json`.
+  No capability URL matches in r2/r3 JSON/JSONL/log artifacts. No harness changes,
+  so the existing 82 harness fixture results were retained, not rerun.
+- Final review checked the exact product diff against both findings: both
+  containment and exact imports use case-exact normalized components and stream
+  the same validated handle; non-delivery consumers get the logical path;
+  `output_root()` still supplies the HTTP snapshot; settings cannot publish either
+  path until construction/validation and config persistence succeed. No unrelated
+  code, immutable plan or acceptance criteria changed. Canonical validation and
+  `git diff --check` passed. No commit or push performed.
 - 2026-09-10: `npm.cmd run desktop:build:benchmark --prefix app` passed against
   pre-change tree; optimized executable copied to `build/release/queueback` for the
   prepared template. Only normal linker-output warning. Earlier Sep9 build is
@@ -140,6 +226,13 @@ scrub retain the planned measurement boundary.
 
 ## Decisions
 
+- Review correction verification scope: rerun the packaged `delivery-route-probe`
+  because opened-file admission changed. Do not regenerate the matched seek/scrub
+  matrix: range parsing, file opening/final-path queries, streaming, cancellation,
+  resource ownership, controller and telemetry are unchanged. The comparison now
+  uses exact nonallocating equality in the existing admission check; root getters
+  retain one lock/read and one cloned path. Retain prior performance evidence with
+  its existing attribution/tail limitations; make no new performance claim.
 - Preserve unrelated local skill changes and `.codex/`. QB-REPLAY-009 changes from
   the earlier turn are now committed in current repository state.
 - One 64-connection HTTP/1 bound also bounds active request bodies/streams; no
@@ -160,11 +253,15 @@ scrub retain the planned measurement boundary.
 
 ## Blockers
 
-None. The earlier analyzer rejection is resolved from controller evidence; the
-valid r2 baseline is preserved. The live debug app in sibling Chronobreak-ui is
-unrelated and must not be stopped or modified.
+No completion blocker. Real case-sensitive NTFS fixture creation is unsupported
+on this host; the explicitly requested deterministic regression is the fallback
+evidence, not a claim that the real fixture ran. The r2 missing-cache probe setup
+failure is resolved by complete r3 preparation. The live debug app in sibling
+Chronobreak-ui is unrelated and must not be stopped or modified.
 
 ## Next action
 
-No implementation action remains. Resume another feature through the normal
-workflow; retain these reports and the immutable plan for provenance.
+No implementation or verification action remains. The user authorized committing
+the complete reviewed QB-REPLAY-011 state and pushing
+`qb-replay-011-local-playback-hardening`. Retain the evidence and do not start
+QB-REPLAY-012; await a separate request for further feature work.

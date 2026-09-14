@@ -72,11 +72,19 @@ explicitly added to the policy. CORS is not the primary authorization boundary.
 
 `playback_file.rs` snapshots approved root identities from opened directory handles
 using Windows `GetFinalPathNameByHandleW` with normalized DOS names. Candidate
-handles use the same extended-path namespace and Windows ordinal case comparison,
-component by component. No ad-hoc prefix stripping or string-prefix containment
-is used. The candidate must be a regular file. A failing handle query or containment
+handles use the same extended-path namespace and exact, case-sensitive component
+comparison. NTFS supports per-directory case sensitivity: case folding could
+approve a distinct sibling or imported file. Unexpected spelling differences deny
+delivery; no ad-hoc prefix stripping or string-prefix containment is used.
+The candidate must be a regular file. A failing handle query or containment
 check denies delivery. The exact validated handle becomes the Tokio streaming
 file; its pathname is never reopened after validation.
+
+`MediaRoots` keeps the configured/logical output directory separately for library,
+export and folder-opening operations. Only HTTP delivery uses its `ApprovedRoot`
+final-path snapshot. Settings prepares both as one validated value, persists the
+configuration, then publishes the pair under one write lock. Validation or save
+failure leaves the active pair unchanged.
 
 Library and Data Dragon root path snapshots are made at explicit startup/selection.
 Each request uses one immutable snapshot. A library settings change affects later
@@ -137,6 +145,10 @@ rejections before the policy layer are not counted as policy-rejected requests.
 Wire tests cover each route with authorization, GET/HEAD, single ranges, 206 and
 416, unsupported paths/types, origins/Host, imports and connection/header recovery.
 Dedicated temporary Windows junction and replacement fixtures exercise containment.
+A case-sensitive NTFS fixture tests distinct case-only siblings, an escaping
+junction and exact imported-file approval when the OS/filesystem permits it;
+unsupported/permission-denied setup is reported explicitly. A separate deterministic
+final-path comparison test always covers the case-exact invariant.
 The `delivery-route-probe` cold-open benchmark scenario is an explicit opt-in
 acceptance seam: its benchmark-only command returns fixed sentinel fixture URLs,
 and the production WebView checks HEAD, range fetch and native video/audio/image
