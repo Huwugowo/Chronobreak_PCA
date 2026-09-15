@@ -102,10 +102,15 @@ Frontend records use the app session's monotonic clock offset. Requested preview
 
 ```text
 seek_requested -> optional pending replacement/dedupe -> seek_dispatched
--> native seeking -> seeked -> first current-generation presented frame
+-> native seeking -> { seeked, first current-generation presented frame }
 ```
 
-The report retains request-to-dispatch, request-to-`seeked`, request-to-presented, target error, direction/distance class, reason, generation, and supersession. Timeout, recovery, degraded state, media error, or stale-generation evidence invalidates the trial.
+Native `seeked` and the first authoritative presented frame may arrive in either
+order. Both must follow dispatch and both are required for a completed seek, as
+already supported by the playback controller. The report retains
+request-to-dispatch, request-to-`seeked`, request-to-presented, target error,
+direction/distance class, reason, generation, and supersession. Timeout, recovery,
+degraded state, media error, or stale-generation evidence invalidates the trial.
 
 The full observer also records media readiness, native play/pause, applied/effective rate, fullscreen state, video quality, one-second diagnostics, export progress, and lifecycle. The minimal observer retains scenario/action boundaries, dispatch/native completion, the first authoritative frame, quality snapshots, and terminal state. Both frontend and Rust writers are bounded and expose capacity, high-water mark, and loss. Any required loss invalidates the trial.
 

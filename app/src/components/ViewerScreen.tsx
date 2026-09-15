@@ -233,6 +233,12 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     response_bytes: 0,
     completed_streams: 0,
     cancelled_streams: 0,
+    active_connections: 0,
+    peak_connections: 0,
+    rejected_connections: 0,
+    rejected_requests: 0,
+    active_streams: 0,
+    peak_streams: 0,
   });
   const initialClipRange = (): ClipRange | null => {
     const draft = props.initialClipDraft;

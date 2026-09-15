@@ -37,6 +37,7 @@ import {
   type ReplayBenchmarkObserver,
 } from "./benchmark";
 import AppHeader from "./components/AppHeader";
+import { runDeliveryRouteProbe } from "./deliveryRouteProbe";
 import ClipExporterScreen from "./components/ClipExporterScreen";
 import ClipModal from "./components/ClipModal";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -360,7 +361,7 @@ function App() {
     }
   };
 
-  const beginBenchmarkScenario = (
+  const beginBenchmarkScenario = async (
     observer: ReplayBenchmarkObserver,
     scenario: BenchmarkScenario,
   ) => {
@@ -405,6 +406,17 @@ function App() {
     if (scenario.kind === "export") {
       void runBenchmarkExport(observer, scenario, fixture);
       return;
+    }
+    if (scenario.id === "delivery-route-probe") {
+      try {
+        const routes = await runDeliveryRouteProbe();
+        observer.emit("delivery_route_probe", { routes, origin: location.origin }, { required: true });
+      } catch {
+        benchmarkFailureStarted = true;
+        observer.emit("scenario_failed", { reason: "delivery_route_probe_failed" }, { required: true });
+        await observer.complete("failed", "delivery route probe failed");
+        return;
+      }
     }
     observer.emit(
       "replay_requested",

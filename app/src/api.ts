@@ -608,9 +608,15 @@ export const chooseMusicFile = async (): Promise<string | null> => {
   return typeof selected === "string" ? selected : null;
 };
 
-export const prepareImportedMusicPreview = async (path: string): Promise<string> => {
-  if (!isTauri()) return "";
-  return invoke<string>("prepare_imported_music_preview", { path });
+export type ImportedMusicPreview = { url: string; token: string };
+
+export const prepareImportedMusicPreview = async (path: string): Promise<ImportedMusicPreview> => {
+  if (!isTauri()) return { url: "", token: "" };
+  return invoke<ImportedMusicPreview>("prepare_imported_music_preview", { path });
+};
+
+export const releaseImportedMusicPreview = async (token: string): Promise<void> => {
+  if (isTauri()) await invoke<void>("release_imported_music_preview", { token });
 };
 
 export const exportClip = async (
@@ -808,6 +814,12 @@ export const loadServerMetrics = async (): Promise<ServerMetrics> => {
       response_bytes: 0,
       completed_streams: 0,
       cancelled_streams: 0,
+      active_connections: 0,
+      peak_connections: 0,
+      rejected_connections: 0,
+      rejected_requests: 0,
+      active_streams: 0,
+      peak_streams: 0,
     };
   }
   return invoke<ServerMetrics>("get_playback_server_metrics");

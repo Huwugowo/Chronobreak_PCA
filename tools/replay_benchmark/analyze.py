@@ -925,7 +925,12 @@ def _validate_events(
                     next((i for i, record in enumerate(records) if _kind(record) in phase), None)
                     for phase in (SEEK_DISPATCH_KINDS, SEEKED_KINDS, PRESENTED_KINDS)
                 ]
-                if any(index is None for index in phases) or phases != sorted(phases):
+                # RVFC and native seeked are independent browser observations. The
+                # controller supports either completion order, but both must follow
+                # dispatch and both remain required for a completed seek.
+                if any(index is None for index in phases) or not (
+                    phases[0] < phases[1] and phases[0] < phases[2]
+                ):
                     raise InvalidData(f"seek action {action_id} has incomplete/impossible phases")
             elif not any(
                 kind in ACTION_COMPLETE_KINDS or kind in ACTION_SHORT_CIRCUIT_KINDS

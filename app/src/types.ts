@@ -210,6 +210,12 @@ export type ServerMetrics = {
   response_bytes: number;
   completed_streams: number;
   cancelled_streams: number;
+  active_connections: number;
+  peak_connections: number;
+  rejected_connections: number;
+  rejected_requests: number;
+  active_streams: number;
+  peak_streams: number;
 };
 
 export type LibraryTab = "games" | "clips";
