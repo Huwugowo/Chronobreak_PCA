@@ -107,8 +107,7 @@
 }
 
 .matchRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  position: relative;
 }
 
 .matchOpen {
@@ -116,7 +115,7 @@
   grid-template-columns: 48px 68px 132px 92px 180px 72px minmax(24px, 1fr) 78px 124px;
   align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-3);
+  padding: 0 calc(72px + var(--space-3)) 0 var(--space-3);
 }
 
 .matchRow {
@@ -138,7 +137,7 @@
   transition: background-color var(--motion-fast);
 }
 
-.matchOpen:hover {
+.matchRow:hover .matchOpen:not(:disabled) {
   background: var(--surface-hover);
 }
 
@@ -385,12 +384,23 @@
 }
 
 .matchActions {
-  position: relative;
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
+  width: 72px;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  background: var(--surface-panel);
+  background: transparent;
+  pointer-events: none;
+}
+
+.starButton,
+.moreMenu {
+  pointer-events: auto;
 }
 
 .starButton,
