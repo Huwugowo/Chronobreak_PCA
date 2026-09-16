@@ -1,5 +1,4 @@
 import type { DdragonStatus, LibraryTab, NavigationState } from "../types";
-import { isDesktopRuntime } from "../api";
 import { ClipsIcon, MatchHistoryIcon, SettingsIcon } from "../ui/icons";
 import styles from "./Chrome.module.css";
 
@@ -53,12 +52,6 @@ function AppHeader(props: Props) {
           {props.ddragon.state === "ready"
             ? `ASSETS ${props.ddragon.version ?? "READY"}`
             : props.ddragon.state.toUpperCase()}
-        </span>
-        <span
-          class={styles.runtimeMark}
-          title={isDesktopRuntime() ? "Tauri desktop runtime" : "Browser preview"}
-        >
-          {isDesktopRuntime() ? "DESKTOP" : "PREVIEW"}
         </span>
         <button
           class={styles.settingsButton}
