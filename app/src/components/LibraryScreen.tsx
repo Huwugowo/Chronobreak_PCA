@@ -141,7 +141,7 @@ function GamesLibrary(props: Props) {
           onChange={(event) => setChampionFilter(event.currentTarget.value)}
           aria-label="Filter by champion"
         >
-          <option value="" disabled hidden>Champion</option>
+          <option value="">All champions</option>
           <For each={champions()}>
             {(champion) => <option value={champion}>{champion}</option>}
           </For>
@@ -153,7 +153,7 @@ function GamesLibrary(props: Props) {
           onChange={(event) => setModeFilter(event.currentTarget.value)}
           aria-label="Filter by mode"
         >
-          <option value="" disabled hidden>Mode</option>
+          <option value="">All modes</option>
           <For each={modes()}>
             {(mode) => <option value={mode}>{mode}</option>}
           </For>
