@@ -249,7 +249,7 @@ Destructive operations such as Delete live behind the More action / confirmation
 - filled yellow Star only
 
 ### Outcome
-- result label color only; do not tint the full row
+- result label color plus a slim 3 px leading outcome cue; do not tint the full row
 
 ### Busy mutation
 - disable only the control(s) that must not repeat
