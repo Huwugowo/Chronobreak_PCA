@@ -1,4 +1,81 @@
 :root {
+  /* Chronobreak foundation surfaces */
+  --surface-app: #0d0c10;
+  --surface-panel: #14121a;
+  --surface-raised: #1b1822;
+  --surface-hover: #231f2c;
+  --surface-pressed: #100f14;
+
+  /* Brand */
+  --brand-plum: #48405c;
+  --brand-yellow: #fafa69;
+
+  /* Text */
+  --text-primary: #f5f3f7;
+  --text-secondary: #b7b2c0;
+  --text-muted: #928b9b;
+
+  /* Semantic result/status colors */
+  --accent-blue: #4da3ff;
+  --accent-red: #ff5268;
+  --accent-neutral: #9ca0aa;
+  /* Structure and interaction */
+  --line-subtle: rgba(245, 243, 247, 0.12);
+  --line-strong: rgba(245, 243, 247, 0.24);
+  --focus-ring: var(--brand-yellow);
+  --selected-surface: rgba(250, 250, 105, 0.06);
+  --selected-line: rgba(250, 250, 105, 0.55);
+  --disabled-opacity: 0.45;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Geometry */
+  --app-header-height: 56px;
+  --control-height: 32px;
+  --match-row-height: 72px;
+  --radius-panel-ui: 0px;
+  --radius-control: 2px;
+  --radius-badge: 2px;
+
+  /* Icon sizes */
+  --icon-xs: 14px;
+  --icon-sm: 16px;
+  --icon-md: 18px;
+  --icon-lg: 20px;
+
+  /* Typography roles. Riot fonts are not bundled until redistribution is cleared. */
+  --font-ui: "Spiegel", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Beaufort for LOL", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --font-mono: "DM Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+
+  --type-display-size: 18px;
+  --type-display-line: 22px;
+  --type-result-size: 14px;
+  --type-result-line: 18px;
+  --type-ui-strong-size: 14px;
+  --type-ui-strong-line: 20px;
+  --type-data-size: 14px;
+  --type-data-line: 20px;
+  --type-secondary-size: 13px;
+  --type-secondary-line: 18px;
+  --type-label-size: 11px;
+  --type-label-line: 14px;
+  --type-meta-size: 10px;
+  --type-meta-line: 14px;
+
+  --motion-fast: 100ms ease-out;
+
+  /*
+   * Legacy tokens are intentionally frozen to their pre-redesign values.
+   * Screens that have not been migrated yet keep their existing appearance;
+   * new Chronobreak UI code uses the semantic foundation tokens above.
+   */
   --color-ink: #07090d;
   --color-panel: #0d1119;
   --color-panel-raised: #131925;
@@ -14,11 +91,10 @@
   --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.38);
   --radius-small: 4px;
   --radius-panel: 12px;
-  --font-display: "Barlow Condensed", "Arial Narrow", "Segoe UI Variable Display", sans-serif;
-  --font-mono: "DM Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  color: var(--color-text);
-  background: var(--color-ink);
+
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  background: var(--surface-app);
   font-synthesis: none;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;

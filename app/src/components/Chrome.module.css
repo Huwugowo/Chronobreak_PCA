@@ -1,0 +1,267 @@
+.header {
+  position: relative;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) auto minmax(210px, 1fr);
+  align-items: center;
+  width: min(100%, 1540px);
+  min-height: var(--app-header-height);
+  margin: 0 auto var(--space-5);
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.brandLockup {
+  display: grid;
+  width: max-content;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.brandWordmark {
+  font-family: var(--font-display);
+  font-size: var(--type-display-size);
+  font-weight: 700;
+  line-height: var(--type-display-line);
+  letter-spacing: 0.035em;
+}
+
+.brandLockup small {
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
+  font-weight: 500;
+  line-height: var(--type-meta-line);
+  letter-spacing: 0.08em;
+}
+
+.tabs {
+  align-self: stretch;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.tabs button {
+  position: relative;
+  display: inline-flex;
+  min-width: 106px;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--type-ui-strong-size);
+  font-weight: 600;
+  line-height: var(--type-ui-strong-line);
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.tabs button::after {
+  position: absolute;
+  right: var(--space-3);
+  bottom: -1px;
+  left: var(--space-3);
+  height: 1px;
+  background: transparent;
+  content: "";
+}
+
+.tabs button:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.tabs .activeTab {
+  color: var(--brand-yellow);
+  background: transparent;
+}
+
+.tabs .activeTab::after {
+  background: var(--brand-yellow);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.assetStatus,
+.runtimeMark {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+  background: transparent;
+  font-size: var(--type-meta-size);
+  font-weight: 500;
+  line-height: var(--type-meta-line);
+  letter-spacing: 0.06em;
+}
+
+.assetStatus i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-neutral);
+}
+
+.assetStatus[data-state="offline"] {
+  color: var(--accent-red);
+}
+
+.assetStatus[data-state="offline"] i {
+  background: var(--accent-red);
+}
+
+.settingsButton {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 10px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-panel);
+  font-size: var(--type-secondary-size);
+  font-weight: 500;
+  line-height: var(--type-secondary-line);
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.settingsButton:hover {
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.settingsActive {
+  border-color: var(--selected-line);
+  color: var(--brand-yellow);
+  background: var(--selected-surface);
+}
+
+.storageIndicator {
+  position: fixed;
+  z-index: 18;
+  right: clamp(16px, 2.5vw, 32px);
+  bottom: 12px;
+  left: clamp(16px, 2.5vw, 32px);
+  display: flex;
+  width: min(calc(100% - clamp(32px, 5vw, 64px)), 1540px);
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: 0 auto;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel-ui);
+  background: var(--surface-panel);
+}
+
+.storageSummary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
+  font-weight: 500;
+  line-height: var(--type-meta-line);
+}
+
+.storageSummary > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.storageSummary i {
+  width: 1px;
+  height: 12px;
+  background: var(--line-subtle);
+}
+
+.storageSummary strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.storageIndicator button {
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--type-secondary-size);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.storageIndicator button:hover {
+  border-color: var(--line-subtle);
+  color: var(--brand-yellow);
+  background: var(--surface-hover);
+}
+
+@media (max-width: 1080px) {
+  .header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .tabs {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    min-height: 40px;
+    justify-self: center;
+    margin-top: var(--space-2);
+  }
+
+  .assetStatus,
+  .runtimeMark {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .brandLockup small {
+    display: none;
+  }
+
+  .tabs {
+    width: 100%;
+  }
+
+  .tabs button {
+    flex: 1;
+  }
+
+  .settingsButton span,
+  .storageSummary span,
+  .storageSummary i {
+    display: none;
+  }
+
+  .storageIndicator {
+    right: 12px;
+    bottom: 10px;
+    left: 12px;
+    width: calc(100% - 24px);
+  }
+}

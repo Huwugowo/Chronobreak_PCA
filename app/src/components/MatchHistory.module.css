@@ -1,0 +1,535 @@
+.matchHistory {
+  width: 100%;
+}
+
+.toolbar {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.searchField {
+  width: 240px;
+  height: var(--control-height);
+  padding: 0 10px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-panel);
+  font-size: var(--type-secondary-size);
+}
+
+.searchField::placeholder {
+  color: var(--text-muted);
+}
+.filterSelect,
+.savedFilter {
+  height: var(--control-height);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-panel);
+  font-size: var(--type-secondary-size);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.filterSelect {
+  min-width: 112px;
+  padding: 0 28px 0 10px;
+  color-scheme: dark;
+  cursor: pointer;
+}
+
+.savedFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.filterSelect:hover,
+.savedFilter:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.filterSelect:focus-visible,
+.savedFilter:focus-visible,
+.searchField:focus-visible {
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.savedFilter[data-active="true"] {
+  border-color: var(--selected-line);
+  color: var(--text-primary);
+  background: var(--selected-surface);
+}
+
+.summaryBar {
+  display: flex;
+  margin-left: auto;
+  min-height: 32px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+}
+
+.summaryBar strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.summaryBar i {
+  width: 1px;
+  height: 12px;
+  background: var(--line-subtle);
+}
+
+.matchScroller {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.matchTable {
+  min-width: 1040px;
+  border-top: 1px solid var(--line-subtle);
+}
+
+.matchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+}
+
+.matchOpen {
+  display: grid;
+  grid-template-columns: 48px 68px 132px 92px 180px 72px minmax(24px, 1fr) 78px 124px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+}
+
+.matchRow {
+  min-height: var(--match-row-height);
+  border-bottom: 1px solid var(--line-subtle);
+  background: var(--surface-panel);
+}
+
+.matchOpen {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--match-row-height);
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+
+.matchOpen:hover {
+  background: var(--surface-hover);
+}
+
+.matchOpen:active:not(:disabled) {
+  background: var(--surface-pressed);
+}
+
+.matchOpen:disabled {
+  color: inherit;
+  cursor: default;
+}
+
+.matchOpen:disabled:hover {
+  background: transparent;
+}
+
+
+.matchOpen > * {
+  grid-row: 1;
+}
+
+.championSlot { grid-column: 1; }
+.loadout { grid-column: 2; }
+.resultBlock { grid-column: 3; }
+.performance { grid-column: 4 / 6; }
+
+.recordingMeta {
+  grid-column: 8 / 10;
+  display: grid;
+  grid-template-columns: 78px 124px;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.durationMetric {
+  grid-column: 6;
+}
+.championSlot {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: var(--surface-app);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.championSlot img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.resultBlock,
+.kda,
+.metric,
+.dateBlock {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+}
+
+.resultBlock {
+  gap: 1px;
+}
+
+.outcome {
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: var(--type-result-size);
+  font-weight: 700;
+  line-height: var(--type-result-line);
+  letter-spacing: 0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outcome[data-outcome="victory"] {
+  color: var(--accent-blue);
+}
+
+.outcome[data-outcome="defeat"] {
+  color: var(--accent-red);
+}
+
+.outcome[data-outcome="remake"],
+.outcome[data-outcome="terminated"] {
+  color: var(--accent-neutral);
+}
+
+.mode {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--type-secondary-size);
+  font-weight: 400;
+  line-height: var(--type-secondary-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health {
+  overflow: hidden;
+  color: var(--accent-neutral);
+  font-size: var(--type-meta-size);
+  font-style: normal;
+  font-weight: 600;
+  line-height: var(--type-meta-line);
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loadout {
+  display: grid;
+  grid-template-columns: 44px 20px;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.spells {
+  display: grid;
+  grid-template-columns: repeat(2, 20px);
+  gap: var(--space-1);
+}
+
+.assetIcon,
+.itemSlot {
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-app);
+}
+
+.assetIcon {
+  width: 20px;
+  height: 20px;
+}
+
+.runeIcon {
+  border-radius: 50%;
+}
+
+.assetIcon img,
+.itemSlot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.performance {
+  display: grid;
+  grid-template-columns: 92px 180px;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.performance .kda {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.performance .items {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.items {
+  display: grid;
+  grid-template-columns: repeat(7, 24px);
+  gap: 2px;
+}
+
+.itemSlot {
+  width: 24px;
+  height: 24px;
+}
+
+.kda {
+  gap: 1px;
+}
+
+.kda strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--type-data-size);
+  font-weight: 600;
+  line-height: var(--type-data-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kda strong i {
+  color: var(--text-muted);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.kda em {
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
+  font-style: normal;
+  font-weight: 400;
+  line-height: var(--type-meta-line);
+}
+
+.metric {
+  min-height: 32px;
+  align-items: center;
+  padding-left: var(--space-3);
+}
+
+.metric strong,
+.dateBlock strong {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--type-secondary-size);
+  font-weight: 500;
+  line-height: var(--type-secondary-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dateBlock {
+  gap: 1px;
+}
+
+.dateBlock small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matchActions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--surface-panel);
+}
+
+.starButton,
+.moreMenu > summary {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.starButton:hover,
+.moreMenu > summary:hover {
+  border-color: var(--line-subtle);
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.starButton[data-saved="true"] {
+  color: var(--brand-yellow);
+}
+
+.starButton:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: wait;
+}
+
+.moreMenu {
+  position: relative;
+}
+
+.moreMenu > summary {
+  list-style: none;
+}
+
+.moreMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.moreMenu[data-busy="true"] {
+  pointer-events: none;
+  opacity: var(--disabled-opacity);
+}
+
+.moreMenu[open] > summary {
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.actionMenu {
+  position: absolute;
+  z-index: 30;
+  top: 50%;
+  right: calc(100% + 4px);
+  min-width: 148px;
+  transform: translateY(-50%);
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.actionMenu button {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--accent-red);
+  background: transparent;
+  font-size: var(--type-secondary-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.actionMenu button:hover {
+  background: var(--surface-hover);
+}
+
+.actionMenu button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: wait;
+}
+
+.emptyState {
+  display: grid;
+  min-height: 260px;
+  margin-top: var(--space-2);
+  padding: var(--space-6);
+  place-content: center;
+  justify-items: center;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-panel-ui);
+  background: var(--surface-panel);
+  text-align: center;
+}
+
+.emptyState h2 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--type-display-size);
+  font-weight: 700;
+  line-height: var(--type-display-line);
+}
+
+.emptyState p {
+  max-width: 440px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-secondary-size);
+  line-height: 1.55;
+}
+
+.matchRow[data-outcome="victory"] .matchOpen {
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+}
+
+.matchRow[data-outcome="defeat"] .matchOpen {
+  box-shadow: inset 3px 0 0 var(--accent-red);
+}
+
+.matchRow[data-outcome="remake"] .matchOpen,
+.matchRow[data-outcome="terminated"] .matchOpen {
+  box-shadow: inset 3px 0 0 var(--accent-neutral);
+}
+@media (max-width: 720px) {
+  .summaryBar {
+    justify-content: flex-start;
+  }
+}
+
+
+.recordingMeta .metric {
+  padding-left: 0;
+}

@@ -366,13 +366,15 @@ let mockSettings: AppSettings = {
 
 const pausePreview = () => new Promise((resolve) => window.setTimeout(resolve, 60));
 
+const useMockApi = (): boolean =>
+  !isTauri() || (import.meta.env.DEV && import.meta.env.VITE_UI_MOCKS === "1");
 export const loadGames = async (): Promise<GameSummary[]> => {
-  if (!isTauri()) return structuredClone(mockGames);
+  if (useMockApi()) return structuredClone(mockGames);
   return invoke<GameSummary[]>("list_games");
 };
 
 export const loadClips = async (): Promise<ClipSummary[]> => {
-  if (!isTauri()) return structuredClone(mockClips);
+  if (useMockApi()) return structuredClone(mockClips);
   return invoke<ClipSummary[]>("list_clips");
 };
 const exactRecord = (
@@ -538,7 +540,7 @@ export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
 
 
 export const loadPlaybackProbe = async (gameTimestamp: string): Promise<PlaybackProbe> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     const game = mockGames.find((candidate) => candidate.timestamp === gameTimestamp);
     if (!game) throw new Error("Recording not found");
     return {
@@ -556,7 +558,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
 };
 
 export const setGameSaved = async (gameTimestamp: string, saved: boolean): Promise<void> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockGames = mockGames.map((game) =>
       game.timestamp === gameTimestamp ? { ...game, saved } : game,
@@ -567,7 +569,7 @@ export const setGameSaved = async (gameTimestamp: string, saved: boolean): Promi
 };
 
 export const removeGame = async (gameTimestamp: string): Promise<void> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockGames = mockGames.filter((game) => game.timestamp !== gameTimestamp);
     return;
@@ -576,7 +578,7 @@ export const removeGame = async (gameTimestamp: string): Promise<void> => {
 };
 
 export const removeClip = async (clipFilename: string): Promise<void> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockClips = mockClips.filter((clip) => clip.filename !== clipFilename);
     return;
@@ -585,7 +587,7 @@ export const removeClip = async (clipFilename: string): Promise<void> => {
 };
 
 export const loadBuiltInMusic = async (): Promise<BuiltInMusicTrack[]> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return [
       {
         filename: "momentum.mp3",
@@ -600,7 +602,7 @@ export const loadBuiltInMusic = async (): Promise<BuiltInMusicTrack[]> => {
 };
 
 export const chooseMusicFile = async (): Promise<string | null> => {
-  if (!isTauri()) return "C:\\Music\\highlight.mp3";
+  if (useMockApi()) return "C:\\Music\\highlight.mp3";
   const selected = await open({
     multiple: false,
     filters: [{ name: "Audio", extensions: ["mp3", "wav"] }],
@@ -609,7 +611,7 @@ export const chooseMusicFile = async (): Promise<string | null> => {
 };
 
 export const prepareImportedMusicPreview = async (path: string): Promise<string> => {
-  if (!isTauri()) return "";
+  if (useMockApi()) return "";
   return invoke<string>("prepare_imported_music_preview", { path });
 };
 
@@ -617,7 +619,7 @@ export const exportClip = async (
   request: ClipExportRequest,
   onProgress: (progress: ClipExportProgress) => void,
 ): Promise<ClipExportResult> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     const totalOutputs = request.presets.length;
     for (const [outputIndex, preset] of request.presets.entries()) {
       for (const localPercent of [8, 24, 46, 69, 88, 96, 99]) {
@@ -721,7 +723,7 @@ export const exportClip = async (
 };
 
 export const loadStorageUsage = async (): Promise<StorageUsage> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return {
       games_bytes: mockGames.reduce((total, game) => total + game.video_size_bytes, 0),
       clips_bytes: mockClips.reduce((total, clip) => total + clip.file_size_bytes, 0),
@@ -733,12 +735,12 @@ export const loadStorageUsage = async (): Promise<StorageUsage> => {
 };
 
 export const loadSettings = async (): Promise<AppSettings> => {
-  if (!isTauri()) return structuredClone(mockSettings);
+  if (useMockApi()) return structuredClone(mockSettings);
   return invoke<AppSettings>("get_settings");
 };
 
 export const persistSettings = async (settings: SettingsUpdate): Promise<AppSettings> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockSettings = { ...mockSettings, ...settings };
     return structuredClone(mockSettings);
@@ -747,23 +749,23 @@ export const persistSettings = async (settings: SettingsUpdate): Promise<AppSett
 };
 
 export const chooseOutputFolder = async (currentPath: string): Promise<string | null> => {
-  if (!isTauri()) return currentPath;
+  if (useMockApi()) return currentPath;
   const selected = await open({ directory: true, multiple: false, defaultPath: currentPath });
   return typeof selected === "string" ? selected : null;
 };
 
 export const cleanUpNow = async (): Promise<AutoDeleteResult> => {
-  if (!isTauri()) return { deleted_count: 0 };
+  if (useMockApi()) return { deleted_count: 0 };
   return invoke<AutoDeleteResult>("run_auto_delete");
 };
 
 export const openOutputFolder = async (): Promise<void> => {
-  if (!isTauri()) return;
+  if (useMockApi()) return;
   await invoke("open_output_folder");
 };
 
 export const openClipsFolder = async (): Promise<void> => {
-  if (!isTauri()) return;
+  if (useMockApi()) return;
   await invoke("open_clips_folder");
 };
 
@@ -788,7 +790,7 @@ export const resolveItemName = async (itemId: string): Promise<string | null> =>
 };
 
 export const ensureHevcCapability = async (): Promise<HevcProbeStatus> => {
-  if (!isTauri()) return { tested: true, supported: true, probe_url: "" };
+  if (useMockApi()) return { tested: true, supported: true, probe_url: "" };
   const status = await invoke<HevcProbeStatus>("get_hevc_probe_status");
   if (status.tested) return status;
   let supported = false;
@@ -801,7 +803,7 @@ export const ensureHevcCapability = async (): Promise<HevcProbeStatus> => {
 };
 
 export const loadServerMetrics = async (): Promise<ServerMetrics> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return {
       requests: 0,
       range_requests: 0,
