@@ -22,7 +22,7 @@
   /* Structure and interaction */
   --line-subtle: rgba(245, 243, 247, 0.12);
   --line-strong: rgba(245, 243, 247, 0.24);
-  --focus-ring: var(--brand-yellow);
+  --focus-ring: var(--text-muted);
   --selected-surface: rgba(250, 250, 105, 0.06);
   --selected-line: rgba(250, 250, 105, 0.55);
   --disabled-opacity: 0.45;

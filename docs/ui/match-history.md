@@ -243,7 +243,7 @@ Destructive operations such as Delete live behind the More action / confirmation
 - no semantic-color wash
 
 ### Keyboard focus
-- the focused open/control target receives the global focus treatment
+- compact controls use the global focus treatment; the full-width replay-open target may use the same neutral surface treatment as hover instead of a row-spanning outline
 
 ### Saved
 - filled yellow Star only

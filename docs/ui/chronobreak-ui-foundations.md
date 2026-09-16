@@ -161,7 +161,7 @@ UI work must not casually alter playback, capture, media timing, storage, or bac
   --line-subtle: rgba(245, 243, 247, 0.12);
   --line-strong: rgba(245, 243, 247, 0.24);
 
-  --focus-ring: var(--brand-yellow);
+  --focus-ring: var(--text-muted);
 
   --selected-surface: rgba(250, 250, 105, 0.06);
   --selected-line: rgba(250, 250, 105, 0.55);
@@ -173,7 +173,7 @@ UI work must not casually alter playback, capture, media timing, storage, or bac
 ### 5.1 Brand roles
 
 - Plum is a brand anchor/structural color, not the full application background.
-- Yellow is Chronobreak's interaction/focus/selection accent.
+- Yellow is Chronobreak's active/selection accent.
 - Yellow should remain sparse enough to retain hierarchy.
 
 ### 5.2 Semantic hue policy
@@ -332,7 +332,7 @@ Default keyboard focus:
 }
 ```
 
-If overflow/clipping makes the default outline ineffective, preserve an equally obvious focus indication rather than clipping it away.
+If the default outline is ineffective or would make a very large interactive surface read like selected state, preserve an equally obvious neutral focus indication instead. Large row-level targets may use their neutral hover surface for keyboard focus; ordinary compact controls should retain the global outline.
 
 Do not replace focus with glow alone.
 

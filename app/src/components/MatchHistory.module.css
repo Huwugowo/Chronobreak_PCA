@@ -543,3 +543,8 @@
 .recordingMeta .metric {
   padding-left: 0;
 }
+
+.matchOpen:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+}
