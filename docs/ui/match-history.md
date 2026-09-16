@@ -38,9 +38,9 @@ Use the same broad information architecture: dense horizontal match rows, famili
 
 Do not add a large hero/intro panel.
 
-Recording/saved counters are not part of the current screen contract. If a later product need justifies them, treat that as a new screen decision rather than a default dashboard pattern.
+The Match History toolbar includes quiet recording/saved counters as compact summary metadata, not as dashboard cards or hero metrics.
 
-Do not add search/filter/sort controls until the corresponding product behavior actually exists. When that behavior becomes a task, design the controls then; do not preserve speculative fake controls merely because an earlier mockup contained them.
+The toolbar supports free-text search, Champion filtering, Mode filtering, and a Favorites-only toggle. Champion and Mode filters must expose an explicit neutral/reset option (`All champions` / `All modes`); Favorites toggles off by activating it again. Do not add speculative filters or sorting controls without corresponding product behavior.
 
 ## 4. Match row contract
 
