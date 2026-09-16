@@ -221,17 +221,27 @@ function GamesLibrary(props: Props) {
                       </span>
 
                       <span class={matchStyles.resultBlock}>
-                        <Show when={outcome}>
+                        <Show
+                          when={outcome}
+                          fallback={
+                            <Show when={health}>
+                              <strong class={matchStyles.health}>{health}</strong>
+                            </Show>
+                          }
+                        >
                           <strong class={matchStyles.outcome} data-outcome={outcome!}>
                             {outcomeLabel(outcome!)}
                           </strong>
                         </Show>
-                        <span class={matchStyles.mode}>{game.game_mode === "Unknown" ? "—" : game.game_mode}</span>
-                        <Show when={health}>
+                        <Show when={game.game_mode !== "Unknown" || !health}>
+                          <span class={matchStyles.mode}>
+                            {game.game_mode === "Unknown" ? "—" : game.game_mode}
+                          </span>
+                        </Show>
+                        <Show when={outcome && health}>
                           <em class={matchStyles.health}>{health}</em>
                         </Show>
                       </span>
-
                       <span class={matchStyles.loadout} aria-hidden="true">
                         <span class={matchStyles.spells}>
                           <For each={game.summoner_spells.slice(0, 2)}>
