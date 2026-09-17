@@ -94,6 +94,41 @@ const mockEvent = (
 });
 
 const mockEvents = (): ViewerEvent[] => {
+  const denseFight = [
+    mockEvent("ChampionKill", mockTick(888_000), {
+      killer: "SUPERSTAR",
+      victim: "Enemy Mid",
+      assisters: ["Ally Jungler", "Ally Support"],
+      relation: "ally",
+    }),
+    mockEvent("ChampionKill", mockTick(889_500), {
+      killer: "Enemy Carry",
+      victim: "Ally Carry",
+      assisters: ["Enemy Support"],
+      relation: "enemy",
+    }),
+    mockEvent("ChampionKill", mockTick(891_000), {
+      killer: "Ally Jungler",
+      victim: "Enemy Jungler",
+      assisters: ["SUPERSTAR"],
+      relation: "ally",
+    }),
+    mockEvent("Multikill", mockTick(892_200), {
+      killer: "SUPERSTAR",
+      kill_streak: 2,
+      relation: "ally",
+    }),
+    mockEvent("ChampionKill", mockTick(895_000), {
+      killer: "SUPERSTAR",
+      victim: "Enemy Carry",
+      assisters: ["Ally Support"],
+      relation: "ally",
+    }),
+    mockEvent("Ace", mockTick(897_500), {
+      acer: "SUPERSTAR",
+      relation: "ally",
+    }),
+  ];
   const generated = Array.from({ length: 48 }, (_, index) => {
     const replayTick = mockTick(248_000 + index * 29_500);
     if (index % 11 === 4) {
@@ -142,6 +177,7 @@ const mockEvents = (): ViewerEvent[] => {
       relation: "ally",
     }),
     ...generated,
+    ...denseFight,
     mockEvent("BaronKill", mockTick(1_501_000), {
       killer: "Ally Jungler",
       assisters: ["SUPERSTAR", "Ally Support"],
@@ -545,7 +581,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
     if (!game) throw new Error("Recording not found");
     return {
       game: structuredClone(game),
-      video_url: "",
+      video_url: new URL("/mock-replay.mp4", window.location.href).href,
       media_timeline: MOCK_MEDIA_TIMELINE,
       local_player_name: "SUPERSTAR#VOID",
       participants: mockParticipants(),

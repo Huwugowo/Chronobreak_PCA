@@ -525,3 +525,66 @@
 @keyframes rec-pulse {
   50% { opacity: 0.42; }
 }
+
+.rosterHud {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity 220ms ease;
+}
+
+.bottomHud {
+  position: absolute;
+  z-index: 6;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  gap: 2px;
+  padding: 34px 12px 12px;
+  background:
+    linear-gradient(
+      to top,
+      rgba(2, 3, 6, 0.92) 0,
+      rgba(2, 3, 6, 0.68) 48%,
+      transparent 100%
+    );
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition:
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(.4, 0, .2, 1);
+}
+
+.timelineHud {
+  min-width: 0;
+}
+
+.bottomHud .fullscreenControls {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 16px;
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hudHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bottomHud.hudHidden {
+  transform: translateY(14px);
+}
+
+@media (max-height: 740px) {
+  .bottomHud {
+    padding-top: 22px;
+  }
+}
