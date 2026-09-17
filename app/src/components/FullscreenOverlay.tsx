@@ -77,7 +77,8 @@ function FullscreenOverlay(props: Props) {
     Math.floor((tick * 1_000) / REPLAY_TICKS_PER_SECOND);
   const replaySecond = createMemo(() =>
     Math.floor(replayTickToMilliseconds(props.replayTick) / 1_000),
-  );  const gameTickToMilliseconds = (tick: string): number => Number(BigInt(tick) / 1_000n);
+  );
+  const gameTickToMilliseconds = (tick: string): number => Number(BigInt(tick) / 1_000n);
   const frameBoundaryTick = (frame: ClipRange["startFrame"]): ReplayTick =>
     replayTickAtFrameBoundary(frame, props.mediaTimeline);
   const mappedEvents = createMemo(() =>
