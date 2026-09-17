@@ -8,6 +8,21 @@
   margin: 0 auto;
 }
 
+.appShell[data-screen="viewer"] {
+  box-sizing: border-box;
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  padding-bottom: 16px;
+  overflow: hidden;
+}
+
+.appShell[data-screen="viewer"] .mainContent {
+  flex: 1;
+  min-height: 0;
+}
+
 .header {
   position: relative;
   z-index: 20;

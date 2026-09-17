@@ -219,6 +219,25 @@
   background: var(--surface-hover);
 }
 
+.header[data-screen="viewer"] {
+  min-height: 44px;
+  margin-bottom: var(--space-3);
+}
+
+.header[data-screen="viewer"] .tabs,
+.header[data-screen="viewer"] .assetStatus {
+  display: none;
+}
+
+.header[data-screen="viewer"] .brandWordmark {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+
+.header[data-screen="viewer"] .brandLockup small {
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
 @media (max-width: 680px) {
   .brandLockup small {
     display: none;

@@ -1211,13 +1211,6 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
   return (
     <section class={styles.playbackSurface} data-testid="viewer-surface">
-      <div class={styles.viewerTopline}>
-        <button class={styles.backButton} type="button" onClick={props.onBack}>
-          <span aria-hidden="true">←</span> GAMES
-        </button>
-        <span class={styles.replayLabel}><span aria-hidden="true">▶</span> REPLAY</span>
-      </div>
-
       <header class={styles.gameHeader}>
         <div class={styles.gameIdentity}>
           <p>LOCAL RECORDING / {props.probe.game.game_mode}</p>

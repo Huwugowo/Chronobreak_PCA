@@ -13,12 +13,13 @@ type Props = {
 function AppHeader(props: Props) {
   const activeTab = () => (props.navigation.screen === "library" ? props.navigation.tab : null);
   const settingsActive = () => props.navigation.screen === "settings";
+  const replayMode = () => props.navigation.screen === "viewer";
 
   return (
-    <header class={styles.header}>
-      <button class={styles.brandLockup} type="button" onClick={props.onHome} aria-label="Open Match History">
-        <strong class={styles.brandWordmark}>CHRONOBREAK</strong>
-        <small>LEAGUE REPLAY</small>
+    <header class={styles.header} data-screen={props.navigation.screen}>
+      <button class={styles.brandLockup} type="button" onClick={props.onHome} aria-label={replayMode() ? "Back to Match History" : "Open Match History"}>
+        <strong class={styles.brandWordmark}>{replayMode() ? "← MATCH HISTORY" : "CHRONOBREAK"}</strong>
+        <small>{replayMode() ? "CHRONOBREAK REPLAY" : "LEAGUE REPLAY"}</small>
       </button>
 
       <nav class={styles.tabs} aria-label="Library">
