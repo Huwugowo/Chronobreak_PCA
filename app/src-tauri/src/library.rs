@@ -32,6 +32,7 @@ pub struct GameSummary {
     pub summoner_spells: Vec<String>,
     pub keystone_id: Option<u32>,
     pub items: Vec<GameItemSummary>,
+    pub participants: Vec<ReplayParticipant>,
     pub saved: bool,
     pub incomplete: bool,
     pub video_size_bytes: u64,
@@ -388,57 +389,7 @@ pub fn playback_probe(
     }
 
     let local_player_name = metadata.local_player_summoner_name.clone();
-    let mut team_by_player = HashMap::new();
-    let mut roster = Vec::new();
-    let mut roster_seen = HashSet::new();
-    for player in log
-        .snapshots
-        .iter()
-        .flat_map(|snapshot| snapshot.players.iter())
-    {
-        if !player.summoner_name.is_empty() {
-            let normalized_name = normalized_player_name(&player.summoner_name);
-            if roster_seen.insert(normalized_name.clone()) {
-                roster.push((
-                    player.summoner_name.clone(),
-                    player.champion.clone(),
-                    player.team.clone(),
-                ));
-            }
-            if player.team.is_empty() {
-                continue;
-            }
-            team_by_player
-                .entry(normalized_name)
-                .or_insert_with(|| player.team.clone());
-        }
-    }
-    let local_player_team = metadata.local_player_team.clone().or_else(|| {
-        local_player_name
-            .as_deref()
-            .and_then(|player| team_by_player.get(&normalized_player_name(player)).cloned())
-    });
-    let mut participants = roster
-        .into_iter()
-        .map(|(summoner_name, champion, team)| ReplayParticipant {
-            summoner_name,
-            champion: if champion.is_empty() {
-                "Unknown".to_owned()
-            } else {
-                champion
-            },
-            relation: match local_player_team.as_deref() {
-                Some(local_team) if team.eq_ignore_ascii_case(local_team) => EventRelation::Ally,
-                Some(_) if !team.is_empty() => EventRelation::Enemy,
-                _ => EventRelation::Neutral,
-            },
-        })
-        .collect::<Vec<_>>();
-    participants.sort_by_key(|participant| match participant.relation {
-        EventRelation::Ally => 0,
-        EventRelation::Enemy => 1,
-        EventRelation::Neutral => 2,
-    });
+    let (participants, team_by_player, local_player_team) = derive_roster_context(&metadata, &log);
     let mut player_timeline = Vec::new();
     if let Some(local_player) = local_player_name.as_deref() {
         for snapshot in &log.snapshots {
@@ -693,6 +644,7 @@ fn game_summary_from_bundle(
         .map(|player| derive_loadout(player, &game_log.snapshots))
         .unwrap_or_default();
 
+    let (participants, _, _) = derive_roster_context(metadata, game_log);
     GameSummary {
         timestamp,
         champion: metadata
@@ -711,6 +663,7 @@ fn game_summary_from_bundle(
         summoner_spells,
         keystone_id,
         items,
+        participants,
         saved: metadata.saved,
         incomplete: false,
         video_size_bytes,
@@ -731,6 +684,7 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
         summoner_spells: Vec::new(),
         keystone_id: None,
         items: Vec::new(),
+        participants: Vec::new(),
         saved: false,
         incomplete: true,
         video_size_bytes,
@@ -818,6 +772,75 @@ fn same_player(left: &str, right: &str) -> bool {
     let left = left.split_once('#').map_or(left, |(name, _)| name);
     let right = right.split_once('#').map_or(right, |(name, _)| name);
     left.eq_ignore_ascii_case(right)
+}
+
+fn derive_roster_context(
+    metadata: &MetadataDocument,
+    log: &GameLogDocument,
+) -> (
+    Vec<ReplayParticipant>,
+    HashMap<String, String>,
+    Option<String>,
+) {
+    let local_player_name = metadata.local_player_summoner_name.as_deref();
+    let mut team_by_player = HashMap::new();
+    let mut roster = Vec::new();
+    let mut roster_seen = HashSet::new();
+
+    for player in log
+        .snapshots
+        .iter()
+        .flat_map(|snapshot| snapshot.players.iter())
+    {
+        if player.summoner_name.is_empty() {
+            continue;
+        }
+
+        let normalized_name = normalized_player_name(&player.summoner_name);
+        if roster_seen.insert(normalized_name.clone()) {
+            roster.push((
+                player.summoner_name.clone(),
+                player.champion.clone(),
+                player.team.clone(),
+            ));
+        }
+
+        if !player.team.is_empty() {
+            team_by_player
+                .entry(normalized_name)
+                .or_insert_with(|| player.team.clone());
+        }
+    }
+
+    let local_player_team = metadata.local_player_team.clone().or_else(|| {
+        local_player_name
+            .and_then(|player| team_by_player.get(&normalized_player_name(player)).cloned())
+    });
+
+    let mut participants = roster
+        .into_iter()
+        .map(|(summoner_name, champion, team)| ReplayParticipant {
+            summoner_name,
+            champion: if champion.is_empty() {
+                "Unknown".to_owned()
+            } else {
+                champion
+            },
+            relation: match local_player_team.as_deref() {
+                Some(local_team) if team.eq_ignore_ascii_case(local_team) => EventRelation::Ally,
+                Some(_) if !team.is_empty() => EventRelation::Enemy,
+                _ => EventRelation::Neutral,
+            },
+        })
+        .collect::<Vec<_>>();
+
+    participants.sort_by_key(|participant| match participant.relation {
+        EventRelation::Ally => 0,
+        EventRelation::Enemy => 1,
+        EventRelation::Neutral => 2,
+    });
+
+    (participants, team_by_player, local_player_team)
 }
 
 fn normalized_player_name(player: &str) -> String {

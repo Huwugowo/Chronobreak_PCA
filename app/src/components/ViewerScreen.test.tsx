@@ -17,7 +17,7 @@ it("marks only the persistent primary video across layout and recovery, then rel
   vi.mocked(loadPlaybackProbe).mockResolvedValue({
     game: { timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-08T00:00:00Z",
       kills: 1, deaths: 2, assists: 3, duration_ms: 240_000, summoner_spells: [], keystone_id: null,
-      items: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true },
+      items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true },
     video_url: "http://127.0.0.1:123/games/1/video.mp4",
     media_timeline: { mediaId: parseMediaId("11111111-2222-4333-8444-555555555555"),
       video: { codec: "h264", profile: "High", timeBase: { numerator: 1n, denominator: 60n }, firstPts: 0n,
