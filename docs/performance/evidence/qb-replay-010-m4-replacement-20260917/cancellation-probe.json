@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "recorded_utc": "2026-09-17",
+  "purpose": "Correlate a partial HTTP 206 body cancellation with the packaged ffprobe child result without changing the benchmark or production path.",
+  "command": "python docs/performance/evidence/qb-replay-010-m4-replacement-20260917/cancellation_probe.py <296175-byte-clip> <staged-ffprobe.exe>",
+  "fixture": {
+    "name": "1789400100_1789500000.mp4",
+    "bytes": 296175,
+    "sha256": "98FA11D62D24D40F0DDA92ABB8F38565625F8BA36211DF20BCDF871A346509CB"
+  },
+  "ffprobe_sha256": "639DA6703F05C4E0F436D8602B39F44070CBE8233C5DD942775E00F25004615E",
+  "response": {
+    "status": 206,
+    "declared_bytes": 296175,
+    "delivered_bytes": 200704,
+    "client_closed_or_reset": true,
+    "windows_server_error": "ConnectionResetError(10054)"
+  },
+  "child": {
+    "returncode": 0,
+    "stdout": "10.000000\n",
+    "stderr": ""
+  },
+  "disposition": "The child exited successfully after reading metadata and closing the partial response. This reproduces the campaign's server-side cancellation shape; it is not evidence of a failed or killed ffprobe child. The campaign itself still lacks per-request child PID/exit-status correlation."
+}

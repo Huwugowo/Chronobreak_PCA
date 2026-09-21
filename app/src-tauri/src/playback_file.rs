@@ -34,6 +34,41 @@ pub(crate) enum FileScope<'a> {
     Exact(&'a Path),
 }
 
+/// Disposable display-cache identity from the same validated handle, never authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileFacts {
+    volume: u32,
+    index: u64,
+    length: u64,
+    modified: std::time::SystemTime,
+}
+
+#[cfg(windows)]
+pub(crate) fn file_facts(file: &std::fs::File) -> Result<FileFacts> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle},
+    };
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: file owns a live handle and info is a writable Windows structure.
+    unsafe {
+        GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info)?;
+    }
+    let metadata = file.metadata()?;
+    Ok(FileFacts {
+        volume: info.dwVolumeSerialNumber,
+        index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        length: metadata.len(),
+        modified: metadata.modified()?,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn file_facts(_file: &std::fs::File) -> Result<FileFacts> {
+    bail!("opened-handle media identity requires Windows")
+}
+
 pub(crate) fn open_file(path: &Path, scope: FileScope<'_>) -> Result<std::fs::File> {
     let file = std::fs::File::open(path).context("could not open media file")?;
     if !file.metadata()?.is_file() {

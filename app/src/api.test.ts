@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodePlaybackProbe } from "./api";
+import { decodeClipDurations, decodeLibrarySnapshot, decodePlaybackProbe } from "./api";
 
 const playbackWire = () => ({
   game: {
@@ -113,5 +113,43 @@ describe("decodePlaybackProbe", () => {
     Object.assign(wire.events[0]!.mapped_replay_time, { legacy_time_ms: 1000 });
 
     expect(() => decodePlaybackProbe(wire)).toThrow("invalid schema");
+  });
+});
+
+describe("decodeLibrarySnapshot", () => {
+  const valid = () => ({
+    token: "snapshot-a",
+    games: [playbackWire().game],
+    clips: [{ filename: "1_2", game_timestamp: "1", clip_timestamp: "2", duration_ms: null,
+      file_size_bytes: 10, thumbnail_path: null, thumbnail_url: null, video_url: "",
+      source_champion: null, source_date: null }],
+    usage: { games_bytes: 10, clips_bytes: 10, game_count: 1, clip_count: 1 },
+  });
+  it("admits one coherent tokenized core snapshot with unknown duration", () => {
+    expect(decodeLibrarySnapshot(valid()).clips[0]?.duration_ms).toBeNull();
+  });
+  it("rejects extra fields in snapshot records", () => {
+    const value = valid();
+    Object.assign(value.clips[0]!, { unexpected: true });
+    expect(() => decodeLibrarySnapshot(value)).toThrow("invalid schema");
+  });
+});
+
+describe("decodeClipDurations", () => {
+  it("keeps unavailable and available results explicit", () => {
+    expect(decodeClipDurations({ snapshot_token: "a", clips: [
+      { clip_id: "x", duration: { state: "unavailable" } },
+      { clip_id: "y", duration: { state: "available", duration_ms: 42 } },
+    ] }).clips[1]?.duration).toEqual({ state: "available", duration_ms: 42 });
+  });
+  it("rejects an unknown optional-duration shape", () => {
+    expect(() => decodeClipDurations({ snapshot_token: "a", clips: [{ clip_id: "x", duration: { state: "available" } }] })).toThrow();
+  });
+  it("rejects duplicate IDs or an empty response token", () => {
+    expect(() => decodeClipDurations({ snapshot_token: "", clips: [] })).toThrow();
+    expect(() => decodeClipDurations({ snapshot_token: "a", clips: [
+      { clip_id: "x", duration: { state: "unavailable" } },
+      { clip_id: "x", duration: { state: "unavailable" } },
+    ] })).toThrow();
   });
 });

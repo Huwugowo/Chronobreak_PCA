@@ -2,7 +2,7 @@
 
 Feature: `QB-REPLAY-011`
 ExecPlan: `docs/exec-plans/qb-replay-011-local-playback-server-hardening.md`
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 ## Current milestone
 
@@ -16,6 +16,9 @@ independent review passed.
 
 ## Completed
 
+- 2026-09-15 roadmap reconciliation: the reviewed hardening and retry corrections
+  are merged into `qb-replay-009-wip` as `3a750e2` (PR #2). Retained verification
+  below is historical evidence; no product checks were rerun for this handoff.
 - Product/workflow/feature/dependency/architecture/verification bootstrap read.
 - Read-only server, consumer and benchmark scouts resolved the implementation
   surface. Plan review accepted the design after specifying consistent opened
@@ -338,5 +341,6 @@ Chronobreak-ui is unrelated and must not be stopped or modified.
 
 ## Next action
 
-Commit/push the reviewed retry correction to `qb-replay-011-local-playback-hardening`.
-Do not merge PR #2 or start QB-REPLAY-012; further work requires a separate request.
+None for QB-REPLAY-011; PR #2 is merged as `3a750e2`. Follow the current
+`EPIC-REPLAY` sequence and dependency caveats in `feature-list.json`; the next
+engineering disposition is QB-REPLAY-010 measured library/open attribution.

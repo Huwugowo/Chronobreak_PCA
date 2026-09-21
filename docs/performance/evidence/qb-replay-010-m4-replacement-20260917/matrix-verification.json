@@ -1,0 +1,52 @@
+[
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-e-cold-candidate"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-e-cold-reference"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-e-warm-candidate"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-e-warm-reference"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-n-cold-candidate"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-n-cold-reference"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-n-warm-candidate"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-n-warm-reference"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-s-cold-candidate"
+  },
+  {
+    "exit_code": 0,
+    "output": "QB-REPLAY-MATRIX-VERIFY-OK: 1 arm(s), 5 trial(s), 5 required result(s)\n",
+    "plan": "m4r2-s-cold-reference"
+  }
+]

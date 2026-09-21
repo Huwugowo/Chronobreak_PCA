@@ -1,0 +1,24 @@
+{
+  "benchmark": [
+    {
+      "all_sha256_match": true,
+      "bytes": 185340714,
+      "cell": "s",
+      "files": 9
+    },
+    {
+      "all_sha256_match": true,
+      "bytes": 416534000,
+      "cell": "n",
+      "files": 200
+    },
+    {
+      "all_sha256_match": true,
+      "bytes": 506918350,
+      "cell": "e",
+      "files": 200
+    }
+  ],
+  "prior_raw_artifacts_unchanged": true,
+  "utc": "2026-09-17T12:40:29.450772+00:00"
+}

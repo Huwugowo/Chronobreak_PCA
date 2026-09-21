@@ -35,7 +35,7 @@ function ClipModal(props: Props) {
             <h2 id="clip-modal-title">{props.clip.source_champion ?? "Exported moment"}</h2>
             <span>
               {props.clip.source_date ? formatDate(props.clip.source_date) : "Source game unavailable"}
-              {` / ${formatDuration(props.clip.duration_ms)}`}
+              {` / ${props.clip.duration_ms === null ? "Duration unavailable" : formatDuration(props.clip.duration_ms)}`}
             </span>
           </div>
           <button ref={closeButton} type="button" onClick={props.onClose} aria-label="Close clip player">

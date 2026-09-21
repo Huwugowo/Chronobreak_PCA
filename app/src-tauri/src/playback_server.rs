@@ -434,6 +434,16 @@ impl MediaRoots {
             .clone()
     }
 
+    /// Clone logical and approved paths from the same publication, without I/O.
+    /// Library callers take their coordinator guard before this read guard.
+    pub(crate) fn output_pair(&self) -> (PathBuf, ApprovedRoot) {
+        let directory = self
+            .output_directory
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (directory.path.clone(), directory.root.clone())
+    }
+
     fn output_root(&self) -> ApprovedRoot {
         self.output_directory
             .read()

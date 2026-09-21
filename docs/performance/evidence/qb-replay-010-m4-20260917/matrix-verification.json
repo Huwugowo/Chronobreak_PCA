@@ -1,0 +1,52 @@
+[
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\candidate\\m4-e-cold-candidate-002-e-cold-cold-02-full\n",
+    "plan": "m4-e-cold-candidate"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\reference\\m4-e-cold-reference-002-e-cold-cold-02-full\n",
+    "plan": "m4-e-cold-reference"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\candidate\\m4-e-warm-candidate-003-e-warm-warm-03-full\n",
+    "plan": "m4-e-warm-candidate"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\reference\\m4-e-warm-reference-003-e-warm-warm-03-full\n",
+    "plan": "m4-e-warm-reference"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\candidate\\m4-n-cold-candidate-003-n-cold-cold-03-full\n",
+    "plan": "m4-n-cold-candidate"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\reference\\m4-n-cold-reference-003-n-cold-cold-03-full\n",
+    "plan": "m4-n-cold-reference"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: result terminal is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\candidate\\m4-n-warm-candidate-002-n-warm-warm-02-full\\terminal.json\n",
+    "plan": "m4-n-warm-candidate"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\reference\\m4-n-warm-reference-002-n-warm-warm-02-full\n",
+    "plan": "m4-n-warm-reference"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\candidate\\m4-s-cold-candidate-002-s-cold-cold-02-full\n",
+    "plan": "m4-s-cold-candidate"
+  },
+  {
+    "exit_code": 2,
+    "output": "QB-REPLAY-MATRIX-ERROR: required result is missing: <repo>\\build\\perf\\qb-replay-010-m4\\.chronobreak-replay-benchmark\\results\\reference\\m4-s-cold-reference-002-s-cold-cold-02-full\n",
+    "plan": "m4-s-cold-reference"
+  }
+]

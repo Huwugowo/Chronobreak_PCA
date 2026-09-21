@@ -1,0 +1,77 @@
+--- a/app/src-tauri/src/library.rs
++++ b/app/src-tauri/src/library.rs
+@@ -501,10 +501,16 @@
+         return Ok(Vec::new());
+     }
+ 
++    #[cfg(all(test, feature = "replay-benchmark"))]
++    let diagnostic_started = std::time::Instant::now();
+     let games = list_games(output_directory)?
+         .into_iter()
+         .map(|game| (game.timestamp.clone(), game))
+         .collect::<HashMap<_, _>>();
++    #[cfg(all(test, feature = "replay-benchmark"))]
++    let diagnostic_games_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
++    #[cfg(all(test, feature = "replay-benchmark"))]
++    let (mut diagnostic_probe_ms, mut diagnostic_probe_count) = (0.0, 0usize);
+     let mut clips = Vec::new();
+     for entry in fs::read_dir(&clips_directory).with_context(|| {
+         format!(
+@@ -530,7 +536,17 @@
+             game_timestamp: game_timestamp.to_owned(),
+             clip_timestamp: clip_timestamp.to_owned(),
+             duration_ms: ffprobe
+-                .and_then(|tool| probe_duration_ms(tool, &path))
++                .and_then(|tool| {
++                    #[cfg(all(test, feature = "replay-benchmark"))]
++                    let started = std::time::Instant::now();
++                    let duration = probe_duration_ms(tool, &path);
++                    #[cfg(all(test, feature = "replay-benchmark"))]
++                    {
++                        diagnostic_probe_ms += started.elapsed().as_secs_f64() * 1000.0;
++                        diagnostic_probe_count += 1;
++                    }
++                    duration
++                })
+                 .unwrap_or(0),
+             file_size_bytes: entry.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+             thumbnail_path: thumbnail
+@@ -545,6 +561,14 @@
+         });
+     }
+     clips.sort_by(|left, right| right.clip_timestamp.cmp(&left.clip_timestamp));
++    #[cfg(all(test, feature = "replay-benchmark"))]
++    println!("QB010_DIAGNOSTIC {}", serde_json::json!({
++        "games_ms": diagnostic_games_ms,
++        "probe_ms": diagnostic_probe_ms,
++        "probe_count": diagnostic_probe_count,
++        "clip_count": clips.len(),
++        "total_ms": diagnostic_started.elapsed().as_secs_f64() * 1000.0,
++    }));
+     Ok(clips)
+ }
+ 
+@@ -1355,3 +1379,23 @@
+         assert!(!valid_game_id("../1786000000-1"));
+     }
+ }
++
++#[cfg(all(test, feature = "replay-benchmark"))]
++#[test]
++#[ignore = "one bounded QB-REPLAY-010 native diagnostic"]
++fn qb010_clip_work_attribution() {
++    let root = std::path::PathBuf::from(std::env::var_os("QB010_DIAGNOSTIC_ROOT").expect("test root"));
++    assert_eq!(root.file_name().and_then(|name| name.to_str()), Some(".chronobreak-replay-benchmark"));
++    let tool = std::path::PathBuf::from(std::env::var_os("QB010_DIAGNOSTIC_FFPROBE").expect("packaged ffprobe"));
++    assert!(tool.is_file());
++    std::thread::sleep(std::time::Duration::from_secs(5));
++    for (index, cell) in ["n", "e", "e", "n", "n", "e"].into_iter().enumerate() {
++        let library = root.join(format!("library-{cell}"));
++        assert!(library.join("games").is_dir() && library.join("clips").is_dir());
++        println!("QB010_CELL {}", serde_json::json!({"ordinal": index, "cell": cell}));
++        let clips = list_clips(&library, "http://diagnostic.invalid", Some(&tool)).expect("prepared clips");
++        assert_eq!(clips.len(), 50);
++        assert!(clips.iter().all(|clip| clip.duration_ms > 0));
++        std::thread::sleep(std::time::Duration::from_secs(1));
++    }
++}

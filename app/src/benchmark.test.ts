@@ -10,6 +10,7 @@ import {
   ReplayBenchmarkObserver,
   sanitizePayload,
   shouldRecordBenchmarkEvent,
+  GAMES_LIBRARY_USABLE_CONTRACT,
   type BenchmarkScenario,
   type BenchmarkSessionInfo,
 } from "./benchmark";
@@ -100,6 +101,9 @@ describe("observer reduction", () => {
     expect(shouldRecordBenchmarkEvent("minimal", "native_seeking")).toBe(false);
     expect(shouldRecordBenchmarkEvent("minimal", "native_seeking", true)).toBe(true);
     expect(shouldRecordBenchmarkEvent("full", "native_seeking")).toBe(true);
+    expect(GAMES_LIBRARY_USABLE_CONTRACT).toBe("games-library-usable-v1");
+    expect(shouldRecordBenchmarkEvent("minimal", "library_view_admitted")).toBe(true);
+    expect(shouldRecordBenchmarkEvent("minimal", "games_library_usable")).toBe(true);
   });
 
   it("rejects stale presented-frame generations", () => {

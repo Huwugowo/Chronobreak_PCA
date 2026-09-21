@@ -1,6 +1,8 @@
 import { For, Show } from "solid-js";
 import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
 import type { ClipSummary, DdragonStatus, GameItemSummary, GameSummary, LibraryTab } from "../types";
+import type { DurationDisplay } from "../libraryController";
+import type { LibraryOrigin } from "../libraryController";
 import styles from "./Library.module.css";
 
 type Props = {
@@ -8,13 +10,17 @@ type Props = {
   games: GameSummary[];
   clips: ClipSummary[];
   ddragon: DdragonStatus;
+  actionable: boolean;
   busyId: string | null;
   onOpenGame: (timestamp: string) => void;
-  onToggleSaved: (game: GameSummary) => void;
-  onDeleteGame: (game: GameSummary) => void;
+  onToggleSaved: (game: GameSummary, origin: LibraryOrigin | null) => void;
+  onDeleteGame: (game: GameSummary, origin: LibraryOrigin | null) => void;
   onOpenClip: (clip: ClipSummary) => void;
-  onDeleteClip: (clip: ClipSummary) => void;
+  onDeleteClip: (clip: ClipSummary, origin: LibraryOrigin | null) => void;
   onOpenClipsFolder: () => void;
+  durationStates?: Readonly<Record<string, DurationDisplay>>;
+  onRetryDuration?: (filename: string) => void;
+  snapshotOrigin: LibraryOrigin | null;
 };
 
 const accentColors = ["#2457ff", "#8b5cff", "#00a889", "#d24b68", "#d68c2f"];
@@ -94,7 +100,7 @@ function GamesLibrary(props: Props) {
                   class={styles.matchOpen}
                   type="button"
                   onClick={() => props.onOpenGame(game.timestamp)}
-                  disabled={!game.video_available}
+                  disabled={!game.video_available || !props.actionable}
                   aria-label={`Open ${game.champion} recording from ${formatDate(game.recorded_at)}`}
                 >
                   <span class={styles.matchLoadout} aria-hidden="true">
@@ -210,8 +216,8 @@ function GamesLibrary(props: Props) {
                   <Show when={!game.incomplete}>
                     <button
                       type="button"
-                      onClick={() => props.onToggleSaved(game)}
-                      disabled={props.busyId === game.timestamp}
+                  onClick={() => props.onToggleSaved(game, props.snapshotOrigin)}
+                      disabled={props.busyId === game.timestamp || !props.actionable}
                       aria-label={game.saved ? `Unsave ${game.champion} recording` : `Save ${game.champion} recording`}
                       data-active={game.saved}
                     >
@@ -223,8 +229,8 @@ function GamesLibrary(props: Props) {
                     <button
                       type="button"
                       data-danger
-                      onClick={() => props.onDeleteGame(game)}
-                      disabled={props.busyId === game.timestamp}
+                  onClick={() => props.onDeleteGame(game, props.snapshotOrigin)}
+                      disabled={props.busyId === game.timestamp || !props.actionable}
                       aria-label={`Delete ${game.champion} recording`}
                     >
                       DELETE
@@ -274,6 +280,7 @@ function ClipsLibrary(props: Props) {
                   class={styles.clipOpen}
                   type="button"
                   onClick={() => props.onOpenClip(clip)}
+                  disabled={!props.actionable}
                   aria-label={`Play ${clip.source_champion ?? "unknown"} clip`}
                 >
                   <span
@@ -291,7 +298,12 @@ function ClipsLibrary(props: Props) {
                     >
                       <img src={clip.thumbnail_url!} alt="" loading="lazy" />
                     </Show>
-                    <em>{formatDuration(clip.duration_ms)}</em>
+                    <em>{(() => {
+                      const state = props.durationStates?.[clip.filename];
+                      return state?.state === "available" ? formatDuration(state.duration_ms)
+                        : state?.state === "unavailable" ? "Unavailable"
+                        : clip.duration_ms === null ? "—" : formatDuration(clip.duration_ms);
+                    })()}</em>
                     <i class={styles.playGlyph} aria-hidden="true">
                       ▶
                     </i>
@@ -306,12 +318,15 @@ function ClipsLibrary(props: Props) {
                     <span>{formatBytes(clip.file_size_bytes)}</span>
                   </span>
                 </button>
+                <Show when={props.durationStates?.[clip.filename]?.state === "unavailable" && props.onRetryDuration}>
+                  <button type="button" disabled={!props.actionable} onClick={() => props.onRetryDuration!(clip.filename)}>Retry duration</button>
+                </Show>
                 <button
                   class={styles.clipDelete}
                   type="button"
                   data-danger
-                  onClick={() => props.onDeleteClip(clip)}
-                  disabled={props.busyId === clip.filename}
+                  onClick={() => props.onDeleteClip(clip, props.snapshotOrigin)}
+                  disabled={props.busyId === clip.filename || !props.actionable}
                 >
                   Delete
                 </button>

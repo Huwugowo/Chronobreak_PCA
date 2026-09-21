@@ -25,13 +25,28 @@ export type ClipSummary = {
   filename: string;
   game_timestamp: string;
   clip_timestamp: string;
-  duration_ms: number;
+  duration_ms: number | null;
   file_size_bytes: number;
   thumbnail_path: string | null;
   thumbnail_url: string | null;
   video_url: string;
   source_champion: string | null;
   source_date: string | null;
+};
+
+export type LibrarySnapshot = {
+  token: string;
+  games: GameSummary[];
+  clips: ClipSummary[];
+  usage: StorageUsage;
+};
+
+export type ClipDuration =
+  | { state: "available"; duration_ms: number }
+  | { state: "unavailable" };
+export type ClipDurations = {
+  snapshot_token: string;
+  clips: Array<{ clip_id: string; duration: ClipDuration }>;
 };
 
 import type { FrameBoundary, MediaId, ReplayTick } from "./replayTime";
@@ -223,7 +238,7 @@ export type LibraryTab = "games" | "clips";
 export type ReturnNavigationState =
   | { screen: "library"; tab: LibraryTab }
   | { screen: "viewer"; gameTimestamp: string; clipDraft?: ClipDraft }
-  | { screen: "clip-export"; draft: ClipDraft };
+  | { screen: "clip-export"; draft: ClipDraft; snapshotOrigin?: import("./libraryController").LibraryOrigin };
 
 export type NavigationState =
   | ReturnNavigationState

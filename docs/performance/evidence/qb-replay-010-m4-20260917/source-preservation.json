@@ -1,0 +1,36 @@
+{
+  "benchmark": [
+    {
+      "all_sha256_match": true,
+      "bytes": 185340714,
+      "cell": "s",
+      "files": 9
+    },
+    {
+      "all_sha256_match": true,
+      "bytes": 416534000,
+      "cell": "n",
+      "files": 200
+    },
+    {
+      "all_sha256_match": true,
+      "bytes": 506918350,
+      "cell": "e",
+      "files": 200
+    }
+  ],
+  "checked_utc": "2026-09-17T07:42:47.833707+00:00",
+  "invalid_run_not_repaired": "Final source audit does not replace run 15 missing terminal/collection/post-hash evidence.",
+  "manual": [
+    {
+      "all_sha256_match": true,
+      "files": 20,
+      "root": "a"
+    },
+    {
+      "all_sha256_match": true,
+      "files": 5,
+      "root": "b"
+    }
+  ]
+}

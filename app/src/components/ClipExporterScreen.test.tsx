@@ -51,7 +51,7 @@ it("retries the same imported file after preparation fails and releases the succ
   const dispose = render(() => <ClipExporterScreen
     draft={{ gameTimestamp: "1", mediaId: probe.media_timeline!.mediaId,
       startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
-    outputPath="C:\\output" onBack={() => {}} onExported={() => {}}
+    outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "C:\\output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }} onBack={() => {}} onExported={() => {}}
     onOpenClips={() => {}} onOpenFolder={() => {}}
   />, host);
   let audio: HTMLAudioElement | null = null;

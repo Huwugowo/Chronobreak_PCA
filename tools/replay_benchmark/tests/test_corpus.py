@@ -2,7 +2,9 @@ import copy
 from fractions import Fraction
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -684,6 +686,40 @@ class ReplayCorpusTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             corpus._parser().parse_args(["--help"])
         self.assertEqual(raised.exception.code, 0)
+
+    @unittest.skipUnless(os.environ.get("QUEUEBACK_TEST_MEDIA_RUNTIME"), "requires packaged media runtime")
+    def test_repeat_preserves_every_frame_boundary_with_aac_priming(self) -> None:
+        runtime = Path(os.environ["QUEUEBACK_TEST_MEDIA_RUNTIME"])
+        ffmpeg, ffprobe, _ = corpus._resolve_tools(runtime)
+        with tempfile.TemporaryDirectory(prefix="queueback-repeat-grid-") as temporary:
+            base = Path(temporary)
+            source = base / "source.mp4"
+            output = base / "repeat.mp4"
+            subprocess.run([
+                str(ffmpeg), "-v", "error", "-nostdin", "-n", "-f", "lavfi", "-i",
+                "testsrc2=size=1920x1080:rate=60:duration=1", "-f", "lavfi", "-i",
+                "sine=frequency=880:sample_rate=48000:duration=1", "-t", "1",
+                "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1", "-bf", "0",
+                "-g", "60", "-c:a", "aac", str(source)
+            ], check=True, timeout=60, capture_output=True)
+            fixture = dict(id="repeat-grid", source_video=source, transform="repeat",
+                expected_frame_rate=Fraction(60), target_duration_seconds=Fraction(3),
+                minimum_duration_seconds=Fraction(3), expected_video_codec="h264", expected_audio_codec="aac")
+            source_media = corpus._validate_media(corpus._probe(ffprobe, source), fixture, source=True)
+            time_base = corpus._positive_rational(source_media["exact_video_time_base"], "source time base")
+            source_grid = corpus._scan_video_grid(ffprobe, source, time_base=time_base,
+                frame_rate=Fraction(60), expected_first_pts=source_media["video_start_pts"],
+                expected_duration_ts=source_media["video_duration_ts"], expected_frame_count=60)
+            self.assertEqual(corpus._create_media(ffmpeg, fixture, output, source_grid), 180)
+            media = corpus._validate_media(corpus._probe(ffprobe, output), fixture, source=False)
+            output_grid = corpus._scan_video_grid(ffprobe, output,
+                time_base=corpus._positive_rational(media["exact_video_time_base"], "output time base"),
+                frame_rate=Fraction(60), expected_first_pts=0,
+                expected_duration_ts=media["video_duration_ts"], expected_frame_count=180)
+            self.assertEqual(output_grid["frame_count"], 180)
+            self.assertEqual(Fraction(output_grid["duration_ts"]) * time_base, 3)
+            subprocess.run([str(ffmpeg), "-v", "error", "-xerror", "-threads", "1",
+                "-i", str(output), "-f", "null", "NUL"], check=True, timeout=60, capture_output=True)
 
 
 if __name__ == "__main__":

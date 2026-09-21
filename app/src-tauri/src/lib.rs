@@ -1,9 +1,11 @@
 #[cfg(feature = "replay-benchmark")]
 mod benchmark;
+mod clip_duration;
 mod clip_export;
 mod config;
 mod ddragon;
 mod library;
+mod library_coordinator;
 mod music;
 mod playback_diagnostics;
 mod playback_file;
@@ -29,6 +31,7 @@ use clip_export::{ClipExportProgress, ClipExportRequest, ClipExportResult};
 use config::{Config, Settings, SettingsUpdate};
 use ddragon::DdragonStatus;
 use library::{AutoDeleteResult, ClipSummary, GameSummary, PlaybackProbe, StorageUsage};
+use library_coordinator::{LibraryCoordinator, LibraryRefreshError, Selection, command_error};
 use music::BuiltInMusicTrack;
 #[cfg(feature = "replay-benchmark")]
 use playback_server::{BenchmarkRequestTelemetry, RequestTelemetrySnapshot};
@@ -42,8 +45,9 @@ const HEVC_PROBE_VERSION: u32 = 1;
 
 struct AppState {
     config_path: PathBuf,
-    config: RwLock<Config>,
+    config: Arc<RwLock<Config>>,
     roots: Arc<MediaRoots>,
+    library: LibraryCoordinator,
     playback_origin: String,
     playback_metrics: Arc<PlaybackMetrics>,
     hevc_probe_path: PathBuf,
@@ -55,6 +59,12 @@ struct AppState {
     benchmark: Option<Arc<BenchmarkSession>>,
     #[cfg(feature = "replay-benchmark")]
     benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
+}
+
+impl Drop for AppState {
+    fn drop(&mut self) {
+        self.library.shutdown();
+    }
 }
 
 #[derive(Clone)]
@@ -90,6 +100,16 @@ struct HevcProbeStatus {
 struct HevcProbeMarker {
     version: u32,
     supported: bool,
+}
+
+#[tauri::command]
+async fn refresh_library(
+    state: State<'_, AppState>,
+) -> Result<library::LibrarySnapshot, LibraryRefreshError> {
+    state
+        .library
+        .refresh(&state.roots, &state.playback_origin)
+        .await
 }
 
 #[tauri::command(async)]
@@ -190,27 +210,86 @@ fn get_playback_probe(
     result.map_err(error_string)
 }
 
-#[tauri::command(async)]
-fn save_game(
+#[tauri::command]
+async fn save_game(
     state: State<'_, AppState>,
+    snapshot_token: String,
     game_timestamp: String,
     saved: bool,
 ) -> Result<(), String> {
     ensure_user_mutation_allowed(&state)?;
-    library::save_game(&state.roots.output_directory(), &game_timestamp, saved)
-        .map_err(error_string)
+    let id = game_timestamp.clone();
+    state
+        .library
+        .mutate(
+            &state.roots,
+            &snapshot_token,
+            Selection::Game(&game_timestamp),
+            move |path| library::save_game(path, &id, saved),
+        )
+        .await
 }
 
-#[tauri::command(async)]
-fn delete_game(state: State<'_, AppState>, game_timestamp: String) -> Result<(), String> {
+#[tauri::command]
+async fn delete_game(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    game_timestamp: String,
+) -> Result<(), String> {
     ensure_user_mutation_allowed(&state)?;
-    library::delete_game(&state.roots.output_directory(), &game_timestamp).map_err(error_string)
+    let id = game_timestamp.clone();
+    state
+        .library
+        .mutate(
+            &state.roots,
+            &snapshot_token,
+            Selection::Game(&game_timestamp),
+            move |path| library::delete_game(path, &id),
+        )
+        .await
 }
 
-#[tauri::command(async)]
-fn delete_clip(state: State<'_, AppState>, clip_filename: String) -> Result<(), String> {
+#[tauri::command]
+async fn delete_clip(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    clip_filename: String,
+) -> Result<(), String> {
     ensure_user_mutation_allowed(&state)?;
-    library::delete_clip(&state.roots.output_directory(), &clip_filename).map_err(error_string)
+    let id = clip_filename.clone();
+    state
+        .library
+        .mutate(
+            &state.roots,
+            &snapshot_token,
+            Selection::Clip(&clip_filename),
+            move |path| library::delete_clip(path, &id),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn resolve_clip_durations(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    clip_ids: Vec<String>,
+    retry_unavailable: bool,
+) -> Result<library_coordinator::ClipDurations, LibraryRefreshError> {
+    let ffprobe = state
+        .media_runtime
+        .available()
+        .map(|tools| tools.ffprobe().to_path_buf());
+    state
+        .library
+        .resolve_durations(
+            &state.roots,
+            &state.playback_origin,
+            &snapshot_token,
+            clip_ids,
+            ffprobe,
+            retry_unavailable,
+        )
+        .await
 }
 
 #[tauri::command]
@@ -251,6 +330,7 @@ fn release_imported_music_preview(state: State<'_, AppState>, token: String) -> 
 #[tauri::command]
 async fn export_clip(
     state: State<'_, AppState>,
+    snapshot_token: String,
     request: ClipExportRequest,
     progress: Channel<ClipExportProgress>,
 ) -> Result<ClipExportResult, String> {
@@ -258,7 +338,11 @@ async fn export_clip(
     if state.benchmark.is_some() && matches!(&request.music, ClipMusicSource::File { .. }) {
         return Err("file-based music is disabled in replay benchmark mode".to_owned());
     }
-    let output_directory = state.roots.output_directory();
+    let completion = state
+        .library
+        .admit_export(&state.roots, &snapshot_token, &request.game_timestamp)
+        .map_err(command_error)?;
+    let output_directory = completion.capture.path.clone();
     let music_directory = state.music_directory.clone();
     let media_tools = state.media_runtime.require()?;
     #[cfg(feature = "replay-benchmark")]
@@ -315,7 +399,13 @@ async fn export_clip(
             .record_app_event(kind, payload)
             .map_err(error_string)?;
     }
-    result.map_err(error_string)
+    let current = completion.selection_is_current();
+    drop(completion);
+    let result = result.map_err(error_string)?;
+    if !current {
+        return Err(command_error(LibraryRefreshError::Superseded));
+    }
+    Ok(result)
 }
 
 #[tauri::command(async)]
@@ -344,16 +434,29 @@ fn get_storage_usage(state: State<'_, AppState>) -> Result<StorageUsage, String>
     result.map_err(error_string)
 }
 
-#[tauri::command(async)]
-fn run_auto_delete(state: State<'_, AppState>) -> Result<AutoDeleteResult, String> {
+#[tauri::command]
+async fn run_auto_delete(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+) -> Result<AutoDeleteResult, String> {
     ensure_user_mutation_allowed(&state)?;
-    let days = state
-        .config
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .storage
-        .auto_delete_days;
-    library::run_auto_delete(&state.roots.output_directory(), days).map_err(error_string)
+    let config = Arc::clone(&state.config);
+    state
+        .library
+        .mutate(
+            &state.roots,
+            &snapshot_token,
+            Selection::Library,
+            move |path| {
+                let days = config
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .storage
+                    .auto_delete_days;
+                library::run_auto_delete(path, days)
+            },
+        )
+        .await
 }
 
 #[tauri::command]
@@ -365,25 +468,44 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
         .settings()
 }
 
-#[tauri::command(async)]
-fn save_settings(state: State<'_, AppState>, settings: SettingsUpdate) -> Result<Settings, String> {
+#[tauri::command]
+async fn save_settings(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    settings: SettingsUpdate,
+) -> Result<Settings, String> {
     ensure_user_mutation_allowed(&state)?;
-    let mut next = state
-        .config
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    next.apply_settings(settings).map_err(error_string)?;
-    let output_directory = next.resolved_output_path().map_err(error_string)?;
-    ensure_output_directories(&output_directory).map_err(error_string)?;
-    let output_directory = OutputDirectory::new(output_directory).map_err(error_string)?;
-    config::save(&state.config_path, &next).map_err(error_string)?;
-    state.roots.set_output_directory(output_directory);
-    *state
-        .config
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = next.clone();
-    Ok(next.settings())
+    // The same owned slot serializes settings persistence/publication with mutation capture.
+    let config = Arc::clone(&state.config);
+    let config_path = state.config_path.clone();
+    let roots = Arc::clone(&state.roots);
+    let library = state.library.clone();
+    state
+        .library
+        .settings_for_snapshot(&state.roots, &snapshot_token, move || {
+            let mut next = config.read().unwrap_or_else(|p| p.into_inner()).clone();
+            next.apply_settings(settings).map_err(error_string)?;
+            let output_directory = next.resolved_output_path().map_err(error_string)?;
+            ensure_output_directories(&output_directory).map_err(error_string)?;
+            let output_directory = OutputDirectory::new(output_directory).map_err(error_string)?;
+            persist_settings_and_publish(&config_path, &next, output_directory, &roots, &library)
+                .map_err(error_string)?;
+            *config.write().unwrap_or_else(|p| p.into_inner()) = next.clone();
+            Ok(next.settings())
+        })
+        .await
+}
+
+fn persist_settings_and_publish(
+    config_path: &Path,
+    next: &Config,
+    directory: OutputDirectory,
+    roots: &MediaRoots,
+    library: &LibraryCoordinator,
+) -> Result<()> {
+    config::save(config_path, next)?;
+    library.publish_output_directory(roots, directory);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -979,8 +1101,9 @@ pub fn run() {
 
             app.manage(AppState {
                 config_path,
-                config: RwLock::new(config),
+                config: Arc::new(RwLock::new(config)),
                 roots,
+                library: LibraryCoordinator::new(),
                 playback_origin,
                 playback_metrics,
                 hevc_probe_path,
@@ -1050,6 +1173,8 @@ pub fn run() {
 
     #[cfg(feature = "replay-benchmark")]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        refresh_library,
+        resolve_clip_durations,
         list_games,
         list_clips,
         get_playback_probe,
@@ -1084,6 +1209,8 @@ pub fn run() {
 
     #[cfg(not(feature = "replay-benchmark"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        refresh_library,
+        resolve_clip_durations,
         list_games,
         list_clips,
         get_playback_probe,

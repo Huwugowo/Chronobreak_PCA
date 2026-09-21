@@ -1,0 +1,41 @@
+{
+  "note": "Exact source snapshots, originally executed from build/qb010-m4. Do not run these one-shot collectors/retainers again in place; existing evidence must never be overwritten.",
+  "files": [
+    {
+      "path": "prepare_replacement.py",
+      "original_location": "build/qb010-m4/prepare_replacement.py",
+      "bytes": 5926,
+      "sha256": "5575b86b9376aecb03157da76d91ea25cf75fcace9f039a4b52c5624085335c5"
+    },
+    {
+      "path": "run_replacement.py",
+      "original_location": "build/qb010-m4/run_replacement.py",
+      "bytes": 3535,
+      "sha256": "024f6c55fa801bc3e7a3d72f9dfa4e81a2500b4fb1fb2e361f8bf43ca7df36f6"
+    },
+    {
+      "path": "retain_replacement.py",
+      "original_location": "build/qb010-m4/retain_replacement.py",
+      "bytes": 5572,
+      "sha256": "0cffe27673b688c510c4bbd1498d4e4b84a713a339245d1cdd8e9a25bd8163bb"
+    },
+    {
+      "path": "resource_details.py",
+      "original_location": "build/qb010-m4/resource_details.py",
+      "bytes": 3595,
+      "sha256": "e33e6111e5c4e03a30a8609c70cd9b90ece2c37ce34e4630e90c97760a34d281"
+    },
+    {
+      "path": "summarize_replacement.py",
+      "original_location": "build/qb010-m4/summarize_replacement.py",
+      "bytes": 4326,
+      "sha256": "350eea4761e5b31c172a837d37b95be7b93d6ef1ea2c503328b41cdf74d59be4"
+    },
+    {
+      "path": "retain_assisted_manual.py",
+      "original_location": "build/qb010-m4/retain_assisted_manual.py",
+      "bytes": 2293,
+      "sha256": "6d21866da7c21825ad60bb5b936065782da36901b2516e0fa1e591102a2b03a4"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "configured_vs_resolved_root_risk": "Remains open; initial exact absolute root worked, alias/root switch not exercised.",
+  "date": "2026-09-17",
+  "dedicated_process_stopped": true,
+  "errors": [
+    "SetIsBorderRequired failed: interface not supported (0x80004002)",
+    "coordinate input geometry is unavailable",
+    "initial keyboard attempt: user input was detected; after re-observation retry showed no focus transition"
+  ],
+  "evidence": [
+    {
+      "bytes": 285,
+      "path": "manual/config.toml",
+      "sha256": "c3a21985db24c7cd7f6c889258180924e169bfe89284879e249a36e6b1b5c83b"
+    },
+    {
+      "bytes": 14686,
+      "path": "manual/interactions.jsonl",
+      "sha256": "f2f903a998ffd7b1fd0858c2996330dd22168558e977be24bd4707f74ee2119b"
+    },
+    {
+      "bytes": 630,
+      "path": "manual/launch.json",
+      "sha256": "5b0eb59b68141a2fc96b48fe91b07301eb79a6c51d6e0aa7f844b0acf8565aeb"
+    },
+    {
+      "bytes": 931,
+      "path": "manual/normal-app.stderr.log",
+      "sha256": "9d5ffed45d2032ea133e8caaaf88cde8d4aaacb64103a957ee7fb32013fefb9a"
+    },
+    {
+      "bytes": 0,
+      "path": "manual/normal-app.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 3201,
+      "path": "manual/root-a-before.json",
+      "sha256": "2ddf4613a5bbadcb6ad240525a9d2690d6c0dd3da602ada4e6d4e6fd8416745c"
+    },
+    {
+      "bytes": 793,
+      "path": "manual/root-b-before.json",
+      "sha256": "4c44e2b46d435bef9f7fbb3a37f636eec75ce36b9ec3f13cfc657566a9e71c17"
+    }
+  ],
+  "initial_counts": {
+    "games": 3,
+    "prepared_clip_files_not_opened": 10,
+    "saved": 0
+  },
+  "initial_games": "passed",
+  "initial_storage_display": {
+    "clips": "2.67 MB",
+    "recordings": "23.9 MB",
+    "total": "26.6 MB"
+  },
+  "normal_build_observation": "Ordinary Games view; no automated benchmark scenario. Normal cfg session returns None and writer/terminal handlers are absent.",
+  "recovery": "Fresh returned window selected; accessibility succeeded; pointer failed; refreshed keyboard fallback did not establish actionable focus.",
+  "required_checks": {
+    "cleanup_while_optional_batch_owned": "environment-blocked",
+    "clips_select_switch_away_back": "environment-blocked",
+    "delete_while_optional_batch_owned": "environment-blocked",
+    "export_while_optional_batch_owned": "environment-blocked",
+    "fresh_cards_counts_after_mutation": "environment-blocked",
+    "games_while_duration_work_delayed": "environment-blocked",
+    "optional_failure_presentation": "environment-blocked",
+    "playable_export": "environment-blocked",
+    "save_while_optional_batch_owned": "environment-blocked",
+    "switch_overlapping_numeric_ids_roots": "environment-blocked",
+    "viewer_return_navigation": "environment-blocked"
+  },
+  "source_preservation": "passed: all 25 files unchanged; no successful mutation/export interaction",
+  "status": "environment-blocked"
+}

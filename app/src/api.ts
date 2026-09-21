@@ -8,6 +8,8 @@ import type {
   ClipExportRequest,
   ClipExportResult,
   ClipSummary,
+  ClipDurations,
+  LibrarySnapshot,
   DdragonStatus,
   GameSummary,
   HevcProbeStatus,
@@ -375,6 +377,65 @@ export const loadClips = async (): Promise<ClipSummary[]> => {
   if (!isTauri()) return structuredClone(mockClips);
   return invoke<ClipSummary[]>("list_clips");
 };
+let mockSnapshotSequence = 0;
+
+export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
+  const wire = exactRecord(value, ["token", "games", "clips", "usage"], "library_snapshot");
+  if (typeof wire.token !== "string" || wire.token.length === 0) throw new Error("library_snapshot.token is invalid");
+  if (!Array.isArray(wire.games) || !Array.isArray(wire.clips)) throw new Error("library_snapshot arrays are invalid");
+  const gameKeys = ["timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "saved", "incomplete", "video_size_bytes", "video_available"];
+  const clipKeys = ["filename", "game_timestamp", "clip_timestamp", "duration_ms", "file_size_bytes", "thumbnail_path", "thumbnail_url", "video_url", "source_champion", "source_date"];
+  wire.games.forEach((game, index) => { exactRecord(game, gameKeys, `library_snapshot.games[${index}]`); });
+  wire.clips.forEach((clip, index) => {
+    const record = exactRecord(clip, clipKeys, `library_snapshot.clips[${index}]`);
+    if (record.duration_ms !== null &&
+      (typeof record.duration_ms !== "number" || !Number.isSafeInteger(record.duration_ms) || record.duration_ms < 0)) {
+      throw new Error(`library_snapshot.clips[${index}].duration_ms is invalid`);
+    }
+  });
+  const usage = wire.usage as Record<string, unknown>;
+  if (!usage || typeof usage !== "object") throw new Error("library_snapshot.usage is invalid");
+  for (const key of ["games_bytes", "clips_bytes", "game_count", "clip_count"]) {
+    if (typeof usage[key] !== "number" || !Number.isSafeInteger(usage[key])) throw new Error(`library_snapshot.usage.${key} is invalid`);
+  }
+  return { token: wire.token, games: wire.games as GameSummary[], clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage };
+};
+
+export const refreshLibrary = async (): Promise<LibrarySnapshot> => {
+  if (!isTauri()) return {
+    token: `mock-${Date.now()}-${++mockSnapshotSequence}`,
+    games: structuredClone(mockGames), clips: structuredClone(mockClips), usage: await loadStorageUsage(),
+  };
+  return decodeLibrarySnapshot(await invoke<unknown>("refresh_library"));
+};
+
+export const resolveClipDurations = async (snapshotToken: string, clipIds: string[], retryUnavailable = false): Promise<ClipDurations> => {
+  if (!isTauri()) return { snapshot_token: snapshotToken, clips: clipIds.slice(0, 8).map(clip_id => ({ clip_id, duration: { state: "available", duration_ms: mockClips.find(c => c.filename === clip_id)?.duration_ms ?? 0 } })) };
+  return decodeClipDurations(await invoke<unknown>("resolve_clip_durations", { snapshotToken, clipIds, retryUnavailable }));
+};
+
+export const decodeClipDurations = (value: unknown): ClipDurations => {
+  const wire = exactRecord(value, ["snapshot_token", "clips"], "clip_durations");
+  if (typeof wire.snapshot_token !== "string" || wire.snapshot_token.length === 0 || !Array.isArray(wire.clips) || wire.clips.length > 8) throw new Error("clip_durations payload is invalid");
+  const ids = new Set<string>();
+  const clips = wire.clips.map((entry, index) => {
+    const item = exactRecord(entry, ["clip_id", "duration"], `clip_durations.clips[${index}]`);
+    if (typeof item.clip_id !== "string") throw new Error(`clip_durations.clips[${index}].clip_id is invalid`);
+    if (ids.has(item.clip_id)) throw new Error(`clip_durations.clips[${index}].clip_id is duplicated`);
+    ids.add(item.clip_id);
+    const duration = item.duration as Record<string, unknown>;
+    if (!duration || typeof duration !== "object") throw new Error(`clip_durations.clips[${index}].duration is invalid`);
+    if (duration.state === "available") {
+      exactRecord(duration, ["state", "duration_ms"], `clip_durations.clips[${index}].duration`);
+      if (typeof duration.duration_ms !== "number" || !Number.isSafeInteger(duration.duration_ms) || duration.duration_ms < 0) throw new Error("duration_ms is invalid");
+      return { clip_id: item.clip_id, duration: { state: "available" as const, duration_ms: duration.duration_ms } };
+    }
+    exactRecord(duration, ["state"], `clip_durations.clips[${index}].duration`);
+    if (duration.state !== "unavailable") throw new Error("duration state is invalid");
+    return { clip_id: item.clip_id, duration: { state: "unavailable" as const } };
+  });
+  return { snapshot_token: wire.snapshot_token, clips };
+};
 const exactRecord = (
   value: unknown,
   expectedKeys: readonly string[],
@@ -555,7 +616,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
   return decodePlaybackProbe(await invoke<unknown>("get_playback_probe", { gameTimestamp }));
 };
 
-export const setGameSaved = async (gameTimestamp: string, saved: boolean): Promise<void> => {
+export const setGameSaved = async (gameTimestamp: string, saved: boolean, snapshotToken: string): Promise<void> => {
   if (!isTauri()) {
     await pausePreview();
     mockGames = mockGames.map((game) =>
@@ -563,25 +624,25 @@ export const setGameSaved = async (gameTimestamp: string, saved: boolean): Promi
     );
     return;
   }
-  await invoke("save_game", { gameTimestamp, saved });
+  await invoke("save_game", { snapshotToken, gameTimestamp, saved });
 };
 
-export const removeGame = async (gameTimestamp: string): Promise<void> => {
+export const removeGame = async (gameTimestamp: string, snapshotToken: string): Promise<void> => {
   if (!isTauri()) {
     await pausePreview();
     mockGames = mockGames.filter((game) => game.timestamp !== gameTimestamp);
     return;
   }
-  await invoke("delete_game", { gameTimestamp });
+  await invoke("delete_game", { snapshotToken, gameTimestamp });
 };
 
-export const removeClip = async (clipFilename: string): Promise<void> => {
+export const removeClip = async (clipFilename: string, snapshotToken: string): Promise<void> => {
   if (!isTauri()) {
     await pausePreview();
     mockClips = mockClips.filter((clip) => clip.filename !== clipFilename);
     return;
   }
-  await invoke("delete_clip", { clipFilename });
+  await invoke("delete_clip", { snapshotToken, clipFilename });
 };
 
 export const loadBuiltInMusic = async (): Promise<BuiltInMusicTrack[]> => {
@@ -622,6 +683,7 @@ export const releaseImportedMusicPreview = async (token: string): Promise<void> 
 export const exportClip = async (
   request: ClipExportRequest,
   onProgress: (progress: ClipExportProgress) => void,
+  snapshotToken: string,
 ): Promise<ClipExportResult> => {
   if (!isTauri()) {
     const totalOutputs = request.presets.length;
@@ -723,7 +785,7 @@ export const exportClip = async (
   }
   const progress = new Channel<ClipExportProgress>();
   progress.onmessage = onProgress;
-  return invoke<ClipExportResult>("export_clip", { request, progress });
+  return invoke<ClipExportResult>("export_clip", { snapshotToken, request, progress });
 };
 
 export const loadStorageUsage = async (): Promise<StorageUsage> => {
@@ -743,13 +805,13 @@ export const loadSettings = async (): Promise<AppSettings> => {
   return invoke<AppSettings>("get_settings");
 };
 
-export const persistSettings = async (settings: SettingsUpdate): Promise<AppSettings> => {
+export const persistSettings = async (settings: SettingsUpdate, snapshotToken: string): Promise<AppSettings> => {
   if (!isTauri()) {
     await pausePreview();
     mockSettings = { ...mockSettings, ...settings };
     return structuredClone(mockSettings);
   }
-  return invoke<AppSettings>("save_settings", { settings });
+  return invoke<AppSettings>("save_settings", { snapshotToken, settings });
 };
 
 export const chooseOutputFolder = async (currentPath: string): Promise<string | null> => {
@@ -758,9 +820,9 @@ export const chooseOutputFolder = async (currentPath: string): Promise<string | 
   return typeof selected === "string" ? selected : null;
 };
 
-export const cleanUpNow = async (): Promise<AutoDeleteResult> => {
+export const cleanUpNow = async (snapshotToken: string): Promise<AutoDeleteResult> => {
   if (!isTauri()) return { deleted_count: 0 };
-  return invoke<AutoDeleteResult>("run_auto_delete");
+  return invoke<AutoDeleteResult>("run_auto_delete", { snapshotToken });
 };
 
 export const openOutputFolder = async (): Promise<void> => {

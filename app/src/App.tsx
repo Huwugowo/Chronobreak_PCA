@@ -14,12 +14,10 @@ import {
   cleanUpNow,
   ensureHevcCapability,
   exportClip,
-  loadClips,
   loadDdragonStatus,
-  loadGames,
+  refreshLibrary,
   loadPlaybackProbe,
   loadSettings,
-  loadStorageUsage,
   openClipsFolder,
   openOutputFolder,
   persistSettings,
@@ -35,6 +33,7 @@ import {
   type BenchmarkFixture,
   type BenchmarkScenario,
   type ReplayBenchmarkObserver,
+  GAMES_LIBRARY_USABLE_CONTRACT,
 } from "./benchmark";
 import AppHeader from "./components/AppHeader";
 import { runDeliveryRouteProbe } from "./deliveryRouteProbe";
@@ -55,11 +54,12 @@ import type {
   ReturnNavigationState,
   ClipExportPreset,
 } from "./types";
+import { LibraryController, type LibraryOrigin } from "./libraryController";
 import styles from "./App.module.css";
 
 type DeleteTarget =
-  | { kind: "game"; game: GameSummary }
-  | { kind: "clip"; clip: ClipSummary };
+  | { kind: "game"; game: GameSummary; origin: LibraryOrigin }
+  | { kind: "clip"; clip: ClipSummary; origin: LibraryOrigin };
 
 const emptyDdragon: DdragonStatus = {
   state: "loading",
@@ -84,9 +84,14 @@ function App() {
     screen: "library",
     tab: initialTab(),
   });
-  const [games, { refetch: refetchGames }] = createResource(loadGames);
-  const [clips, { refetch: refetchClips }] = createResource(loadClips);
-  const [usage, { refetch: refetchUsage }] = createResource(loadStorageUsage);
+  const controller = new LibraryController({
+    refresh: refreshLibrary,
+    durations: (token, ids, retry) => import("./api").then(api => api.resolveClipDurations(token, ids, retry)),
+  });
+  const [libraryState, setLibraryState] = createSignal(controller.value);
+  const games = createMemo(() => libraryState().snapshot?.games);
+  const clips = createMemo(() => libraryState().snapshot?.clips);
+  const usage = createMemo(() => libraryState().snapshot?.usage);
   const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
   const [ddragon, { refetch: refetchDdragon }] = createResource(loadDdragonStatus);
   const [benchmarkObserver] = createResource(initializeReplayBenchmark);
@@ -94,11 +99,19 @@ function App() {
     createSignal<HevcProbeStatus | null>(null);
   const [busyId, setBusyId] = createSignal<string | null>(null);
   const [deleteTarget, setDeleteTarget] = createSignal<DeleteTarget | null>(null);
-  const [activeClip, setActiveClip] = createSignal<ClipSummary | null>(null);
+  const activeClip = createMemo(() => {
+    const id = libraryState().activeClip;
+    const clip = clips()?.find(clip => clip.filename === id);
+    if (!clip) return null;
+    const duration = libraryState().durations[clip.filename];
+    return duration?.state === "available" ? { ...clip, duration_ms: duration.duration_ms } : clip;
+  });
   const [notice, setNotice] = createSignal<string | null>(null);
   let noticeTimer: number | undefined;
   let benchmarkNavigationStarted = false;
+  let benchmarkLibraryReadinessStarted = false;
   let benchmarkLibraryUsefulEmitted = false;
+  let benchmarkGamesLibraryUsableEmitted = false;
   let benchmarkViewerCycles = 0;
   let benchmarkFailureStarted = false;
   let benchmarkHevcCapabilityEmitted = false;
@@ -117,28 +130,46 @@ function App() {
     showNotice(error instanceof Error ? error.message : String(error));
   };
 
-  const reloadLibrary = async () => {
-    await Promise.all([refetchGames(), refetchClips(), refetchUsage()]);
-  };
+  const reloadLibrary = () => controller.refresh();
 
-  const openTab = (tab: LibraryTab) => setNavigation({ screen: "library", tab });
+  const openTab = (tab: LibraryTab) => {
+    const returningToLibrary = navigation().screen !== "library";
+    controller.navigate(tab === "clips");
+    setNavigation({ screen: "library", tab });
+    if (returningToLibrary) controller.refresh();
+  };
 
   const openSettings = () => {
     const current = navigation();
     if (current.screen === "settings") return;
+    controller.navigate(false);
     setNavigation({ screen: "settings", returnTo: current });
   };
 
   const closeSettings = () => {
     const current = navigation();
-    setNavigation(current.screen === "settings" ? current.returnTo : { screen: "library", tab: "games" });
+    if (current.screen !== "settings") {
+      setNavigation({ screen: "library", tab: "games" });
+      return;
+    }
+    const destination = current.returnTo;
+    if (destination.screen === "library") {
+      controller.navigate(destination.tab === "clips");
+      setNavigation(destination);
+      controller.refresh();
+    } else {
+      controller.navigate(false);
+      setNavigation(destination);
+    }
   };
 
-  const toggleSaved = async (game: GameSummary) => {
+  const toggleSaved = async (game: GameSummary, origin: LibraryOrigin | null) => {
+    if (!origin) return showError("Select a current library snapshot first.");
     setBusyId(game.timestamp);
     try {
-      await setGameSaved(game.timestamp, !game.saved);
-      await refetchGames();
+      const result = await controller.mutate(origin, game.timestamp,
+        token => setGameSaved(game.timestamp, !game.saved, token));
+      if (!result.admitted) throw new Error(result.error ?? "Save request became stale.");
       showNotice(game.saved ? "Recording removed from saved games." : "Recording saved.");
     } catch (error) {
       showError(error);
@@ -153,11 +184,12 @@ function App() {
     const id = target.kind === "game" ? target.game.timestamp : target.clip.filename;
     setBusyId(id);
     try {
-      if (target.kind === "game") await removeGame(target.game.timestamp);
-      else await removeClip(target.clip.filename);
-      if (activeClip()?.filename === id) setActiveClip(null);
+      const result = target.kind === "game"
+        ? await controller.mutate(target.origin, id, token => removeGame(id, token))
+        : await controller.mutate(target.origin, id, token => removeClip(id, token));
+      if (!result.admitted) throw new Error(result.error ?? "Delete request became stale.");
+      if (activeClip()?.filename === id) controller.selectClip(null);
       setDeleteTarget(null);
-      await reloadLibrary();
       showNotice(target.kind === "game" ? "Recording deleted." : "Clip deleted.");
     } catch (error) {
       showError(error);
@@ -167,10 +199,14 @@ function App() {
   };
 
   const saveSettings = async (outputPath: string, retentionDays: number): Promise<boolean> => {
+    const origin = controller.origin();
+    if (!origin) { showError("Settings require a current library snapshot."); return false; }
     setBusyId("settings");
     try {
-      await persistSettings({ output_path: outputPath, auto_delete_days: retentionDays });
-      await Promise.all([refetchSettings(), reloadLibrary()]);
+      const result = await controller.saveSettings(origin,
+        token => persistSettings({ output_path: outputPath, auto_delete_days: retentionDays }, token));
+      await refetchSettings();
+      if (!result.admitted) throw new Error(result.error ?? "Settings request became stale.");
       showNotice("Settings saved.");
       return true;
     } catch (error) {
@@ -206,10 +242,13 @@ function App() {
   };
 
   const cleanStorage = async () => {
+    const origin = controller.origin();
+    if (!origin) { showError("Cleanup requires a current library snapshot."); return; }
     setBusyId("settings");
     try {
-      const result = await cleanUpNow();
-      await reloadLibrary();
+      const operation = await controller.mutate(origin, "retention", token => cleanUpNow(token));
+      if (!operation.admitted) throw new Error(operation.error ?? "Cleanup request became stale.");
+      const result = operation.value;
       showNotice(
         result.deleted_count === 0
           ? "No recordings qualified for cleanup."
@@ -223,13 +262,10 @@ function App() {
   };
 
   const loading = createMemo(
-    () =>
-      (games() === undefined && games.loading) ||
-      (clips() === undefined && clips.loading) ||
-      (usage() === undefined && usage.loading) ||
+    () => (libraryState().snapshot === null && libraryState().refreshing) ||
       (settings() === undefined && settings.loading),
   );
-  const loadError = createMemo(() => games.error ?? clips.error ?? usage.error ?? settings.error);
+  const loadError = createMemo(() => libraryState().error ?? settings.error);
 
   const runBenchmarkExport = async (
     observer: ReplayBenchmarkObserver,
@@ -237,7 +273,11 @@ function App() {
     fixture: BenchmarkFixture,
   ) => {
     const actionId = "export-1";
+    const exportOrigin = controller.origin();
+    const exportToken = exportOrigin?.token ?? "";
+    let backendAttempted = false;
     try {
+      if (!exportOrigin) throw new Error("export fixture requires a current library snapshot");
       const game = games()?.find((candidate) => candidate.timestamp === fixture.game_timestamp);
       if (!game) throw new Error("export fixture is absent from the benchmark library");
       const probe = await loadPlaybackProbe(fixture.game_timestamp);
@@ -297,6 +337,7 @@ function App() {
         },
         { actionId, required: true },
       );
+      backendAttempted = true;
       const result = await exportClip(
         {
           game_timestamp: fixture.game_timestamp,
@@ -324,6 +365,7 @@ function App() {
             },
             { actionId },
           ),
+        exportToken,
       );
       observer.emit(
         "export_completed",
@@ -359,6 +401,7 @@ function App() {
       observer.emit("scenario_failed", { reason }, { required: true });
       await observer.complete("failed", reason);
     }
+    if (backendAttempted && exportOrigin) controller.invalidateRoot(exportOrigin.root);
   };
 
   const beginBenchmarkScenario = async (
@@ -437,6 +480,21 @@ function App() {
   });
 
   createEffect(() => {
+    const configured = settings();
+    if (configured && controller.value.root !== configured.output_path) controller.setRoot(configured.output_path);
+  });
+
+  createEffect(() => {
+    const current = navigation();
+    if (current.screen === "library" && current.tab === "clips" && libraryState().actionable) {
+      const ids = (clips() ?? []).slice(0, 8).map(clip => clip.filename);
+      const activeId = libraryState().activeClip;
+      if (activeId && !ids.includes(activeId)) ids[ids.length === 8 ? 7 : ids.length] = activeId;
+      controller.requestDurations(ids);
+    }
+  });
+
+  createEffect(() => {
     const observer = benchmarkObserver();
     if (!observer) return;
     const error = loadError();
@@ -449,7 +507,7 @@ function App() {
       }
       return;
     }
-    if (loading()) return;
+    if (loading() || libraryState().refreshing || !libraryState().actionable) return;
     const hevcCapability = benchmarkHevcCapability();
     if (!hevcCapability) return;
     if (!benchmarkHevcCapabilityEmitted) {
@@ -473,30 +531,101 @@ function App() {
       }
       return;
     }
-    if (!benchmarkLibraryUsefulEmitted) {
-      benchmarkLibraryUsefulEmitted = true;
+    if (!benchmarkLibraryReadinessStarted) {
+      benchmarkLibraryReadinessStarted = true;
+      const scenario = observer.scenario();
+      const snapshot = libraryState().snapshot;
+      const currentNavigation = navigation();
+      const gamesViewAtAdmission =
+        currentNavigation.screen === "library" && currentNavigation.tab === "games";
+      let gamesUsablePayload: Record<string, unknown> | null = null;
+      const gamesUsableOrigin =
+        snapshot && gamesViewAtAdmission
+          ? controller.origin()
+          : null;
+      if (!benchmarkGamesLibraryUsableEmitted && snapshot && gamesViewAtAdmission && scenario.id.startsWith("qb010-library-v2-")) {
+        const payload = {
+          measurement_contract: GAMES_LIBRARY_USABLE_CONTRACT,
+          refresh_request_token: String(libraryState().request),
+          snapshot_token: snapshot.token,
+          view_token: snapshot.token,
+          game_count: snapshot.games.length,
+          clip_count: snapshot.clips.length,
+          storage_game_count: snapshot.usage.game_count,
+          storage_clip_count: snapshot.usage.clip_count,
+        };
+        gamesUsablePayload = payload;
+        observer.emit("library_view_admitted", payload, { required: true });
+      }
       benchmarkUsefulFrame = window.requestAnimationFrame(() => {
         benchmarkUsefulFrame = undefined;
         benchmarkUsefulPaintFrame = window.requestAnimationFrame(() => {
           benchmarkUsefulPaintFrame = undefined;
-          observer.emit(
-            "library_useful",
-            {
-              game_count: games()?.length ?? 0,
-              clip_count: clips()?.length ?? 0,
-              after_library_paint: true,
-            },
-            { required: true },
-          );
-          beginBenchmarkScenario(observer, observer.scenario());
+          const currentOrigin = controller.origin();
+          const currentNavigation = navigation();
+          const gamesViewStillCurrent =
+            gamesUsableOrigin !== null &&
+            currentOrigin !== null &&
+            currentOrigin.root === gamesUsableOrigin.root &&
+            currentOrigin.rootEpoch === gamesUsableOrigin.rootEpoch &&
+            currentOrigin.request === gamesUsableOrigin.request &&
+            currentOrigin.token === gamesUsableOrigin.token &&
+            currentNavigation.screen === "library" &&
+            currentNavigation.tab === "games" &&
+            libraryState().actionable &&
+            !libraryState().refreshing;
+          if (gamesUsablePayload && gamesViewStillCurrent) {
+            benchmarkGamesLibraryUsableEmitted = true;
+            observer.emit("games_library_usable", { ...gamesUsablePayload, after_library_paint: true }, { required: true });
+          }
+          const emitHistoricalUseful = () => {
+            benchmarkLibraryUsefulEmitted = true;
+            observer.emit(
+              "library_useful",
+              {
+                game_count: games()?.length ?? 0,
+                clip_count: clips()?.length ?? 0,
+                after_library_paint: true,
+              },
+              { required: true },
+            );
+            beginBenchmarkScenario(observer, observer.scenario());
+          };
+          if (gamesViewStillCurrent && snapshot) {
+            // The old library_useful milestone means full clip details are
+            // ready. Keep that meaning in benchmark mode by draining through
+            // the bounded duration API after games_library_usable.
+            void controller.drainDurations(snapshot.clips.map(clip => clip.filename)).then((drained) => {
+              const afterDrainOrigin = controller.origin();
+              const afterDrainNavigation = navigation();
+              const stillCurrent = afterDrainOrigin !== null && gamesUsableOrigin !== null &&
+                afterDrainOrigin.root === gamesUsableOrigin.root &&
+                afterDrainOrigin.rootEpoch === gamesUsableOrigin.rootEpoch &&
+                afterDrainOrigin.request === gamesUsableOrigin.request &&
+                afterDrainOrigin.token === gamesUsableOrigin.token &&
+                afterDrainNavigation.screen === "library" && afterDrainNavigation.tab === "games" &&
+                libraryState().actionable && !libraryState().refreshing;
+              if (drained && stillCurrent) emitHistoricalUseful();
+              else if (!benchmarkFailureStarted) {
+                benchmarkFailureStarted = true;
+                const reason = "Historical library details did not complete for the admitted view";
+                observer.emit("scenario_failed", { phase: "library_details", reason }, { required: true });
+                void observer.complete("failed", reason, { phase: "library_details" });
+              }
+            });
+          } else {
+            emitHistoricalUseful();
+          }
         });
       });
       return;
     }
-    beginBenchmarkScenario(observer, observer.scenario());
+    if (benchmarkLibraryUsefulEmitted) beginBenchmarkScenario(observer, observer.scenario());
   });
 
   onMount(() => {
+    const unsubscribe = controller.subscribe(setLibraryState);
+    setLibraryState(controller.value);
     void ensureHevcCapability()
       .then((status) => {
         setBenchmarkHevcCapability(status);
@@ -587,6 +716,8 @@ function App() {
     window.addEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
 
     onCleanup(() => {
+      unsubscribe();
+      controller.dispose();
       window.clearInterval(pollAssets);
       window.removeEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
     });
@@ -623,7 +754,7 @@ function App() {
               <p>Scanning your local replay archive...</p>
             </section>
           </Match>
-          <Match when={loadError()}>
+          <Match when={loadError() && !libraryState().snapshot}>
             <section class={styles.statePanel} role="alert">
               <p class={styles.errorLabel}>LIBRARY UNAVAILABLE</p>
               <h1>League Replay could not read the archive.</h1>
@@ -634,17 +765,28 @@ function App() {
             </section>
           </Match>
           <Match when={navigation().screen === "library"}>
+            <Show when={loadError() && libraryState().snapshot}>
+              <p class={styles.errorLabel} role="alert">{String(loadError())}</p>
+            </Show>
             <LibraryScreen
               tab={(navigation() as Extract<NavigationState, { screen: "library" }>).tab}
               games={games() ?? []}
               clips={clips() ?? []}
+              actionable={libraryState().actionable}
+              durationStates={libraryState().durations}
+              onRetryDuration={(filename) => controller.requestDurations([filename], true)}
+              snapshotOrigin={controller.origin()}
               ddragon={ddragon() ?? emptyDdragon}
               busyId={busyId()}
-              onOpenGame={(gameTimestamp) => setNavigation({ screen: "viewer", gameTimestamp })}
-              onToggleSaved={(game) => void toggleSaved(game)}
-              onDeleteGame={(game) => setDeleteTarget({ kind: "game", game })}
-              onOpenClip={setActiveClip}
-              onDeleteClip={(clip) => setDeleteTarget({ kind: "clip", clip })}
+              onOpenGame={(gameTimestamp) => { controller.navigate(false); setNavigation({ screen: "viewer", gameTimestamp }); }}
+              onToggleSaved={(game, origin) => void toggleSaved(game, origin)}
+              onDeleteGame={(game, origin) => {
+                if (origin) { controller.selectDeletion("game", game.timestamp); setDeleteTarget({ kind: "game", game, origin }); }
+              }}
+              onOpenClip={(clip) => { controller.selectClip(clip.filename); }}
+              onDeleteClip={(clip, origin) => {
+                if (origin) { controller.selectDeletion("clip", clip.filename); setDeleteTarget({ kind: "clip", clip, origin }); }
+              }}
               onOpenClipsFolder={() => void openClipsFolder().catch(showError)}
             />
           </Match>
@@ -657,7 +799,10 @@ function App() {
               initialClipDraft={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).clipDraft
               }
-              onExportClip={(draft) => setNavigation({ screen: "clip-export", draft })}
+              onExportClip={(draft) => {
+                const snapshotOrigin = controller.origin();
+                if (snapshotOrigin) { controller.navigate(false); setNavigation({ screen: "clip-export", draft, snapshotOrigin }); }
+              }}
             />
           </Match>
           <Match when={navigation().screen === "clip-export"}>
@@ -666,6 +811,8 @@ function App() {
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "clip-export" }>).draft
               }
               outputPath={settings()?.output_path ?? "~/LeagueReplays"}
+              snapshotToken={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin?.token ?? ""}
+              snapshotOrigin={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin!}
               onBack={(draft) =>
                 setNavigation({
                   screen: "viewer",
@@ -673,9 +820,9 @@ function App() {
                   clipDraft: draft,
                 })
               }
-              onExported={async () => {
-                await Promise.all([refetchClips(), refetchUsage()]);
-                showNotice("Clip exported.");
+              onExported={async (exportOrigin, completed) => {
+                controller.invalidateRoot(exportOrigin.root);
+                if (completed) showNotice("Clip exported.");
               }}
               onOpenClips={() => openTab("clips")}
               onOpenFolder={() => void openClipsFolder().catch(showError)}
@@ -702,7 +849,7 @@ function App() {
           {(loaded) => <StorageIndicator usage={loaded()} onManage={openSettings} />}
         </Show>
       </Show>
-      <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => setActiveClip(null)} />}</Show>
+      <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => controller.selectClip(null)} />}</Show>
       <Show when={deleteTarget()}>
         {(target) => (
           <ConfirmDialog

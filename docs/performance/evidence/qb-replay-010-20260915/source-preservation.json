@@ -1,0 +1,14 @@
+{
+  "after_native_diagnostic": [
+    {
+      "cell": "n",
+      "files_verified": 200,
+      "all_preparation_hashes_unchanged": true
+    },
+    {
+      "cell": "e",
+      "files_verified": 200,
+      "all_preparation_hashes_unchanged": true
+    }
+  ]
+}

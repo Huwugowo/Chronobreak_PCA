@@ -26,6 +26,7 @@ import type {
   ClipExportProgress,
   ClipExportResult,
 } from "../types";
+import type { LibraryOrigin } from "../libraryController";
 import {
   browserSecondsForReplayTick,
   createClipRange,
@@ -37,8 +38,10 @@ import styles from "./ClipExporterScreen.module.css";
 type Props = {
   draft: ClipDraft;
   outputPath: string;
+  snapshotToken: string;
   onBack: (draft: ClipDraft) => void;
-  onExported: () => void | Promise<void>;
+  onExported: (origin: LibraryOrigin, completed: boolean) => void | Promise<void>;
+  snapshotOrigin: LibraryOrigin;
   onOpenClips: () => void;
   onOpenFolder: () => void;
 };
@@ -443,6 +446,8 @@ function ClipExporterScreen(props: Props) {
     setExporting(true);
     setExportError(null);
     setResult(null);
+    let backendAttempted = false;
+    let completed = false;
     setProgress({
       stage: "encoding",
       percent: 0,
@@ -457,6 +462,7 @@ function ClipExporterScreen(props: Props) {
           : musicMode() === "file"
             ? { kind: "file" as const, path: importedPath() }
             : { kind: "none" as const };
+      backendAttempted = true;
       const exported = await exportClip(
         {
           game_timestamp: props.draft.gameTimestamp,
@@ -471,12 +477,16 @@ function ClipExporterScreen(props: Props) {
           music_volume: musicVolume(),
         },
         setProgress,
+        props.snapshotToken,
       );
       setResult(exported);
-      await props.onExported();
+      completed = true;
     } catch (error) {
       setExportError(error instanceof Error ? error.message : String(error));
     } finally {
+      // A stale/superseded backend response can still represent published files.
+      // Reconcile the captured root even when the exporter UI has unmounted.
+      if (backendAttempted) await props.onExported(props.snapshotOrigin, completed);
       setExporting(false);
     }
   };

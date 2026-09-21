@@ -58,6 +58,30 @@ pub struct ClipSummary {
     pub source_date: Option<String>,
 }
 
+/// Lightweight clip display data. Duration is optional and never probed by a core scan.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct LibraryClip {
+    pub filename: String,
+    pub game_timestamp: String,
+    pub clip_timestamp: String,
+    pub duration_ms: Option<u64>,
+    pub file_size_bytes: u64,
+    pub thumbnail_path: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub video_url: String,
+    pub source_champion: Option<String>,
+    pub source_date: Option<String>,
+}
+
+/// Disposable results derived from one completed filesystem scan.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct LibrarySnapshot {
+    pub token: String,
+    pub games: Vec<GameSummary>,
+    pub clips: Vec<LibraryClip>,
+    pub usage: StorageUsage,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct StorageUsage {
     pub games_bytes: u64,
@@ -341,21 +365,116 @@ struct GameEvent {
     result: Option<String>,
 }
 
-pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
-    let games_directory = output_directory.join("games");
-    if !games_directory.exists() {
-        return Ok(Vec::new());
-    }
+/// The caller owns blocking admission and supplies a cheap cancellation check.
+/// No media runtime or external probe is used on this path.
+pub(crate) fn build_library_snapshot(
+    output_directory: &Path,
+    origin: &str,
+    token: String,
+    check_current: impl Fn() -> Result<()>,
+) -> Result<LibrarySnapshot> {
+    build_library_snapshot_with(
+        output_directory,
+        origin,
+        token,
+        check_current,
+        read_game_summary,
+    )
+}
 
-    let entries = fs::read_dir(&games_directory).with_context(|| {
-        format!(
-            "failed to read games directory {}",
-            games_directory.display()
-        )
-    })?;
+fn build_library_snapshot_with(
+    output_directory: &Path,
+    origin: &str,
+    token: String,
+    check_current: impl Fn() -> Result<()>,
+    read_summary: impl FnMut(&Path, String) -> GameSummary,
+) -> Result<LibrarySnapshot> {
+    let games = scan_games(output_directory, &check_current, read_summary)?;
+    let sources = games
+        .iter()
+        .map(|game| (game.timestamp.as_str(), game))
+        .collect::<HashMap<_, _>>();
+    let mut usage = StorageUsage {
+        games_bytes: games.iter().map(|game| game.video_size_bytes).sum(),
+        game_count: games.len() as u64,
+        clips_bytes: 0,
+        clip_count: 0,
+    };
+    let mut clips = Vec::new();
+    check_current()?;
+    let clips_directory = output_directory.join("clips");
+    if let Some(entries) = read_library_directory(&clips_directory)? {
+        for entry in entries {
+            check_current()?;
+            let entry = entry.context("failed to read a clips directory entry")?;
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("mp4") {
+                continue;
+            }
+            let file_size_bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+            // All existing MP4 entries count toward storage, even without a displayable ID.
+            usage.clips_bytes += file_size_bytes;
+            usage.clip_count += 1;
+            let Some(filename) = path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let Some((game_timestamp, clip_timestamp)) = parse_clip_filename(filename) else {
+                continue;
+            };
+            let thumbnail = clips_directory.join(format!("{filename}.jpg"));
+            let has_thumbnail = thumbnail.exists();
+            let source = sources.get(game_timestamp);
+            clips.push(LibraryClip {
+                filename: filename.to_owned(),
+                game_timestamp: game_timestamp.to_owned(),
+                clip_timestamp: clip_timestamp.to_owned(),
+                duration_ms: None,
+                file_size_bytes,
+                thumbnail_path: has_thumbnail.then(|| thumbnail.to_string_lossy().into_owned()),
+                thumbnail_url: has_thumbnail.then(|| format!("{origin}/clips/{filename}.jpg")),
+                video_url: format!("{origin}/clips/{filename}.mp4"),
+                source_champion: source.map(|game| game.champion.clone()),
+                source_date: source.map(|game| game.recorded_at.clone()),
+            });
+        }
+    }
+    check_current()?;
+    clips.sort_by(|left, right| right.clip_timestamp.cmp(&left.clip_timestamp));
+    Ok(LibrarySnapshot {
+        token,
+        games,
+        clips,
+        usage,
+    })
+}
+
+fn read_library_directory(path: &Path) -> Result<Option<fs::ReadDir>> {
+    match fs::read_dir(path) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to read library directory {}", path.display())),
+    }
+}
+
+pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
+    scan_games(output_directory, || Ok(()), read_game_summary)
+}
+
+fn scan_games(
+    output_directory: &Path,
+    check_current: impl Fn() -> Result<()>,
+    mut read_summary: impl FnMut(&Path, String) -> GameSummary,
+) -> Result<Vec<GameSummary>> {
+    check_current()?;
+    let games_directory = output_directory.join("games");
+    let Some(entries) = read_library_directory(&games_directory)? else {
+        return Ok(Vec::new());
+    };
 
     let mut games = Vec::new();
     for entry in entries {
+        check_current()?;
         let entry = entry.context("failed to read a games directory entry")?;
         let path = entry.path();
         if !path.is_dir() {
@@ -365,7 +484,7 @@ pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
         if !valid_game_id(&timestamp) {
             continue;
         }
-        games.push(read_game_summary(&path, timestamp));
+        games.push(read_summary(&path, timestamp));
     }
 
     games.sort_by(compare_games);
@@ -382,7 +501,10 @@ pub fn playback_probe(
     }
     let game_directory = output_directory.join("games").join(timestamp);
     let (metadata, log) = read_recording_bundle(&game_directory)?;
-    let game = game_summary_from_bundle(&game_directory, timestamp.to_owned(), &metadata, &log);
+    let video_size_bytes = fs::metadata(game_directory.join(VIDEO_MP4))
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let game = game_summary_from_bundle(video_size_bytes, timestamp.to_owned(), &metadata, &log);
     if !game.video_available {
         bail!("recording video is unavailable");
     }
@@ -673,18 +795,15 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let Ok((metadata, game_log)) = read_recording_bundle(directory) else {
         return incomplete_summary(timestamp, video_size_bytes);
     };
-    game_summary_from_bundle(directory, timestamp, &metadata, &game_log)
+    game_summary_from_bundle(video_size_bytes, timestamp, &metadata, &game_log)
 }
 
 fn game_summary_from_bundle(
-    directory: &Path,
+    video_size_bytes: u64,
     timestamp: String,
     metadata: &MetadataDocument,
     game_log: &GameLogDocument,
 ) -> GameSummary {
-    let video_size_bytes = fs::metadata(directory.join(VIDEO_MP4))
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
     let local_player_name = metadata.local_player_summoner_name.as_deref();
     let (kills, deaths, assists) = local_player_name
         .map(|player| derive_kda(player, &game_log.events))
@@ -1079,7 +1198,7 @@ fn hide_console(command: &mut Command) {
 fn hide_console(_command: &mut Command) {}
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::PathBuf;
 
     use chronobreak_replay_time::{
@@ -1146,7 +1265,12 @@ mod tests {
         .unwrap()
     }
 
-    fn write_game(root: &Path, timestamp: &str, recorded_at: &str, saved: bool) -> PathBuf {
+    pub(crate) fn write_game(
+        root: &Path,
+        timestamp: &str,
+        recorded_at: &str,
+        saved: bool,
+    ) -> PathBuf {
         let game = root.join("games").join(timestamp);
         fs::create_dir_all(&game).unwrap();
         fs::write(game.join(VIDEO_MP4), b"video").unwrap();
@@ -1205,6 +1329,188 @@ mod tests {
         )
         .unwrap();
         game
+    }
+
+    fn core_snapshot(root: &Path) -> Result<LibrarySnapshot> {
+        build_library_snapshot(
+            root,
+            "http://127.0.0.1:9000/cap/test",
+            "test-scan".into(),
+            || Ok(()),
+        )
+    }
+
+    #[test]
+    fn snapshot_derives_all_views_from_one_summary_read_per_game_without_probes() {
+        let root = tempdir().unwrap();
+        write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
+        write_game(root.path(), "1786000001-1", "2026-08-06T10:00:00Z", true);
+        let clips = root.path().join("clips");
+        fs::create_dir(&clips).unwrap();
+        // Deliberately non-media fixture bytes: core scan must not depend on probing.
+        fs::write(clips.join("1786000000_100.mp4"), b"clip-one").unwrap();
+        fs::write(clips.join("1786000000_100.jpg"), b"thumbnail").unwrap();
+        fs::write(clips.join("999_200.mp4"), b"source-less").unwrap();
+        fs::write(clips.join("unrecognized.mp4"), b"storage-only").unwrap();
+        fs::write(clips.join("1786000000_300.MP4"), b"ignored-extension").unwrap();
+        fs::create_dir(clips.join("1786000000_400.mp4")).unwrap();
+        fs::create_dir(root.path().join("games/not-a-game")).unwrap();
+        let mut reads = HashMap::new();
+        let snapshot = build_library_snapshot_with(
+            root.path(),
+            "http://127.0.0.1:9000/cap/test",
+            "one-scan".into(),
+            || Ok(()),
+            |path, timestamp| {
+                *reads.entry(timestamp.clone()).or_insert(0) += 1;
+                let game = read_game_summary(path, timestamp);
+                // Change the backing files after their read. Clip enrichment and
+                // storage must use the collected summary, not re-read these files.
+                fs::write(path.join(METADATA_JSON), b"changed after read").unwrap();
+                fs::write(path.join(VIDEO_MP4), b"changed media length").unwrap();
+                game
+            },
+        )
+        .unwrap();
+        assert_eq!(reads.len(), 2);
+        assert!(reads.values().all(|count| *count == 1));
+        assert_eq!(
+            snapshot
+                .games
+                .iter()
+                .map(|g| g.timestamp.as_str())
+                .collect::<Vec<_>>(),
+            ["1786000001-1", "1786000000"]
+        );
+        assert!(snapshot.games.iter().all(|game| !game.incomplete));
+        assert_eq!(
+            snapshot.usage,
+            StorageUsage {
+                games_bytes: 10,
+                clips_bytes: 31,
+                game_count: 2,
+                clip_count: 3
+            }
+        );
+        assert_eq!(
+            snapshot
+                .clips
+                .iter()
+                .map(|clip| clip.filename.as_str())
+                .collect::<Vec<_>>(),
+            ["999_200", "1786000000_100"]
+        );
+        let orphan = &snapshot.clips[0];
+        assert_eq!(orphan.source_champion, None);
+        assert_eq!(orphan.source_date, None);
+        assert_eq!(orphan.thumbnail_url, None);
+        let sourced = &snapshot.clips[1];
+        assert_eq!(sourced.source_champion.as_deref(), Some("Syndra"));
+        assert_eq!(
+            sourced.source_date.as_deref(),
+            Some(snapshot.games[1].recorded_at.as_str())
+        );
+        assert_eq!(sourced.file_size_bytes, 8);
+        assert!(sourced.thumbnail_path.is_some());
+        assert_eq!(
+            sourced.thumbnail_url.as_deref(),
+            Some("http://127.0.0.1:9000/cap/test/clips/1786000000_100.jpg")
+        );
+        assert!(snapshot.clips.iter().all(|clip| clip.duration_ms.is_none()));
+        assert!(serde_json::to_value(&snapshot).unwrap()["clips"][0]["duration_ms"].is_null());
+        // A later explicit scan is rebuilt from disk, not the previous result.
+        let rebuilt = core_snapshot(root.path()).unwrap();
+        assert!(rebuilt.games.iter().all(|game| game.incomplete));
+        assert_eq!(rebuilt.usage.games_bytes, 40);
+    }
+
+    #[test]
+    fn snapshot_preserves_strict_v2_and_incomplete_bundle_semantics() {
+        let root = tempdir().unwrap();
+        write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        let missing = write_game(root.path(), "101", "2026-08-05T10:00:00Z", false);
+        fs::remove_file(missing.join(GAME_LOG_JSON)).unwrap();
+        let invalid = write_game(root.path(), "102", "2026-08-05T10:00:00Z", false);
+        fs::write(invalid.join(METADATA_JSON), b"invalid").unwrap();
+        let v1 = write_game(root.path(), "103", "2026-08-05T10:00:00Z", false);
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(v1.join(METADATA_JSON)).unwrap()).unwrap();
+        metadata["schema_version"] = json!(1);
+        fs::write(
+            v1.join(METADATA_JSON),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        let no_video = write_game(root.path(), "104", "2026-08-05T10:00:00Z", false);
+        fs::remove_file(no_video.join(VIDEO_MP4)).unwrap();
+        fs::create_dir(root.path().join("games/105")).unwrap();
+        let snapshot = core_snapshot(root.path()).unwrap();
+        assert_eq!(snapshot.usage.game_count, 6);
+        assert_eq!(snapshot.usage.games_bytes, 20);
+        assert_eq!(snapshot.games.iter().filter(|g| g.incomplete).count(), 4);
+        assert!(
+            snapshot
+                .games
+                .iter()
+                .find(|g| g.timestamp == "100")
+                .is_some_and(|g| !g.incomplete && g.video_available)
+        );
+        assert!(
+            snapshot
+                .games
+                .iter()
+                .find(|g| g.timestamp == "104")
+                .is_some_and(|g| !g.video_available)
+        );
+        for timestamp in ["101", "102", "103", "104", "105"] {
+            assert!(playback_probe(root.path(), "test-origin", timestamp).is_err());
+        }
+    }
+
+    #[test]
+    fn snapshot_missing_directories_are_empty_but_enumeration_failures_are_errors() {
+        let root = tempdir().unwrap();
+        let empty = core_snapshot(root.path()).unwrap();
+        assert_eq!(
+            empty.usage,
+            StorageUsage {
+                games_bytes: 0,
+                clips_bytes: 0,
+                game_count: 0,
+                clip_count: 0
+            }
+        );
+        for name in ["games", "clips"] {
+            let blocked = root.path().join(name);
+            fs::write(&blocked, b"not a directory").unwrap();
+            assert!(core_snapshot(root.path()).is_err());
+            fs::remove_file(blocked).unwrap();
+        }
+    }
+
+    #[test]
+    fn snapshot_cancellation_stops_between_game_entries() {
+        use std::cell::Cell;
+        let root = tempdir().unwrap();
+        for timestamp in ["100", "101", "102"] {
+            write_game(root.path(), timestamp, "2026-08-05T10:00:00Z", false);
+        }
+        let reads = Cell::new(0);
+        let result = build_library_snapshot_with(
+            root.path(),
+            "test-origin",
+            "cancelled".into(),
+            || {
+                anyhow::ensure!(reads.get() == 0, "superseded");
+                Ok(())
+            },
+            |path, timestamp| {
+                reads.set(reads.get() + 1);
+                read_game_summary(path, timestamp)
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(reads.get(), 1);
     }
 
     #[test]

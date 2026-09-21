@@ -1,0 +1,144 @@
+[
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "desktop:build:benchmark",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-17T08:20:32.057301+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "42d9df1d494a674ace64aa160bf4aac92e6778569031fcebf576418855e3b546",
+    "receipt": "r2-benchmark-build.json",
+    "started_utc": "2026-09-17T08:19:30.388006+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-17T08:11:43.495236+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "835ae2d740b807d2175fddc22a1bf4649440ef3e156a0130da886bcbb2eb64dd",
+    "receipt": "r2-frontend-tests.json",
+    "started_utc": "2026-09-17T08:11:19.419650+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "desktop:build",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-17T08:18:35.832697+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "56d8f28a577bf3a36680305d53815dc8b1f2647a76c34d349c3630c75e51d739",
+    "receipt": "r2-normal-build.json",
+    "started_utc": "2026-09-17T08:17:19.173966+00:00"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/replay_benchmark/tests",
+      "-v"
+    ],
+    "completed_utc": "2026-09-17T08:11:41.734880+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "c96c8106cb5251bcd65472eff9cf8d5379cceae5b202ddd50bdb0cc090e0bb2b",
+    "receipt": "r2-python-tests.json",
+    "started_utc": "2026-09-17T08:11:19.430762+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--prefix",
+      "build/qb010-m4/reference-source/app",
+      "--",
+      "App.referenceBenchmark.test.tsx"
+    ],
+    "completed_utc": "2026-09-17T08:20:28.632349+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "6c4965af4348bc54d71d18b5610dd5f46999c9faeec0ef2c21e40a9137127f02",
+    "receipt": "r2-reference-parity-correct.json",
+    "started_utc": "2026-09-17T08:20:04.989583+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--",
+      "App.reference.test.tsx"
+    ],
+    "completed_utc": "2026-09-17T08:19:36.030901+00:00",
+    "cwd": "build/qb010-m4/reference-source/app",
+    "exit_code": 1,
+    "log_sha256": "e20703ac732e656ec8522193b454a5c48524bbc67a750caeab89d0826b46316f",
+    "receipt": "r2-reference-parity.json",
+    "started_utc": "2026-09-17T08:19:30.387899+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "clippy",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "completed_utc": "2026-09-17T08:17:23.994606+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "013ad36f674e15f5bd9880eb7d4a77de627d37fe3ade11ba4408a265f1471ff7",
+    "receipt": "r2-rust-clippy.json",
+    "started_utc": "2026-09-17T08:17:19.688077+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "fmt",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml",
+      "--",
+      "--check"
+    ],
+    "completed_utc": "2026-09-17T08:17:19.617738+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "a88abd88b2e27f9cc8cecd4d0095a48841e6a37c6e1ff4b203cc4994e3b4d54e",
+    "receipt": "r2-rust-fmt.json",
+    "started_utc": "2026-09-17T08:17:19.173979+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml"
+    ],
+    "completed_utc": "2026-09-17T08:11:43.172560+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "6e8ec94af3fd86a7f9e0c59bb44f704aa0950b0fe1bb1f9e9647e34f8ec1fa4c",
+    "receipt": "r2-rust-tests.json",
+    "started_utc": "2026-09-17T08:11:19.419642+00:00"
+  }
+]

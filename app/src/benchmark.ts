@@ -80,11 +80,14 @@ const LOCAL_EVENT_CAPACITY = 1024;
 const FLUSH_BATCH_SIZE = 128;
 const SERVER_FLUSH_INTERVAL_MS = 1_000;
 export const REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT = "chronobreak:replay-benchmark-viewer-cycle";
+export const GAMES_LIBRARY_USABLE_CONTRACT = "games-library-usable-v1" as const;
 
 const MINIMAL_EVENT_KINDS = new Set([
   "frontend_initialized",
   "library_requested",
   "library_useful",
+  "library_view_admitted",
+  "games_library_usable",
   "replay_requested",
   "playback_payload_ready",
   "viewer_mounted",

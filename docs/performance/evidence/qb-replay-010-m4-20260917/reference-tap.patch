@@ -1,0 +1,61 @@
+--- a/app/src/App.tsx
++++ b/app/src/App.tsx
+@@ -31,6 +31,7 @@
+ import { REPLAY_TICKS_PER_SECOND, parseReplayTick, projectReplayIntervalToClipRange } from "./replayTime";
+ import {
+   initializeReplayBenchmark,
++  GAMES_LIBRARY_USABLE_CONTRACT,
+   REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
+   type BenchmarkFixture,
+   type BenchmarkScenario,
+@@ -475,10 +476,25 @@
+     }
+     if (!benchmarkLibraryUsefulEmitted) {
+       benchmarkLibraryUsefulEmitted = true;
++      const currentNavigation = navigation();
++      const gamesUsablePayload = observer.scenario().id.startsWith("qb010-library-v2-") &&
++        currentNavigation.screen === "library" && currentNavigation.tab === "games" ? {
++          measurement_contract: GAMES_LIBRARY_USABLE_CONTRACT,
++          refresh_request_token: "reference-request-1",
++          snapshot_token: "reference-view-1",
++          view_token: "reference-view-1",
++          game_count: games()?.length ?? 0,
++          clip_count: clips()?.length ?? 0,
++          storage_game_count: usage()?.game_count ?? 0,
++          storage_clip_count: usage()?.clip_count ?? 0,
++        } : null;
++      if (gamesUsablePayload) observer.emit("library_view_admitted", gamesUsablePayload, { required: true });
+       benchmarkUsefulFrame = window.requestAnimationFrame(() => {
+         benchmarkUsefulFrame = undefined;
+         benchmarkUsefulPaintFrame = window.requestAnimationFrame(() => {
+           benchmarkUsefulPaintFrame = undefined;
++          if (gamesUsablePayload) observer.emit("games_library_usable",
++            { ...gamesUsablePayload, after_library_paint: true }, { required: true });
+           observer.emit(
+             "library_useful",
+             {
+@@ -493,7 +509,6 @@
+       });
+       return;
+     }
+-    beginBenchmarkScenario(observer, observer.scenario());
+   });
+ 
+   onMount(() => {
+--- a/app/src/benchmark.ts
++++ b/app/src/benchmark.ts
+@@ -81,10 +81,14 @@
+ const SERVER_FLUSH_INTERVAL_MS = 1_000;
+ export const REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT = "chronobreak:replay-benchmark-viewer-cycle";
+ 
++export const GAMES_LIBRARY_USABLE_CONTRACT = "games-library-usable-v1" as const;
++
+ const MINIMAL_EVENT_KINDS = new Set([
+   "frontend_initialized",
+   "library_requested",
+   "library_useful",
++  "library_view_admitted",
++  "games_library_usable",
+   "replay_requested",
+   "playback_payload_ready",
+   "viewer_mounted",

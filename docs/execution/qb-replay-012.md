@@ -2,7 +2,7 @@
 
 Feature: `QB-REPLAY-012`
 ExecPlan: `docs/exec-plans/qb-replay-012-canonical-replay-time-contract-v6.md`
-Updated: 2026-09-07
+Updated: 2026-09-15
 
 ## Current milestone
 
@@ -252,5 +252,8 @@ canonical feature list.
 
 ## Next action
 
-Route to `QB-REPLAY-013` (`Versioned Replay Index and Staged Opening`) through its
-planned-work workflow.
+None for QB-REPLAY-012. The 2026-09-15 roadmap reconciliation supersedes the
+earlier direct routing to QB-REPLAY-013: follow `EPIC-REPLAY` in
+`feature-list.json`, beginning with QB-REPLAY-010 measured library/open
+attribution and respecting the remaining dependencies. Optional QB-REPLAY-015
+user stepping does not gate this completed timing contract or later replay work.

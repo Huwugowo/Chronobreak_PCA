@@ -718,7 +718,7 @@ def _validate_scenario_evidence(
     trial_events: Sequence[Mapping[str, Any]],
 ) -> None:
     scenario_kind = str(spec.get("kind", "")).lower()
-    if not scenario_kind:
+    if not scenario_kind and not key.scenario_id.startswith("qb010-library-v2-"):
         # Legacy analyzer fixtures predate the production launch-manifest shape.
         return
     kinds = [_kind(event) for event in trial_events]
@@ -732,6 +732,37 @@ def _validate_scenario_evidence(
             )
 
     require("library_requested", "library_useful")
+    if key.scenario_id.startswith("qb010-library-v2-"):
+        require("library_view_admitted", "games_library_usable")
+        origins = [event for event in trial_events if _kind(event) == "library_requested"]
+        if len(origins) != 1:
+            raise InvalidData("games usable requires exactly one frontend library request")
+        origin = origins[0]
+        if sum(1 for event in trial_events if _kind(event) == "library_view_admitted") != 1 or sum(1 for event in trial_events if _kind(event) == "games_library_usable") != 1:
+            raise InvalidData("games usable events must occur exactly once")
+        admitted = next(event for event in trial_events if _kind(event) == "library_view_admitted")
+        usable = next(event for event in trial_events if _kind(event) == "games_library_usable")
+        if any(event.get("source") != "frontend" for event in (origin, admitted, usable)):
+            raise InvalidData("games usable timing requires the frontend clock")
+        if float(admitted["monotonic_ms"]) < float(origin["monotonic_ms"]):
+            raise InvalidData("games usable admission precedes library request")
+        if _field(admitted, "measurement_contract") != "games-library-usable-v1" or _field(usable, "measurement_contract") != "games-library-usable-v1":
+            raise InvalidData("games usable events have the wrong measurement contract")
+        if _field(usable, "after_library_paint") is not True:
+            raise InvalidData("games usable event must be after library paint")
+        for field in ("refresh_request_token", "snapshot_token", "view_token"):
+            if not isinstance(_field(admitted, field), str) or _field(admitted, field) == "":
+                raise InvalidData(f"games usable admission lacks {field}")
+        for field in ("game_count", "clip_count", "storage_game_count", "storage_clip_count"):
+            for event in (admitted, usable):
+                value = _field(event, field)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise InvalidData(f"games usable event has invalid {field}")
+        for field in ("refresh_request_token", "snapshot_token", "view_token", "game_count", "clip_count", "storage_game_count", "storage_clip_count"):
+            if _field(usable, field) != _field(admitted, field):
+                raise InvalidData(f"games usable {field} does not match admission")
+        if float(usable["monotonic_ms"]) < float(admitted["monotonic_ms"]):
+            raise InvalidData("games usable event precedes view admission")
     if scenario_kind == "app_idle":
         return
     if scenario_kind == "export":
@@ -1662,6 +1693,14 @@ KNOWN_EVENT_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("game_count", "library_useful_game_count"),
         ("clip_count", "library_useful_clip_count"),
     ),
+    "library_view_admitted": (
+        ("game_count", "games_library_usable_game_count"),
+        ("clip_count", "games_library_usable_clip_count"),
+    ),
+    "games_library_usable": (
+        ("game_count", "games_library_usable_game_count"),
+        ("clip_count", "games_library_usable_clip_count"),
+    ),
     "playback_payload_backend_ready": (
         ("elapsed_ms", "playback_payload_backend_elapsed_ms"),
     ),
@@ -1821,6 +1860,17 @@ def _event_pair_metrics(
             "library_request_to_useful_ms",
             float(library_useful["monotonic_ms"])
             - float(library_requested["monotonic_ms"]),
+        )
+    games_library_usable = first_by_kind.get("games_library_usable")
+    # The versioned primary metric has one explicit frontend origin. Historical
+    # library_useful continues to use its existing earliest-command semantics.
+    games_requested = first_by_kind.get("library_requested")
+    if games_requested is not None and games_library_usable is not None:
+        _add_metric(
+            metrics,
+            "library_request_to_games_usable_ms",
+            float(games_library_usable["monotonic_ms"])
+            - float(games_requested["monotonic_ms"]),
         )
 
     replay_requested = first_by_kind.get("replay_requested")
@@ -2598,6 +2648,14 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> 
         baseline, "--compare baseline report"
     )
     current_summaries = _validated_report_summaries(current, "current report")
+    games_scenarios = {
+        key[0] for key in baseline_summaries.keys() | current_summaries.keys()
+        if key[0].startswith("qb010-library-v2-")
+    }
+    for scenario in games_scenarios:
+        primary = (scenario, "library_request_to_games_usable_ms", "median")
+        if primary not in baseline_summaries or primary not in current_summaries:
+            raise InvalidData(f"games usable primary metric is missing for {scenario}")
     comparisons: list[dict[str, Any]] = []
     for key, after in sorted(current_summaries.items()):
         before = baseline_summaries.get(key)

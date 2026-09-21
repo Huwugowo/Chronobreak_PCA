@@ -1,0 +1,86 @@
+{
+  "kind": "one optimized native test-process diagnostic; not Tauri end-to-end trials",
+  "source_revision": "3a750e2c003d6e3605b2f907ff19ad7898d3dbd2",
+  "order": [
+    "n",
+    "e",
+    "e",
+    "n",
+    "n",
+    "e"
+  ],
+  "rows": [
+    {
+      "cell": "n",
+      "ordinal": 0,
+      "clip_count": 50,
+      "games_ms": 24.1771,
+      "probe_count": 50,
+      "probe_ms": 1772.0942000000005,
+      "total_ms": 1805.2628,
+      "probe_fraction_of_total": 0.9816267193895539
+    },
+    {
+      "cell": "e",
+      "ordinal": 1,
+      "clip_count": 50,
+      "games_ms": 306.31059999999997,
+      "probe_count": 50,
+      "probe_ms": 1817.3496,
+      "total_ms": 2132.0851,
+      "probe_fraction_of_total": 0.852381361325587
+    },
+    {
+      "cell": "e",
+      "ordinal": 2,
+      "clip_count": 50,
+      "games_ms": 287.71950000000004,
+      "probe_count": 50,
+      "probe_ms": 1670.1273999999999,
+      "total_ms": 1965.8873999999998,
+      "probe_fraction_of_total": 0.8495539469859769
+    },
+    {
+      "cell": "n",
+      "ordinal": 3,
+      "clip_count": 50,
+      "games_ms": 19.028799999999997,
+      "probe_count": 50,
+      "probe_ms": 1673.5656999999997,
+      "total_ms": 1700.1967,
+      "probe_fraction_of_total": 0.9843365182393305
+    },
+    {
+      "cell": "n",
+      "ordinal": 4,
+      "clip_count": 50,
+      "games_ms": 20.9163,
+      "probe_count": 50,
+      "probe_ms": 1680.5707,
+      "total_ms": 1709.4221,
+      "probe_fraction_of_total": 0.9831221323276446
+    },
+    {
+      "cell": "e",
+      "ordinal": 5,
+      "clip_count": 50,
+      "games_ms": 300.6944,
+      "probe_count": 50,
+      "probe_ms": 1665.3822,
+      "total_ms": 1974.6063000000001,
+      "probe_fraction_of_total": 0.8433996184454592
+    }
+  ],
+  "initial_settling_seconds": 5,
+  "between_calls_seconds": 1,
+  "command": "cargo test --manifest-path app/src-tauri/Cargo.toml --release --features replay-benchmark --lib library::qb010_clip_work_attribution -- --exact --ignored --nocapture --test-threads=1",
+  "library_source_restored_exactly": true,
+  "diagnostic_source_sha256": "8d96f658cca9417f45096d8306a245fae859f84a2104ed2d89579189f213f564",
+  "limitations": [
+    "Single native test process, three calls per cell; no UI or collector resource claim.",
+    "Elapsed probe subtotal includes synchronous process creation, execution, wait and duration parse.",
+    "Prepared media unchanged; no extra hashing/probing inside timed work."
+  ],
+  "diagnostic_test_binary_sha256": "c26dc1a51f4ade81d0b02a09170f6ed84b543c2083f7c176e2b0d0a6ce01e891",
+  "raw_diagnostic_log_sha256": "4a4963073504c211e04bf78d351f406f4bc9626d5a99d000b02cb9d88960e70e"
+}

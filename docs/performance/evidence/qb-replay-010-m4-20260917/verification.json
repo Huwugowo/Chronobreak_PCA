@@ -1,0 +1,254 @@
+[
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "desktop:build:benchmark",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:55:39.117424+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "a210464ed42e462f82541369be9531c8b14897c9580c65ef9323c13f2d77859b",
+    "receipt": "candidate-build.json",
+    "started_utc": "2026-09-16T13:54:44.779570+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "check",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:50:49.692172+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "284a1426836dd68b533709b194886ee2b91715aacf978b608fbebf0632cd723d",
+    "receipt": "frontend-check.json",
+    "started_utc": "2026-09-16T13:50:49.001982+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--prefix",
+      "app",
+      "--",
+      "App.benchmark.test.tsx"
+    ],
+    "completed_utc": "2026-09-16T13:53:15.465964+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "9da5c4b14883c3bc2a6035892d9f0f4a12907b349ba1af65cf35b6d9c6e3da45",
+    "receipt": "frontend-readiness.json",
+    "started_utc": "2026-09-16T13:53:12.581454+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:53:41.832872+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "e7779f608c298ead4565144f51e506df442f0111dfed2f1544378a57ca84cf50",
+    "receipt": "frontend-tests-final.json",
+    "started_utc": "2026-09-16T13:53:38.433101+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:46:59.008840+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "7cba787e7ae7a4c0cfe39f4fd7fbe1fb8fdf3e59d9d3e39436af37b0dad7a390",
+    "receipt": "frontend-tests.json",
+    "started_utc": "2026-09-16T13:46:55.150480+00:00"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/replay_benchmark/tests",
+      "-p",
+      "test_games_usable.py",
+      "-v"
+    ],
+    "completed_utc": "2026-09-16T13:50:16.108098+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "cb43fd2263d88b61982593e13670435830fb4250c75db11b991da9571045f800",
+    "receipt": "games-contract-tests.json",
+    "started_utc": "2026-09-16T13:50:14.887574+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "desktop:build",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:54:30.768437+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "16d4bcc87aa2a1110b1ccfa5d542654586175f2155b3888e78a8a61200606a90",
+    "receipt": "normal-build.json",
+    "started_utc": "2026-09-16T13:53:38.512025+00:00"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tools/replay_benchmark/tests",
+      "-v"
+    ],
+    "completed_utc": "2026-09-16T13:51:08.504694+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "b05fc81050353504e00415ec6298835125300114a0bc9e0220d2a19377a4825c",
+    "receipt": "python-tests.json",
+    "started_utc": "2026-09-16T13:50:48.978808+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "desktop:build:benchmark",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:58:33.326838+00:00",
+    "cwd": "build/qb010-m4/reference-source",
+    "exit_code": 0,
+    "log_sha256": "7b8a25f6b492e600c73540fd635b1e948bba2f89e282f03849229cecc9374c8b",
+    "receipt": "reference-build-staged.json",
+    "started_utc": "2026-09-16T13:57:36.460208+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "desktop:build:benchmark",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:55:46.657181+00:00",
+    "cwd": "build/qb010-m4/reference-source",
+    "exit_code": 1,
+    "log_sha256": "1c47ea6922ae6a60fbb09764a5b2ed26e98d4dcab6a93c55374d16497d14ee75",
+    "receipt": "reference-build.json",
+    "started_utc": "2026-09-16T13:55:32.292323+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "check",
+      "--prefix",
+      "app"
+    ],
+    "completed_utc": "2026-09-16T13:53:39.331381+00:00",
+    "cwd": "build/qb010-m4/reference-source",
+    "exit_code": 0,
+    "log_sha256": "284a1426836dd68b533709b194886ee2b91715aacf978b608fbebf0632cd723d",
+    "receipt": "reference-check.json",
+    "started_utc": "2026-09-16T13:53:38.429140+00:00"
+  },
+  {
+    "command": [
+      "npm.cmd",
+      "run",
+      "test",
+      "--prefix",
+      "app",
+      "--",
+      "App.referenceBenchmark.test.tsx"
+    ],
+    "completed_utc": "2026-09-16T14:02:51.643595+00:00",
+    "cwd": "build/qb010-m4/reference-source",
+    "exit_code": 0,
+    "log_sha256": "23fd221ca348c146cd012a9d372e8dd2b8d9e4a359054eb61b99e207136f6191",
+    "receipt": "reference-parity.json",
+    "started_utc": "2026-09-16T14:02:31.410398+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "clippy",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "completed_utc": "2026-09-16T13:51:55.272351+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "ecc61e2f7aadc501a2ad02808ef85fb943bf4512a37327169a8ff139fbf59362",
+    "receipt": "rust-clippy.json",
+    "started_utc": "2026-09-16T13:51:54.643062+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "fmt",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml",
+      "--",
+      "--check"
+    ],
+    "completed_utc": "2026-09-16T13:50:49.402819+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "a88abd88b2e27f9cc8cecd4d0095a48841e6a37c6e1ff4b203cc4994e3b4d54e",
+    "receipt": "rust-fmt.json",
+    "started_utc": "2026-09-16T13:50:49.077006+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml"
+    ],
+    "completed_utc": "2026-09-16T13:51:00.526120+00:00",
+    "cwd": ".",
+    "exit_code": 0,
+    "log_sha256": "e0a07b62b48fa477de7c03fbc31553a79b55ca9d8fd862d7d1f6f31db91df101",
+    "receipt": "rust-tests-policy.json",
+    "started_utc": "2026-09-16T13:50:48.980381+00:00"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "app/src-tauri/Cargo.toml"
+    ],
+    "completed_utc": "2026-09-16T13:47:05.841939+00:00",
+    "cwd": ".",
+    "exit_code": 101,
+    "log_sha256": "973a2598c4c60e3421ab4ab8184033cd3999cab5ce2ecc30e857857e88431942",
+    "receipt": "rust-tests.json",
+    "started_utc": "2026-09-16T13:46:55.150462+00:00"
+  }
+]

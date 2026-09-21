@@ -1,0 +1,29 @@
+{
+  "checked_utc": "2026-09-17T07:49:56.000780+00:00",
+  "checks": [
+    {
+      "check": "canonical validator",
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "validated 60 canonical roadmap items and 8 plan/checkpoint pairs\n"
+    },
+    {
+      "check": "git diff --check",
+      "exit_code": 0,
+      "stderr": "warning: in the working copy of 'app/src-tauri/Cargo.toml', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src-tauri/src/lib.rs', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src-tauri/src/library.rs', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src-tauri/src/playback_file.rs', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src-tauri/src/playback_server.rs', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/App.tsx', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/api.test.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/api.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/benchmark.test.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/benchmark.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/components/ClipExporterScreen.test.tsx', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/components/ClipExporterScreen.tsx', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/components/ClipModal.tsx', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/components/LibraryScreen.tsx', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/src/types.ts', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/architecture/media-library.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/architecture/replay-time.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/execution/qb-replay-011.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/execution/qb-replay-012.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'feature-list.json', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tools/replay_benchmark/analyze.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tools/replay_benchmark/build_corpus.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tools/replay_benchmark/tests/test_corpus.py', LF will be replaced by CRLF the next time Git touches it\n",
+      "stdout": ""
+    },
+    {
+      "check": "retained evidence identity, validity and sanitization",
+      "comparisons_eligible": 0,
+      "hashed_attempt_artifacts": 261,
+      "invalid_runs": 1,
+      "manual_files_unchanged": 25,
+      "preflights": 50,
+      "prepared_files_unchanged": 409,
+      "required_matrix_checks": "10 correctly reject incomplete results",
+      "status": "passed",
+      "valid_runs": 14
+    }
+  ]
+}

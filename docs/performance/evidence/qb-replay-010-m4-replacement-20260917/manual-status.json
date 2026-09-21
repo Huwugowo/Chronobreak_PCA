@@ -1,0 +1,142 @@
+{
+  "utc": "2026-09-17T12:42:39.072045+00:00",
+  "status": "accepted",
+  "status_updated_date": "2026-09-21",
+  "native_controls": "disabled",
+  "cua_inventory": {
+    "apps": [],
+    "browsers": []
+  },
+  "manual_actions_run": true,
+  "assisted_app_launched": true,
+  "current_app_running": "not material to closed acceptance",
+  "folder_switch_attempt": "The first roots hold was not observed. Subsequent roots3 held a verified child and the user confirmed A/B/A; audit-roots3.json preserves the result.",
+  "current_helper_sha256": "8db9ac7928689ab7a63c0ce7d21e12d164f30a795e18a29eaefa66c1ac99514f",
+  "helper_verification_20260921": "Four focused rejection tests passed after extending only the disposable manual window to 30 seconds; replay suite 95 run, one existing opt-in skipped; py_compile/help and git diff --check passed. Standalone packaged-child hold/resume smoke passed. No app code, subject bytes or fixture bytes changed.",
+  "user_assisted_results": {
+    "games_local_failure_retry_clip_playback": "User reported working; initial games hold navigation timing was not confirmed.",
+    "games_navigation_save_during_optional_work": "User explicitly confirmed HOLDING and 3 recordings, 1 saved, 10 clips; hold-save.json and audit-save.json retained.",
+    "clip_delete_during_optional_work": "First delete attempt caught no child. Explicit Retry duration produced hold-delete2.json; user reported the instructed sequence successful. Audit confirms exactly one source-less clip removed.",
+    "separate_unsaved_recording_delete": "User confirmed 2 recordings, 1 saved, 9 clips. Audit confirms game 1789400101 removed and 1789400102 saved.",
+    "intermediate_unsaved_state": "User explicitly confirmed toggling SAVED repeatedly; no unexplained saved-state change remains.",
+    "resume_audit": "audit-resume-20260921.json reconfirms only intentional changes in A, preserved retained media/log hashes, and unchanged B.",
+    "a_b_a_root_ordering": "User confirmed B showed its one Lux recording/one clip and a return to A restored its intended two recordings/one saved state while hold-roots3.json held a verified optional child; audit-roots3.json preserves B unchanged.",
+    "export_and_return": "User confirmed source playback, default export, EXPORTED IN, VIEW CLIPS, exported-clip playback and return to Games. audit-export-verified.json validates generated H.264/AAC exports and full decodes.",
+    "export_during_optional_work": "hold-export2.json verified the direct packaged ffprobe child and normal-app parent with no watcher errors. User explicitly confirmed EXPORT 1 MP4 while HOLDING; audit-export-overlap-verified.json validates four generated H.264/AAC exports, selected durations and full decodes.",
+    "cleanup_during_optional_work": "hold-cleanup.json verified owned optional work; user confirmed cleanup and final playback. audit-final-verified.json records one saved A game, retained clips, restored Never retention and unchanged B."
+  },
+  "user_assisted_receipt_root": "build/perf/qb-replay-010-m4/.chronobreak-replay-benchmark/manual-assisted-20260917",
+  "prepared": true,
+  "baseline_hashes_unchanged": true,
+  "baseline": {
+    "a": {
+      "deleted": [],
+      "added": [],
+      "changed": [],
+      "game_directories": [
+        "1789400100",
+        "1789400101",
+        "1789400102"
+      ],
+      "clip_files": [
+        "1789400100_1789500000.mp4",
+        "1789400100_1789599999.mp4",
+        "1789400101_1789500001.mp4",
+        "1789400102_1789500002.mp4",
+        "1789400103_1789500003.mp4",
+        "1789400104_1789500004.mp4",
+        "1789400105_1789500005.mp4",
+        "1789400106_1789500006.mp4",
+        "1789400107_1789500007.mp4",
+        "1789400108_1789500008.mp4"
+      ],
+      "game_metadata": {
+        "1789400100": {
+          "saved": false,
+          "local_player_champion": "Ahri",
+          "recorded_at": "2026-08-27T00:00:00Z"
+        },
+        "1789400101": {
+          "saved": false,
+          "local_player_champion": "Ahri",
+          "recorded_at": "2026-08-27T00:00:00Z"
+        },
+        "1789400102": {
+          "saved": false,
+          "local_player_champion": "Ahri",
+          "recorded_at": "2026-08-27T00:00:00Z"
+        }
+      }
+    },
+    "b": {
+      "deleted": [],
+      "added": [],
+      "changed": [],
+      "game_directories": [
+        "1789400100"
+      ],
+      "clip_files": [
+        "1789400100_1789500000.mp4"
+      ],
+      "game_metadata": {
+        "1789400100": {
+          "saved": false,
+          "local_player_champion": "Lux",
+          "recorded_at": "2026-08-27T00:00:00Z"
+        }
+      }
+    }
+  },
+  "preparation": {
+    "utc": "2026-09-17T12:40:34.519319+00:00",
+    "binary_sha256": "253a7eec067a846a4efe94b81b1ee50351d1246aab13fa34780db3985656f305",
+    "source_evidence_unchanged": true,
+    "roots": {
+      "a": {
+        "games": 3,
+        "clips": 10
+      },
+      "b": {
+        "games": 1,
+        "clips": 1
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "path": "build/perf/qb-replay-010-m4/.chronobreak-replay-benchmark/manual-assisted-20260917/preparation.json",
+      "sha256": "ab16de52cf8935ff8a12657fad1a32266264f510af3ab5a69f7d3a1013428bac",
+      "bytes": 311
+    },
+    {
+      "path": "build/perf/qb-replay-010-m4/.chronobreak-replay-benchmark/manual-assisted-20260917/root-a-before.json",
+      "sha256": "24376b55b119229ab9fd4e77b373032c06daa187c501f864318874ed8e221420",
+      "bytes": 3221
+    },
+    {
+      "path": "build/perf/qb-replay-010-m4/.chronobreak-replay-benchmark/manual-assisted-20260917/root-b-before.json",
+      "sha256": "3cd0438eb48c0e35f114056b6ed2023f428fb3957853c5217271e09d26420def",
+      "bytes": 798
+    },
+    {
+      "path": "build/perf/qb-replay-010-m4/.chronobreak-replay-benchmark/manual-assisted-20260917/audit-baseline.json",
+      "sha256": "0b845307864a0615727f383cc7047ece64285f4e3c9dbf90a31ed8cee407df66",
+      "bytes": 6523
+    },
+    {
+      "path": "tools/replay_benchmark/qb010_manual.py",
+      "sha256": "8db9ac7928689ab7a63c0ce7d21e12d164f30a795e18a29eaefa66c1ac99514f",
+      "bytes": 15569
+    }
+  ],
+  "verification": [
+    "py_compile passed; --help passed",
+    "Earlier Windows self-process identity and Toolhelp smoke passed without suspending any process",
+    "Earlier optimized-Python nine-second hold rejection passed before app access",
+    "Fresh prepare and baseline audit passed",
+    "User-assisted acceptance passed; UI observations are explicitly recorded above and are not inferred from helper output",
+    "Final focused replay suite: 95 passed, one existing opt-in skipped; canonical validator passed 60 roadmap items and 8 plan/checkpoint pairs"
+  ],
+  "remaining": [],
+  "procedure": "manual-acceptance.md"
+}

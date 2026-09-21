@@ -1,0 +1,2492 @@
+{
+  "feature": "QB-REPLAY-010",
+  "runs": [
+    {
+      "run_alias": "launch-01",
+      "scenario_id": "r-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 18.1,
+          "request_to_media_loadstart_ms": 66.9,
+          "request_to_metadata_ready_ms": 263.3,
+          "request_to_media_canplay_ms": 375.5,
+          "request_to_first_presented_frame_ms": 372.8,
+          "request_to_viewer_mounted_ms": 19.8,
+          "payload_to_mount_ms": 1.7,
+          "mount_to_loadstart_ms": 47.1,
+          "mount_to_metadata_ms": 243.5,
+          "loadstart_to_metadata_ms": 196.4,
+          "metadata_to_canplay_ms": 112.2,
+          "mount_to_first_frame_ms": 353.0
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        2.8938
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 7368704,
+          "started_ms": 1110.0705,
+          "first_byte_ms": 1110.3328,
+          "completed_ms": 1152.2806,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 1703936,
+          "range_end": 58645126,
+          "declared_bytes": 56941191,
+          "delivered_bytes": 20480,
+          "started_ms": 1154.1282,
+          "first_byte_ms": 1154.4362999999998,
+          "completed_ms": 1154.5767,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 4,
+          "method": "GET",
+          "status": 206,
+          "range_start": 6029312,
+          "range_end": 58645126,
+          "declared_bytes": 52615815,
+          "delivered_bytes": 52615815,
+          "started_ms": 1154.9177,
+          "first_byte_ms": 1155.0969,
+          "completed_ms": 1329.0450999999998,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 5,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9809920,
+          "started_ms": 1338.6046,
+          "first_byte_ms": 1338.9198000000001,
+          "completed_ms": 7468.6151,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-02",
+      "scenario_id": "n-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 12.6,
+          "request_to_media_loadstart_ms": 50.9,
+          "request_to_metadata_ready_ms": 58.7,
+          "request_to_media_canplay_ms": 200.2,
+          "request_to_first_presented_frame_ms": 219.4,
+          "request_to_viewer_mounted_ms": 13.6,
+          "payload_to_mount_ms": 1.0,
+          "mount_to_loadstart_ms": 37.3,
+          "mount_to_metadata_ms": 45.1,
+          "loadstart_to_metadata_ms": 7.8,
+          "metadata_to_canplay_ms": 141.5,
+          "mount_to_first_frame_ms": 205.8
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.7085
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2851.0732000000003,
+          "first_byte_ms": 2851.4078000000004,
+          "completed_ms": 2875.2489,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-03",
+      "scenario_id": "l-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 20.9,
+          "request_to_media_loadstart_ms": 63.2,
+          "request_to_metadata_ready_ms": 445.7,
+          "request_to_media_canplay_ms": 554.5,
+          "request_to_first_presented_frame_ms": 562.4,
+          "request_to_viewer_mounted_ms": 22.6,
+          "payload_to_mount_ms": 1.7,
+          "mount_to_loadstart_ms": 40.6,
+          "mount_to_metadata_ms": 423.1,
+          "loadstart_to_metadata_ms": 382.5,
+          "metadata_to_canplay_ms": 108.8,
+          "mount_to_first_frame_ms": 539.8
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        3.9047
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 15962112,
+          "started_ms": 705.0861,
+          "first_byte_ms": 705.3846,
+          "completed_ms": 760.8931,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 15761408,
+          "range_end": 117323101,
+          "declared_bytes": 101561694,
+          "delivered_bytes": 101561694,
+          "started_ms": 762.1381999999999,
+          "first_byte_ms": 762.3443,
+          "completed_ms": 1072.2622000000001,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10092544,
+          "started_ms": 1080.6961999999999,
+          "first_byte_ms": 1080.9164,
+          "completed_ms": 7229.9407,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-04",
+      "scenario_id": "s-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 12.5,
+          "request_to_media_loadstart_ms": 54.0,
+          "request_to_metadata_ready_ms": 66.4,
+          "request_to_media_canplay_ms": 184.4,
+          "request_to_first_presented_frame_ms": 188.0,
+          "request_to_viewer_mounted_ms": 14.3,
+          "payload_to_mount_ms": 1.8,
+          "mount_to_loadstart_ms": 39.7,
+          "mount_to_metadata_ms": 52.1,
+          "loadstart_to_metadata_ms": 12.4,
+          "metadata_to_canplay_ms": 118.0,
+          "mount_to_first_frame_ms": 173.7
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.7251
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 649.8906999999999,
+          "first_byte_ms": 650.1278,
+          "completed_ms": 674.4637,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-05",
+      "scenario_id": "e-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 23.2,
+          "request_to_media_loadstart_ms": 62.4,
+          "request_to_metadata_ready_ms": 67.1,
+          "request_to_media_canplay_ms": 222.1,
+          "request_to_first_presented_frame_ms": 222.5,
+          "request_to_viewer_mounted_ms": 24.4,
+          "payload_to_mount_ms": 1.2,
+          "mount_to_loadstart_ms": 38.0,
+          "mount_to_metadata_ms": 42.7,
+          "loadstart_to_metadata_ms": 4.7,
+          "metadata_to_canplay_ms": 155.0,
+          "mount_to_first_frame_ms": 198.1
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        7.2912
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2855.1334,
+          "first_byte_ms": 2855.3920000000003,
+          "completed_ms": 2891.533,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-06",
+      "scenario_id": "r-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 15.0,
+          "request_to_media_loadstart_ms": 58.3,
+          "request_to_metadata_ready_ms": 248.4,
+          "request_to_media_canplay_ms": 379.0,
+          "request_to_first_presented_frame_ms": 376.4,
+          "request_to_viewer_mounted_ms": 16.9,
+          "payload_to_mount_ms": 1.9,
+          "mount_to_loadstart_ms": 41.4,
+          "mount_to_metadata_ms": 231.5,
+          "loadstart_to_metadata_ms": 190.1,
+          "metadata_to_canplay_ms": 130.6,
+          "mount_to_first_frame_ms": 359.5
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        2.5574999999999997
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 665.3062,
+          "first_byte_ms": 665.5529,
+          "completed_ms": 843.1225000000001,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9793536,
+          "started_ms": 849.3192,
+          "first_byte_ms": 849.5992,
+          "completed_ms": 6992.6301,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-07",
+      "scenario_id": "e-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 32.2,
+          "request_to_media_loadstart_ms": 79.8,
+          "request_to_metadata_ready_ms": 92.3,
+          "request_to_media_canplay_ms": 212.1,
+          "request_to_first_presented_frame_ms": 215.6,
+          "request_to_viewer_mounted_ms": 33.4,
+          "payload_to_mount_ms": 1.2,
+          "mount_to_loadstart_ms": 46.4,
+          "mount_to_metadata_ms": 58.9,
+          "loadstart_to_metadata_ms": 12.5,
+          "metadata_to_canplay_ms": 119.8,
+          "mount_to_first_frame_ms": 182.2
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        7.2782
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2855.1884,
+          "first_byte_ms": 2855.4191,
+          "completed_ms": 2879.3309,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-08",
+      "scenario_id": "n-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 16.1,
+          "request_to_media_loadstart_ms": 59.2,
+          "request_to_metadata_ready_ms": 67.4,
+          "request_to_media_canplay_ms": 193.8,
+          "request_to_first_presented_frame_ms": 196.9,
+          "request_to_viewer_mounted_ms": 17.6,
+          "payload_to_mount_ms": 1.5,
+          "mount_to_loadstart_ms": 41.6,
+          "mount_to_metadata_ms": 49.8,
+          "loadstart_to_metadata_ms": 8.2,
+          "metadata_to_canplay_ms": 126.4,
+          "mount_to_first_frame_ms": 179.3
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.7187
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2611.56,
+          "first_byte_ms": 2611.8262,
+          "completed_ms": 2644.6358999999998,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-09",
+      "scenario_id": "l-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 31.9,
+          "request_to_media_loadstart_ms": 74.8,
+          "request_to_metadata_ready_ms": 443.2,
+          "request_to_media_canplay_ms": 567.3,
+          "request_to_first_presented_frame_ms": 568.1,
+          "request_to_viewer_mounted_ms": 33.2,
+          "payload_to_mount_ms": 1.3,
+          "mount_to_loadstart_ms": 41.6,
+          "mount_to_metadata_ms": 410.0,
+          "loadstart_to_metadata_ms": 368.4,
+          "metadata_to_canplay_ms": 124.1,
+          "mount_to_first_frame_ms": 534.9
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        4.9829
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 703.8367000000001,
+          "first_byte_ms": 704.162,
+          "completed_ms": 1057.3083,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10186752,
+          "started_ms": 1065.8343,
+          "first_byte_ms": 1066.1357,
+          "completed_ms": 7214.0518,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-10",
+      "scenario_id": "s-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 12.9,
+          "request_to_media_loadstart_ms": 54.7,
+          "request_to_metadata_ready_ms": 70.8,
+          "request_to_media_canplay_ms": 183.5,
+          "request_to_first_presented_frame_ms": 188.0,
+          "request_to_viewer_mounted_ms": 14.5,
+          "payload_to_mount_ms": 1.6,
+          "mount_to_loadstart_ms": 40.2,
+          "mount_to_metadata_ms": 56.3,
+          "loadstart_to_metadata_ms": 16.1,
+          "metadata_to_canplay_ms": 112.7,
+          "mount_to_first_frame_ms": 173.5
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.6589
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 658.7744,
+          "first_byte_ms": 659.1848,
+          "completed_ms": 683.5249,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-11",
+      "scenario_id": "e-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 28.2,
+          "request_to_media_loadstart_ms": 75.4,
+          "request_to_metadata_ready_ms": 390.5,
+          "request_to_media_canplay_ms": 511.5,
+          "request_to_first_presented_frame_ms": 512.0,
+          "request_to_viewer_mounted_ms": 29.3,
+          "payload_to_mount_ms": 1.1,
+          "mount_to_loadstart_ms": 46.1,
+          "mount_to_metadata_ms": 361.2,
+          "loadstart_to_metadata_ms": 315.1,
+          "metadata_to_canplay_ms": 121.0,
+          "mount_to_first_frame_ms": 482.7
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        7.9627
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2845.5881,
+          "first_byte_ms": 2845.8417000000004,
+          "completed_ms": 3171.6049000000003,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-12",
+      "scenario_id": "r-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 17.2,
+          "request_to_media_loadstart_ms": 56.8,
+          "request_to_metadata_ready_ms": 236.1,
+          "request_to_media_canplay_ms": 362.9,
+          "request_to_first_presented_frame_ms": 360.8,
+          "request_to_viewer_mounted_ms": 18.8,
+          "payload_to_mount_ms": 1.6,
+          "mount_to_loadstart_ms": 38.0,
+          "mount_to_metadata_ms": 217.3,
+          "loadstart_to_metadata_ms": 179.3,
+          "metadata_to_canplay_ms": 126.8,
+          "mount_to_first_frame_ms": 342.0
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        2.2588999999999997
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 628.7769999999999,
+          "first_byte_ms": 628.9882,
+          "completed_ms": 796.8635999999999,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9789440,
+          "started_ms": 802.6967,
+          "first_byte_ms": 802.9384999999999,
+          "completed_ms": 6944.7096,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-13",
+      "scenario_id": "s-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 12.0,
+          "request_to_media_loadstart_ms": 53.9,
+          "request_to_metadata_ready_ms": 66.3,
+          "request_to_media_canplay_ms": 179.8,
+          "request_to_first_presented_frame_ms": 190.4,
+          "request_to_viewer_mounted_ms": 13.8,
+          "payload_to_mount_ms": 1.8,
+          "mount_to_loadstart_ms": 40.1,
+          "mount_to_metadata_ms": 52.5,
+          "loadstart_to_metadata_ms": 12.4,
+          "metadata_to_canplay_ms": 113.5,
+          "mount_to_first_frame_ms": 176.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.6172000000000001
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 638.5033999999999,
+          "first_byte_ms": 638.7982,
+          "completed_ms": 663.2599,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-15",
+      "scenario_id": "n-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 13.8,
+          "request_to_media_loadstart_ms": 71.0,
+          "request_to_metadata_ready_ms": 86.3,
+          "request_to_media_canplay_ms": 212.0,
+          "request_to_first_presented_frame_ms": 214.8,
+          "request_to_viewer_mounted_ms": 15.2,
+          "payload_to_mount_ms": 1.4,
+          "mount_to_loadstart_ms": 55.8,
+          "mount_to_metadata_ms": 71.1,
+          "loadstart_to_metadata_ms": 15.3,
+          "metadata_to_canplay_ms": 125.7,
+          "mount_to_first_frame_ms": 199.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.7232999999999999
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2813.2956,
+          "first_byte_ms": 2813.5719,
+          "completed_ms": 2840.9163,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-16",
+      "scenario_id": "e-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 34.4,
+          "request_to_media_loadstart_ms": 79.4,
+          "request_to_metadata_ready_ms": 93.3,
+          "request_to_media_canplay_ms": 214.3,
+          "request_to_first_presented_frame_ms": 220.1,
+          "request_to_viewer_mounted_ms": 35.5,
+          "payload_to_mount_ms": 1.1,
+          "mount_to_loadstart_ms": 43.9,
+          "mount_to_metadata_ms": 57.8,
+          "loadstart_to_metadata_ms": 13.9,
+          "metadata_to_canplay_ms": 121.0,
+          "mount_to_first_frame_ms": 184.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        8.850999999999999
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2964.7013,
+          "first_byte_ms": 2964.9686,
+          "completed_ms": 2989.2875000000004,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-17",
+      "scenario_id": "l-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 22.9,
+          "request_to_media_loadstart_ms": 67.2,
+          "request_to_metadata_ready_ms": 436.2,
+          "request_to_media_canplay_ms": 556.4,
+          "request_to_first_presented_frame_ms": 563.3,
+          "request_to_viewer_mounted_ms": 24.2,
+          "payload_to_mount_ms": 1.3,
+          "mount_to_loadstart_ms": 43.0,
+          "mount_to_metadata_ms": 412.0,
+          "loadstart_to_metadata_ms": 369.0,
+          "metadata_to_canplay_ms": 120.2,
+          "mount_to_first_frame_ms": 539.1
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        4.4324
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 747.3454999999999,
+          "first_byte_ms": 747.7149,
+          "completed_ms": 1099.9257,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10096640,
+          "started_ms": 1109.4641,
+          "first_byte_ms": 1109.7471,
+          "completed_ms": 7265.219499999999,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-19",
+      "scenario_id": "s-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 12.9,
+          "request_to_media_loadstart_ms": 54.5,
+          "request_to_metadata_ready_ms": 68.1,
+          "request_to_media_canplay_ms": 188.2,
+          "request_to_first_presented_frame_ms": 196.1,
+          "request_to_viewer_mounted_ms": 14.5,
+          "payload_to_mount_ms": 1.6,
+          "mount_to_loadstart_ms": 40.0,
+          "mount_to_metadata_ms": 53.6,
+          "loadstart_to_metadata_ms": 13.6,
+          "metadata_to_canplay_ms": 120.1,
+          "mount_to_first_frame_ms": 181.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.7557
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 684.4504,
+          "first_byte_ms": 684.6772,
+          "completed_ms": 709.0949,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-20",
+      "scenario_id": "r-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 18.6,
+          "request_to_media_loadstart_ms": 63.3,
+          "request_to_metadata_ready_ms": 556.3,
+          "request_to_media_canplay_ms": 666.3,
+          "request_to_first_presented_frame_ms": 676.0,
+          "request_to_viewer_mounted_ms": 20.0,
+          "payload_to_mount_ms": 1.4,
+          "mount_to_loadstart_ms": 43.3,
+          "mount_to_metadata_ms": 536.3,
+          "loadstart_to_metadata_ms": 493.0,
+          "metadata_to_canplay_ms": 110.0,
+          "mount_to_first_frame_ms": 656.0
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        2.0949
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 701.8109999999999,
+          "first_byte_ms": 702.0824,
+          "completed_ms": 1183.1295,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9830400,
+          "started_ms": 1188.726,
+          "first_byte_ms": 1188.9139,
+          "completed_ms": 7335.5861,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-21",
+      "scenario_id": "l-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 23.7,
+          "request_to_media_loadstart_ms": 65.7,
+          "request_to_metadata_ready_ms": 429.0,
+          "request_to_media_canplay_ms": 554.1,
+          "request_to_first_presented_frame_ms": 561.4,
+          "request_to_viewer_mounted_ms": 25.8,
+          "payload_to_mount_ms": 2.1,
+          "mount_to_loadstart_ms": 39.9,
+          "mount_to_metadata_ms": 403.2,
+          "loadstart_to_metadata_ms": 363.3,
+          "metadata_to_canplay_ms": 125.1,
+          "mount_to_first_frame_ms": 535.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        4.2584
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 687.1624,
+          "first_byte_ms": 687.3967,
+          "completed_ms": 1034.0974,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10096640,
+          "started_ms": 1043.2353,
+          "first_byte_ms": 1043.6339,
+          "completed_ms": 7197.3067,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-22",
+      "scenario_id": "s-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 11.9,
+          "request_to_media_loadstart_ms": 55.4,
+          "request_to_metadata_ready_ms": 70.6,
+          "request_to_media_canplay_ms": 189.8,
+          "request_to_first_presented_frame_ms": 196.5,
+          "request_to_viewer_mounted_ms": 13.2,
+          "payload_to_mount_ms": 1.3,
+          "mount_to_loadstart_ms": 42.2,
+          "mount_to_metadata_ms": 57.4,
+          "loadstart_to_metadata_ms": 15.2,
+          "metadata_to_canplay_ms": 119.2,
+          "mount_to_first_frame_ms": 183.3
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.6431
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 652.2018,
+          "first_byte_ms": 652.5928,
+          "completed_ms": 676.2299,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-23",
+      "scenario_id": "n-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 16.1,
+          "request_to_media_loadstart_ms": 58.1,
+          "request_to_metadata_ready_ms": 70.1,
+          "request_to_media_canplay_ms": 190.7,
+          "request_to_first_presented_frame_ms": 196.3,
+          "request_to_viewer_mounted_ms": 17.9,
+          "payload_to_mount_ms": 1.8,
+          "mount_to_loadstart_ms": 40.2,
+          "mount_to_metadata_ms": 52.2,
+          "loadstart_to_metadata_ms": 12.0,
+          "metadata_to_canplay_ms": 120.6,
+          "mount_to_first_frame_ms": 178.4
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.8053
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2588.3897,
+          "first_byte_ms": 2588.6133,
+          "completed_ms": 2612.1666,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-24",
+      "scenario_id": "e-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 31.9,
+          "request_to_media_loadstart_ms": 81.4,
+          "request_to_metadata_ready_ms": 94.8,
+          "request_to_media_canplay_ms": 209.0,
+          "request_to_first_presented_frame_ms": 221.7,
+          "request_to_viewer_mounted_ms": 33.1,
+          "payload_to_mount_ms": 1.2,
+          "mount_to_loadstart_ms": 48.3,
+          "mount_to_metadata_ms": 61.7,
+          "loadstart_to_metadata_ms": 13.4,
+          "metadata_to_canplay_ms": 114.2,
+          "mount_to_first_frame_ms": 188.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        10.995899999999999
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2899.1712,
+          "first_byte_ms": 2899.4936,
+          "completed_ms": 2923.9932999999996,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-25",
+      "scenario_id": "r-cold",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 37.7,
+          "request_to_media_loadstart_ms": 80.3,
+          "request_to_metadata_ready_ms": 266.3,
+          "request_to_media_canplay_ms": 391.8,
+          "request_to_first_presented_frame_ms": 407.8,
+          "request_to_viewer_mounted_ms": 38.9,
+          "payload_to_mount_ms": 1.2,
+          "mount_to_loadstart_ms": 41.4,
+          "mount_to_metadata_ms": 227.4,
+          "loadstart_to_metadata_ms": 186.0,
+          "metadata_to_canplay_ms": 125.5,
+          "mount_to_first_frame_ms": 368.9
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        2.1396
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 693.3379,
+          "first_byte_ms": 693.7179000000001,
+          "completed_ms": 868.4417000000001,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9809920,
+          "started_ms": 874.7462,
+          "first_byte_ms": 874.9585,
+          "completed_ms": 7042.0122,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-26",
+      "scenario_id": "e-warm",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 30.6,
+          "request_to_media_loadstart_ms": 77.7,
+          "request_to_metadata_ready_ms": 89.8,
+          "request_to_media_canplay_ms": 208.7,
+          "request_to_first_presented_frame_ms": 220.1,
+          "request_to_viewer_mounted_ms": 32.0,
+          "payload_to_mount_ms": 1.4,
+          "mount_to_loadstart_ms": 45.7,
+          "mount_to_metadata_ms": 57.8,
+          "loadstart_to_metadata_ms": 12.1,
+          "metadata_to_canplay_ms": 118.9,
+          "mount_to_first_frame_ms": 188.1
+        },
+        {
+          "ordinal": 1,
+          "role": "warm_remount",
+          "generation": 2,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 149.3,
+          "request_to_media_loadstart_ms": 188.1,
+          "request_to_metadata_ready_ms": 514.5,
+          "request_to_media_canplay_ms": 526.4,
+          "request_to_first_presented_frame_ms": 529.7,
+          "request_to_viewer_mounted_ms": 150.0,
+          "payload_to_mount_ms": 0.7,
+          "mount_to_loadstart_ms": 38.1,
+          "mount_to_metadata_ms": 364.5,
+          "loadstart_to_metadata_ms": 326.4,
+          "metadata_to_canplay_ms": 11.9,
+          "mount_to_first_frame_ms": 379.7
+        },
+        {
+          "ordinal": 2,
+          "role": "warm_remount",
+          "generation": 3,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 139.6,
+          "request_to_media_loadstart_ms": 153.9,
+          "request_to_metadata_ready_ms": 161.8,
+          "request_to_media_canplay_ms": 172.5,
+          "request_to_first_presented_frame_ms": 174.0,
+          "request_to_viewer_mounted_ms": 140.0,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 13.9,
+          "mount_to_metadata_ms": 21.8,
+          "loadstart_to_metadata_ms": 7.9,
+          "metadata_to_canplay_ms": 10.7,
+          "mount_to_first_frame_ms": 34.0
+        },
+        {
+          "ordinal": 3,
+          "role": "warm_remount",
+          "generation": 4,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 158.9,
+          "request_to_media_loadstart_ms": 174.0,
+          "request_to_metadata_ready_ms": 179.9,
+          "request_to_media_canplay_ms": 197.3,
+          "request_to_first_presented_frame_ms": 200.6,
+          "request_to_viewer_mounted_ms": 159.3,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 14.7,
+          "mount_to_metadata_ms": 20.6,
+          "loadstart_to_metadata_ms": 5.9,
+          "metadata_to_canplay_ms": 17.4,
+          "mount_to_first_frame_ms": 41.3
+        },
+        {
+          "ordinal": 4,
+          "role": "warm_remount",
+          "generation": 5,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 158.5,
+          "request_to_media_loadstart_ms": 173.4,
+          "request_to_metadata_ready_ms": 182.8,
+          "request_to_media_canplay_ms": 196.1,
+          "request_to_first_presented_frame_ms": 201.0,
+          "request_to_viewer_mounted_ms": 158.9,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 14.5,
+          "mount_to_metadata_ms": 23.9,
+          "loadstart_to_metadata_ms": 9.4,
+          "metadata_to_canplay_ms": 13.3,
+          "mount_to_first_frame_ms": 42.1
+        },
+        {
+          "ordinal": 5,
+          "role": "warm_remount",
+          "generation": 6,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 135.3,
+          "request_to_media_loadstart_ms": 163.5,
+          "request_to_metadata_ready_ms": 175.8,
+          "request_to_media_canplay_ms": 186.6,
+          "request_to_first_presented_frame_ms": 200.9,
+          "request_to_viewer_mounted_ms": 135.9,
+          "payload_to_mount_ms": 0.6,
+          "mount_to_loadstart_ms": 27.6,
+          "mount_to_metadata_ms": 39.9,
+          "loadstart_to_metadata_ms": 12.3,
+          "metadata_to_canplay_ms": 10.8,
+          "mount_to_first_frame_ms": 65.0
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        8.0308,
+        13.2202,
+        5.8069999999999995,
+        10.6449,
+        13.8636,
+        8.0679
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2846.9502,
+          "first_byte_ms": 2847.3784,
+          "completed_ms": 2869.3085,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 9308.3935,
+          "first_byte_ms": 9309.0889,
+          "completed_ms": 9654.0512,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 15934.1817,
+          "first_byte_ms": 15934.5348,
+          "completed_ms": 15962.2395,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 4,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 22243.9622,
+          "first_byte_ms": 22244.2561,
+          "completed_ms": 22271.2013,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 5,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 28552.9402,
+          "first_byte_ms": 28553.196,
+          "completed_ms": 28576.4123,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 6,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 34883.539300000004,
+          "first_byte_ms": 34883.93310000001,
+          "completed_ms": 34912.2209,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-27",
+      "scenario_id": "s-warm",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 10.7,
+          "request_to_media_loadstart_ms": 58.8,
+          "request_to_metadata_ready_ms": 382.8,
+          "request_to_media_canplay_ms": 495.4,
+          "request_to_first_presented_frame_ms": 490.0,
+          "request_to_viewer_mounted_ms": 12.0,
+          "payload_to_mount_ms": 1.3,
+          "mount_to_loadstart_ms": 46.8,
+          "mount_to_metadata_ms": 370.8,
+          "loadstart_to_metadata_ms": 324.0,
+          "metadata_to_canplay_ms": 112.6,
+          "mount_to_first_frame_ms": 478.0
+        },
+        {
+          "ordinal": 1,
+          "role": "warm_remount",
+          "generation": 2,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 113.4,
+          "request_to_media_loadstart_ms": 120.9,
+          "request_to_metadata_ready_ms": 131.1,
+          "request_to_media_canplay_ms": 142.3,
+          "request_to_first_presented_frame_ms": 156.3,
+          "request_to_viewer_mounted_ms": 113.9,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 7.0,
+          "mount_to_metadata_ms": 17.2,
+          "loadstart_to_metadata_ms": 10.2,
+          "metadata_to_canplay_ms": 11.2,
+          "mount_to_first_frame_ms": 42.4
+        },
+        {
+          "ordinal": 2,
+          "role": "warm_remount",
+          "generation": 3,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 121.8,
+          "request_to_media_loadstart_ms": 130.5,
+          "request_to_metadata_ready_ms": 140.7,
+          "request_to_media_canplay_ms": 153.2,
+          "request_to_first_presented_frame_ms": 165.6,
+          "request_to_viewer_mounted_ms": 122.1,
+          "payload_to_mount_ms": 0.3,
+          "mount_to_loadstart_ms": 8.4,
+          "mount_to_metadata_ms": 18.6,
+          "loadstart_to_metadata_ms": 10.2,
+          "metadata_to_canplay_ms": 12.5,
+          "mount_to_first_frame_ms": 43.5
+        },
+        {
+          "ordinal": 3,
+          "role": "warm_remount",
+          "generation": 4,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 114.6,
+          "request_to_media_loadstart_ms": 122.1,
+          "request_to_metadata_ready_ms": 129.5,
+          "request_to_media_canplay_ms": 138.9,
+          "request_to_first_presented_frame_ms": 142.5,
+          "request_to_viewer_mounted_ms": 115.0,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 7.1,
+          "mount_to_metadata_ms": 14.5,
+          "loadstart_to_metadata_ms": 7.4,
+          "metadata_to_canplay_ms": 9.4,
+          "mount_to_first_frame_ms": 27.5
+        },
+        {
+          "ordinal": 4,
+          "role": "warm_remount",
+          "generation": 5,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 109.1,
+          "request_to_media_loadstart_ms": 116.9,
+          "request_to_metadata_ready_ms": 124.3,
+          "request_to_media_canplay_ms": 134.6,
+          "request_to_first_presented_frame_ms": 136.3,
+          "request_to_viewer_mounted_ms": 109.5,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 7.4,
+          "mount_to_metadata_ms": 14.8,
+          "loadstart_to_metadata_ms": 7.4,
+          "metadata_to_canplay_ms": 10.3,
+          "mount_to_first_frame_ms": 26.8
+        },
+        {
+          "ordinal": 5,
+          "role": "warm_remount",
+          "generation": 6,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 115.8,
+          "request_to_media_loadstart_ms": 128.8,
+          "request_to_metadata_ready_ms": 137.6,
+          "request_to_media_canplay_ms": 152.9,
+          "request_to_first_presented_frame_ms": 157.9,
+          "request_to_viewer_mounted_ms": 116.3,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 12.5,
+          "mount_to_metadata_ms": 21.3,
+          "loadstart_to_metadata_ms": 8.8,
+          "metadata_to_canplay_ms": 15.3,
+          "mount_to_first_frame_ms": 41.6
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.6199,
+        0.5869,
+        0.6022,
+        0.5318,
+        0.5381,
+        0.9889
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 632.488,
+          "first_byte_ms": 632.7841,
+          "completed_ms": 970.0501999999999,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 7312.4533,
+          "first_byte_ms": 7312.755000000001,
+          "completed_ms": 7337.2617,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 13612.8148,
+          "first_byte_ms": 13613.1129,
+          "completed_ms": 13640.8707,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 4,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 19894.061599999997,
+          "first_byte_ms": 19894.3121,
+          "completed_ms": 19918.7433,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 5,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 26162.077699999998,
+          "first_byte_ms": 26162.353499999997,
+          "completed_ms": 26188.057999999997,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 6,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 32435.9061,
+          "first_byte_ms": 32436.415799999995,
+          "completed_ms": 32463.899699999994,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-28",
+      "scenario_id": "r-warm",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 13.9,
+          "request_to_media_loadstart_ms": 64.2,
+          "request_to_metadata_ready_ms": 242.7,
+          "request_to_media_canplay_ms": 369.9,
+          "request_to_first_presented_frame_ms": 367.4,
+          "request_to_viewer_mounted_ms": 15.1,
+          "payload_to_mount_ms": 1.2,
+          "mount_to_loadstart_ms": 49.1,
+          "mount_to_metadata_ms": 227.6,
+          "loadstart_to_metadata_ms": 178.5,
+          "metadata_to_canplay_ms": 127.2,
+          "mount_to_first_frame_ms": 352.3
+        },
+        {
+          "ordinal": 1,
+          "role": "warm_remount",
+          "generation": 2,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 122.4,
+          "request_to_media_loadstart_ms": 134.9,
+          "request_to_metadata_ready_ms": 311.2,
+          "request_to_media_canplay_ms": 322.6,
+          "request_to_first_presented_frame_ms": 328.8,
+          "request_to_viewer_mounted_ms": 122.9,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 12.0,
+          "mount_to_metadata_ms": 188.3,
+          "loadstart_to_metadata_ms": 176.3,
+          "metadata_to_canplay_ms": 11.4,
+          "mount_to_first_frame_ms": 205.9
+        },
+        {
+          "ordinal": 2,
+          "role": "warm_remount",
+          "generation": 3,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 114.9,
+          "request_to_media_loadstart_ms": 127.6,
+          "request_to_metadata_ready_ms": 298.4,
+          "request_to_media_canplay_ms": 314.5,
+          "request_to_first_presented_frame_ms": 310.8,
+          "request_to_viewer_mounted_ms": 115.3,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 12.3,
+          "mount_to_metadata_ms": 183.1,
+          "loadstart_to_metadata_ms": 170.8,
+          "metadata_to_canplay_ms": 16.1,
+          "mount_to_first_frame_ms": 195.5
+        },
+        {
+          "ordinal": 3,
+          "role": "warm_remount",
+          "generation": 4,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 125.9,
+          "request_to_media_loadstart_ms": 135.9,
+          "request_to_metadata_ready_ms": 323.4,
+          "request_to_media_canplay_ms": 335.8,
+          "request_to_first_presented_frame_ms": 336.4,
+          "request_to_viewer_mounted_ms": 126.9,
+          "payload_to_mount_ms": 1.0,
+          "mount_to_loadstart_ms": 9.0,
+          "mount_to_metadata_ms": 196.5,
+          "loadstart_to_metadata_ms": 187.5,
+          "metadata_to_canplay_ms": 12.4,
+          "mount_to_first_frame_ms": 209.5
+        },
+        {
+          "ordinal": 4,
+          "role": "warm_remount",
+          "generation": 5,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 118.2,
+          "request_to_media_loadstart_ms": 129.1,
+          "request_to_metadata_ready_ms": 302.2,
+          "request_to_media_canplay_ms": 313.8,
+          "request_to_first_presented_frame_ms": 314.0,
+          "request_to_viewer_mounted_ms": 118.5,
+          "payload_to_mount_ms": 0.3,
+          "mount_to_loadstart_ms": 10.6,
+          "mount_to_metadata_ms": 183.7,
+          "loadstart_to_metadata_ms": 173.1,
+          "metadata_to_canplay_ms": 11.6,
+          "mount_to_first_frame_ms": 195.5
+        },
+        {
+          "ordinal": 5,
+          "role": "warm_remount",
+          "generation": 6,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 125.4,
+          "request_to_media_loadstart_ms": 139.0,
+          "request_to_metadata_ready_ms": 335.2,
+          "request_to_media_canplay_ms": 348.6,
+          "request_to_first_presented_frame_ms": 356.5,
+          "request_to_viewer_mounted_ms": 126.0,
+          "payload_to_mount_ms": 0.6,
+          "mount_to_loadstart_ms": 13.0,
+          "mount_to_metadata_ms": 209.2,
+          "loadstart_to_metadata_ms": 196.2,
+          "metadata_to_canplay_ms": 13.4,
+          "mount_to_first_frame_ms": 230.5
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        2.0932,
+        2.6431,
+        2.8447,
+        5.4796000000000005,
+        2.0273000000000003,
+        4.5021
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 7569408,
+          "started_ms": 603.0399,
+          "first_byte_ms": 603.3681,
+          "completed_ms": 647.4023,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 983040,
+          "range_end": 58645126,
+          "declared_bytes": 57662087,
+          "delivered_bytes": 421888,
+          "started_ms": 648.369,
+          "first_byte_ms": 648.7486,
+          "completed_ms": 650.0038999999999,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 5341184,
+          "range_end": 58645126,
+          "declared_bytes": 53303943,
+          "delivered_bytes": 737280,
+          "started_ms": 649.7737000000001,
+          "first_byte_ms": 650.0455000000001,
+          "completed_ms": 652.5452,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 4,
+          "method": "GET",
+          "status": 206,
+          "range_start": 5308416,
+          "range_end": 58645126,
+          "declared_bytes": 53336711,
+          "delivered_bytes": 4096,
+          "started_ms": 654.2285,
+          "first_byte_ms": 654.513,
+          "completed_ms": 654.5908,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 5,
+          "method": "GET",
+          "status": 206,
+          "range_start": 5963776,
+          "range_end": 58645126,
+          "declared_bytes": 52681351,
+          "delivered_bytes": 442368,
+          "started_ms": 654.89,
+          "first_byte_ms": 655.0323999999999,
+          "completed_ms": 656.4375,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 6,
+          "method": "GET",
+          "status": 206,
+          "range_start": 5931008,
+          "range_end": 58645126,
+          "declared_bytes": 52714119,
+          "delivered_bytes": 307200,
+          "started_ms": 657.0708000000001,
+          "first_byte_ms": 657.216,
+          "completed_ms": 657.9444,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 7,
+          "method": "GET",
+          "status": 206,
+          "range_start": 6291456,
+          "range_end": 58645126,
+          "declared_bytes": 52353671,
+          "delivered_bytes": 52353671,
+          "started_ms": 657.8399,
+          "first_byte_ms": 657.9783,
+          "completed_ms": 807.3311,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 8,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9793536,
+          "started_ms": 813.9031,
+          "first_byte_ms": 814.1892,
+          "completed_ms": 6961.1748,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 9,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 7202.4142999999995,
+          "first_byte_ms": 7202.713299999999,
+          "completed_ms": 7369.3695,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 10,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9969664,
+          "started_ms": 7375.3261,
+          "first_byte_ms": 7375.5706,
+          "completed_ms": 13403.5102,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 11,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 13631.5108,
+          "first_byte_ms": 13631.7864,
+          "completed_ms": 13796.2306,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 12,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9940992,
+          "started_ms": 13802.3325,
+          "first_byte_ms": 13802.6001,
+          "completed_ms": 19829.128099999998,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 13,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 20080.3412,
+          "first_byte_ms": 20080.6955,
+          "completed_ms": 20258.2964,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 14,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 10055680,
+          "started_ms": 20264.2144,
+          "first_byte_ms": 20264.568099999997,
+          "completed_ms": 26303.3025,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 15,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 26534.1306,
+          "first_byte_ms": 26534.391499999998,
+          "completed_ms": 26696.797499999997,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 16,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 9957376,
+          "started_ms": 26703.524699999998,
+          "first_byte_ms": 26703.782199999998,
+          "completed_ms": 32734.977599999995,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 17,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 58645127,
+          "started_ms": 32975.018899999995,
+          "first_byte_ms": 32975.4046,
+          "completed_ms": 33160.5228,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 18,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 58645126,
+          "declared_bytes": 58645127,
+          "delivered_bytes": 10268672,
+          "started_ms": 33168.0878,
+          "first_byte_ms": 33168.3721,
+          "completed_ms": 39205.152,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-29",
+      "scenario_id": "n-warm",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 15.8,
+          "request_to_media_loadstart_ms": 55.9,
+          "request_to_metadata_ready_ms": 65.7,
+          "request_to_media_canplay_ms": 179.0,
+          "request_to_first_presented_frame_ms": 189.2,
+          "request_to_viewer_mounted_ms": 17.3,
+          "payload_to_mount_ms": 1.5,
+          "mount_to_loadstart_ms": 38.6,
+          "mount_to_metadata_ms": 48.4,
+          "loadstart_to_metadata_ms": 9.8,
+          "metadata_to_canplay_ms": 113.3,
+          "mount_to_first_frame_ms": 171.9
+        },
+        {
+          "ordinal": 1,
+          "role": "warm_remount",
+          "generation": 2,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 145.9,
+          "request_to_media_loadstart_ms": 154.7,
+          "request_to_metadata_ready_ms": 160.5,
+          "request_to_media_canplay_ms": 171.8,
+          "request_to_first_presented_frame_ms": 173.8,
+          "request_to_viewer_mounted_ms": 146.3,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 8.4,
+          "mount_to_metadata_ms": 14.2,
+          "loadstart_to_metadata_ms": 5.8,
+          "metadata_to_canplay_ms": 11.3,
+          "mount_to_first_frame_ms": 27.5
+        },
+        {
+          "ordinal": 2,
+          "role": "warm_remount",
+          "generation": 3,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 128.3,
+          "request_to_media_loadstart_ms": 142.4,
+          "request_to_metadata_ready_ms": 150.9,
+          "request_to_media_canplay_ms": 173.1,
+          "request_to_first_presented_frame_ms": 188.1,
+          "request_to_viewer_mounted_ms": 128.8,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 13.6,
+          "mount_to_metadata_ms": 22.1,
+          "loadstart_to_metadata_ms": 8.5,
+          "metadata_to_canplay_ms": 22.2,
+          "mount_to_first_frame_ms": 59.3
+        },
+        {
+          "ordinal": 3,
+          "role": "warm_remount",
+          "generation": 4,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 136.1,
+          "request_to_media_loadstart_ms": 149.6,
+          "request_to_metadata_ready_ms": 157.1,
+          "request_to_media_canplay_ms": 170.6,
+          "request_to_first_presented_frame_ms": 175.0,
+          "request_to_viewer_mounted_ms": 137.0,
+          "payload_to_mount_ms": 0.9,
+          "mount_to_loadstart_ms": 12.6,
+          "mount_to_metadata_ms": 20.1,
+          "loadstart_to_metadata_ms": 7.5,
+          "metadata_to_canplay_ms": 13.5,
+          "mount_to_first_frame_ms": 38.0
+        },
+        {
+          "ordinal": 4,
+          "role": "warm_remount",
+          "generation": 5,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 147.9,
+          "request_to_media_loadstart_ms": 155.5,
+          "request_to_metadata_ready_ms": 164.1,
+          "request_to_media_canplay_ms": 175.1,
+          "request_to_first_presented_frame_ms": 188.2,
+          "request_to_viewer_mounted_ms": 148.3,
+          "payload_to_mount_ms": 0.4,
+          "mount_to_loadstart_ms": 7.2,
+          "mount_to_metadata_ms": 15.8,
+          "loadstart_to_metadata_ms": 8.6,
+          "metadata_to_canplay_ms": 11.0,
+          "mount_to_first_frame_ms": 39.9
+        },
+        {
+          "ordinal": 5,
+          "role": "warm_remount",
+          "generation": 6,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 141.9,
+          "request_to_media_loadstart_ms": 156.2,
+          "request_to_metadata_ready_ms": 163.0,
+          "request_to_media_canplay_ms": 173.8,
+          "request_to_first_presented_frame_ms": 180.1,
+          "request_to_viewer_mounted_ms": 142.1,
+          "payload_to_mount_ms": 0.2,
+          "mount_to_loadstart_ms": 14.1,
+          "mount_to_metadata_ms": 20.9,
+          "loadstart_to_metadata_ms": 6.8,
+          "metadata_to_canplay_ms": 10.8,
+          "mount_to_first_frame_ms": 38.0
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        0.798,
+        0.8474,
+        0.5831999999999999,
+        0.777,
+        0.597,
+        2.1987
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 2430.0268,
+          "first_byte_ms": 2430.2643,
+          "completed_ms": 2464.7282,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 8886.389000000001,
+          "first_byte_ms": 8886.635199999999,
+          "completed_ms": 8915.051599999999,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 15187.7465,
+          "first_byte_ms": 15188.0709,
+          "completed_ms": 15233.7058,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 4,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 21497.037800000002,
+          "first_byte_ms": 21497.349200000004,
+          "completed_ms": 21524.866,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 5,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 27806.6402,
+          "first_byte_ms": 27807.001500000002,
+          "completed_ms": 27832.708300000002,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 6,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 7973361,
+          "declared_bytes": 7973362,
+          "delivered_bytes": 7973362,
+          "started_ms": 34117.4896,
+          "first_byte_ms": 34117.7849,
+          "completed_ms": 34146.52909999999,
+          "outcome": "completed"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    },
+    {
+      "run_alias": "launch-30",
+      "scenario_id": "l-warm",
+      "cycles": [
+        {
+          "ordinal": 0,
+          "role": "initial_mount",
+          "generation": 1,
+          "request_includes_remount_timer": false,
+          "request_to_playback_payload_ready_ms": 21.8,
+          "request_to_media_loadstart_ms": 64.3,
+          "request_to_metadata_ready_ms": 433.5,
+          "request_to_media_canplay_ms": 544.8,
+          "request_to_first_presented_frame_ms": 541.1,
+          "request_to_viewer_mounted_ms": 23.5,
+          "payload_to_mount_ms": 1.7,
+          "mount_to_loadstart_ms": 40.8,
+          "mount_to_metadata_ms": 410.0,
+          "loadstart_to_metadata_ms": 369.2,
+          "metadata_to_canplay_ms": 111.3,
+          "mount_to_first_frame_ms": 517.6
+        },
+        {
+          "ordinal": 1,
+          "role": "warm_remount",
+          "generation": 2,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 126.6,
+          "request_to_media_loadstart_ms": 142.4,
+          "request_to_metadata_ready_ms": 507.4,
+          "request_to_media_canplay_ms": 516.7,
+          "request_to_first_presented_frame_ms": 520.9,
+          "request_to_viewer_mounted_ms": 127.1,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 15.3,
+          "mount_to_metadata_ms": 380.3,
+          "loadstart_to_metadata_ms": 365.0,
+          "metadata_to_canplay_ms": 9.3,
+          "mount_to_first_frame_ms": 393.8
+        },
+        {
+          "ordinal": 2,
+          "role": "warm_remount",
+          "generation": 3,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 121.0,
+          "request_to_media_loadstart_ms": 135.1,
+          "request_to_metadata_ready_ms": 472.8,
+          "request_to_media_canplay_ms": 482.2,
+          "request_to_first_presented_frame_ms": 485.1,
+          "request_to_viewer_mounted_ms": 121.3,
+          "payload_to_mount_ms": 0.3,
+          "mount_to_loadstart_ms": 13.8,
+          "mount_to_metadata_ms": 351.5,
+          "loadstart_to_metadata_ms": 337.7,
+          "metadata_to_canplay_ms": 9.4,
+          "mount_to_first_frame_ms": 363.8
+        },
+        {
+          "ordinal": 3,
+          "role": "warm_remount",
+          "generation": 4,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 131.2,
+          "request_to_media_loadstart_ms": 146.0,
+          "request_to_metadata_ready_ms": 497.2,
+          "request_to_media_canplay_ms": 508.8,
+          "request_to_first_presented_frame_ms": 513.1,
+          "request_to_viewer_mounted_ms": 131.7,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 14.3,
+          "mount_to_metadata_ms": 365.5,
+          "loadstart_to_metadata_ms": 351.2,
+          "metadata_to_canplay_ms": 11.6,
+          "mount_to_first_frame_ms": 381.4
+        },
+        {
+          "ordinal": 4,
+          "role": "warm_remount",
+          "generation": 5,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 125.5,
+          "request_to_media_loadstart_ms": 139.9,
+          "request_to_metadata_ready_ms": 813.5,
+          "request_to_media_canplay_ms": 828.9,
+          "request_to_first_presented_frame_ms": 829.1,
+          "request_to_viewer_mounted_ms": 126.1,
+          "payload_to_mount_ms": 0.6,
+          "mount_to_loadstart_ms": 13.8,
+          "mount_to_metadata_ms": 687.4,
+          "loadstart_to_metadata_ms": 673.6,
+          "metadata_to_canplay_ms": 15.4,
+          "mount_to_first_frame_ms": 703.0
+        },
+        {
+          "ordinal": 5,
+          "role": "warm_remount",
+          "generation": 6,
+          "request_includes_remount_timer": true,
+          "request_to_playback_payload_ready_ms": 129.3,
+          "request_to_media_loadstart_ms": 154.3,
+          "request_to_metadata_ready_ms": 513.0,
+          "request_to_media_canplay_ms": 524.9,
+          "request_to_first_presented_frame_ms": 529.5,
+          "request_to_viewer_mounted_ms": 129.8,
+          "payload_to_mount_ms": 0.5,
+          "mount_to_loadstart_ms": 24.5,
+          "mount_to_metadata_ms": 383.2,
+          "loadstart_to_metadata_ms": 358.7,
+          "metadata_to_canplay_ms": 11.9,
+          "mount_to_first_frame_ms": 399.7
+        }
+      ],
+      "backend_payload_elapsed_ms_whole_process": [
+        5.059100000000001,
+        7.4112,
+        5.0385,
+        8.1326,
+        10.553999999999998,
+        3.8476
+      ],
+      "backend_to_cycle_join": "unavailable; no exact cycle key; native durations are not assigned to front-end cycles",
+      "game_video_requests_whole_process": [
+        {
+          "request_id": 1,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 626.6648,
+          "first_byte_ms": 626.8971,
+          "completed_ms": 979.8686,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 2,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10088448,
+          "started_ms": 988.2402,
+          "first_byte_ms": 988.4860000000001,
+          "completed_ms": 7130.3339,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 3,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 7378.476500000001,
+          "first_byte_ms": 7378.8194,
+          "completed_ms": 7730.6923,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 4,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10825728,
+          "started_ms": 7738.2183,
+          "first_byte_ms": 7738.4097,
+          "completed_ms": 13778.9577,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 5,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 14035.5013,
+          "first_byte_ms": 14035.781,
+          "completed_ms": 14360.6507,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 6,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10158080,
+          "started_ms": 14368.5401,
+          "first_byte_ms": 14368.8134,
+          "completed_ms": 20400.3817,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 7,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 20657.1699,
+          "first_byte_ms": 20657.734800000002,
+          "completed_ms": 20994.9067,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 8,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10092544,
+          "started_ms": 21001.9347,
+          "first_byte_ms": 21002.2266,
+          "completed_ms": 27037.3268,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 9,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 3506176,
+          "started_ms": 27274.3929,
+          "first_byte_ms": 27274.9067,
+          "completed_ms": 27287.517,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 10,
+          "method": "GET",
+          "status": 206,
+          "range_start": 3407872,
+          "range_end": 117323101,
+          "declared_bytes": 113915230,
+          "delivered_bytes": 851968,
+          "started_ms": 27289.051900000002,
+          "first_byte_ms": 27289.3541,
+          "completed_ms": 27292.0495,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 11,
+          "method": "GET",
+          "status": 499,
+          "range_start": null,
+          "range_end": null,
+          "declared_bytes": 0,
+          "delivered_bytes": 0,
+          "started_ms": 27294.003099999998,
+          "first_byte_ms": null,
+          "completed_ms": 27294.249900000003,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 12,
+          "method": "GET",
+          "status": 206,
+          "range_start": 4161536,
+          "range_end": 117323101,
+          "declared_bytes": 113161566,
+          "delivered_bytes": 413696,
+          "started_ms": 27294.6887,
+          "first_byte_ms": 27294.9067,
+          "completed_ms": 27296.3474,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 13,
+          "method": "GET",
+          "status": 499,
+          "range_start": null,
+          "range_end": null,
+          "declared_bytes": 0,
+          "delivered_bytes": 0,
+          "started_ms": 27297.3448,
+          "first_byte_ms": null,
+          "completed_ms": 27297.5732,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 14,
+          "method": "GET",
+          "status": 206,
+          "range_start": 4489216,
+          "range_end": 117323101,
+          "declared_bytes": 112833886,
+          "delivered_bytes": 112833886,
+          "started_ms": 27297.840399999997,
+          "first_byte_ms": 27297.993599999998,
+          "completed_ms": 27944.2664,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 15,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10493952,
+          "started_ms": 27951.270399999998,
+          "first_byte_ms": 27951.5399,
+          "completed_ms": 33981.710600000006,
+          "outcome": "cancelled"
+        },
+        {
+          "request_id": 16,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 117323102,
+          "started_ms": 34245.41850000001,
+          "first_byte_ms": 34245.92450000001,
+          "completed_ms": 34590.14890000001,
+          "outcome": "completed"
+        },
+        {
+          "request_id": 17,
+          "method": "GET",
+          "status": 206,
+          "range_start": 0,
+          "range_end": 117323101,
+          "declared_bytes": 117323102,
+          "delivered_bytes": 10149888,
+          "started_ms": 34598.2638,
+          "first_byte_ms": 34598.60710000001,
+          "completed_ms": 40629.00770000001,
+          "outcome": "cancelled"
+        }
+      ],
+      "server_to_cycle_join": "unavailable; no generation key; no timing-based join"
+    }
+  ]
+}

@@ -1407,7 +1407,9 @@ def _create_media(
             audio_filter,
             "-shortest",
             "-avoid_negative_ts",
-            "make_zero",
+            # Preserve the validated video grid. Shifting for AAC priming with
+            # make_zero stretches the first fragmented-MP4 video sample.
+            "disabled",
             "-movflags",
             "+frag_keyframe+empty_moov+default_base_moof",
             str(destination),
