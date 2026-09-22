@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { decodeClipDurations, decodeLibrarySnapshot, decodePlaybackProbe } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { assertReplayProbeMatches, decodeClipDurations, decodeLibrarySnapshot, decodePlaybackProbe, decodeReplayDescriptor, loadReplayDescriptor } from "./api";
+
+vi.mock("@tauri-apps/api/core", async original => ({ ...await original<typeof import("@tauri-apps/api/core")>(),
+  invoke: vi.fn(), isTauri: vi.fn() }));
+afterEach(() => vi.resetAllMocks());
 
 const playbackWire = () => ({
   game: {
@@ -94,6 +99,47 @@ const playbackWire = () => ({
       relation: "ally",
     },
   ],
+});
+
+describe("decodeReplayDescriptor", () => {
+  const wire = () => ({ snapshot_token: "current", game_timestamp: "1787904000",
+    video_url: playbackWire().video_url, media_timeline: playbackWire().media_timeline });
+  it("admits media authority independently of semantic arrays", () => {
+    const descriptor = decodeReplayDescriptor(wire());
+    expect(descriptor.media_timeline.video.replayEnd).toBe(96_000_000);
+    expect(Object.keys(descriptor)).toHaveLength(4);
+  });
+  it("sends the selected token and rejects a descriptor for a different token or game", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockResolvedValueOnce(wire());
+    await expect(loadReplayDescriptor("1787904000", "current")).resolves.toMatchObject({ snapshot_token: "current" });
+    expect(invoke).toHaveBeenCalledWith("get_replay_descriptor", { gameTimestamp: "1787904000", snapshotToken: "current" });
+    for (const changed of [{ ...wire(), snapshot_token: "old" }, { ...wire(), game_timestamp: "2" }]) {
+      vi.mocked(invoke).mockResolvedValueOnce(changed);
+      await expect(loadReplayDescriptor("1787904000", "current")).rejects.toThrow("selection mismatch");
+    }
+  });
+  it("rejects legacy, missing, malformed and expanded descriptor payloads", () => {
+    for (const invalid of [{ ...wire(), snapshot_token: "" }, { ...wire(), game_timestamp: "../1" },
+      { ...wire(), events: [] }, { ...wire(), video_url: null },
+      { ...wire(), media_timeline: { ...wire().media_timeline, schema_version: 1 } }]) {
+      expect(() => decodeReplayDescriptor(invalid)).toThrow();
+    }
+  });
+  it("rejects full details from a different recording, URL or exact media timeline", () => {
+    const descriptor = decodeReplayDescriptor(wire());
+    const probe = decodePlaybackProbe(playbackWire());
+    expect(assertReplayProbeMatches(descriptor, probe)).toBe(probe);
+    const variants = [
+      { ...probe, game: { ...probe.game, timestamp: "2" } },
+      { ...probe, video_url: `${probe.video_url}?changed` },
+      { ...probe, media_timeline: { ...probe.media_timeline,
+        video: { ...probe.media_timeline.video, firstPts: 1n } } },
+      { ...probe, media_timeline: { ...probe.media_timeline,
+        audio: { present: true } } },
+    ];
+    for (const changed of variants) expect(() => assertReplayProbeMatches(descriptor, changed)).toThrow("Recording changed");
+  });
 });
 
 describe("decodePlaybackProbe", () => {

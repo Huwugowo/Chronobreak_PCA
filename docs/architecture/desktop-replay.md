@@ -25,7 +25,36 @@ exporter's source changes or its preview is disposed.
 
 ## Library and viewer flow
 
-Opening a game asks Rust to strictly parse its schema-v2 bundle into a playback probe containing the loopback video URL, validated media timeline, mapped events, snapshots, and metadata. A single persistent video element is shared between windowed and fullscreen layouts; changing layout does not remount the decoder.
+Opening a selected game first requests a token-bound `ReplayDescriptor`: snapshot
+token, game ID, protected loopback video URL and validated schema-v2 media timeline.
+Rust uses the strict bundle reader and requires a nonempty regular video, but does
+not construct semantic projections or run media probes. The existing viewer and
+controller mount from this descriptor and the selected snapshot's display summary.
+Data Dragon, optional clip durations and full replay details do not gate that mount.
+A single persistent video element is shared between windowed and fullscreen layouts;
+changing layout does not remount the decoder.
+
+After two animation frames provide a paint opportunity, the viewer requests the
+unchanged full playback probe. Its game, URL and decoded media timeline must match
+the descriptor before semantic arrays are admitted. Existing event/player/KDA
+views update reactively without reopening media or resetting rate, clip range,
+seek state or fullscreen. Pending/failed details are explicit, with a local retry;
+missing stats and game-time calibration stay unavailable. This is not a staged
+semantic timeline or a new ReplayTimeline UI. Strict JSON is read for each request;
+there is no persistent cache or claim that aggregate I/O is reduced.
+
+`LibraryController` owns one active replay read and one replaceable latest intent
+across viewer/exporter lifetimes. Admission includes root epoch, request, token,
+game membership and navigation; superseded responses reject rather than publish.
+App viewer opens, Settings/exporter returns and benchmark remounts capture a fresh
+origin. An invalidated viewer selection unmounts. Exporter details use the same
+owner; export's existing source/frame and mutation contracts remain unchanged.
+
+`playback_payload_ready` still means the full semantic probe, now potentially after
+mount; it never means descriptor readiness. Benchmark scenarios require both full
+details and presented media, regardless of arrival order. Historical library
+milestones are unchanged; old payload-before-mount attribution is not a descriptor
+performance comparison.
 
 `playbackController.ts` owns the primary media lifecycle through
 `htmlVideoPlaybackAdapter.ts`: source/load, native play/pause, seek scheduling,

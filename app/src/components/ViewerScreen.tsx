@@ -12,6 +12,8 @@ import {
 } from "solid-js";
 import {
   loadPlaybackProbe,
+  loadReplayDescriptor,
+  assertReplayProbeMatches,
   loadServerMetrics,
 } from "../api";
 import {
@@ -26,7 +28,8 @@ import type {
   ClipDraft,
   ClipRange,
   KdaTimelinePoint,
-  PlaybackProbe,
+  GameSummary,
+  ReplayDescriptor,
   PlayerTimelinePoint,
   ServerMetrics,
   ViewerEvent,
@@ -56,9 +59,12 @@ import ChampionFilter from "./ChampionFilter";
 import FullscreenOverlay from "./FullscreenOverlay";
 import PlaybackControls from "./PlaybackControls";
 import styles from "./ViewerScreen.module.css";
+import { libraryError, type ReplayRead } from "../libraryController";
 
 type Props = {
   gameTimestamp: string;
+  game: GameSummary;
+  readReplay: ReplayRead;
   onBack: () => void;
   initialClipDraft?: ClipDraft;
   onExportClip: (draft: ClipDraft) => void;
@@ -115,58 +121,43 @@ const millisecondsToReplayTick = (milliseconds: number, replayEnd: ReplayTick): 
 const gameTickToMilliseconds = (gameTick: string): number => Number(BigInt(gameTick) / 1_000n);
 
 function ViewerScreen(props: Props) {
-  const [probe] = createResource(() => props.gameTimestamp, loadPlaybackProbe);
-  let payloadReported = false;
+  const [descriptor, { refetch }] = createResource(() => props.gameTimestamp,
+    id => props.readReplay(token => loadReplayDescriptor(id, token)));
   let failureReported = false;
 
   createEffect(() => {
-    if (probe.error || payloadReported) return;
-    const loaded = probe();
-    if (!loaded) return;
-    payloadReported = true;
-    emitReplayBenchmarkEvent(
-      "playback_payload_ready",
-      {
-        event_count: loaded.events.length,
-        participant_count: loaded.participants.length,
-        duration_ms: loaded.game.duration_ms,
-      },
-      { required: true },
-    );
-  });
-
-  createEffect(() => {
-    const error = probe.error;
+    const error = descriptor.error;
     const observer = replayBenchmarkObserver();
     if (!error || !observer || failureReported) return;
     failureReported = true;
     const reason = error instanceof Error ? error.message : String(error);
-    observer.emit("scenario_failed", { phase: "playback_probe", reason }, { required: true });
-    void observer.complete("failed", reason, { phase: "playback_probe" });
+    observer.emit("scenario_failed", { phase: "replay_descriptor", reason }, { required: true });
+    void observer.complete("failed", reason, { phase: "replay_descriptor" });
   });
 
   return (
     <div class={styles.viewerScreen}>
       <Switch>
-        <Match when={probe.loading}>
+        <Match when={descriptor.loading}>
           <section class={styles.viewerState} aria-live="polite">
             Loading recording...
           </section>
         </Match>
-        <Match when={probe.error}>
+        <Match when={descriptor.error}>
           <section class={styles.viewerState} role="alert">
             <strong>Recording could not be opened.</strong>
-            <span>{String(probe.error)}</span>
+            <span>{libraryError(descriptor.error)}</span>
+            <button type="button" onClick={() => void refetch()}>Retry recording</button>
             <button type="button" onClick={props.onBack}>
               Return to games
             </button>
           </section>
         </Match>
-        <Match when={probe()}>
+        <Match when={descriptor()}>
           {(loaded) => (
             <PlaybackSurface
               {...props}
-              probe={loaded()}
+              descriptor={loaded()}
             />
           )}
         </Match>
@@ -175,8 +166,8 @@ function ViewerScreen(props: Props) {
   );
 }
 
-function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
-  const mediaTimeline = props.probe.media_timeline;
+function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
+  const mediaTimeline = props.descriptor.media_timeline;
   const replayEnd = mediaTimeline.video.replayEnd;
   const durationMs = replayTickToMilliseconds(replayEnd);
   let primaryVideo: HTMLVideoElement | undefined;
@@ -196,15 +187,53 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const benchmarkAbortController = new AbortController();
   const dispatchObservers = new Map<string, () => void>();
 
-  const events: MappedViewerEvent[] = props.probe.events
+  const [detailsStarted, setDetailsStarted] = createSignal(false);
+  const [detailsResource, { refetch: retryDetails }] = createResource(
+    () => detailsStarted() && props.gameTimestamp,
+    async id => assertReplayProbeMatches(props.descriptor,
+      await props.readReplay(token => loadPlaybackProbe(id, token))),
+  );
+  const detailsError = () => detailsResource.error;
+  const details = () => detailsError() ? undefined : detailsResource();
+  let detailsPaint: number | undefined;
+  let payloadReported = false;
+  let detailsFailureReported = false;
+  onMount(() => {
+    detailsPaint = requestAnimationFrame(() => {
+      detailsPaint = requestAnimationFrame(() => { if (!disposed) setDetailsStarted(true); });
+    });
+  });
+  onCleanup(() => { if (detailsPaint !== undefined) cancelAnimationFrame(detailsPaint); });
+  createEffect(() => {
+    if (detailsError()) {
+      const observer = replayBenchmarkObserver();
+      if (observer && !detailsFailureReported) {
+        detailsFailureReported = true;
+        const reason = libraryError(detailsError());
+        observer.emit("scenario_failed", { phase: "playback_probe", reason }, { required: true });
+        void observer.complete("failed", reason, { phase: "playback_probe" });
+      }
+      return;
+    }
+    const loaded = details();
+    if (!loaded || payloadReported) return;
+    payloadReported = true;
+    emitReplayBenchmarkEvent("playback_payload_ready", {
+      event_count: loaded.events.length, participant_count: loaded.participants.length,
+      duration_ms: loaded.game.duration_ms,
+    }, { required: true });
+    queueMicrotask(() => { if (!disposed) void runBenchmarkScenario(); });
+  });
+
+  const events = createMemo<MappedViewerEvent[]>(() => (details()?.events ?? [])
     .filter(hasReplayTick)
-    .sort((left, right) => left.replay_tick - right.replay_tick);
-  const playerTimeline: MappedPlayerTimelinePoint[] = props.probe.player_timeline
+    .sort((left, right) => left.replay_tick - right.replay_tick));
+  const playerTimeline = createMemo<MappedPlayerTimelinePoint[]>(() => (details()?.player_timeline ?? [])
     .filter(hasReplayTick)
-    .sort((left, right) => left.replay_tick - right.replay_tick);
-  const kdaTimeline: MappedKdaTimelinePoint[] = props.probe.kda_timeline
+    .sort((left, right) => left.replay_tick - right.replay_tick));
+  const kdaTimeline = createMemo<MappedKdaTimelinePoint[]>(() => (details()?.kda_timeline ?? [])
     .filter(hasReplayTick)
-    .sort((left, right) => left.replay_tick - right.replay_tick);
+    .sort((left, right) => left.replay_tick - right.replay_tick));
 
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
@@ -244,7 +273,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     const draft = props.initialClipDraft;
     if (
       !draft ||
-      draft.gameTimestamp !== props.probe.game.timestamp ||
+      draft.gameTimestamp !== props.game.timestamp ||
       draft.mediaId !== mediaTimeline.mediaId
     ) {
       return null;
@@ -270,25 +299,25 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const clipEndTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.endFrameExclusive);
   const progress = createMemo(() => clamp((replayPosition() / replayEnd) * 100, 0, 100));
   const videoSecond = createMemo(() => Math.floor(replayPosition() / REPLAY_TICKS_PER_SECOND));
-  const calibrationPoint = events[0] ?? playerTimeline[0];
-  const replayTickAtGameZero = calibrationPoint
-    ? BigInt(calibrationPoint.replay_tick) - BigInt(calibrationPoint.game_tick) * 48n
-    : null;
+  const replayTickAtGameZero = createMemo(() => {
+    const point = events()[0] ?? playerTimeline()[0];
+    return point ? BigInt(point.replay_tick) - BigInt(point.game_tick) * 48n : null;
+  });
   const currentGameTick = createMemo(() =>
-    replayTickAtGameZero === null
+    replayTickAtGameZero() === null
       ? "0"
-      : ((BigInt(presentedPosition() ?? 0) - replayTickAtGameZero) / 48n).toString(),
+      : ((BigInt(presentedPosition() ?? 0) - replayTickAtGameZero()!) / 48n).toString(),
   );
   const beforeGameStart = createMemo(
-    () => presentedPosition() === null || replayTickAtGameZero === null || BigInt(currentGameTick()) < 0n,
+    () => presentedPosition() === null || replayTickAtGameZero() === null || BigInt(currentGameTick()) < 0n,
   );
   const gameClockSecond = createMemo(() =>
     Math.max(0, Math.floor(gameTickToMilliseconds(currentGameTick()) / 1_000)),
   );
   const visibleEvents = createMemo(() => {
     const selected = selectedPlayers();
-    if (selected.length === 0) return events;
-    return events.filter((event) =>
+    if (selected.length === 0) return events();
+    return events().filter((event) =>
       selected.some((player) => eventInvolvesPlayer(event, player)),
     );
   });
@@ -312,10 +341,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     return index < 0 ? undefined : visibleEvents()[index];
   });
   const currentPlayer = createMemo<PlayerTimelinePoint | undefined>(() =>
-    presentedPosition() === null ? undefined : timelineValue(playerTimeline, presentedPosition()!),
+    presentedPosition() === null ? undefined : timelineValue(playerTimeline(), presentedPosition()!),
   );
   const currentKda = createMemo<KdaTimelinePoint | undefined>(() =>
-    presentedPosition() === null ? undefined : timelineValue(kdaTimeline, presentedPosition()!),
+    presentedPosition() === null ? undefined : timelineValue(kdaTimeline(), presentedPosition()!),
   );
   const lastDiagnostic = createMemo(() => {
     const events = diagnosticEvents();
@@ -393,10 +422,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   createEffect(() => { const range = clipRange(); if (controller) controller.setLoopRange(range); });
 
   const clipRangeForAnchor = (anchor: ReplayTick, anchorEvent?: ViewerEvent) =>
-    defaultClipRange(anchor, mediaTimeline, events, anchorEvent);
+    defaultClipRange(anchor, mediaTimeline, events(), anchorEvent);
 
   const activateClip = () => {
-    const kills = events.filter(
+    const kills = events().filter(
       (candidate) =>
         candidate.event_type === "ChampionKill" || candidate.event_type === "FirstBlood",
     );
@@ -430,7 +459,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     controller.pause();
     setIsFullscreen(false);
     props.onExportClip({
-      gameTimestamp: props.probe.game.timestamp,
+      gameTimestamp: props.game.timestamp,
       mediaId: range.mediaId,
       startFrame: range.startFrame,
       endFrameExclusive: range.endFrameExclusive,
@@ -634,7 +663,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   };
 
   const togglePlayback = async () => {
-    if (!props.probe.video_url || mediaState() !== "ready") return;
+    if (!props.descriptor.video_url || mediaState() !== "ready") return;
     if (!controller.snapshot().media.paused) {
       controller.pause();
       return;
@@ -893,10 +922,10 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               ? action.reason
               : "benchmark";
           let target = millisecondsToReplayTick(action.targetMs, replayEnd);
-          if (reason === "event-jump" && events.length > 0) {
-            const eventIndex = nearestIndexAt(events, target);
+          if (reason === "event-jump" && events().length > 0) {
+            const eventIndex = nearestIndexAt(events(), target);
             if (eventIndex >= 0) {
-              const selected = events[eventIndex];
+              const selected = events()[eventIndex];
               target = selected.replay_tick;
               if (clipRange()) setClipRange(clipRangeForAnchor(target, selected));
               emitReplayBenchmarkEvent(
@@ -1003,7 +1032,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
   const runBenchmarkScenario = async () => {
     const observer = replayBenchmarkObserver();
     if (
-      !observer ||
+      disposed || !observer ||
+      !details() || detailsError() ||
       benchmarkScenarioStarted ||
       mediaState() !== "ready" ||
       canPlayGeneration !== mediaGeneration ||
@@ -1123,8 +1153,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
       }
     });
     const openMedia = () => {
-      if (disposed || !props.probe.video_url) return;
-      void controller.open({ url: props.probe.video_url, mediaId: mediaTimeline.mediaId, timeline: mediaTimeline });
+      if (disposed || !props.descriptor.video_url) return;
+      void controller.open({ url: props.descriptor.video_url, mediaId: mediaTimeline.mediaId, timeline: mediaTimeline });
       const initial = clipRange();
       if (initial) { controller.setLoopRange(initial); void seekTo(clipStartTick(initial)); }
     };
@@ -1134,7 +1164,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     else openMedia();
     emitReplayBenchmarkEvent("viewer_mounted", { duration_ms: durationMs,
       frame_rate_numerator: mediaTimeline.video.frameRate.numerator.toString(),
-      frame_rate_denominator: mediaTimeline.video.frameRate.denominator.toString(), has_video_url: Boolean(props.probe.video_url) },
+      frame_rate_denominator: mediaTimeline.video.frameRate.denominator.toString(), has_video_url: Boolean(props.descriptor.video_url) },
       { generation: mediaGeneration, required: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -1188,7 +1218,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
     window.addEventListener("keydown", onKeyDown);
     metricsIntervalId = window.setInterval(() => void updateMetrics(), 1_000);
     const observer = replayBenchmarkObserver();
-    if (observer && props.probe.video_url) {
+    if (observer && props.descriptor.video_url) {
       benchmarkMediaReadyTimerId = window.setTimeout(() => {
         if (benchmarkScenarioStarted || benchmarkScenarioFinished || disposed) return;
         benchmarkScenarioFinished = true;
@@ -1226,15 +1256,15 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
 
       <header class={styles.gameHeader}>
         <div class={styles.gameIdentity}>
-          <p>LOCAL RECORDING / {props.probe.game.game_mode}</p>
-          <h1>{props.probe.game.champion}</h1>
-          <span>{props.probe.local_player_name ?? "LOCAL PLAYER"}</span>
+          <p>LOCAL RECORDING / {props.game.game_mode}</p>
+          <h1>{props.game.champion}</h1>
+          <span>{details()?.local_player_name ?? "LOCAL PLAYER"}</span>
         </div>
         <dl>
           <div>
             <dt>FINAL K / D / A</dt>
             <dd>
-              {props.probe.game.kills} / {props.probe.game.deaths} / {props.probe.game.assists}
+              {props.game.kills} / {props.game.deaths} / {props.game.assists}
             </dd>
           </div>
           <div>
@@ -1243,10 +1273,20 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
           </div>
           <div>
             <dt>CAPTURED</dt>
-            <dd>{formatDate(props.probe.game.recorded_at, true)}</dd>
+            <dd>{formatDate(props.game.recorded_at, true)}</dd>
           </div>
         </dl>
       </header>
+
+      <Show when={!details()}>
+        <section role="status" data-testid="replay-details-state">
+          {detailsError() ? "Replay details unavailable. Playback remains available." : "Loading replay details..."}
+          <Show when={detailsError()}>
+            <span>{libraryError(detailsError())}</span>
+            <button type="button" onClick={() => void retryDetails()}>Retry replay details</button>
+          </Show>
+        </section>
+      </Show>
 
       <div class={styles.replayView} aria-label="Replay" data-testid="replay-panel">
         <div class={styles.windowedGrid}>
@@ -1263,7 +1303,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               ref={(element) => { primaryVideo = element; }}
               playsinline
               preload="auto"
-              aria-label={`${props.probe.game.champion} replay video`}
+              aria-label={`${props.game.champion} replay video`}
               onClick={() => void togglePlayback()}
               onDblClick={(event) => {
                 event.preventDefault();
@@ -1272,7 +1312,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             />
             <Show
               when={
-                !props.probe.video_url ||
+                !props.descriptor.video_url ||
                 mediaState() === "recovering" ||
                 mediaState() === "degraded"
               }
@@ -1308,14 +1348,14 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             </Show>
             <Show when={!isFullscreen()}>
               <div class={styles.videoClock}>
-                <span>{beforeGameStart() ? "PRE-GAME" : "GAME TIME"}</span>
+                <span>{replayTickAtGameZero() === null ? "GAME TIME UNAVAILABLE" : beforeGameStart() ? "PRE-GAME" : "GAME TIME"}</span>
                 <strong>{beforeGameStart() ? "--:--" : formatDuration(gameClockSecond() * 1_000)}</strong>
               </div>
             </Show>
             <Show when={isFullscreen()}>
               <FullscreenOverlay
-                champion={props.probe.game.champion}
-                localPlayerName={props.probe.local_player_name}
+                champion={props.game.champion}
+                localPlayerName={(details()?.local_player_name ?? null)}
                 events={visibleEvents()}
                 mediaTimeline={mediaTimeline}
                 replayTick={replayPosition()}
@@ -1328,8 +1368,8 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
                 onRate={(rate) => controller?.setRate(rate)}
                 onMuted={(muted) => controller?.setMuted(muted)}
                 onVolume={(volume) => controller?.setVolume(volume)}
-                mediaAvailable={Boolean(props.probe.video_url) && mediaState() === "ready"}
-                participants={props.probe.participants}
+                mediaAvailable={Boolean(props.descriptor.video_url) && mediaState() === "ready"}
+                participants={(details()?.participants ?? [])}
                 selectedPlayers={selectedPlayers()}
                 clipRange={clipRange()}
                 onPlayerToggle={togglePlayerFilter}
@@ -1362,43 +1402,43 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               </div>
               <div class={styles.championBlock}>
                 <span class={styles.championMonogram} aria-hidden="true">
-                  {props.probe.game.champion.slice(0, 2).toUpperCase()}
+                  {props.game.champion.slice(0, 2).toUpperCase()}
                 </span>
                 <div>
                   <p>CHAMPION</p>
-                  <strong>{props.probe.game.champion}</strong>
+                  <strong>{props.game.champion}</strong>
                 </div>
               </div>
               <dl class={styles.liveStatGrid}>
                 <div class={styles.kdaStat}>
                   <dt>K / D / A</dt>
                   <dd data-testid="current-kda">
-                    {currentKda()?.kills ?? 0}
+                    {currentKda()?.kills ?? "—"}
                     <span>/</span>
-                    {currentKda()?.deaths ?? 0}
+                    {currentKda()?.deaths ?? "—"}
                     <span>/</span>
-                    {currentKda()?.assists ?? 0}
+                    {currentKda()?.assists ?? "—"}
                   </dd>
                 </div>
                 <div>
                   <dt>CS</dt>
-                  <dd data-testid="current-cs">{currentPlayer()?.cs ?? 0}</dd>
+                  <dd data-testid="current-cs">{currentPlayer()?.cs ?? "—"}</dd>
                 </div>
                 <div>
                   <dt>LEVEL</dt>
-                  <dd data-testid="current-level">{currentPlayer()?.level ?? 1}</dd>
+                  <dd data-testid="current-level">{currentPlayer()?.level ?? "—"}</dd>
                 </div>
                 <div>
                   <dt>GAME CLOCK</dt>
-                  <dd>{beforeGameStart() ? "PRE" : formatDuration(gameClockSecond() * 1_000)}</dd>
+                  <dd>{replayTickAtGameZero() === null ? "—" : beforeGameStart() ? "PRE" : formatDuration(gameClockSecond() * 1_000)}</dd>
                 </div>
               </dl>
             </section>
 
             <ChampionFilter
-              participants={props.probe.participants}
+              participants={(details()?.participants ?? [])}
               selectedPlayers={selectedPlayers()}
-              localPlayerName={props.probe.local_player_name}
+              localPlayerName={(details()?.local_player_name ?? null)}
               mode="panel"
               onToggle={togglePlayerFilter}
               onClear={() => setSelectedPlayers([])}
@@ -1476,7 +1516,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             <button
               class={styles.playButton}
               type="button"
-              disabled={!props.probe.video_url || mediaState() !== "ready"}
+              disabled={!props.descriptor.video_url || mediaState() !== "ready"}
               onClick={() => void togglePlayback()}
               aria-label={
                 isPlaying() ? "Pause replay" : clipRange() ? "Preview selected clip" : "Play replay"
@@ -1515,7 +1555,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             <div class={styles.nowPlaying}>
               <span>NOW</span>
               <strong>
-                {activeEvent()
+                {!details() ? (detailsError() ? "DETAILS UNAVAILABLE" : "LOADING DETAILS") : activeEvent()
                   ? eventTitle(activeEvent()!)
                   : selectedPlayers().length > 0
                     ? "NO MATCHING EVENT"
@@ -1587,7 +1627,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
               </div>
               <div>
                 <dt>INDEXED</dt>
-                <dd>{visibleEvents().length} / {events.length} EVENTS</dd>
+                <dd>{details() ? `${visibleEvents().length} / ${events().length} EVENTS` : "DETAILS UNAVAILABLE"}</dd>
               </div>
               <div>
                 <dt>MEDIA</dt>

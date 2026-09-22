@@ -40,6 +40,17 @@ publication. Settings validation and persistence finish before publication, with
 no filesystem I/O or await under these guards. Snapshot identity never authorizes
 media delivery; the existing opened-handle boundary remains authoritative.
 
+Descriptor and full-probe commands require the current selected snapshot token
+and game membership and share one additional replay-read slot in the same
+`LibraryCoordinator`. Excess requests fail Busy immediately. Strict bundle
+parsing, filesystem access and optional semantic projection execute in one owned
+blocking job; caller cancellation cannot release its permit before the job exits.
+Admission and completion capture the paired root and root epoch under the existing
+guard order. Refresh, mutation, root A/B/A or shutdown invalidates old results.
+No lock spans the read or await, no task-per-event fan-out is introduced, and no
+replay data cache is retained. A descriptor is not a media-delivery authorization:
+the existing protected route and checked opened handle still control served bytes.
+
 Optional `resolve_clip_durations` accepts one to eight distinct current-snapshot
 clip IDs. Its one global blocking batch/child slot rejects excess requests without
 queuing. A caller drop, invalidation or shutdown cancels remaining work; the worker

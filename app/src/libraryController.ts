@@ -24,6 +24,8 @@ type Dependencies = {
   durations: (token: string, ids: string[], retry: boolean) => Promise<ClipDurations>;
 };
 type DurationIntent = { origin: LibraryOrigin; epoch: number; ids: string[]; retry: boolean };
+export type ReplayRead = <T>(work: (token: string) => Promise<T>) => Promise<T>;
+type ReplayIntent = { run: () => Promise<void>; cancel: () => void };
 export type OperationResult<T> =
   | { admitted: true; value: T }
   | { admitted: false; error?: string };
@@ -59,6 +61,9 @@ export class LibraryController {
   private durationPending: DurationIntent | null = null;
   private durationEpoch = 0;
   private clipsVisible = false;
+  private replayActive = false;
+  private replayPending: ReplayIntent | null = null;
+  private replayRequest = 0;
 
   constructor(private readonly api: Dependencies) {}
   get value(): LibraryState { return this.state; }
@@ -88,6 +93,7 @@ export class LibraryController {
   setRoot(root: string) {
     if (this.closed || root === this.state.root) return;
     this.rootEpoch++;
+    this.supersedeReplay();
     this.navigation++;
     this.supersedeDurations();
     this.publish({ root, snapshot: null, selectedGame: null, activeClip: null, deletion: null,
@@ -97,6 +103,7 @@ export class LibraryController {
   refresh() {
     if (this.closed || this.state.root === null) return;
     this.scanPending = true;
+    this.supersedeReplay();
     this.supersedeDurations();
     this.publish({ request: this.state.request + 1, refreshing: true,
       // Keep the complete cards visible, but stop admitting tokenized actions
@@ -136,6 +143,7 @@ export class LibraryController {
   }
   navigate(clipsVisible: boolean) {
     this.navigation++;
+    this.supersedeReplay();
     this.clipsVisible = clipsVisible;
     this.supersedeDurations();
     this.publish({ activeClip: null, deletion: null });
@@ -156,6 +164,45 @@ export class LibraryController {
     if (origin && this.mayStart(origin) && exists) this.publish({ deletion: { kind, id, origin } });
   }
   clearDeletion() { this.publish({ deletion: null }); }
+
+  /** Shared across viewer/exporter lifetimes: one active read and one latest intent. */
+  readReplay<T>(origin: LibraryOrigin, game: string, work: (token: string) => Promise<T>): Promise<T> {
+    const currentSelection = () => this.mayPublish(origin) &&
+      this.state.snapshot?.games.some(item => item.timestamp === game);
+    if (!currentSelection()) return Promise.reject(new Error("Replay selection became stale. Return to games."));
+    const request = ++this.replayRequest;
+    this.replayPending?.cancel();
+    return new Promise<T>((resolve, reject) => {
+      const stale = () => reject(new Error("Replay selection became stale. Return to games."));
+      this.replayPending = {
+        cancel: stale,
+        run: async () => {
+          if (!currentSelection() || request !== this.replayRequest) { stale(); return; }
+          try {
+            const result = await work(origin.token);
+            if (currentSelection() && request === this.replayRequest) resolve(result);
+            else stale();
+          } catch (error) {
+            if (currentSelection() && request === this.replayRequest) reject(error);
+            else stale();
+          }
+        },
+      };
+      this.pumpReplay();
+    });
+  }
+  private pumpReplay() {
+    if (this.closed || this.replayActive || !this.replayPending) return;
+    const intent = this.replayPending;
+    this.replayPending = null;
+    this.replayActive = true;
+    void intent.run().finally(() => { this.replayActive = false; this.pumpReplay(); });
+  }
+  private supersedeReplay() {
+    this.replayRequest++;
+    this.replayPending?.cancel();
+    this.replayPending = null;
+  }
 
   async mutate<T>(origin: LibraryOrigin, id: string, work: (token: string) => Promise<T>,
     independentExport = false): Promise<OperationResult<T>> {
@@ -292,6 +339,7 @@ export class LibraryController {
   }
   dispose() {
     this.closed = true;
+    this.supersedeReplay();
     this.scanPending = false;
     this.durationPending = null;
     this.listeners.clear();

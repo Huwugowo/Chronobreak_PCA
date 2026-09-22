@@ -26,7 +26,7 @@ import type {
   ClipExportProgress,
   ClipExportResult,
 } from "../types";
-import type { LibraryOrigin } from "../libraryController";
+import type { LibraryOrigin, ReplayRead } from "../libraryController";
 import {
   browserSecondsForReplayTick,
   createClipRange,
@@ -42,6 +42,7 @@ type Props = {
   onBack: (draft: ClipDraft) => void;
   onExported: (origin: LibraryOrigin, completed: boolean) => void | Promise<void>;
   snapshotOrigin: LibraryOrigin;
+  readReplay: ReplayRead;
   onOpenClips: () => void;
   onOpenFolder: () => void;
 };
@@ -91,7 +92,8 @@ function ClipExporterScreen(props: Props) {
   let pendingPreviewSeekMs: number | undefined;
   let lastPreviewSeekAt = Number.NEGATIVE_INFINITY;
 
-  const [probe] = createResource(() => props.draft.gameTimestamp, loadPlaybackProbe);
+  const [probe] = createResource(() => props.draft.gameTimestamp,
+    id => props.readReplay(token => loadPlaybackProbe(id, token)));
   const [tracks] = createResource(loadBuiltInMusic);
   const [selectedPresets, setSelectedPresets] = createSignal<readonly ClipExportPreset[]>([
     "horizontal",

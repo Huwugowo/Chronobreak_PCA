@@ -53,6 +53,7 @@ it("retries the same imported file after preparation fails and releases the succ
       startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
     outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "C:\\output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }} onBack={() => {}} onExported={() => {}}
     onOpenClips={() => {}} onOpenFolder={() => {}}
+    readReplay={work => work("test-snapshot")}
   />, host);
   let audio: HTMLAudioElement | null = null;
   try {

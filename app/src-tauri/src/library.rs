@@ -156,6 +156,15 @@ pub struct PlaybackProbe {
     pub events: Vec<ViewerEvent>,
 }
 
+/// Selected recording media authority, independent of semantic projections.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct ReplayDescriptor {
+    pub snapshot_token: String,
+    pub game_timestamp: String,
+    pub video_url: String,
+    pub media_timeline: MediaTimelineV2,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MetadataDocument {
@@ -489,6 +498,30 @@ fn scan_games(
 
     games.sort_by(compare_games);
     Ok(games)
+}
+
+pub(crate) fn replay_descriptor(
+    output_directory: &Path,
+    origin: &str,
+    timestamp: &str,
+    snapshot_token: String,
+) -> Result<ReplayDescriptor> {
+    if !valid_game_id(timestamp) {
+        bail!("invalid game identifier");
+    }
+    let directory = output_directory.join("games").join(timestamp);
+    let (metadata, _) = read_recording_bundle(&directory)?;
+    let video =
+        fs::metadata(directory.join(VIDEO_MP4)).context("recording video is unavailable")?;
+    if !video.is_file() || video.len() == 0 {
+        bail!("recording video is unavailable");
+    }
+    Ok(ReplayDescriptor {
+        snapshot_token,
+        game_timestamp: timestamp.to_owned(),
+        video_url: format!("{origin}/games/{timestamp}/video.mp4"),
+        media_timeline: metadata.media_timeline,
+    })
 }
 
 pub fn playback_probe(
@@ -1330,6 +1363,8 @@ pub(crate) mod tests {
         .unwrap();
         game
     }
+
+    include!("replay_descriptor_tests.rs");
 
     fn core_snapshot(root: &Path) -> Result<LibrarySnapshot> {
         build_library_snapshot(

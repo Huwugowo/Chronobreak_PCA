@@ -245,7 +245,7 @@ function FullscreenOverlay(props: Props) {
             <strong>{props.champion}</strong>
           </div>
           <span class={styles.topKda}>
-            {props.currentKda?.kills ?? 0} / {props.currentKda?.deaths ?? 0} / {props.currentKda?.assists ?? 0}
+            {props.currentKda?.kills ?? "—"} / {props.currentKda?.deaths ?? "—"} / {props.currentKda?.assists ?? "—"}
           </span>
         </div>
         <div class={styles.topStatus}>

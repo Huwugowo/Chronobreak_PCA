@@ -15,6 +15,7 @@ import type {
   HevcProbeStatus,
   KdaTimelinePoint,
   PlaybackProbe,
+  ReplayDescriptor,
   PlayerTimelinePoint,
   ReplayParticipant,
   ServerMetrics,
@@ -598,7 +599,51 @@ export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
 };
 
 
-export const loadPlaybackProbe = async (gameTimestamp: string): Promise<PlaybackProbe> => {
+export const decodeReplayDescriptor = (value: unknown): ReplayDescriptor => {
+  const wire = exactRecord(value,
+    ["snapshot_token", "game_timestamp", "video_url", "media_timeline"], "replay_descriptor");
+  for (const key of ["snapshot_token", "game_timestamp", "video_url"] as const) {
+    if (typeof wire[key] !== "string" || wire[key].length === 0)
+      throw new Error(`replay_descriptor.${key} is invalid`);
+  }
+  if (!/^[0-9]+(?:-[0-9]+)?$/.test(wire.game_timestamp as string))
+    throw new Error("replay_descriptor.game_timestamp is invalid");
+  return {
+    snapshot_token: wire.snapshot_token as string,
+    game_timestamp: wire.game_timestamp as string,
+    video_url: wire.video_url as string,
+    media_timeline: validateMediaTimeline(wire.media_timeline),
+  };
+};
+
+export const loadReplayDescriptor = async (gameTimestamp: string, snapshotToken: string): Promise<ReplayDescriptor> => {
+  if (!isTauri()) {
+    if (!mockGames.some(game => game.timestamp === gameTimestamp)) throw new Error("Recording not found");
+    return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: "", media_timeline: MOCK_MEDIA_TIMELINE };
+  }
+  const descriptor = decodeReplayDescriptor(await invoke<unknown>("get_replay_descriptor", { gameTimestamp, snapshotToken }));
+  if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp)
+    throw new Error("Replay descriptor selection mismatch");
+  return descriptor;
+};
+
+export const assertReplayProbeMatches = (descriptor: ReplayDescriptor, probe: PlaybackProbe): PlaybackProbe => {
+  const identity = (timeline: ReplayDescriptor["media_timeline"]) => [
+    timeline.mediaId, timeline.audio.present, timeline.video.codec, timeline.video.profile,
+    timeline.video.timeBase.numerator.toString(), timeline.video.timeBase.denominator.toString(),
+    timeline.video.firstPts.toString(), timeline.video.frameRate.numerator.toString(),
+    timeline.video.frameRate.denominator.toString(), timeline.video.frameCount,
+    timeline.video.onePastLastPts.toString(), timeline.video.replayEnd,
+  ];
+  const expected = identity(descriptor.media_timeline);
+  const actual = identity(probe.media_timeline);
+  if (descriptor.game_timestamp !== probe.game.timestamp || descriptor.video_url !== probe.video_url ||
+    expected.some((value, index) => value !== actual[index]))
+    throw new Error("Recording changed while replay details were loading. Return to games.");
+  return probe;
+};
+
+export const loadPlaybackProbe = async (gameTimestamp: string, snapshotToken: string): Promise<PlaybackProbe> => {
   if (!isTauri()) {
     const game = mockGames.find((candidate) => candidate.timestamp === gameTimestamp);
     if (!game) throw new Error("Recording not found");
@@ -613,7 +658,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string): Promise<Playback
       events: mockEvents(),
     };
   }
-  return decodePlaybackProbe(await invoke<unknown>("get_playback_probe", { gameTimestamp }));
+  return decodePlaybackProbe(await invoke<unknown>("get_playback_probe", { gameTimestamp, snapshotToken }));
 };
 
 export const setGameSaved = async (gameTimestamp: string, saved: boolean, snapshotToken: string): Promise<void> => {

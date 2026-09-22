@@ -23,6 +23,65 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 describe("LibraryController", () => {
+  it("bounds replay reads across remounts to one active and one latest intent", async () => {
+    const active = deferred<string>();
+    const calls: string[] = [];
+    const controller = new LibraryController({ refresh: async () => snapshot("token", "1"),
+      durations: async () => ({ snapshot_token: "token", clips: [] }) });
+    controller.setRoot("A"); await flush();
+    const oldOrigin = controller.origin()!;
+    const first = controller.readReplay(oldOrigin, "1", token => {
+      calls.push(token); return active.promise;
+    });
+    const firstResult = expect(first).rejects.toThrow("stale");
+    controller.navigate(false);
+    const origin = controller.origin()!;
+    const pending = controller.readReplay(origin, "1", async () => { calls.push("superseded"); return "old"; });
+    const pendingResult = expect(pending).rejects.toThrow("stale");
+    const latest = controller.readReplay(origin, "1", async token => { calls.push(token); return "latest"; });
+    await pendingResult;
+    expect(calls).toEqual(["token"]);
+    active.resolve("late descriptor");
+    await firstResult;
+    await expect(latest).resolves.toBe("latest");
+    expect(calls).toEqual(["token", "token"]);
+    await expect(controller.readReplay(oldOrigin, "1", async () => "not entered")).rejects.toThrow("stale");
+    await expect(controller.readReplay(origin, "missing", async () => "not entered")).rejects.toThrow("stale");
+    controller.dispose();
+  });
+
+  it.each(["refresh", "root ABA", "navigation", "dispose"])(
+    "rejects both success and failure after replay invalidation by %s", async invalidation => {
+      for (const failure of [false, true]) {
+        const active = deferred<string>();
+        let token = 0;
+        const controller = new LibraryController({ refresh: async () => snapshot(`token-${++token}`, "1"),
+          durations: async () => ({ snapshot_token: "", clips: [] }) });
+        controller.setRoot("A"); await flush();
+        const read = controller.readReplay(controller.origin()!, "1", () => active.promise);
+        const result = expect(read).rejects.toThrow("stale");
+        if (invalidation === "refresh") controller.refresh();
+        else if (invalidation === "root ABA") { controller.setRoot("B"); controller.setRoot("A"); }
+        else if (invalidation === "navigation") controller.navigate(false);
+        else controller.dispose();
+        if (failure) active.reject(new Error("late failure"));
+        else active.resolve("late details");
+        await result;
+        controller.dispose();
+      }
+    });
+
+  it("releases the replay owner after failure and permits an explicit retry", async () => {
+    const controller = new LibraryController({ refresh: async () => snapshot("token", "1"),
+      durations: async () => ({ snapshot_token: "token", clips: [] }) });
+    controller.setRoot("A"); await flush();
+    await expect(controller.readReplay(controller.origin()!, "1", async () => {
+      throw new Error("read failed");
+    })).rejects.toThrow("read failed");
+    await expect(controller.readReplay(controller.origin()!, "1", async () => "retry")).resolves.toBe("retry");
+    controller.dispose();
+  });
+
   it("retains a complete same-root view while admitting only the newest refresh", async () => {
     const first = deferred<LibrarySnapshot>();
     const second = deferred<LibrarySnapshot>();

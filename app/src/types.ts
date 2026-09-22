@@ -173,6 +173,14 @@ export type ReplayParticipant = {
   relation: "ally" | "enemy" | "neutral";
 };
 
+/** Media-only authority for the current selected recording. */
+export type ReplayDescriptor = {
+  snapshot_token: string;
+  game_timestamp: string;
+  video_url: string;
+  media_timeline: import("./replayTime").MediaTimelineV2;
+};
+
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;

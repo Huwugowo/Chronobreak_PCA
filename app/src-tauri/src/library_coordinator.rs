@@ -95,6 +95,7 @@ pub(crate) struct LibraryCoordinator {
     scan_slot: Arc<Semaphore>,
     duration_slot: Arc<Semaphore>,
     mutation_slot: Arc<Semaphore>,
+    replay_slot: Arc<Semaphore>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -160,6 +161,7 @@ impl LibraryCoordinator {
             scan_slot: Arc::new(Semaphore::new(1)),
             duration_slot: Arc::new(Semaphore::new(1)),
             mutation_slot: Arc::new(Semaphore::new(1)),
+            replay_slot: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -295,6 +297,7 @@ impl LibraryCoordinator {
         self.scan_slot.close();
         self.duration_slot.close();
         self.mutation_slot.close();
+        self.replay_slot.close();
     }
 
     fn capture_selection(
@@ -342,6 +345,42 @@ impl LibraryCoordinator {
             root,
             root_epoch: publication.root_epoch,
             token: token.into(),
+        })
+    }
+
+    /// One owned blocking read shared by descriptor and full-probe requests.
+    pub(crate) async fn read_replay<T: Send + 'static>(
+        &self,
+        roots: &MediaRoots,
+        token: &str,
+        game: &str,
+        build: impl FnOnce(&std::path::Path) -> anyhow::Result<T> + Send + 'static,
+    ) -> Result<T, LibraryRefreshError> {
+        let permit =
+            Arc::clone(&self.replay_slot)
+                .try_acquire_owned()
+                .map_err(|error| match error {
+                    tokio::sync::TryAcquireError::Closed => LibraryRefreshError::Superseded,
+                    tokio::sync::TryAcquireError::NoPermits => LibraryRefreshError::Busy,
+                })?;
+        let capture = self.capture_selection(roots, token, Selection::Game(game))?;
+        let path = capture.path.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            build(&path)
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("replay read worker failed")));
+        let current = self.capture_selection(roots, token, Selection::Game(game))?;
+        if current.root_epoch != capture.root_epoch
+            || current.path != capture.path
+            || current.root.path() != capture.root.path()
+        {
+            return Err(LibraryRefreshError::Superseded);
+        }
+        result.map_err(|error| LibraryRefreshError::Failed {
+            message: error.to_string(),
+            retained_snapshot_token: None,
         })
     }
 
@@ -896,4 +935,5 @@ mod tests {
         assert!(current(&coordinator).is_none());
     }
     include!("library_coordinator_m2_tests.rs");
+    include!("library_coordinator_replay_tests.rs");
 }

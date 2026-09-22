@@ -170,9 +170,31 @@ fn list_clips(state: State<'_, AppState>) -> Result<Vec<ClipSummary>, String> {
     result.map_err(error_string)
 }
 
-#[tauri::command(async)]
-fn get_playback_probe(
+#[tauri::command]
+async fn get_replay_descriptor(
     state: State<'_, AppState>,
+    snapshot_token: String,
+    game_timestamp: String,
+) -> Result<library::ReplayDescriptor, String> {
+    let origin = state.playback_origin.clone();
+    let id = game_timestamp.clone();
+    let token = snapshot_token.clone();
+    state
+        .library
+        .read_replay(
+            &state.roots,
+            &snapshot_token,
+            &game_timestamp,
+            move |path| library::replay_descriptor(path, &origin, &id, token),
+        )
+        .await
+        .map_err(command_error)
+}
+
+#[tauri::command]
+async fn get_playback_probe(
+    state: State<'_, AppState>,
+    snapshot_token: String,
     game_timestamp: String,
 ) -> Result<PlaybackProbe, String> {
     #[cfg(feature = "replay-benchmark")]
@@ -186,11 +208,17 @@ fn get_playback_probe(
             )
             .map_err(error_string)?;
     }
-    let result = library::playback_probe(
-        &state.roots.output_directory(),
-        &state.playback_origin,
-        &game_timestamp,
-    );
+    let origin = state.playback_origin.clone();
+    let id = game_timestamp.clone();
+    let result = state
+        .library
+        .read_replay(
+            &state.roots,
+            &snapshot_token,
+            &game_timestamp,
+            move |path| library::playback_probe(path, &origin, &id),
+        )
+        .await;
     #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
@@ -207,7 +235,7 @@ fn get_playback_probe(
             )
             .map_err(error_string)?;
     }
-    result.map_err(error_string)
+    result.map_err(command_error)
 }
 
 #[tauri::command]
@@ -1178,6 +1206,7 @@ pub fn run() {
         list_games,
         list_clips,
         get_playback_probe,
+        get_replay_descriptor,
         save_game,
         delete_game,
         delete_clip,
@@ -1214,6 +1243,7 @@ pub fn run() {
         list_games,
         list_clips,
         get_playback_probe,
+        get_replay_descriptor,
         save_game,
         delete_game,
         delete_clip,

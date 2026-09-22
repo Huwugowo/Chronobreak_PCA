@@ -1,10 +1,27 @@
 # QB-REPLAY-010 execution checkpoint
 
 Feature: `QB-REPLAY-010`
-ExecPlan: `docs/exec-plans/qb-replay-010-library-snapshot-v2.md`
-Updated: 2026-09-21
+ExecPlan: `docs/exec-plans/qb-replay-010-minimal-replay-descriptor.md`
+Updated: 2026-09-22
 
 ## Current milestone
+
+Minimal replay descriptor M1-M3 complete, 2026-09-22. The separate immutable
+descriptor plan was finalized before implementation from checkpoint
+`3b14df20aa7ab4e567fd0372c1abc72c07bbe18e`. Backend ownership and descriptor-first
+viewer/navigation pass the required automated suites and normal/benchmark builds.
+User-operated native acceptance passed on the freshly rebuilt normal subject and
+dedicated strict-v2 A/B fixtures: real A/V, controls, held/failed/late details,
+retry, clip preservation, stale navigation and overlapping-ID roots. The final
+ungated Ahri check passed; the app and diagnostic listener are closed and all
+source hashes remain unchanged. No descriptor defect required a product change.
+
+QB-REPLAY-010 remains in progress for separately planned remaining replay scope
+and full-feature performance/manual gates. No descriptor latency/I/O improvement
+or full-feature completion is claimed. The closed V2/M4 library unit and its
+immutable plan remain unchanged; no campaign or disposition was reopened.
+
+### Closed library unit
 
 Attribution M1-M3 concluded with a material library cause. Reviewed v2 library
 implementation design is finalized; v2 M1, M2 and the requested frontend M3 are
@@ -20,6 +37,14 @@ descriptor, timeline and playback scope. The immutable attribution plan remains 
 `docs/exec-plans/qb-replay-010-measured-library-and-replay-opening.md`.
 
 ## Active unit
+
+None within the minimal replay descriptor unit. Implementation and required
+descriptor acceptance are complete. Detailed results are in Verification below;
+native observations and timestamped diagnostic/source-audit receipts are retained
+under `build/qb010-descriptor-manual-20260922/`. No semantic timeline or
+ReplayTimeline implementation is in progress.
+
+### Historical closed M4 execution
 
 M4 closed 2026-09-21. The user completed the disposable normal-build sequence:
 Games remained usable through an unavailable optional duration; save and clip
@@ -119,6 +144,29 @@ Canonical evidence is retained at
 `docs/performance/evidence/qb-replay-010-m4-20260917/`. M1/M2/M3 remain accepted.
 
 ## Completed
+
+- Descriptor M3: required automated verification and normal/benchmark builds
+  passed. User-operated native acceptance passed on the fresh normal subject:
+  held/failed/late optional details, explicit retry, A/V and ordinary controls,
+  unchanged clip drafts/media, stale navigation and overlapping-ID A/B/A roots.
+  The user confirmed the final ungated replay and app closure. Final audit shows
+  no added/deleted/changed fixture source files; subject and listener are gone.
+
+- Descriptor M1: four-field media projection from the unchanged strict-v2 bundle
+  reader; missing/nonregular/empty video rejection; selected-token command with
+  one owned blocking slot shared by the unchanged full probe. Worker ownership
+  survives waiter drop; refresh/mutation/root A/B/A/shutdown reject late results.
+- Descriptor M2: app-owned one-active/one-latest read scheduling, fresh viewer
+  navigation origins, descriptor-first persistent media surface, optional full
+  details after a paint opportunity, exact identity/time admission, local failure
+  and retry, reactive existing stats/events without resetting playback or clip
+  selection. Exporter and benchmark callers use the same tokenized read owner.
+  Historical full-payload markers retain their meaning, not descriptor readiness.
+- Deferred tests prove useful playback with held/failed details, unchanged primary
+  element/source/load count/rate/clip draft after late admission or retry, unmount
+  and descriptor retry, stale result rejection/coalescing, held assets/durations,
+  Settings/exporter returns and overlapping-ID root changes. No ReplayTimeline,
+  persistent ReplayIndex, payload split or delivery redesign was introduced.
 
 - M4 replacement: all 25 adjacent pairs completed, five processes per arm in
   every required stratum. Reference/candidate/source/runtime identities, exact
@@ -234,6 +282,12 @@ Canonical evidence is retained at
 
 ## In flight
 
+No descriptor implementation or acceptance work remains in flight. No test app,
+held diagnostic response or debugger listener remains active. The following dated
+V2 records are retained history, not current work.
+
+### Historical V2 verification context
+
 No benchmark, product-code change or M1-M3 implementation is in flight. M4 is
 closed: its engineering disposition and user-assisted acceptance are complete.
 The retained manual helper/procedure and evidence remain at
@@ -312,6 +366,15 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
 
 ## Remaining
 
+No descriptor milestone remains. Full-feature replay performance/manual gates
+remain separate and unrun for this unit; the deliberate descriptor/full-probe
+duplicate strict JSON reads are not a latency or I/O non-regression claim.
+Semantic timeline/ReplayTimeline requires its own separately finalized next-unit
+design and is not authorized by this descriptor plan. The historical V2 tasks
+below were completed by the recorded M4 closure; do not repeat them.
+
+### Historical V2 handoff list (superseded by closure)
+
 - V2 M4: collection and engineering disposition are sufficient and closed. Preserve
   both campaigns; no further launches or selective top-ups are authorized by this
   replacement disposition. The historical useful/read-I/O cost is the documented
@@ -331,6 +394,170 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
   initial absolute-root rendering was observed, not alias/root-switch acceptance.
 
 ## Verification
+
+- 2026-09-22 final native confirmation: user replied "all passed and closed" to
+  Ahri/details with no stale Lux, reopen Ahri with the hold removed, video/audio,
+  play/pause/seek/fullscreen, then close the test app. This completes the actual
+  user-operated descriptor procedure; DOM tests are not native playback proof.
+  Agent verified subject PID 23268 and WebView2 debugger PID 26316 absent and
+  zero listeners on the isolated debug port 52316. The original fetch had already
+  been restored with no pending response in
+  `diagnostic-2026-09-22T12-21-54-232Z-finish.json`.
+  `python build/qb010-descriptor-manual-20260922/prepare.py audit final-closed`
+  passed: both A/B roots unchanged, no added/deleted/changed source files.
+  Fixture setup, human observations and raw diagnostics/audits remain in the
+  ignored workspace; `manual-observations.md` records the instructed sequence
+  and explicit replies. No production code changed during native acceptance.
+- Final code review: root reviewed backend command/coordinator/projection changes,
+  new Rust tests, frontend changes/tests, architecture and the complete canonical
+  diff; a fresh read-only
+  frontend scout found no actionable descriptor defect. Complete required
+  automated results below remain applicable to the unchanged product tree.
+
+- Native failure/retry: user confirmed the injected error text and working
+  preview/pause, then confirmed multiple Retry clicks. Request 3 completed into
+  the one latest pending request 4; after both authentic responses were released,
+  pending/error cleared. Video 2, one loadstart/emptied, paused 71.929267 s, rate 1,
+  unmuted volume 1 and windowed state were preserved through admission. A focused
+  scout matched this to LibraryController's one-active/one-latest scheduler and
+  ViewerScreen's explicit retry button; no automatic loop or defect established.
+  The previous error stays visible during a held retry until success. Source
+  `audit-retry-complete.json` passes A/B unchanged. Final visual draft confirmation
+  after successful retry was subsequently confirmed by the user.
+
+- Stale native navigation: user confirmed the instructed Ahri pending -> Games
+  -> Garen selection sequence. Request 5 (old Ahri, game 1790100000) was verified
+  held with no primary video. Release admitted only the queued current Garen
+  descriptor and request 6/game 1790100001; video 4 mounted. Its own response
+  release retained same element/source, loadstart/emptied 1/1, paused time 0/rate 1,
+  and cleared details pending/error. User subsequently confirmed visible Garen
+  and no stale Ahri before proceeding to root changes.
+
+- Root A-to-B: user reported only Lux after switching via Settings, with Lux
+  waiting on Recording. Config confirmed B. Old Ahri request 7 remained held
+  and no primary video existed; release admitted B video 6 and request 8 using
+  the same game ID 1790100000. User subsequently confirmed Lux playback and return
+  to A. Config A, held B request 8 and absent primary video were verified before
+  release. Current A video 7/request 9 then appeared. Release 9 and gate removal
+  retained element/source, one loadstart/emptied, paused time 0/rate 1, with no
+  pending/error. `audit-root-return.json` passes both roots unchanged. Final visual
+  Ahri/no-Lux and ungated playback/close were subsequently confirmed as recorded
+  above, followed by the final closed-app source audit.
+
+- Assisted first native sequence: user confirmed moving picture, audible sound,
+  play/pause/resume, rapid seeks, fullscreen controls/in-out and adjustment of
+  both clip handles to a valid draft while details request 1 was verified held.
+  Before/after release diagnostics retain identical element/source, loadstart 1,
+  emptied 1, play/pause 61/61, seeked 105, paused 130.106781 s, rate 4, unmuted
+  volume 1, windowed. Details became available without error. Frame counters
+  were 11,307 total/3,276 dropped after the user's rapid seeking/rate/clip exercises;
+  this is not a controlled performance or rate-capability claim. Source audit
+  `audit-first-release.json` passes A/B unchanged. User subsequently confirmed
+  visible details and unchanged clip draft. User evidence: workspace `manual-observations.md`;
+  time-stamped baseline/release/status JSON retains supplementary diagnostics.
+
+- 2026-09-22 assisted setup: `npm run desktop:build --prefix app` passed with
+  TypeScript/Vite and optimized normal Tauri build; existing warnings non-fatal.
+  Frozen normal subject SHA-256:
+  `32fd21f9b41db6f6c4c4197699923f3c574d167b0debffee4ae79470ea0bff43`.
+  `preparation.json` records the copied subject, packaged r6 runtime and new A/B
+  fixtures. All three new videos passed strict exact-60-FPS validation and full
+  single-thread decode (exit 0, empty stderr). Prelaunch audit
+  `audit-prelaunch-resume.json` confirms all A/B source files unchanged. The generated
+  non-personal input was read-only and unchanged; no M4 campaign or fixture was mutated.
+- Setup-only failures were preserved: omitted builder keyword corrected before
+  generation; v1 audio-remux rejected for nonexact rate/240.021354-second video.
+  New v2 exact-copy recipe preserves the validated grid and source AAC. No parser
+  tolerance or benchmark tooling changed. Audible output was subsequently
+  confirmed by the user in the held-details native sequence above.
+- Ignored `session.mjs` uses a child-only loopback debugger setting and isolated
+  config/profile; no CSP/Origin/security bypass or alternate UI driver. The first
+  unlaunched invoke-wrapper assumption was invalid because Tauri freezes invoke;
+  corrected to the exact optional command's fetch response only. `node --check`
+  and `gate.test.mjs` pass against installed Tauri 2.11.5 core/transport scripts,
+  including authentic held response, failure without fallback/reissue, retry,
+  callback cleanup and restoration. Native transport capture and restoration were
+  subsequently verified in the held-response sequence above.
+  The diagnostic holds frontend delivery, not backend worker ownership; native
+  visuals/audio require explicit user observations. No payload, capability URL,
+  arbitrary DOM text or input values are retained in diagnostic receipts.
+
+- 2026-09-21 native-acceptance resume: `npm run desktop:build --prefix app`
+  passed, including TypeScript/Vite and the optimized normal non-benchmark Tauri
+  executable. No product code changed. Subject:
+  `app/src-tauri/target/release/league-replay-app.exe`, 16,268,800 bytes,
+  SHA-256 `a495d9c3cae12fbab629dd6d549035f3f0ea5bc1f8a4da9a76f926d2b4b7c58c`;
+  last-write UTC `2026-09-21T13:58:10Z`. This supersedes the earlier handoff's
+  benchmark-enabled last-build note below. Existing Vite/linker warnings remain
+  non-fatal. No subject was launched.
+- Supported computer-use preflight: imported `@oai/sky` through `node_repl` as
+  instructed, then `sky.list_windows()` returned `Computer Use native pipe is
+  unavailable: failed to connect native pipe: Le fichier spécifié est introuvable.
+  (os error 2)`. Reset the JavaScript session, reinitialized and retried discovery;
+  the identical error persisted. **Environment-blocked**, not a product failure.
+  A subsequent resume repeated discovery and reset/retry with the same error;
+  the normal executable still matches the recorded SHA-256. No app was launched.
+  No alternate UI driver, browser/DOM substitute, real recording, old M4 fixture
+  or acceptance artifact was used. At that preflight, A/V, controls, held/failed/
+  late details, retry, clip state, stale navigation/root behavior and source-hash
+  acceptance were unperformed; no commit was made. The 2026-09-22 user-operated
+  sequence above subsequently completed those descriptor checks.
+- A bounded read-only scout found no existing normal-app full-probe hold/fail/
+  release helper. Existing M4 ffprobe-duration holds do not hold replay details.
+  Establish a descriptor-specific controlled fixture setup when native access is
+  restored; this finding does not authorize production hooks or a redesign.
+
+- 2026-09-22 final canonical validator and `git diff --check` passed after the
+  descriptor closure edits: 60 roadmap items and eight linked plan/checkpoint
+  pairs. The V2 plan, benchmark tooling, campaigns,
+  resource/cancellation dispositions and manual-acceptance artifacts are unchanged.
+- 2026-09-21 descriptor final automated baseline: `cargo test --manifest-path
+  app/src-tauri/Cargo.toml` passed 90 tests (one existing opt-in packaged-probe
+  test ignored); app `cargo fmt -- --check` and `cargo clippy --all-targets --
+  -D warnings` passed. The two newly included Rust test files were also formatted
+  directly with rustfmt. No recorder/media-runtime checks or M4 campaign ran.
+- `npm run test --prefix app` passed 123 tests in 17 files; `npm run check
+  --prefix app` passed. The initial new deferred clip test used a one-second draft,
+  correctly rejected by the existing five-second minimum; corrected to a valid
+  ten-second fixture and rerun. No product minimum or validation was weakened.
+- `npm run build --prefix app` passed. Both `npm run desktop:build --prefix app`
+  and `npm run desktop:build:benchmark --prefix app` passed with fresh TypeScript/
+  Vite builds after the final product-code edits. Their warning about the existing
+  static/dynamic API import and Windows linker informational output did not fail
+  builds. At that handoff the shared executable was benchmark-enabled; the fresh
+  normal rebuild and native launch recorded above supersede that handoff state.
+- `python -m unittest discover -s tools/replay_benchmark/tests -v` ran 95 tests
+  successfully with one existing opt-in skip (94 passed). Detailed combined
+  frontend/build/Python log: `.codex/logs/command-20260921-145022.log`.
+- At the 2026-09-21 automated handoff, native descriptor acceptance was **not run**;
+  the subsequent 2026-09-22 user-operated results above supersede that blocker.
+  Automated DOM and ownership tests do not prove native decode, audible A/V, presented-frame or
+  source-hash acceptance. Closed M4 acceptance is neither repeated nor reused as
+  proof of these new viewer changes. No new benchmark/performance pass is claimed.
+
+- Descriptor handoff validator passed: 60 roadmap items/eight plan-checkpoint
+  pairs; whitespace passed. The initial apply_patch engine failed in sandbox;
+  approved native apply_patch now works with Windows argument quoting corrected.
+- M1: two Rust descriptor tests and two owned-read tests passed. Fixtures cover
+  empty/older v2, strict malformed/v1 rejection, absent media, off-thread progress,
+  dropped waiter/Busy ownership, failures, refresh/mutation/A-B-A/shutdown rejection.
+  Initial compilation found only a missing Path qualification in the new test;
+  corrected and rerun successfully. Frontend API tests 9/9 passed.
+- M2 initial TypeScript check passed after threading required read-owner props
+  into existing viewer/exporter test harnesses. Optional resource errors are read
+  through a guarded accessor so failed details cannot throw through video memos.
+
+- Descriptor bootstrap: PRODUCT, WORKFLOW, complete feature, complete checkpoint,
+  V2 immutable plan, PLANS, VERIFICATION, forward-engineering/Rust guidance and
+  applicable replay/library/security architecture read. HEAD matches 3b14df2;
+  initial worktree clean. Product verification not run for descriptor planning.
+- Root plan challenge resolved shared read-slot ownership, exact descriptor
+  projection, strict bundle compatibility, all three full-probe callers,
+  Settings/exporter/benchmark navigation origins and benchmark readiness ordering.
+  Delegated scouts never initialized (pending_init); no independent review is
+  claimed. Historical opening_attribution assumes payload-before-mount and is not
+  reused as a descriptor measurement. Duplicate strict JSON reads are an explicit
+  tradeoff, with no replay latency/I/O non-regression claim.
 
 - 2026-09-17 replacement: all 50 strict bundles valid, all ten result matrices pass;
   required event/request loss zero, all source hashes unchanged. Same-clock
@@ -592,19 +819,25 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
 
 ## Blockers
 
-No unresolved M3 or M4 engineering blocker remains. M4's primary comparison,
-resource/reliability dispositions and user-assisted acceptance are complete.
-The minimal replay descriptor, staged semantic timeline and playback
-blocking-work disposition separately prevent full-feature completion. The first
-campaign's N/L coverage gaps remain explicit and are not repaired by pooling.
+No unresolved minimal-descriptor acceptance or engineering blocker remains.
+The missing Windows native pipe persisted after reset/reinitialization; the
+user-operated native sequence supplied the actual UI/audio observations instead.
+The agent's scoped response diagnostic supplied supplementary admission/media
+and source-hash evidence, not a substitute for those native observations. The
+shell sandbox helper was unavailable; approved shell execution and the same
+apply_patch engine worked. Planning scouts did not initialize; root reviewed the
+plan directly. Final native-resume/read-only frontend review completed.
+
+The full feature stays in progress because its separate replay scope and complete
+performance/manual gates are not satisfied here. V2/M4 has no remaining blocker;
+its campaigns, dispositions and acceptance are closed and unchanged. The first
+campaign's coverage gaps remain explicit and are not repaired by pooling.
 
 ## Next action
 
-Do not launch another benchmark or resume the first runner. Preserve both
-campaigns, the replacement's durable receipts and the completed engineering
-disposition. Run the canonical validator, focused helper tests and normal
-whitespace checks, then checkpoint M1-M4. The recommended next unit is the
-minimal replay descriptor: it is the next unsatisfied useful-first dependency.
-Do not begin it in this M4 closure session. The descriptor/staged timeline and
-full-feature work remain separate; no automatic payload split or full-feature
-completion follows this library result.
+Stop at the completed descriptor boundary after the requested coherent commit.
+No replay implementation is active. On a subsequent request, follow planned-work
+bootstrap and create/finalize a separate plan for the next semantic timeline /
+ReplayTimeline unit before implementation. Preserve the completed descriptor and
+V2/M4 evidence; do not relaunch a campaign, reopen closed dispositions, or infer
+full-feature performance acceptance from descriptor independence.

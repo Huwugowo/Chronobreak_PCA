@@ -48,6 +48,7 @@ import type {
   ClipSummary,
   DdragonStatus,
   GameSummary,
+  ClipDraft,
   HevcProbeStatus,
   LibraryTab,
   NavigationState,
@@ -89,6 +90,12 @@ function App() {
     durations: (token, ids, retry) => import("./api").then(api => api.resolveClipDurations(token, ids, retry)),
   });
   const [libraryState, setLibraryState] = createSignal(controller.value);
+  const [viewerSelection, setViewerSelection] = createSignal<{ game: GameSummary; origin: LibraryOrigin }>();
+  const currentViewer = createMemo(() => {
+    libraryState();
+    const selected = viewerSelection();
+    return selected && controller.mayPublish(selected.origin) ? selected : null;
+  });
   const games = createMemo(() => libraryState().snapshot?.games);
   const clips = createMemo(() => libraryState().snapshot?.clips);
   const usage = createMemo(() => libraryState().snapshot?.usage);
@@ -132,6 +139,21 @@ function App() {
 
   const reloadLibrary = () => controller.refresh();
 
+  const openViewer = (gameTimestamp: string, clipDraft?: ClipDraft) => {
+    controller.navigate(false);
+    controller.selectGame(gameTimestamp);
+    const origin = controller.origin();
+    const game = controller.value.snapshot?.games.find(item => item.timestamp === gameTimestamp);
+    if (!origin || !game || !controller.mayPublish(origin)) {
+      setViewerSelection(undefined);
+      setNavigation({ screen: "library", tab: "games" });
+      showError("Refresh the library before opening a recording.");
+      return;
+    }
+    setViewerSelection({ game, origin });
+    setNavigation({ screen: "viewer", gameTimestamp, clipDraft });
+  };
+
   const openTab = (tab: LibraryTab) => {
     const returningToLibrary = navigation().screen !== "library";
     controller.navigate(tab === "clips");
@@ -157,9 +179,17 @@ function App() {
       controller.navigate(destination.tab === "clips");
       setNavigation(destination);
       controller.refresh();
+    } else if (destination.screen === "viewer") {
+      const selected = viewerSelection();
+      if (selected && controller.mayStart(selected.origin)) openViewer(destination.gameTimestamp, destination.clipDraft);
+      else openTab("games");
     } else {
+      if (!destination.snapshotOrigin || !controller.mayStart(destination.snapshotOrigin)) {
+        openTab("games");
+        return;
+      }
       controller.navigate(false);
-      setNavigation(destination);
+      setNavigation({ ...destination, snapshotOrigin: controller.origin()! });
     }
   };
 
@@ -280,7 +310,8 @@ function App() {
       if (!exportOrigin) throw new Error("export fixture requires a current library snapshot");
       const game = games()?.find((candidate) => candidate.timestamp === fixture.game_timestamp);
       if (!game) throw new Error("export fixture is absent from the benchmark library");
-      const probe = await loadPlaybackProbe(fixture.game_timestamp);
+      const probe = await controller.readReplay(exportOrigin, fixture.game_timestamp,
+        token => loadPlaybackProbe(fixture.game_timestamp, token));
       const timeline = probe.media_timeline;
       const rawStart = typeof scenario.clip_start_ms === "number" ? scenario.clip_start_ms : 10_000;
       const rawEnd =
@@ -466,7 +497,7 @@ function App() {
       { fixture_alias: fixture.alias },
       { required: true },
     );
-    setNavigation({ screen: "viewer", gameTimestamp: fixture.game_timestamp });
+    openViewer(fixture.game_timestamp);
   };
 
   createEffect(() => {
@@ -710,7 +741,7 @@ function App() {
       setNavigation({ screen: "library", tab: "games" });
       benchmarkReopenTimer = window.setTimeout(() => {
         benchmarkReopenTimer = undefined;
-        setNavigation({ screen: "viewer", gameTimestamp: nextFixture.game_timestamp });
+        openViewer(nextFixture.game_timestamp);
       }, 100);
     };
     window.addEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
@@ -778,7 +809,7 @@ function App() {
               snapshotOrigin={controller.origin()}
               ddragon={ddragon() ?? emptyDdragon}
               busyId={busyId()}
-              onOpenGame={(gameTimestamp) => { controller.navigate(false); setNavigation({ screen: "viewer", gameTimestamp }); }}
+              onOpenGame={openViewer}
               onToggleSaved={(game, origin) => void toggleSaved(game, origin)}
               onDeleteGame={(game, origin) => {
                 if (origin) { controller.selectDeletion("game", game.timestamp); setDeleteTarget({ kind: "game", game, origin }); }
@@ -791,7 +822,12 @@ function App() {
             />
           </Match>
           <Match when={navigation().screen === "viewer"}>
+            <Show when={currentViewer()} keyed fallback={
+              <section role="status">The library changed. <button type="button" onClick={() => openTab("games")}>Return to games</button></section>
+            }>{selected => (
             <ViewerScreen
+              game={selected.game}
+              readReplay={work => controller.readReplay(selected.origin, selected.game.timestamp, work)}
               gameTimestamp={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).gameTimestamp
               }
@@ -800,10 +836,12 @@ function App() {
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).clipDraft
               }
               onExportClip={(draft) => {
+                controller.navigate(false);
                 const snapshotOrigin = controller.origin();
-                if (snapshotOrigin) { controller.navigate(false); setNavigation({ screen: "clip-export", draft, snapshotOrigin }); }
+                if (snapshotOrigin && controller.mayPublish(snapshotOrigin)) setNavigation({ screen: "clip-export", draft, snapshotOrigin });
               }}
             />
+            )}</Show>
           </Match>
           <Match when={navigation().screen === "clip-export"}>
             <ClipExporterScreen
@@ -813,13 +851,12 @@ function App() {
               outputPath={settings()?.output_path ?? "~/LeagueReplays"}
               snapshotToken={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin?.token ?? ""}
               snapshotOrigin={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin!}
-              onBack={(draft) =>
-                setNavigation({
-                  screen: "viewer",
-                  gameTimestamp: draft.gameTimestamp,
-                  clipDraft: draft,
-                })
-              }
+              readReplay={work => {
+                const current = navigation() as Extract<NavigationState, { screen: "clip-export" }>;
+                if (!current.snapshotOrigin) return Promise.reject(new Error("Replay selection is unavailable"));
+                return controller.readReplay(current.snapshotOrigin, current.draft.gameTimestamp, work);
+              }}
+              onBack={(draft) => openViewer(draft.gameTimestamp, draft)}
               onExported={async (exportOrigin, completed) => {
                 controller.invalidateRoot(exportOrigin.root);
                 if (completed) showNotice("Clip exported.");
