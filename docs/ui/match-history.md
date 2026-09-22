@@ -1,7 +1,7 @@
 # Chronobreak Match History UI Spec
 
 **Status:** Canonical screen contract
-**Revision:** 3
+**Revision:** 5
 **Depends on:** `docs/ui/chronobreak-ui-foundations.md`
 
 ## 1. Purpose
@@ -32,62 +32,91 @@ The screen's job is to let the user:
 
 ## 3. Structural direction
 
-The League client match-history list is the **structural baseline, not the visual skin**.
+Mainstream League match histories such as OP.GG and DeepLoL are the **information-architecture baseline, not the visual skin**.
 
-Use the same broad information architecture: dense horizontal match rows, familiar grouping of champion/loadout/items/KDA/match metadata, and fast vertical scanning. Chronobreak's typography, surfaces, spacing, controls, color semantics, and chrome remain its own.
+Chronobreak uses a vertically stacked list of self-contained **match items**, not table rows. Each item groups related information semantically instead of assigning every value its own global column.
 
-Do not add a large hero/intro panel.
+Normal desktop reading order:
 
-The Match History toolbar includes quiet recording/saved counters as compact summary metadata, not as dashboard cards or hero metrics.
+**match context -> player summary/build -> both team rosters -> recording metadata -> actions**
 
-The toolbar supports free-text search, Champion filtering, Mode filtering, and a Favorites-only toggle. Champion and Mode filters must expose an explicit neutral/reset option (`All champions` / `All modes`); Favorites toggles off by activating it again. Do not add speculative filters or sorting controls without corresponding product behavior.
+Each match is an independent object with its own surface, border, hover state, spacing, and outcome cue.
 
-## 4. Match row contract
+Do not treat Match History as a table:
 
-Default row height: `72px`.
+- no shared borders between adjacent matches;
+- no one-grid-track-per-field layout;
+- no zero-gap row stack;
+- no table header;
+- no requirement that unrelated scalar values align to the same x-coordinate;
+- no visual dependence between adjacent matches.
 
-Default content order:
+The toolbar remains compact and supports search, Champion filtering, Mode filtering, Favorites-only filtering, and quiet recording/saved counters.
 
-1. champion portrait
-2. result when authoritative + current authoritative mode label
-3. summoner spells + keystone
-4. final items
-5. K / D / A + KDA ratio
-6. duration
-7. recording size
-8. date/time
-9. independent utility controls: Star when save is eligible; More when at least one additional action is available
+## 4. Match item contract
+
+Default complete match-item minimum height: `109px`.
+
+Default semantic grouping:
+
+1. match context: authoritative mode/queue identity, relative age, outcome/health, duration;
+2. champion portrait + summoner spells + keystone;
+3. K / D / A + KDA ratio + final build;
+4. both five-player rosters;
+5. Chronobreak recording metadata such as recording size;
+6. independent Star / More actions.
 
 There is **no visible Open button**.
 
-A final-level badge is not part of the current row contract. Adding one later is a new screen decision and requires authoritative data.
+The primary content area is one large replay-open target. Star and More are separate sibling controls and must not trigger replay opening.
 
-### 4.1 Dimensions
+A final-level badge is not part of the current item contract.
 
-```css
-:root {
-  --match-row-height: 72px;
-  --match-row-padding-x: 12px;
-  --match-row-gap: 12px;
+### 4.1 Dimensions and spacing
 
-  --champion-icon-size: 44px;
-  --spell-icon-size: 20px;
-  --rune-icon-size: 20px;
-  --item-icon-size: 24px;
-}
-```
+Baseline:
 
-Do not reduce row height below roughly `64px` without validating actual Windows readability and target sizes.
+- match item minimum height: `109px`
+- gap between match items: `8px`
+- vertical content padding: `4px`
+- card radius: `4px`
+- champion portrait: `52px`
+- summoner spells: `22px`
+- keystone: `22px`
+- item icons: `24px`
+- leading outcome cue: `5px`
+- match-context width: approximately `108px`
+- actions remain reserved at the right edge without forming a separate card column
 
-Use explicit column alignment. Compress gaps before shrinking typography.
+The approximately `109px` height is intentional. It is driven largely by the five-player roster stacks and follows the density of mainstream League match histories rather than adding decorative vertical whitespace.
+
+Use larger spacing **between semantic groups** and smaller spacing **within groups**.
+
+Incomplete/degraded matches preserve the same overall geometry where practical.
+
+### 4.2 Team rosters
+
+Complete match items display both participant teams.
+
+Each roster:
+
+- displays up to five participants supplied by the replay summary;
+- uses `18px` champion icons;
+- uses five compact rows with approximately `2px` inter-row gaps.
+
+The two rosters form one compact cluster rather than separate table columns.
+
+The roster cluster may occupy up to roughly `340px` and should remain adjacent to the player/build information instead of being pushed to an arbitrary far-right edge.
+
+Do not infer local-player or local-team identity when the data contract does not establish it reliably.
 
 ## 5. Champion identity
 
-- Champion portrait: `44×44px`.
+- Champion portrait: `52×52px`.
 - Circular portrait treatment is allowed.
-- **Do not visibly display the champion name in the normal Match History row.**
+- **Do not visibly display the champion name in the normal Match History item.**
 - Keep champion identity available programmatically for accessible labeling.
-- Missing champion art must preserve row geometry and use a quiet fallback rather than broken-image UI.
+- Missing champion art must preserve item geometry and use a quiet fallback rather than broken-image UI.
 
 Adding visible champion names later is a product/usability decision, not an optical tweak.
 
@@ -143,11 +172,16 @@ until the data contract actually distinguishes those concepts.
 
 Preserve League-provided artwork/color.
 
-- spells: `20×20px`
-- keystone: `20×20px`
-- items: `24×24px`
-- fixed item slots preserve row alignment
+- spells: `22x22px`
+- keystone: `22x22px`
+- items: `24x24px`
+- seven fixed item slots preserve build geometry
+- item gaps: `2px`
 - missing assets keep their slots and remain visually quiet
+
+The full seven-slot item strip is `180px` wide:
+
+`7 * 24px + 6 * 2px = 180px`
 
 Do not add decorative frames unless they solve a real recognition/alignment need.
 
@@ -157,18 +191,22 @@ Use the global Spiegel/data typography role.
 
 - Do not use monospace by default.
 - Keep K/D/A and ratio visually grouped.
-- Duration and recording size align consistently across rows.
-- Recording size remains visible as a Chronobreak-specific field.
-- Date/time should be compact and locale-appropriate.
+- Center the K/D/A block over the `180px` item-strip footprint beneath it, not over arbitrary spare parent width.
+- Duration stays grouped with match context.
+- Recording size remains secondary and right-aligned.
 - Missing scalar values may use `—`.
 
 Deterministic formatting or arithmetic derived directly from authoritative fields is allowed. For example, formatting duration/size/date or calculating the defined KDA ratio is not the same as inventing a missing semantic fact.
+
+Duration uses compact match-history formatting such as `37m 52s`.
+
+Relative match age is shown in English, independent of the Windows/browser locale, for example `2 months ago`. The exact recorded timestamp may remain available as secondary detail such as a tooltip.
 
 Incomplete recordings may omit derived KDA values rather than presenting misleading precision.
 
 ## 10. Open interaction
 
-Opening a replay should require one ordinary left click anywhere in the row's **primary content area**.
+Opening a replay should require one ordinary left click anywhere in the item's **primary content area**.
 
 The primary content area includes:
 - champion
@@ -178,27 +216,27 @@ The primary content area includes:
 - KDA
 - duration
 - size
-- date/time
+- relative match age
 - otherwise unused primary-content space
 
 Independent controls are excluded:
 - Star when present
 - More when present
-- any future explicit row utility
+- any future explicit item utility
 
 Those controls must not also trigger replay opening.
 
 Implementation should use:
-- one large focusable replay-open target for ordinary row content;
+- one large focusable replay-open target for ordinary item content;
 - separate sibling controls for Star/More.
 
 Do not nest interactive controls inside another button.
 
 If the replay video is unavailable:
 - the open action is disabled/non-activatable;
-- the row's metadata remains readable;
+- the item's metadata remains readable;
 - unavailable semantics remain exposed accessibly;
-- the whole row should not be visually washed out as if all information were disabled.
+- the whole item should not be visually washed out as if all information were disabled.
 
 ## 11. Saved state
 
@@ -209,15 +247,24 @@ Saved state is represented by **Star only**.
 - saved star may use Chronobreak yellow
 
 Do not add:
-- saved row tint
+
+- saved item tint
 - saved badge
 - saved label
 - saved border
-- other row-layout changes
+- other item-layout changes
 
 The outline/fill shape change ensures saved state does not depend on color alone.
 
 The Star appears only when the recording is eligible for the existing save behavior. The UI must not broaden save eligibility on its own.
+
+Save/unsave interaction is optimistic:
+
+- update the Star immediately in local frontend state;
+- persist the new value asynchronously;
+- do not refetch the entire game list merely to rediscover the value just written;
+- roll back the local Star state if persistence fails;
+- prevent overlapping save mutations for the same recording.
 
 ## 12. More / destructive actions
 
@@ -228,31 +275,56 @@ Destructive operations such as Delete live behind the More action / confirmation
 - More itself is not red.
 - Actual Delete action is red.
 - Confirmation remains explicit.
-- Do not tint the row red merely because delete exists.
+- Do not tint the item red merely because delete exists.
 
-## 13. Row states
+## 13. Match item states
 
 ### Rest
+
 - quiet surface
-- thin structural separator
+- thin `1px` structural card border
+- subtle `4px` card radius
 
 ### Hover
-- neutral `--surface-hover`
+
+- quiet neutral surface change
 - no translation/scale
 - no glow
-- no semantic-color wash
 
 ### Keyboard focus
-- compact controls use the global focus treatment; the full-width replay-open target may use the same neutral surface treatment as hover instead of a row-spanning outline
+
+- compact controls use the global focus treatment
+- the replay-open target may use the same restrained surface treatment as hover instead of an item-spanning outline
 
 ### Saved
+
 - filled yellow Star only
 
 ### Outcome
-- result label color plus a slim 3 px leading outcome cue; do not tint the full row
+
+Outcome treatment combines:
+
+- the explicit result word when authoritative;
+- a restrained full-card outcome tint;
+- a `5px` leading semantic strip.
+
+The current win/loss surface tint is intentionally subtle, approximately a `7%` mix of the semantic accent into the normal panel surface.
+
+The leading strip is a separate overlay layer. It visually covers the normal `1px` card border rather than terminating against it.
+
+Its geometry is:
+
+- full visual item height;
+- straight inner edge;
+- rounded only on the outer left corners;
+- visually above the ordinary card border;
+- independent from content layout.
+
+Do **not** implement the strip as an inset shadow or as a structural `border-left` that changes content geometry.
 
 ### Busy mutation
-- disable only the control(s) that must not repeat
+
+- disable only controls that genuinely must not repeat
 - do not dim/block the entire Match History screen
 - no full-screen spinner for ordinary short save/delete operations
 
@@ -266,7 +338,7 @@ Destructive operations such as Delete live behind the More action / confirmation
 - no oversized illustration or branding
 
 ### Incomplete/recovered
-- same row geometry as normal recordings
+- same item geometry as normal recordings
 - explicit `INCOMPLETE` status
 - unavailable derived values may be `—`
 - preserve legitimate current actions
@@ -280,17 +352,17 @@ Do not call the bundle corrupted unless the application actually knows that.
 - provide accessible explanation where practical
 
 ### Missing Data Dragon artwork
-- keep row geometry
+- keep item geometry
 - champion fallback may use `?`
 - spell/rune/item slots stay stable
-- no repeated per-row global-network warning
+- no repeated per-item global-network warning
 - no broken browser-image UI
 
 ### Error scope
 
 Show problems at the narrowest useful scope:
 1. field/asset fallback
-2. row status
+2. item status
 3. screen/application notice only when broadly relevant or actionable
 
 ## 15. Accessibility
@@ -302,30 +374,40 @@ Show problems at the narrowest useful scope:
 - Result/health/saved states may not rely on color alone.
 - Hit targets obey the global minimum.
 
-If visual column headings are shown, treat them as scanning aids; expose them to assistive technology only when doing so adds useful structure rather than repetitive noise.
+Do not add table-style visual column headings to the normal Match History list.
 
 ## 16. Width behavior
 
 Chronobreak is desktop-first.
 
-When width is constrained:
-1. preserve champion
-2. preserve result/mode
-3. preserve KDA
-4. preserve duration
-5. preserve actions
-6. compress gaps and lower-priority metadata before shrinking text
+Match History uses a bounded content rail rather than stretching match items across the entire application window.
 
-Do not introduce a mobile card layout for the Windows desktop product.
+Canonical rail behavior:
 
-Horizontal scrolling is acceptable for a dense table-like Match History if it preserves readable fixed-density data better than crushing columns.
+- width: `100%`
+- maximum width: `1120px`
+- horizontally centered
+
+At large/fullscreen window sizes, the Match History rail therefore remains approximately `1120px` wide while surrounding application canvas grows.
+
+At narrower supported window sizes:
+
+- the rail shrinks with the available content width;
+- the match list uses `min-width: 0`;
+- do not retain a historical hard minimum such as `1040px`;
+- do not introduce horizontal scrolling merely to preserve an oversized fixed layout;
+- preserve icon/text readability by allowing semantic groups to use the available grid space.
+
+This bounded-width rule is specific to Match History. Replay/viewer screens may use the viewport much more aggressively.
+
+Do not introduce a separate mobile-card anatomy for the Windows desktop product as part of this contract.
 
 ## 17. Performance
 
 The global performance contract applies. Match History specifically does not justify:
 - virtualization without measured need
-- per-row animation systems
-- per-row shadows/glows
+- per-item animation systems
+- per-item shadows/glows
 - extra reactive state for static fields
 - broad icon/UI dependencies
 
@@ -339,7 +421,7 @@ It must not infer or fabricate a missing **semantic fact**.
 
 The outcome presentation defined in §6 is intentional, but the real application must omit it until the summary data contract exposes an authoritative outcome.
 
-The current row contract does **not** require:
+The current match-item contract does **not** require:
 - final player level
 - richer queue identity than the authoritative mode metadata already available
 - speculative replay-health/error categories beyond states the application actually knows

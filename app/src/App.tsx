@@ -83,7 +83,7 @@ function App() {
     screen: "library",
     tab: initialTab(),
   });
-  const [games, { refetch: refetchGames }] = createResource(loadGames);
+  const [games, { mutate: mutateGames, refetch: refetchGames }] = createResource(loadGames);
   const [clips, { refetch: refetchClips }] = createResource(loadClips);
   const [usage, { refetch: refetchUsage }] = createResource(loadStorageUsage);
   const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
@@ -92,6 +92,7 @@ function App() {
   const [benchmarkHevcCapability, setBenchmarkHevcCapability] =
     createSignal<HevcProbeStatus | null>(null);
   const [busyId, setBusyId] = createSignal<string | null>(null);
+  const savingGameIds = new Set<string>();
   const [deleteTarget, setDeleteTarget] = createSignal<DeleteTarget | null>(null);
   const [activeClip, setActiveClip] = createSignal<ClipSummary | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
@@ -134,18 +135,37 @@ function App() {
   };
 
   const toggleSaved = async (game: GameSummary) => {
-    setBusyId(game.timestamp);
+    if (savingGameIds.has(game.timestamp)) return;
+
+    const previousSaved = game.saved;
+    const nextSaved = !previousSaved;
+
+    savingGameIds.add(game.timestamp);
+
+    mutateGames((current) =>
+      current?.map((candidate) =>
+        candidate.timestamp === game.timestamp
+          ? { ...candidate, saved: nextSaved }
+          : candidate,
+      ),
+    );
+
     try {
-      await setGameSaved(game.timestamp, !game.saved);
-      await refetchGames();
-      showNotice(game.saved ? "Recording removed from saved games." : "Recording saved.");
+      await setGameSaved(game.timestamp, nextSaved);
+      showNotice(nextSaved ? "Recording saved." : "Recording removed from saved games.");
     } catch (error) {
+      mutateGames((current) =>
+        current?.map((candidate) =>
+          candidate.timestamp === game.timestamp
+            ? { ...candidate, saved: previousSaved }
+            : candidate,
+        ),
+      );
       showError(error);
     } finally {
-      setBusyId(null);
+      savingGameIds.delete(game.timestamp);
     }
   };
-
   const confirmDelete = async () => {
     const target = deleteTarget();
     if (!target) return;

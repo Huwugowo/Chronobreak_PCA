@@ -51,13 +51,13 @@ const displayedOutcome = (game: GameSummary): PreviewMatchOutcome | null =>
 const outcomeLabel = (outcome: PreviewMatchOutcome): string => {
   switch (outcome) {
     case "victory":
-      return "VICTORY";
+      return "Victory";
     case "defeat":
-      return "DEFEAT";
+      return "Defeat";
     case "remake":
-      return "REMAKE";
+      return "Remake";
     case "terminated":
-      return "TERMINATED";
+      return "Terminated";
   }
 };
 
@@ -72,6 +72,37 @@ const formattedTime = (value: string): string => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+};
+
+const formatRelativeAge = (value: string): string => {
+  if (!value) return "—";
+
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return "—";
+
+  const delta = timestamp - Date.now();
+  const absolute = Math.abs(delta);
+
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["year", 365 * 24 * 60 * 60 * 1000],
+    ["month", 30 * 24 * 60 * 60 * 1000],
+    ["week", 7 * 24 * 60 * 60 * 1000],
+    ["day", 24 * 60 * 60 * 1000],
+    ["hour", 60 * 60 * 1000],
+    ["minute", 60 * 1000],
+    ["second", 1000],
+  ];
+
+  const [unit, size] = units.find(([, size]) => absolute >= size) ?? units[units.length - 1];
+  return new Intl.RelativeTimeFormat("en", { numeric: "always" })
+    .format(Math.round(delta / size), unit);
+};
+
+const formatMatchDuration = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
 };
 
 const closeActionMenu = (event: MouseEvent) => {
@@ -181,7 +212,7 @@ function GamesLibrary(props: Props) {
         fallback={<MatchHistoryEmptyState />}
       >
         <div class={matchStyles.matchScroller}>
-          <section class={matchStyles.matchTable} aria-label="Recorded matches">
+          <section class={matchStyles.matchList} aria-label="Recorded matches">
             <For each={filteredGames()}>
               {(game: GameSummary) => {
                 const outcome = displayedOutcome(game);
@@ -195,7 +226,7 @@ function GamesLibrary(props: Props) {
                 const time = game.recorded_at ? formattedTime(game.recorded_at) : "—";
 
                 return (
-                  <article class={matchStyles.matchRow} data-incomplete={game.incomplete} data-outcome={outcome ?? undefined}>
+                  <article class={matchStyles.matchItem} data-incomplete={game.incomplete} data-outcome={outcome ?? undefined}>
                     <button
                       class={matchStyles.matchOpen}
                       type="button"
@@ -207,20 +238,20 @@ function GamesLibrary(props: Props) {
                           : `${game.champion} recording unavailable`
                       }
                     >
-                      <span class={matchStyles.championSlot} aria-hidden="true">
-                        <span>?</span>
-                        <Show when={championAsset()}>
-                          <img
-                            src={championAsset()!}
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            onError={hideFailedImage}
-                          />
-                        </Show>
-                      </span>
+                      <span class={matchStyles.matchContext}>
+                        <strong class={matchStyles.queueLabel}>
+                          {game.game_mode === "Unknown" ? "—" : game.game_mode}
+                        </strong>
 
-                      <span class={matchStyles.resultBlock}>
+                        <span
+                          class={matchStyles.relativeAge}
+                          title={game.recorded_at ? `${date} · ${time}` : undefined}
+                        >
+                          {formatRelativeAge(game.recorded_at)}
+                        </span>
+
+                        <span class={matchStyles.contextDivider} aria-hidden="true" />
+
                         <Show
                           when={outcome}
                           fallback={
@@ -233,54 +264,53 @@ function GamesLibrary(props: Props) {
                             {outcomeLabel(outcome!)}
                           </strong>
                         </Show>
-                        <Show when={game.game_mode !== "Unknown" || !health}>
-                          <span class={matchStyles.mode}>
-                            {game.game_mode === "Unknown" ? "—" : game.game_mode}
-                          </span>
-                        </Show>
+
+                        <span class={matchStyles.contextDuration}>
+                          {game.duration_ms ? formatMatchDuration(game.duration_ms) : "—"}
+                        </span>
+
                         <Show when={outcome && health}>
                           <em class={matchStyles.health}>{health}</em>
                         </Show>
                       </span>
-                      <span class={matchStyles.loadout} aria-hidden="true">
-                        <span class={matchStyles.spells}>
-                          <For each={game.summoner_spells.slice(0, 2)}>
-                            {(spell: string) => (
-                              <span class={matchStyles.assetIcon} title={spell.replace(/^Summoner/, "")}>
-                                <Show when={ddragonAsset(props.ddragon, "spell", spell)}>
-                                  <img
-                                    src={ddragonAsset(props.ddragon, "spell", spell)!}
-                                    alt=""
-                                    loading="lazy"
-                                    decoding="async"
-                                    onError={hideFailedImage}
-                                  />
-                                </Show>
-                              </span>
-                            )}
-                          </For>
-                        </span>
-                        <span class={`${matchStyles.assetIcon} ${matchStyles.runeIcon}`} title="Keystone rune">
-                          <Show when={ddragonAsset(props.ddragon, "rune", game.keystone_id)}>
-                            <img
-                              src={ddragonAsset(props.ddragon, "rune", game.keystone_id)!}
-                              alt=""
-                              loading="lazy"
-                              decoding="async"
-                              onError={hideFailedImage}
-                            />
-                          </Show>
-                        </span>
-                      </span>
+                      <span class={matchStyles.playerSummary}>
+                        <span class={matchStyles.championLoadout} aria-hidden="true">
+                          <span class={matchStyles.championSlot}>
+                            <span>?</span>
+                            <Show when={championAsset()}>
+                              <img
+                                src={championAsset()!}
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                                onError={hideFailedImage}
+                              />
+                            </Show>
+                          </span>
 
-                      <span class={matchStyles.performance}>
-                      <span class={matchStyles.items} aria-hidden="true">
-                        <For each={finalBuild(game.items)}>
-                          {(item: GameItemSummary | null) => (
-                            <span class={matchStyles.itemSlot}>
-                              <Show when={ddragonAsset(props.ddragon, "item", item?.item_id)}>
+                          <span class={matchStyles.loadout}>
+                            <span class={matchStyles.spells}>
+                              <For each={game.summoner_spells.slice(0, 2)}>
+                                {(spell: string) => (
+                                  <span class={matchStyles.assetIcon} title={spell.replace(/^Summoner/, "")}>
+                                    <Show when={ddragonAsset(props.ddragon, "spell", spell)}>
+                                      <img
+                                        src={ddragonAsset(props.ddragon, "spell", spell)!}
+                                        alt=""
+                                        loading="lazy"
+                                        decoding="async"
+                                        onError={hideFailedImage}
+                                      />
+                                    </Show>
+                                  </span>
+                                )}
+                              </For>
+                            </span>
+
+                            <span class={`${matchStyles.assetIcon} ${matchStyles.runeIcon}`} title="Keystone rune">
+                              <Show when={ddragonAsset(props.ddragon, "rune", game.keystone_id)}>
                                 <img
-                                  src={ddragonAsset(props.ddragon, "item", item?.item_id)!}
+                                  src={ddragonAsset(props.ddragon, "rune", game.keystone_id)!}
                                   alt=""
                                   loading="lazy"
                                   decoding="async"
@@ -288,32 +318,101 @@ function GamesLibrary(props: Props) {
                                 />
                               </Show>
                             </span>
-                          )}
-                        </For>
+                          </span>
+                        </span>
+
+                        <span class={matchStyles.performance}>
+                          <span class={matchStyles.kda}>
+                            <strong>
+                              {game.incomplete ? "—" : game.kills} <i>/</i>{" "}
+                              {game.incomplete ? "—" : game.deaths} <i>/</i>{" "}
+                              {game.incomplete ? "—" : game.assists}
+                            </strong>
+                            <em>{formatKdaRatio(game)}</em>
+                          </span>
+
+                          <span class={matchStyles.items} aria-hidden="true">
+                            <For each={finalBuild(game.items)}>
+                              {(item: GameItemSummary | null) => (
+                                <span class={matchStyles.itemSlot}>
+                                  <Show when={ddragonAsset(props.ddragon, "item", item?.item_id)}>
+                                    <img
+                                      src={ddragonAsset(props.ddragon, "item", item?.item_id)!}
+                                      alt=""
+                                      loading="lazy"
+                                      decoding="async"
+                                      onError={hideFailedImage}
+                                    />
+                                  </Show>
+                                </span>
+                              )}
+                            </For>
+                          </span>
+                        </span>
                       </span>
 
-                      <span class={matchStyles.kda}>
-                        <strong>
-                          {game.incomplete ? "—" : game.kills} <i>/</i> {game.incomplete ? "—" : game.deaths} <i>/</i>{" "}
-                          {game.incomplete ? "—" : game.assists}
-                        </strong>
-                        <em>{formatKdaRatio(game)}</em>
-                      </span>
+                      <span class={matchStyles.teamRosters} aria-label="Team rosters">
+                        <span class={matchStyles.teamRoster} data-team="ally">
+                          <For each={game.participants.filter((participant) => participant.relation === "ally").slice(0, 5)}>
+                            {(participant) => (
+                              <span class={matchStyles.rosterPlayer}>
+                                <span class={matchStyles.rosterChampion} aria-hidden="true">
+                                  <Show when={ddragonAsset(
+                                    props.ddragon,
+                                    "champion",
+                                    participant.champion === "Unknown" ? null : participant.champion,
+                                  )}>
+                                    <img
+                                      src={ddragonAsset(
+                                        props.ddragon,
+                                        "champion",
+                                        participant.champion === "Unknown" ? null : participant.champion,
+                                      )!}
+                                      alt=""
+                                      loading="lazy"
+                                      decoding="async"
+                                      onError={hideFailedImage}
+                                    />
+                                  </Show>
+                                </span>
+                                <span>{participant.summoner_name}</span>
+                              </span>
+                            )}
+                          </For>
+                        </span>
 
+                        <span class={matchStyles.teamRoster} data-team="enemy">
+                          <For each={game.participants.filter((participant) => participant.relation === "enemy").slice(0, 5)}>
+                            {(participant) => (
+                              <span class={matchStyles.rosterPlayer}>
+                                <span class={matchStyles.rosterChampion} aria-hidden="true">
+                                  <Show when={ddragonAsset(
+                                    props.ddragon,
+                                    "champion",
+                                    participant.champion === "Unknown" ? null : participant.champion,
+                                  )}>
+                                    <img
+                                      src={ddragonAsset(
+                                        props.ddragon,
+                                        "champion",
+                                        participant.champion === "Unknown" ? null : participant.champion,
+                                      )!}
+                                      alt=""
+                                      loading="lazy"
+                                      decoding="async"
+                                      onError={hideFailedImage}
+                                    />
+                                  </Show>
+                                </span>
+                                <span>{participant.summoner_name}</span>
+                              </span>
+                            )}
+                          </For>
+                        </span>
                       </span>
-                      <span class={`${matchStyles.metric} ${matchStyles.durationMetric}`}>
-                        <strong>{game.duration_ms ? formatDuration(game.duration_ms) : "—"}</strong>
-                      </span>
-
                       <span class={matchStyles.recordingMeta}>
-                        <span class={matchStyles.metric}>
-                          <strong>{formatBytes(game.video_size_bytes)}</strong>
-                        </span>
-
-                        <span class={matchStyles.dateBlock}>
-                          <strong>{date}</strong>
-                          <small>{time}</small>
-                        </span>
+                        <strong>{formatBytes(game.video_size_bytes)}</strong>
+                        <small>Recording</small>
                       </span>
                     </button>
 
