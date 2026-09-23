@@ -34,6 +34,8 @@ import {
   type ReplayTick,
 } from "./replayTime";
 
+const mockReplayUrl = () => new URL("/mock-replay.mp4", window.location.href).href;
+
 const MOCK_TICKS_PER_MILLISECOND = 48_000;
 const mockTick = (milliseconds: number): ReplayTick =>
   parseReplayTick(String(milliseconds * MOCK_TICKS_PER_MILLISECOND));
@@ -44,12 +46,12 @@ const MOCK_MEDIA_TIMELINE = validateMediaTimeline({
   media_id: "f22d7d5e-0ce1-4e0f-8318-cbb0b6decb19",
   video: {
     codec: "h264",
-    profile: "High",
-    time_base: { numerator: "1", denominator: "60" },
+    profile: "Constrained Baseline",
+    time_base: { numerator: "1", denominator: "15360" },
     first_pts: "0",
     frame_rate: { numerator: "60", denominator: "1" },
     frame_count: "108000",
-    one_past_last_pts: "108000",
+    one_past_last_pts: "27648000",
     replay_end: "86400000000",
     exact_cfr: true,
   },
@@ -97,6 +99,41 @@ const mockEvent = (
 });
 
 const mockEvents = (): ViewerEvent[] => {
+  const denseFight = [
+    mockEvent("ChampionKill", mockTick(888_000), {
+      killer: "SUPERSTAR",
+      victim: "Enemy Mid",
+      assisters: ["Ally Jungler", "Ally Support"],
+      relation: "ally",
+    }),
+    mockEvent("ChampionKill", mockTick(889_500), {
+      killer: "Enemy Carry",
+      victim: "Ally Carry",
+      assisters: ["Enemy Support"],
+      relation: "enemy",
+    }),
+    mockEvent("ChampionKill", mockTick(891_000), {
+      killer: "Ally Jungler",
+      victim: "Enemy Jungler",
+      assisters: ["SUPERSTAR"],
+      relation: "ally",
+    }),
+    mockEvent("Multikill", mockTick(892_200), {
+      killer: "SUPERSTAR",
+      kill_streak: 2,
+      relation: "ally",
+    }),
+    mockEvent("ChampionKill", mockTick(895_000), {
+      killer: "SUPERSTAR",
+      victim: "Enemy Carry",
+      assisters: ["Ally Support"],
+      relation: "ally",
+    }),
+    mockEvent("Ace", mockTick(897_500), {
+      acer: "SUPERSTAR",
+      relation: "ally",
+    }),
+  ];
   const generated = Array.from({ length: 48 }, (_, index) => {
     const replayTick = mockTick(248_000 + index * 29_500);
     if (index % 11 === 4) {
@@ -145,6 +182,7 @@ const mockEvents = (): ViewerEvent[] => {
       relation: "ally",
     }),
     ...generated,
+    ...denseFight,
     mockEvent("BaronKill", mockTick(1_501_000), {
       killer: "Ally Jungler",
       assisters: ["SUPERSTAR", "Ally Support"],
@@ -210,6 +248,7 @@ let mockGames: GameSummary[] = [
       { item_id: 3102, slot: 5 },
       { item_id: 3363, slot: 6 },
     ],
+    participants: mockParticipants(),
     saved: true,
     incomplete: false,
     video_size_bytes: 4_446_112_713,
@@ -235,6 +274,7 @@ let mockGames: GameSummary[] = [
       { item_id: 3157, slot: 5 },
       { item_id: 3340, slot: 6 },
     ],
+    participants: mockParticipants(),
     saved: false,
     incomplete: false,
     video_size_bytes: 2_866_000_000,
@@ -260,6 +300,7 @@ let mockGames: GameSummary[] = [
       { item_id: 6676, slot: 5 },
       { item_id: 3363, slot: 6 },
     ],
+    participants: mockParticipants(),
     saved: false,
     incomplete: false,
     video_size_bytes: 1_790_000_000,
@@ -285,6 +326,7 @@ let mockGames: GameSummary[] = [
       { item_id: 3102, slot: 5 },
       { item_id: 3340, slot: 6 },
     ],
+    participants: mockParticipants(),
     saved: false,
     incomplete: false,
     video_size_bytes: 2_440_000_000,
@@ -310,6 +352,7 @@ let mockGames: GameSummary[] = [
       { item_id: 3157, slot: 5 },
       { item_id: 3364, slot: 6 },
     ],
+    participants: mockParticipants(),
     saved: false,
     incomplete: false,
     video_size_bytes: 3_120_000_000,
@@ -327,6 +370,7 @@ let mockGames: GameSummary[] = [
     summoner_spells: [],
     keystone_id: null,
     items: [],
+    participants: [],
     saved: false,
     incomplete: true,
     video_size_bytes: 612_000_000,
@@ -369,13 +413,15 @@ let mockSettings: AppSettings = {
 
 const pausePreview = () => new Promise((resolve) => window.setTimeout(resolve, 60));
 
+const useMockApi = (): boolean =>
+  import.meta.env.DEV && (!isTauri() || import.meta.env.VITE_UI_MOCKS === "1");
 export const loadGames = async (): Promise<GameSummary[]> => {
-  if (!isTauri()) return structuredClone(mockGames);
+  if (useMockApi()) return structuredClone(mockGames);
   return invoke<GameSummary[]>("list_games");
 };
 
 export const loadClips = async (): Promise<ClipSummary[]> => {
-  if (!isTauri()) return structuredClone(mockClips);
+  if (useMockApi()) return structuredClone(mockClips);
   return invoke<ClipSummary[]>("list_clips");
 };
 let mockSnapshotSequence = 0;
@@ -384,9 +430,8 @@ export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
   const wire = exactRecord(value, ["token", "games", "clips", "usage"], "library_snapshot");
   if (typeof wire.token !== "string" || wire.token.length === 0) throw new Error("library_snapshot.token is invalid");
   if (!Array.isArray(wire.games) || !Array.isArray(wire.clips)) throw new Error("library_snapshot arrays are invalid");
-  const gameKeys = ["timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "saved", "incomplete", "video_size_bytes", "video_available"];
   const clipKeys = ["filename", "game_timestamp", "clip_timestamp", "duration_ms", "file_size_bytes", "thumbnail_path", "thumbnail_url", "video_url", "source_champion", "source_date"];
-  wire.games.forEach((game, index) => { exactRecord(game, gameKeys, `library_snapshot.games[${index}]`); });
+  const games = wire.games.map((game, index) => decodeGameSummary(game, `library_snapshot.games[${index}]`));
   wire.clips.forEach((clip, index) => {
     const record = exactRecord(clip, clipKeys, `library_snapshot.clips[${index}]`);
     if (record.duration_ms !== null &&
@@ -399,11 +444,11 @@ export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
   for (const key of ["games_bytes", "clips_bytes", "game_count", "clip_count"]) {
     if (typeof usage[key] !== "number" || !Number.isSafeInteger(usage[key])) throw new Error(`library_snapshot.usage.${key} is invalid`);
   }
-  return { token: wire.token, games: wire.games as GameSummary[], clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage };
+  return { token: wire.token, games, clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage };
 };
 
 export const refreshLibrary = async (): Promise<LibrarySnapshot> => {
-  if (!isTauri()) return {
+  if (useMockApi()) return {
     token: `mock-${Date.now()}-${++mockSnapshotSequence}`,
     games: structuredClone(mockGames), clips: structuredClone(mockClips), usage: await loadStorageUsage(),
   };
@@ -411,7 +456,7 @@ export const refreshLibrary = async (): Promise<LibrarySnapshot> => {
 };
 
 export const resolveClipDurations = async (snapshotToken: string, clipIds: string[], retryUnavailable = false): Promise<ClipDurations> => {
-  if (!isTauri()) return { snapshot_token: snapshotToken, clips: clipIds.slice(0, 8).map(clip_id => ({ clip_id, duration: { state: "available", duration_ms: mockClips.find(c => c.filename === clip_id)?.duration_ms ?? 0 } })) };
+  if (useMockApi()) return { snapshot_token: snapshotToken, clips: clipIds.slice(0, 8).map(clip_id => ({ clip_id, duration: { state: "available", duration_ms: mockClips.find(c => c.filename === clip_id)?.duration_ms ?? 0 } })) };
   return decodeClipDurations(await invoke<unknown>("resolve_clip_durations", { snapshotToken, clipIds, retryUnavailable }));
 };
 
@@ -507,6 +552,26 @@ const decodeMappedRows = <T>(
   });
 };
 
+const gameKeys = ["timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available"];
+
+const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] => {
+  if (!Array.isArray(value)) throw new Error(label + " must be an array");
+  return value.map((entry, index) => {
+    const participant = exactRecord(entry, ["summoner_name", "champion", "relation"], label + "[" + index + "]");
+    if (typeof participant.summoner_name !== "string" || typeof participant.champion !== "string" ||
+        !["ally", "enemy", "neutral"].includes(participant.relation as string))
+      throw new Error(label + "[" + index + "] is invalid");
+    return participant as unknown as ReplayParticipant;
+  });
+};
+
+const decodeGameSummary = (value: unknown, label: string): GameSummary => {
+  const game = exactRecord(value, gameKeys, label);
+  const items = recordArray(game.items, label + ".items");
+  for (const [index, item] of items.entries()) exactRecord(item, ["item_id", "slot"], label + ".items[" + index + "]");
+  return { ...game, participants: decodeParticipants(game.participants, label + ".participants") } as GameSummary;
+};
+
 export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
   const wire = exactRecord(
     value,
@@ -522,49 +587,18 @@ export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
     ],
     "playback_probe",
   );
-  const game = exactRecord(
-    wire.game,
-    [
-      "timestamp",
-      "champion",
-      "game_mode",
-      "duration_ms",
-      "recorded_at",
-      "kills",
-      "deaths",
-      "assists",
-      "summoner_spells",
-      "keystone_id",
-      "items",
-      "saved",
-      "incomplete",
-      "video_size_bytes",
-      "video_available",
-    ],
-    "playback_probe.game",
-  );
-  const items = recordArray(game.items, "playback_probe.game.items");
-  for (const [index, item] of items.entries()) {
-    exactRecord(item, ["item_id", "slot"], `playback_probe.game.items[${index}]`);
-  }
-  const participants = recordArray(wire.participants, "playback_probe.participants");
-  for (const [index, participant] of participants.entries()) {
-    exactRecord(
-      participant,
-      ["summoner_name", "champion", "relation"],
-      `playback_probe.participants[${index}]`,
-    );
-  }
+  const game = decodeGameSummary(wire.game, "playback_probe.game");
+  const participants = decodeParticipants(wire.participants, "playback_probe.participants");
   if (typeof wire.video_url !== "string") throw new Error("playback_probe.video_url is invalid");
   if (wire.local_player_name !== null && typeof wire.local_player_name !== "string") {
     throw new Error("playback_probe.local_player_name is invalid");
   }
   return {
-    game: game as unknown as GameSummary,
+    game,
     video_url: wire.video_url,
     media_timeline: validateMediaTimeline(wire.media_timeline),
     local_player_name: wire.local_player_name,
-    participants: participants as unknown as ReplayParticipant[],
+    participants,
     player_timeline: decodeMappedRows<PlayerTimelinePoint>(
       wire.player_timeline,
       ["game_tick", "mapped_replay_time", "cs", "level"],
@@ -617,9 +651,9 @@ export const decodeReplayDescriptor = (value: unknown): ReplayDescriptor => {
 };
 
 export const loadReplayDescriptor = async (gameTimestamp: string, snapshotToken: string): Promise<ReplayDescriptor> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     if (!mockGames.some(game => game.timestamp === gameTimestamp)) throw new Error("Recording not found");
-    return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: "", media_timeline: MOCK_MEDIA_TIMELINE };
+    return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: mockReplayUrl(), media_timeline: MOCK_MEDIA_TIMELINE };
   }
   const descriptor = decodeReplayDescriptor(await invoke<unknown>("get_replay_descriptor", { gameTimestamp, snapshotToken }));
   if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp)
@@ -644,15 +678,15 @@ export const assertReplayProbeMatches = (descriptor: ReplayDescriptor, probe: Pl
 };
 
 export const loadPlaybackProbe = async (gameTimestamp: string, snapshotToken: string): Promise<PlaybackProbe> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     const game = mockGames.find((candidate) => candidate.timestamp === gameTimestamp);
     if (!game) throw new Error("Recording not found");
     return {
       game: structuredClone(game),
-      video_url: "",
+      video_url: mockReplayUrl(),
       media_timeline: MOCK_MEDIA_TIMELINE,
       local_player_name: "SUPERSTAR#VOID",
-      participants: mockParticipants(),
+      participants: structuredClone(game.participants),
       player_timeline: mockPlayerTimeline(),
       kda_timeline: mockKdaTimeline(),
       events: mockEvents(),
@@ -662,7 +696,7 @@ export const loadPlaybackProbe = async (gameTimestamp: string, snapshotToken: st
 };
 
 export const setGameSaved = async (gameTimestamp: string, saved: boolean, snapshotToken: string): Promise<void> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockGames = mockGames.map((game) =>
       game.timestamp === gameTimestamp ? { ...game, saved } : game,
@@ -673,7 +707,7 @@ export const setGameSaved = async (gameTimestamp: string, saved: boolean, snapsh
 };
 
 export const removeGame = async (gameTimestamp: string, snapshotToken: string): Promise<void> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockGames = mockGames.filter((game) => game.timestamp !== gameTimestamp);
     return;
@@ -682,7 +716,7 @@ export const removeGame = async (gameTimestamp: string, snapshotToken: string): 
 };
 
 export const removeClip = async (clipFilename: string, snapshotToken: string): Promise<void> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockClips = mockClips.filter((clip) => clip.filename !== clipFilename);
     return;
@@ -691,7 +725,7 @@ export const removeClip = async (clipFilename: string, snapshotToken: string): P
 };
 
 export const loadBuiltInMusic = async (): Promise<BuiltInMusicTrack[]> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return [
       {
         filename: "momentum.mp3",
@@ -706,7 +740,7 @@ export const loadBuiltInMusic = async (): Promise<BuiltInMusicTrack[]> => {
 };
 
 export const chooseMusicFile = async (): Promise<string | null> => {
-  if (!isTauri()) return "C:\\Music\\highlight.mp3";
+  if (useMockApi()) return "C:\\Music\\highlight.mp3";
   const selected = await open({
     multiple: false,
     filters: [{ name: "Audio", extensions: ["mp3", "wav"] }],
@@ -717,12 +751,12 @@ export const chooseMusicFile = async (): Promise<string | null> => {
 export type ImportedMusicPreview = { url: string; token: string };
 
 export const prepareImportedMusicPreview = async (path: string): Promise<ImportedMusicPreview> => {
-  if (!isTauri()) return { url: "", token: "" };
+  if (useMockApi()) return { url: "", token: "" };
   return invoke<ImportedMusicPreview>("prepare_imported_music_preview", { path });
 };
 
 export const releaseImportedMusicPreview = async (token: string): Promise<void> => {
-  if (isTauri()) await invoke<void>("release_imported_music_preview", { token });
+  if (!useMockApi()) await invoke<void>("release_imported_music_preview", { token });
 };
 
 export const exportClip = async (
@@ -730,7 +764,7 @@ export const exportClip = async (
   onProgress: (progress: ClipExportProgress) => void,
   snapshotToken: string,
 ): Promise<ClipExportResult> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     const totalOutputs = request.presets.length;
     for (const [outputIndex, preset] of request.presets.entries()) {
       for (const localPercent of [8, 24, 46, 69, 88, 96, 99]) {
@@ -834,7 +868,7 @@ export const exportClip = async (
 };
 
 export const loadStorageUsage = async (): Promise<StorageUsage> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return {
       games_bytes: mockGames.reduce((total, game) => total + game.video_size_bytes, 0),
       clips_bytes: mockClips.reduce((total, clip) => total + clip.file_size_bytes, 0),
@@ -846,12 +880,12 @@ export const loadStorageUsage = async (): Promise<StorageUsage> => {
 };
 
 export const loadSettings = async (): Promise<AppSettings> => {
-  if (!isTauri()) return structuredClone(mockSettings);
+  if (useMockApi()) return structuredClone(mockSettings);
   return invoke<AppSettings>("get_settings");
 };
 
 export const persistSettings = async (settings: SettingsUpdate, snapshotToken: string): Promise<AppSettings> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     await pausePreview();
     mockSettings = { ...mockSettings, ...settings };
     return structuredClone(mockSettings);
@@ -860,28 +894,28 @@ export const persistSettings = async (settings: SettingsUpdate, snapshotToken: s
 };
 
 export const chooseOutputFolder = async (currentPath: string): Promise<string | null> => {
-  if (!isTauri()) return currentPath;
+  if (useMockApi()) return currentPath;
   const selected = await open({ directory: true, multiple: false, defaultPath: currentPath });
   return typeof selected === "string" ? selected : null;
 };
 
 export const cleanUpNow = async (snapshotToken: string): Promise<AutoDeleteResult> => {
-  if (!isTauri()) return { deleted_count: 0 };
+  if (useMockApi()) return { deleted_count: 0 };
   return invoke<AutoDeleteResult>("run_auto_delete", { snapshotToken });
 };
 
 export const openOutputFolder = async (): Promise<void> => {
-  if (!isTauri()) return;
+  if (useMockApi()) return;
   await invoke("open_output_folder");
 };
 
 export const openClipsFolder = async (): Promise<void> => {
-  if (!isTauri()) return;
+  if (useMockApi()) return;
   await invoke("open_clips_folder");
 };
 
 export const loadDdragonStatus = async (): Promise<DdragonStatus> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return {
       state: "ready",
       version: "16.16.1",
@@ -896,12 +930,12 @@ export const loadDdragonStatus = async (): Promise<DdragonStatus> => {
 };
 
 export const resolveItemName = async (itemId: string): Promise<string | null> => {
-  if (!isTauri()) return itemId === "1001" ? "Boots" : null;
+  if (useMockApi()) return itemId === "1001" ? "Boots" : null;
   return invoke<string | null>("resolve_item_name", { itemId });
 };
 
 export const ensureHevcCapability = async (): Promise<HevcProbeStatus> => {
-  if (!isTauri()) return { tested: true, supported: true, probe_url: "" };
+  if (useMockApi()) return { tested: true, supported: true, probe_url: "" };
   const status = await invoke<HevcProbeStatus>("get_hevc_probe_status");
   if (status.tested) return status;
   let supported = false;
@@ -914,7 +948,7 @@ export const ensureHevcCapability = async (): Promise<HevcProbeStatus> => {
 };
 
 export const loadServerMetrics = async (): Promise<ServerMetrics> => {
-  if (!isTauri()) {
+  if (useMockApi()) {
     return {
       requests: 0,
       range_requests: 0,

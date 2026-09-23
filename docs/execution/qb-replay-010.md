@@ -1,10 +1,24 @@
 # QB-REPLAY-010 execution checkpoint
 
 Feature: `QB-REPLAY-010`
-ExecPlan: `docs/exec-plans/qb-replay-010-minimal-replay-descriptor.md`
-Updated: 2026-09-22
+ExecPlan: `docs/exec-plans/qb-replay-010-ui-reconciliation.md`
+Updated: 2026-09-23
 
 ## Current milestone
+
+UI reconciliation M1-M3 complete, 2026-09-23: combined automated checks, both
+desktop builds, review and user-operated native acceptance passed. The
+noncommitting integration combines
+root `3426cfa0340373b13a9aa4930b75f41271b7c0d2` with the user-confirmed current UI
+line `6c7174fd8edb4f299e0a0ee0b77a1683a96ee629` and its five uncommitted CSS edits.
+The original input patches are preserved under build/qb010-ui-reconciliation.
+The three conflicts have verified working-tree resolutions and are resolved in
+the Git index; the merge is intentionally uncommitted. The diagnostic gate was
+restored, subject/listener closure verified and final source audit passed. Full
+QB-REPLAY-010 remains in progress for separately planned replay/performance scope;
+no new semantic backend pipeline or performance campaign was authorized.
+
+### Closed descriptor unit
 
 Minimal replay descriptor M1-M3 complete, 2026-09-22. The separate immutable
 descriptor plan was finalized before implementation from checkpoint
@@ -38,11 +52,25 @@ descriptor, timeline and playback scope. The immutable attribution plan remains 
 
 ## Active unit
 
-None within the minimal replay descriptor unit. Implementation and required
-descriptor acceptance are complete. Detailed results are in Verification below;
-native observations and timestamped diagnostic/source-audit receipts are retained
-under `build/qb010-descriptor-manual-20260922/`. No semantic timeline or
-ReplayTimeline implementation is in progress.
+No active reconciliation implementation or verification unit remains. M1-M3 are
+complete: controller/token/descriptor ownership, participant cards, strict roster
+decoders, display-only optimistic save reconciliation and shared rail cleanup are
+verified together. Final frontend suite has 166 passing tests; Rust has 92 passing
+tests and one pre-existing opt-in ignored; typecheck/build/fmt/Clippy and both
+desktop builds pass. Native controls, delayed/failed/retried details, clip/fullscreen
+continuity, normal exporter return, filters, save/unsave and A/B/A passed on the
+fresh normal subject. Gate removed with zero pending responses; title-bar closure
+verified by absent subject/listener. Final video/game-log hashes are unchanged.
+
+The original sibling CSS patch is captured and applied. The sibling remains at
+6c7174f and untouched; on 2026-09-23 it additionally has uncommitted LibraryScreen.tsx
+and SettingsScreen.tsx changes. Those later edits are outside the captured input;
+do not overwrite or silently include them. The original five CSS edits are retained.
+
+Descriptor implementation and acceptance are complete in commit `3426cfa` under
+`docs/exec-plans/qb-replay-010-minimal-replay-descriptor.md`. Its native artifacts
+remain under `build/qb010-descriptor-manual-20260922/`; no descriptor/M4 rerun follows
+from this handoff. No new semantic backend implementation is active.
 
 ### Historical closed M4 execution
 
@@ -144,6 +172,35 @@ Canonical evidence is retained at
 `docs/performance/evidence/qb-replay-010-m4-20260917/`. M1/M2/M3 remain accepted.
 
 ## Completed
+
+- UI reconciliation M3 (2026-09-23): final full affected automated checks, normal
+  and benchmark desktop builds, focused review and native acceptance passed.
+  User-operated tests cover real A/V, seek/zoom/pan, clip edits and fullscreen
+  mid-drag under held details, local failure/retry, late admission without media
+  reload, semantic filters, normal editor/return, immediate/persistent Star state,
+  Garen selection and overlapping-ID A/B/A. Gate restored; no pending requests;
+  normal subject and scoped listener closed. Only Ahri save metadata reserialized
+  (optional capture absent → null, saved remains its original true); all video/log
+  hashes, all B files and generated source are unchanged. Work remains uncommitted.
+
+- UI reconciliation M1-M2 (2026-09-23): retained captured UI/CSS work with existing
+  controller ownership; added required strict roster parity, coherent development
+  mocks matching the physical preview MP4, and optimistic save display overlay.
+  Shared rail cleanup handles pointer identity, cancellation and disposal. Focused
+  backend/frontend regressions pass, including fullscreen mid-drag and benchmark
+  media/details arrival ordering. No extra roster filesystem read was introduced.
+
+- UI integration planning: user confirmed the latest sibling line beyond named
+  `ui/viewer-foundations-v1` (`82d6704`): participant summaries (`783e4bb`) and
+  redesigned cards (`6c7174f`). Common ancestor is `e030161`. A read-only three-way
+  merge dry run found App/API/LibraryScreen conflicts; no merge was applied.
+  Root verified that the tentative Viewer merge retains descriptor-first resources
+  and that summary roster derivation reuses already parsed logs. Incorrect scout
+  assumptions about a no-log summary and lost descriptor were rejected against code.
+  Fresh independent plan review requested explicit optimistic overlay lifecycle,
+  strict roster boundary coverage and stable late-details media/viewport tests;
+  all are specified in the finalized plan. A separate read-only scout confirmed
+  the additional five CSS-only sibling edits and their dependency on MatchHistory.
 
 - Descriptor M3: required automated verification and normal/benchmark builds
   passed. User-operated native acceptance passed on the fresh normal subject:
@@ -282,8 +339,16 @@ Canonical evidence is retained at
 
 ## In flight
 
-No descriptor implementation or acceptance work remains in flight. No test app,
-held diagnostic response or debugger listener remains active. The following dated
+No implementation, test, native subject, held response or diagnostic listener is
+in flight. Reconciliation is complete and remains uncommitted as requested.
+Original input patches, exact receipts, frozen normal subject, diagnostic history
+and source audits are retained under build/qb010-ui-reconciliation/.
+The independent review finding in App benchmark paint admission was repaired and
+covered by stable/away/away-back regressions. The native exporter loading report
+was caused by the deliberate optional-response hold: release resumed the latest
+viewer, and normal ungated exporter/return passed. Its exact ordering is now
+covered by a passing App regression. No production change was needed for it.
+Closed descriptor/M4 subjects and results remain unchanged. The following dated
 V2 records are retained history, not current work.
 
 ### Historical V2 verification context
@@ -366,11 +431,20 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
 
 ## Remaining
 
+No reconciliation milestone remains. Full-feature replay scope and criterion 6
+performance acceptance still require a separately bounded design and evidence.
+Retain all uncommitted work; do not fold later sibling changes into this accepted
+input, remerge it, or reopen closed descriptor/M4 campaigns. No new replay
+performance campaign is authorized by this reconciliation unit.
+
+### Closed descriptor boundary and historical remaining scope
+
 No descriptor milestone remains. Full-feature replay performance/manual gates
 remain separate and unrun for this unit; the deliberate descriptor/full-probe
 duplicate strict JSON reads are not a latency or I/O non-regression claim.
-Semantic timeline/ReplayTimeline requires its own separately finalized next-unit
-design and is not authorized by this descriptor plan. The historical V2 tasks
+The descriptor plan does not authorize semantic timeline/ReplayTimeline work.
+The new UI reconciliation plan separately governs adoption of the existing UI
+timeline only; semantic backend staging stays out of scope. The historical V2 tasks
 below were completed by the recorded M4 closure; do not repeat them.
 
 ### Historical V2 handoff list (superseded by closure)
@@ -394,6 +468,96 @@ below were completed by the recorded M4 closure; do not repeat them.
   initial absolute-root rendering was observed, not alias/root-switch acceptance.
 
 ## Verification
+
+- Reconciliation native acceptance closed 2026-09-23 08:27 UTC. User confirms
+  A/B/A with correct Lux then Ahri/Garen labels and A/V; config returned to root-a
+  with Never retention. After explicit title-bar X, closure-final.json records
+  subject_running=false and diagnostic_listener_open=false. Gate had already
+  restored ordinary fetch with zero pending responses. audit-after-close.json
+  confirms every video/game-log hash and every B file unchanged; only the expected
+  Ahri metadata rewrite differs, validated schema-equivalent with saved=true.
+  Frozen normal subject 5651f0a851b222b7bd318605b3eda8064ba7bf747c7388adf31d7349d247cb82 and
+  original generated source 131a1a096bed8f3e8042059926a65cccc22733639d2bb63d3a2d705a6d7da5fe still
+  match preparation. Detailed user observations and diagnostic disposition are in
+  build/qb010-ui-reconciliation/native-acceptance.md; raw receipts/audits are in
+  native-20260923/. Final frontend 166 tests and typecheck pass after the test-only
+  reported-sequence regression; production binaries remain the verified subjects.
+
+- Native ungated checks: user confirms windowed/fullscreen event and champion
+  filters, editor opening and return with clip/playback intact, immediate/persistent
+  Star state after two toggles, and correct Garen opening. Gate remains removed,
+  zero pending. Post-control audit changes only Ahri metadata bytes: original and
+  current saved=true; absent optional capture becomes null, schema-equivalent
+  after existing Option-field normalization. Every video/game-log hash and all B
+  files are unchanged. Root corrected its mistaken unsaved expectation for the
+  initially saved Ahri fixture. User is performing final A/B/A and app closure.
+
+- Native retry: user confirms playback and clip selection correct after exporter
+  return/failure. Released retry #3, then additional queued #4. Initial finish
+  refused a pending response; after #4 settled, finish restored ordinary fetch
+  with zero held requests. Primary #2 retained same element/source/loadstart=1,
+  readyState=4 and currentTime=152.560963 across delivery. User is checking normal
+  export/return, semantic filters, save/unsave and Garen. Full frontend now passes
+  166 tests plus typecheck after a test-only regression for the reported held
+  exporter round trip (101323); production subject unchanged.
+
+- Native partial observation 2026-09-23: user confirms moving video/audible audio,
+  play/pause, seek, zoom/pan, clip edits and fullscreen including mid-drag all worked
+  with details held. User then entered exporter and returned, reporting loading.
+  Diagnostic showed completed Ahri probe #1 still intentionally held and no video;
+  releasing #1 immediately mounted returned viewer #2 at readyState 4 with its new
+  probe #2 held. This is the diagnostic occupying the single active reader, not an
+  observed media/backend failure. The pending exporter intent was superseded by
+  return. Captured baseline for viewer #2; injected local details failure #2 keeps
+  same primary/source/loadstart count and readyState 4. Await user retry/clip
+  confirmation, then release and remove gate for ungated exporter verification.
+
+- Final benchmark desktop build passed after normal subject freeze, receipt
+  build/qb010-ui-reconciliation/desktop-benchmark.log. Canonical validator passed
+  60 items/eight pairs. Native fixture preparation completed 2026-09-23 07:50 UTC:
+  normal executable SHA-256 5651f0a851b222b7bd318605b3eda8064ba7bf747c7388adf31d7349d247cb82;
+  generated source 131a1a096bed8f3e8042059926a65cccc22733639d2bb63d3a2d705a6d7da5fe unchanged;
+  runtime queueback-ffmpeg-8.1.2-windows-x86_64-r6. Three media files fully decoded,
+  A/B initial source audit unchanged. Helpers are copied into the deeper isolated
+  directory with only repository-relative path adjustment. Diagnostic self-test
+  passed. User-operated observations are retained in native-acceptance.md.
+
+- Final combined checks 2026-09-23: frontend 22 files/165 tests passed (094342),
+  benchmark paint regression 5 App tests passed (094315), typecheck passed; full
+  app Rust 92 passed/one pre-existing packaged-runtime opt-in ignored (tool session
+  50529, PSExecutionPolicyPreference=Bypass for the dedicated child fixture).
+  Rust fmt and Clippy passed (093955), final standalone frontend and normal
+  desktop builds passed. Build logs, retained command receipts and verification.json
+  are under build/qb010-ui-reconciliation/. Git diff HEAD --check passed. Normal
+  build was repeated after the benchmark guard change; older normal output is not
+  the frozen subject. Reviewed source paths add only in-memory roster projection.
+
+- Reconciliation 2026-09-23: focused suites passed after test-seam corrections
+  (37 tests: command-20260923-092313; rail 6: 092509; App save/mock 6: 092654;
+  Viewer 7: 093539; card 1: 093751). Rust library 15 passed (093327), including
+  normalized roster order, missing-team/empty/incomplete parity; an initial enum
+  assertion compile failure (093140) was corrected in tests. Viewer readiness
+  URL equality failure (093505) was corrected to allow the controller session query.
+  Full frontend 22 files/162 tests passed (093830); typecheck and Rust fmt passed;
+  production frontend build passed (093854). All command receipts are in
+  .codex/logs/command-<date-time>.log, with final receipts to be copied under build.
+
+- UI integration 2026-09-22: typecheck passed twice. Focused initial and follow-up
+  failures are retained in .codex/logs/command-20260922-165807.log and
+  command-20260922-170123.log. The latter is 38 passed/5 failed as detailed above.
+  Packaged ffprobe confirms imported mock MP4: 108000 frames at 60/1, time base
+  1/15360, first PTS 0, duration 27648000 ticks, Constrained Baseline, no audio.
+  The mock descriptor/probe now share its URL and exact timeline/profile. Binary
+  media is unchanged. A prior wrong probe path failed setup only.
+
+- 2026-09-22 UI planning only: bootstrap, applicable architecture and plan contract
+  read; independent review reconciled as above. Product verification has not run
+  against a combined tree because integration has not started. Earlier passing
+  descriptor/M4 results below remain historical and are not a combined-UI pass.
+  Handoff canonical validator passed: 60 roadmap items/eight plan-checkpoint pairs;
+  git diff --check and the new plan's final-newline/trailing-whitespace checks
+  passed. Root reviewed the complete plan and canonical diff. Only the three
+  handoff documents differ in the root; no commit or product merge was made.
 
 - 2026-09-22 final native confirmation: user replied "all passed and closed" to
   Ahri/details with no stale Lux, reopen Ahri with the hold removed, video/audio,
@@ -747,6 +911,21 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Decisions
 
+- Reconciliation review (2026-09-23): fix the concrete pre-existing App benchmark
+  fallback that emitted library_useful after the admitted Games view changed
+  before painting. Fail this case with phase library_paint, include navigation
+  epoch in both paint/drain admission, and retain successful milestone ordering.
+  Tests cover stable/away/away-back. This is focused contract preservation, not a
+  campaign rerun or a change to accepted historical M4 measurements.
+
+- UI unit: preserve both original lines and the captured current sibling CSS diff;
+  no commits. Keep LibraryController/Coordinator and protected playback authority.
+  Optimistic Star is a bounded presentation overlay with mandatory filesystem
+  refresh, never a second snapshot owner. Required participants expand the IPC
+  GameSummary consistently in Rust, both strict decoders, TS and fixtures, without
+  changing persisted v2 or the four-field descriptor. Existing ReplayTimeline is
+  integrated, not rewritten; no semantic paging/payload producer or campaign.
+
 - The current user request authorized one fresh bounded replacement campaign;
   its before-launch disposition is linked in Active unit. The former no-further-
   launch decision below remains the disposition of the first matrix. Original M4
@@ -819,6 +998,15 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Blockers
 
+The shell sandbox helper still cannot start; reviewed elevated execution works.
+The 2026-09-22 pending patch/test action was not executed because automatic approval
+review hit an account usage limit (not a safety finding). On 2026-09-23 approved
+read/write/test commands work again. On 2026-09-23 computer-use list_apps reports
+"native pipe is unavailable ... os error 2". User-operated combined native
+acceptance subsequently passed with diagnostic/source-audit support. No
+reconciliation blocker remains; the native pass is actual user evidence, not
+an inference from DOM tests.
+
 No unresolved minimal-descriptor acceptance or engineering blocker remains.
 The missing Windows native pipe persisted after reset/reinitialization; the
 user-operated native sequence supplied the actual UI/audio observations instead.
@@ -835,9 +1023,10 @@ campaign's coverage gaps remain explicit and are not repaired by pooling.
 
 ## Next action
 
-Stop at the completed descriptor boundary after the requested coherent commit.
-No replay implementation is active. On a subsequent request, follow planned-work
-bootstrap and create/finalize a separate plan for the next semantic timeline /
-ReplayTimeline unit before implementation. Preserve the completed descriptor and
-V2/M4 evidence; do not relaunch a campaign, reopen closed dispositions, or infer
-full-feature performance acceptance from descriptor independence.
+Use completed reconciliation M1-M3 as the restart baseline. Keep the merge and
+all changes uncommitted. Before further QB-REPLAY-010 implementation or full replay
+performance work, resolve the next concrete remaining unit against the unchanged
+feature criteria and finalize its separately reviewed design through WORKFLOW.md.
+Do not remerge the accepted UI input, include later sibling edits, rerun this
+completed acceptance without a concrete invalidation, or reopen descriptor/M4
+campaigns. The current immutable reconciliation plan remains unchanged.

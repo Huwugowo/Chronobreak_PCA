@@ -16,12 +16,8 @@ body,
 body {
   min-height: 100vh;
   overflow-x: hidden;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    radial-gradient(circle at 82% 12%, rgba(36, 87, 255, 0.16), transparent 31rem),
-    var(--color-ink);
-  background-size: 42px 42px, 42px 42px, auto, auto;
+  color: var(--text-primary);
+  background: var(--surface-app);
 }
 
 body.replay-fullscreen {
@@ -29,11 +25,14 @@ body.replay-fullscreen {
 }
 
 ::selection {
-  color: #fff;
-  background: var(--color-blue);
+  color: var(--surface-app);
+  background: var(--brand-yellow);
 }
 
-button {
+button,
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -50,9 +49,11 @@ button:focus-visible,
 video:focus-visible,
 select:focus-visible,
 input:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--color-blue-soft);
-  outline-offset: 3px;
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

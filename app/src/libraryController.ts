@@ -18,6 +18,7 @@ export type LibraryState = {
   deletion: LibrarySelection | null;
   durations: Readonly<Record<string, DurationDisplay>>;
   busy: string | null;
+  mutationRefresh: { origin: LibraryOrigin; succeeded: boolean } | null;
 };
 type Dependencies = {
   refresh: () => Promise<LibrarySnapshot>;
@@ -48,7 +49,7 @@ export const libraryError = (error: unknown): string => {
 export class LibraryController {
   private state: LibraryState = {
     root: null, snapshot: null, request: 0, refreshing: false, actionable: false,
-    error: null, selectedGame: null, activeClip: null, deletion: null, durations: {}, busy: null,
+    error: null, selectedGame: null, activeClip: null, deletion: null, durations: {}, busy: null, mutationRefresh: null,
   };
   private listeners = new Set<(state: LibraryState) => void>();
   private closed = false;
@@ -97,10 +98,10 @@ export class LibraryController {
     this.navigation++;
     this.supersedeDurations();
     this.publish({ root, snapshot: null, selectedGame: null, activeClip: null, deletion: null,
-      actionable: false, error: null });
+      actionable: false, error: null, mutationRefresh: null });
     this.refresh();
   }
-  refresh() {
+  refresh(mutationRefresh: LibraryState["mutationRefresh"] = null) {
     if (this.closed || this.state.root === null) return;
     this.scanPending = true;
     this.supersedeReplay();
@@ -108,7 +109,7 @@ export class LibraryController {
     this.publish({ request: this.state.request + 1, refreshing: true,
       // Keep the complete cards visible, but stop admitting tokenized actions
       // while the backend has invalidated the old selected token.
-      actionable: false, error: null });
+      actionable: false, error: null, mutationRefresh });
     this.pumpRefresh();
   }
   /** Reconcile a completed export even when its UI response was superseded. */
@@ -222,7 +223,8 @@ export class LibraryController {
     }
     // Includes stale-token rejection and partial-error completion. M2 can reject
     // an old export response AFTER publishing its files into the captured root.
-    if (!this.closed && origin.root === this.state.root) this.refresh();
+    if (!this.closed && origin.root === this.state.root)
+      this.refresh(admitted ? { origin, succeeded: error === undefined } : null);
     this.pumpRefresh();
     return admitted && error === undefined ? { admitted: true, value: value as T }
       : { admitted: false, ...(admitted && error !== undefined ? { error } : {}) };

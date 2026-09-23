@@ -1,0 +1,239 @@
+.timelineRoot {
+  min-width: 0;
+}
+
+.rail {
+  position: relative;
+  height: 38px;
+  margin: 0 16px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.track,
+.fill {
+  position: absolute;
+  top: 18px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+
+.fill {
+  right: auto;
+  background: var(--color-blue);
+  box-shadow: 0 0 7px rgba(46, 103, 255, 0.8);
+}
+
+.head {
+  position: absolute;
+  z-index: 5;
+  top: 13px;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%);
+  border: 1px solid #fff;
+  background: var(--color-blue);
+  box-shadow: 0 0 9px rgba(46, 103, 255, 0.8);
+  pointer-events: none;
+}
+
+.markers {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+}
+
+.marker {
+  --marker-color: #7f8999;
+  position: absolute;
+  top: 11px;
+  width: 7px;
+  height: 9px;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 0;
+  background: var(--marker-color);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 100ms ease;
+}
+
+.marker::after {
+  position: absolute;
+  top: 8px;
+  left: 1px;
+  width: 3px;
+  height: 3px;
+  transform: rotate(45deg);
+  background: var(--marker-color);
+  content: "";
+}
+
+.marker:hover,
+.marker:focus-visible {
+  z-index: 6;
+  transform: translateX(-50%) scale(1.5);
+}
+
+.markerally {
+  --marker-color: #4a70e0;
+}
+
+.markerenemy {
+  --marker-color: #c2001c;
+}
+
+.markerneutral {
+  --marker-color: #7f8999;
+}
+
+.cluster {
+  position: absolute;
+  z-index: 4;
+  top: 7px;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(169, 187, 255, 0.72);
+  border-radius: 11px;
+  color: #eef2ff;
+  background: rgba(28, 45, 88, 0.96);
+  box-shadow: 0 0 12px rgba(46, 103, 255, 0.24);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 750;
+  cursor: zoom-in;
+  pointer-events: auto;
+}
+
+.cluster:hover,
+.cluster:focus-visible {
+  border-color: #dbe4ff;
+  background: rgba(43, 67, 126, 0.98);
+}
+
+.hoverTime {
+  position: absolute;
+  z-index: 8;
+  bottom: 31px;
+  padding: 3px 5px;
+  transform: translateX(-50%);
+  border: 1px solid var(--color-line-bright);
+  color: #fff;
+  background: rgba(5, 8, 13, 0.94);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.clipSelection {
+  position: absolute;
+  z-index: 2;
+  top: 14px;
+  height: 10px;
+  border-block: 1px solid rgba(138, 166, 255, 0.9);
+  background: rgba(74, 112, 224, 0.34);
+  box-shadow: 0 0 14px rgba(74, 112, 224, 0.36);
+  pointer-events: none;
+}
+
+.clipHandle {
+  position: absolute;
+  z-index: 7;
+  top: 7px;
+  width: 12px;
+  height: 24px;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 1px solid #c9d5ff;
+  border-radius: 2px;
+  background: #4a70e0;
+  box-shadow: 0 0 12px rgba(74, 112, 224, 0.72);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.clipHandle::after {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 5px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.76);
+  content: "";
+}
+
+.clipHandle:focus {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.clipHandleStart {
+  border-radius: 4px 1px 1px 4px;
+}
+
+.clipHandleEnd {
+  border-radius: 1px 4px 4px 1px;
+}
+
+.overview {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  margin: -1px 16px 1px;
+}
+
+.resetZoom {
+  padding: 0;
+  border: 0;
+  color: var(--color-muted-bright);
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.resetZoom:hover,
+.resetZoom:focus-visible {
+  color: #fff;
+}
+
+.overviewTrack {
+  position: relative;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.overviewWindow {
+  position: absolute;
+  top: -2px;
+  height: 7px;
+  border: 1px solid rgba(138, 166, 255, 0.72);
+  background: rgba(74, 112, 224, 0.26);
+}
+
+.overviewPlayhead {
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 7px;
+  background: #fff;
+}
+
+.viewportLabel {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  white-space: nowrap;
+}

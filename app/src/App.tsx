@@ -56,6 +56,7 @@ import type {
   ClipExportPreset,
 } from "./types";
 import { LibraryController, type LibraryOrigin } from "./libraryController";
+import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 import styles from "./App.module.css";
 
 type DeleteTarget =
@@ -96,7 +97,17 @@ function App() {
     const selected = viewerSelection();
     return selected && controller.mayPublish(selected.origin) ? selected : null;
   });
-  const games = createMemo(() => libraryState().snapshot?.games);
+  const [saveOverlay, setSaveOverlay] = createSignal<SavedOverlay | null>(null);
+  createEffect(() => {
+    const state = libraryState();
+    setSaveOverlay(current => reconcileSavedOverlay(current, controller.origin(), state));
+  });
+  const games = createMemo(() => {
+    const canonical = libraryState().snapshot?.games;
+    const overlay = saveOverlay();
+    return overlay ? canonical?.map(game => game.timestamp === overlay.game
+      ? { ...game, saved: overlay.saved } : game) : canonical;
+  });
   const clips = createMemo(() => libraryState().snapshot?.clips);
   const usage = createMemo(() => libraryState().snapshot?.usage);
   const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
@@ -105,6 +116,7 @@ function App() {
   const [benchmarkHevcCapability, setBenchmarkHevcCapability] =
     createSignal<HevcProbeStatus | null>(null);
   const [busyId, setBusyId] = createSignal<string | null>(null);
+
   const [deleteTarget, setDeleteTarget] = createSignal<DeleteTarget | null>(null);
   const activeClip = createMemo(() => {
     const id = libraryState().activeClip;
@@ -194,20 +206,19 @@ function App() {
   };
 
   const toggleSaved = async (game: GameSummary, origin: LibraryOrigin | null) => {
-    if (!origin) return showError("Select a current library snapshot first.");
-    setBusyId(game.timestamp);
-    try {
-      const result = await controller.mutate(origin, game.timestamp,
-        token => setGameSaved(game.timestamp, !game.saved, token));
-      if (!result.admitted) throw new Error(result.error ?? "Save request became stale.");
-      showNotice(game.saved ? "Recording removed from saved games." : "Recording saved.");
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusyId(null);
+    if (!origin || !controller.mayPublish(origin) || saveOverlay() || controller.value.busy) return;
+    const overlay: SavedOverlay = { origin, snapshot: controller.value.snapshot!, game: game.timestamp, saved: !game.saved, phase: "pending" };
+    setSaveOverlay(overlay);
+    const result = await controller.mutate(origin, game.timestamp,
+      token => setGameSaved(game.timestamp, overlay.saved, token));
+    // Mutation reconciliation remains mandatory even if this UI intent went stale.
+    if (!isSaveCompletionCurrent(overlay, controller.origin(), controller.value)) return;
+    if (result.admitted) showNotice(overlay.saved ? "Recording saved." : "Recording removed from saved games.");
+    else {
+      setSaveOverlay(current => current?.origin === origin ? null : current);
+      if (result.error) showError(result.error);
     }
   };
-
   const confirmDelete = async () => {
     const target = deleteTarget();
     if (!target) return;
@@ -601,6 +612,7 @@ function App() {
             currentOrigin.rootEpoch === gamesUsableOrigin.rootEpoch &&
             currentOrigin.request === gamesUsableOrigin.request &&
             currentOrigin.token === gamesUsableOrigin.token &&
+            currentOrigin.navigation === gamesUsableOrigin.navigation &&
             currentNavigation.screen === "library" &&
             currentNavigation.tab === "games" &&
             libraryState().actionable &&
@@ -634,6 +646,7 @@ function App() {
                 afterDrainOrigin.rootEpoch === gamesUsableOrigin.rootEpoch &&
                 afterDrainOrigin.request === gamesUsableOrigin.request &&
                 afterDrainOrigin.token === gamesUsableOrigin.token &&
+                afterDrainOrigin.navigation === gamesUsableOrigin.navigation &&
                 afterDrainNavigation.screen === "library" && afterDrainNavigation.tab === "games" &&
                 libraryState().actionable && !libraryState().refreshing;
               if (drained && stillCurrent) emitHistoricalUseful();
@@ -644,8 +657,11 @@ function App() {
                 void observer.complete("failed", reason, { phase: "library_details" });
               }
             });
-          } else {
-            emitHistoricalUseful();
+          } else if (!benchmarkFailureStarted) {
+            benchmarkFailureStarted = true;
+            const reason = "Games view changed before its paint milestone";
+            observer.emit("scenario_failed", { phase: "library_paint", reason }, { required: true });
+            void observer.complete("failed", reason, { phase: "library_paint" });
           }
         });
       });
@@ -768,7 +784,7 @@ function App() {
     state.screen === "settings" ? state.returnTo : state;
 
   return (
-    <div class={styles.appShell}>
+    <div class={styles.appShell} data-screen={navigation().screen}>
       <AppHeader
         navigation={navigation()}
         ddragon={ddragon() ?? emptyDdragon}
@@ -808,8 +824,10 @@ function App() {
               onRetryDuration={(filename) => controller.requestDurations([filename], true)}
               snapshotOrigin={controller.origin()}
               ddragon={ddragon() ?? emptyDdragon}
-              busyId={busyId()}
-              onOpenGame={openViewer}
+              busyId={libraryState().busy ?? busyId()}
+              onOpenGame={(timestamp, origin) => {
+                  if (origin && controller.mayPublish(origin)) openViewer(timestamp);
+                }}
               onToggleSaved={(game, origin) => void toggleSaved(game, origin)}
               onDeleteGame={(game, origin) => {
                 if (origin) { controller.selectDeletion("game", game.timestamp); setDeleteTarget({ kind: "game", game, origin }); }

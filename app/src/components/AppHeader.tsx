@@ -1,6 +1,6 @@
 import type { DdragonStatus, LibraryTab, NavigationState } from "../types";
-import { isDesktopRuntime } from "../api";
-import styles from "../App.module.css";
+import { ClipsIcon, MatchHistoryIcon, SettingsIcon } from "../ui/icons";
+import styles from "./Chrome.module.css";
 
 type Props = {
   navigation: NavigationState;
@@ -12,33 +12,34 @@ type Props = {
 
 function AppHeader(props: Props) {
   const activeTab = () => (props.navigation.screen === "library" ? props.navigation.tab : null);
+  const settingsActive = () => props.navigation.screen === "settings";
+  const replayMode = () => props.navigation.screen === "viewer";
 
   return (
-    <header class={styles.header}>
-      <button class={styles.brandLockup} type="button" onClick={props.onHome} aria-label="Games library">
-        <span class={styles.brandMark} aria-hidden="true">
-          LR
-        </span>
-        <span>
-          <small>LEAGUE REPLAY</small>
-          <strong>Local match archive</strong>
-        </span>
+    <header class={styles.header} data-screen={props.navigation.screen}>
+      <button class={styles.brandLockup} type="button" onClick={props.onHome} aria-label={replayMode() ? "Back to Match History" : "Open Match History"}>
+        <strong class={styles.brandWordmark}>{replayMode() ? "← MATCH HISTORY" : "CHRONOBREAK"}</strong>
+        <small>{replayMode() ? "CHRONOBREAK REPLAY" : "LEAGUE REPLAY"}</small>
       </button>
 
       <nav class={styles.tabs} aria-label="Library">
         <button
           type="button"
           classList={{ [styles.activeTab]: activeTab() === "games" }}
+          aria-current={activeTab() === "games" ? "page" : undefined}
           onClick={() => props.onTab("games")}
         >
-          Games
+          <MatchHistoryIcon size={16} />
+          <span>Match History</span>
         </button>
         <button
           type="button"
           classList={{ [styles.activeTab]: activeTab() === "clips" }}
+          aria-current={activeTab() === "clips" ? "page" : undefined}
           onClick={() => props.onTab("clips")}
         >
-          Clips
+          <ClipsIcon size={16} />
+          <span>Clips</span>
         </button>
       </nav>
 
@@ -53,20 +54,17 @@ function AppHeader(props: Props) {
             ? `ASSETS ${props.ddragon.version ?? "READY"}`
             : props.ddragon.state.toUpperCase()}
         </span>
-        <span
-          class={styles.runtimeMark}
-          title={isDesktopRuntime() ? "Tauri desktop runtime" : "Browser preview"}
-        >
-          {isDesktopRuntime() ? "DESKTOP" : "PREVIEW"}
-        </span>
         <button
           class={styles.settingsButton}
+          classList={{ [styles.settingsActive]: settingsActive() }}
           type="button"
           onClick={props.onSettings}
           aria-label="Open settings"
+          aria-current={settingsActive() ? "page" : undefined}
           title="Settings"
         >
-          <span aria-hidden="true">SETTINGS</span>
+          <SettingsIcon size={16} />
+          <span>Settings</span>
         </button>
       </div>
     </header>

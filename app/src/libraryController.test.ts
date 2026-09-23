@@ -13,7 +13,7 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
   token,
   games: [{ timestamp: game, champion: "Ahri", game_mode: "CLASSIC", duration_ms: 1,
     recorded_at: "2026-01-01T00:00:00Z", kills: 0, deaths: 0, assists: 0,
-    summoner_spells: [], keystone_id: null, items: [], saved: false, incomplete: false,
+    summoner_spells: [], keystone_id: null, items: [], participants: [], saved: false, incomplete: false,
     video_size_bytes: 1, video_available: true }],
   clips: [{ filename: `${game}_clip`, game_timestamp: game, clip_timestamp: "1", duration_ms: null,
     file_size_bytes: 1, thumbnail_path: null, thumbnail_url: null, video_url: "",

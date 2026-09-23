@@ -1,5 +1,4 @@
 import {
-  For,
   Match,
   Show,
   Switch,
@@ -52,12 +51,17 @@ import {
   replayTickAtFrameBoundary,
   timelineValue,
 } from "../viewerUtils";
+import {
+  wholeTimelineViewport,
+  type TimelineViewport,
+} from "../replayTimelineGeometry";
 import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot } from "../playbackController";
 import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
 import { createPlaybackDiagnostics, type DecoderSnapshot } from "../playbackDiagnostics";
 import ChampionFilter from "./ChampionFilter";
 import FullscreenOverlay from "./FullscreenOverlay";
 import PlaybackControls from "./PlaybackControls";
+import ReplayTimeline from "./ReplayTimeline";
 import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
 
@@ -173,7 +177,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   let primaryVideo: HTMLVideoElement | undefined;
   let controller!: PlaybackController;
   let decoderDiagnostics: ReturnType<typeof createPlaybackDiagnostics> | undefined;
-  let windowedRail!: HTMLDivElement;
   let metricsIntervalId: number | undefined;
   let benchmarkMediaReadyTimerId: number | undefined;
   let mediaGeneration = replayBenchmarkObserver()?.nextMediaGeneration() ?? 0;
@@ -241,6 +244,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   const [playback, setPlayback] = createSignal<PlaybackSnapshot>();
   const [decoder, setDecoder] = createSignal<DecoderSnapshot>();
   const [replayPosition, setReplayPosition] = createSignal<ReplayTick>(0 as ReplayTick);
+  const [timelineViewport, setTimelineViewport] = createSignal<TimelineViewport>(
+    wholeTimelineViewport(replayEnd as ReplayTick),
+  );
   const [isPlaying, setIsPlaying] = createSignal(false);
   const [mediaState, setMediaState] = createSignal<MediaPreviewState>("loading");
   const [mediaError, setMediaError] = createSignal<string | null>(null);
@@ -297,7 +303,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     replayTickAtFrameBoundary(frame, mediaTimeline);
   const clipStartTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.startFrame);
   const clipEndTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.endFrameExclusive);
-  const progress = createMemo(() => clamp((replayPosition() / replayEnd) * 100, 0, 100));
   const videoSecond = createMemo(() => Math.floor(replayPosition() / REPLAY_TICKS_PER_SECOND));
   const replayTickAtGameZero = createMemo(() => {
     const point = events()[0] ?? playerTimeline()[0];
@@ -321,20 +326,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
       selected.some((player) => eventInvolvesPlayer(event, player)),
     );
   });
-  const markerPositions = createMemo(() =>
-    visibleEvents().map((event, index) => ({
-      event,
-      index,
-      position: clamp((event.replay_tick / replayEnd) * 100, 0, 100),
-      tone: event.relation,
-    })),
-  );
-  const clipStartPosition = createMemo(() =>
-    clipRange() ? clamp((clipStartTick(clipRange()!) / replayEnd) * 100, 0, 100) : 0,
-  );
-  const clipEndPosition = createMemo(() =>
-    clipRange() ? clamp((clipEndTick(clipRange()!) / replayEnd) * 100, 0, 100) : 100,
-  );
   const activeEventIndex = createMemo(() => presentedPosition() === null ? -1 : latestIndexAt(visibleEvents(), presentedPosition()!));
   const activeEvent = createMemo(() => {
     const index = activeEventIndex();
@@ -510,49 +501,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     seekTo(previewTick, { reason: "endpoint-edit" });
   };
 
-  const beginClipDrag = (
-    event: PointerEvent & { currentTarget: HTMLButtonElement },
-    endpoint: ClipEndpoint,
-    rail: HTMLDivElement,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    handle.focus({ preventScroll: true });
-    beginClipEndpointEdit(endpoint);
-    const update = (pointerEvent: PointerEvent) => {
-      const bounds = rail.getBoundingClientRect();
-      if (bounds.width <= 0) return;
-      updateClipEndpoint(
-        endpoint,
-        Math.round(
-          clamp((pointerEvent.clientX - bounds.left) / bounds.width, 0, 1) * replayEnd,
-        ) as ReplayTick,
-      );
-    };
-    const cleanup = (pointerEvent: PointerEvent) => {
-      handle.removeEventListener("pointermove", update);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", cancel);
-      if (handle.hasPointerCapture(pointerEvent.pointerId)) {
-        handle.releasePointerCapture(pointerEvent.pointerId);
-      }
-    };
-    const finish = (pointerEvent: PointerEvent) => {
-      update(pointerEvent);
-      cleanup(pointerEvent);
-      finishClipEndpointEdit();
-    };
-    const cancel = (pointerEvent: PointerEvent) => {
-      cleanup(pointerEvent);
-      finishClipEndpointEdit();
-    };
-    handle.setPointerCapture(event.pointerId);
-    handle.addEventListener("pointermove", update);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", cancel);
-  };
-
   const applyEndpointHoldTime = (hold: EndpointHoldState, now: number) => {
     if (now - hold.startedAt < ENDPOINT_HOLD_THRESHOLD_MS) return;
     const frameRate = mediaTimeline.video.frameRate;
@@ -637,29 +585,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     clearEndpointHold();
     setEditingEndpoint(null);
     setClipRange(null);
-  };
-
-  const seekFromRail = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (bounds.width <= 0) return;
-    setEditingEndpoint(null);
-    seekTo(
-      Math.round(
-        clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * replayEnd,
-      ) as ReplayTick,
-    );
-  };
-
-  const handleRailKey = (event: KeyboardEvent) => {
-    let target: number | undefined;
-    if (event.key === "PageDown") target = replayPosition() - 30 * REPLAY_TICKS_PER_SECOND;
-    if (event.key === "PageUp") target = replayPosition() + 30 * REPLAY_TICKS_PER_SECOND;
-    if (event.key === "Home") target = 0;
-    if (event.key === "End") target = replayEnd;
-    if (target === undefined) return;
-    event.preventDefault();
-    setEditingEndpoint(null);
-    seekTo(clamp(target, 0, replayEnd) as ReplayTick);
   };
 
   const togglePlayback = async () => {
@@ -1247,13 +1172,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
 
   return (
     <section class={styles.playbackSurface} data-testid="viewer-surface">
-      <div class={styles.viewerTopline}>
-        <button class={styles.backButton} type="button" onClick={props.onBack}>
-          <span aria-hidden="true">←</span> GAMES
-        </button>
-        <span class={styles.replayLabel}><span aria-hidden="true">▶</span> REPLAY</span>
-      </div>
-
       <header class={styles.gameHeader}>
         <div class={styles.gameIdentity}>
           <p>LOCAL RECORDING / {props.game.game_mode}</p>
@@ -1359,6 +1277,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
                 events={visibleEvents()}
                 mediaTimeline={mediaTimeline}
                 replayTick={replayPosition()}
+                timelineViewport={timelineViewport()}
+                onTimelineViewportChange={setTimelineViewport}
                 presentedTick={presentedPosition()}
                 gameTick={currentGameTick()}
                 beforeGameStart={beforeGameStart()}
@@ -1449,69 +1369,32 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
 
         <Show when={!isFullscreen()}>
         <section class={styles.timelinePanel} aria-label="Replay timeline">
-          <div
-            ref={windowedRail}
-            class={styles.scrubber}
-            role="slider"
-            tabIndex={0}
-            aria-label="Replay position"
-            aria-valuemin={0}
-            aria-valuemax={Math.floor(durationMs / 1_000)}
-            aria-valuenow={videoSecond()}
-            aria-valuetext={`${formatDuration(videoSecond() * 1_000)} of ${formatDuration(durationMs)}`}
-            onPointerDown={seekFromRail}
-            onKeyDown={handleRailKey}
-            data-testid="scrubber"
-          >
-            <span class={styles.scrubberTrack} />
-            <span class={styles.scrubberFill} style={`width:${progress()}%`} />
-            <Show when={clipRange()}>
-              <span
-                class={styles.clipSelection}
-                style={`left:${clipStartPosition()}%;width:${clipEndPosition() - clipStartPosition()}%`}
-              />
-              <button
-                class={`${styles.clipHandle} ${styles.clipHandleStart}`}
-                style={`left:${clipStartPosition()}%`}
-                type="button"
-                aria-label={`Clip starts at ${formatDuration(replayTickToMilliseconds(clipStartTick(clipRange()!)))}`}
-                onPointerDown={(event) => beginClipDrag(event, "start", windowedRail)}
-                onKeyDown={(event) => handleClipEndpointKeyDown(event, "start")}
-                onKeyUp={(event) => handleClipEndpointKeyUp(event, "start")}
-                onBlur={() => handleClipEndpointBlur("start")}
-              />
-              <button
-                class={`${styles.clipHandle} ${styles.clipHandleEnd}`}
-                style={`left:${clipEndPosition()}%`}
-                type="button"
-                aria-label={`Clip ends at ${formatDuration(replayTickToMilliseconds(clipEndTick(clipRange()!)))}`}
-                onPointerDown={(event) => beginClipDrag(event, "end", windowedRail)}
-                onKeyDown={(event) => handleClipEndpointKeyDown(event, "end")}
-                onKeyUp={(event) => handleClipEndpointKeyUp(event, "end")}
-                onBlur={() => handleClipEndpointBlur("end")}
-              />
-            </Show>
-            <span class={styles.scrubberHead} style={`left:${progress()}%`} />
-            <div class={styles.markers}>
-              <For each={markerPositions()}>
-                {(marker) => (
-                  <button
-                    class={`${styles.marker} ${styles[`marker${marker.tone}`]}`}
-                    style={`left:${marker.position}%`}
-                    type="button"
-                    aria-label={`Seek to ${eventTitle(marker.event)} at ${formatDuration(gameTickToMilliseconds(marker.event.game_tick))}`}
-                    title={`${eventTitle(marker.event)} · ${formatDuration(gameTickToMilliseconds(marker.event.game_tick))}`}
-                    data-event-index={marker.index}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      selectEvent(marker.event);
-                    }}
-                  />
-                )}
-              </For>
-            </div>
-          </div>
+          <ReplayTimeline
+            duration={replayEnd as ReplayTick}
+            playhead={replayPosition() as ReplayTick}
+            viewport={timelineViewport()}
+            onViewportChange={setTimelineViewport}
+            events={visibleEvents()}
+            clip={
+              clipRange()
+                ? {
+                    start: clipStartTick(clipRange()!),
+                    end: clipEndTick(clipRange()!),
+                  }
+                : null
+            }
+            onSeek={(tick) => {
+              setEditingEndpoint(null);
+              seekTo(tick);
+            }}
+            onEventSelect={selectEvent}
+            onClipEndpointEditStart={beginClipEndpointEdit}
+            onClipEndpointPreview={updateClipEndpoint}
+            onClipEndpointEditFinish={finishClipEndpointEdit}
+            onClipEndpointKeyDown={handleClipEndpointKeyDown}
+            onClipEndpointKeyUp={handleClipEndpointKeyUp}
+            onClipEndpointBlur={handleClipEndpointBlur}
+          />
           <div class={styles.controlsRow}>
             <button
               class={styles.playButton}

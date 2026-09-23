@@ -7,7 +7,7 @@ type Props = {
   participants: readonly ReplayParticipant[];
   selectedPlayers: readonly string[];
   localPlayerName: string | null;
-  mode: "panel" | "rail";
+  mode: "panel" | "rail" | "fullscreen";
   onToggle: (summonerName: string) => void;
   onClear: () => void;
 };
@@ -35,6 +35,7 @@ function ChampionFilter(props: Props) {
         [styles.root]: true,
         [styles.panel]: props.mode === "panel",
         [styles.rail]: props.mode === "rail",
+        [styles.fullscreen]: props.mode === "fullscreen",
       }}
       aria-label="Timeline champion filter"
       data-testid={`champion-filter-${props.mode}`}

@@ -29,6 +29,12 @@ The core scan never invokes a media probe. The frontend consumes this snapshot
 through one `LibraryController`, which owns the root, token, selections,
 mutations, refresh coalescing, and optional duration enrichment.
 
+Game summaries include required participant display data derived from the already
+parsed strict bundle. The full probe reuses the same roster-context projection and
+name normalization/order. Missing team knowledge stays neutral; absent observations
+and incomplete bundles have empty rosters. This adds projection/IPC data, no extra
+filesystem read, media probe, child process or persistent roster cache.
+
 AppState owns a disposable `LibraryCoordinator`: one blocking scan slot, immediate
 Busy rejection of excess requests, and one completed snapshot. The blocking
 worker retains its permit after caller cancellation. Every admitted refresh gets
@@ -78,6 +84,13 @@ mutation attempt invalidates through a completion guard, including partial error
 and unwinding; errors remain visible. Failed settings persistence retains the
 published pair and revision. Refresh-invalidated retained views are display-only
 until a successful refresh supplies an admissible token.
+
+The Star uses a separate optimistic display overlay keyed to the originating root,
+root epoch, request, token, navigation and canonical snapshot. A successful save
+bridges only its own compulsory refresh while old cards remain visible; the next
+canonical snapshot wins. Failure, an unrelated refresh, navigation or root change
+clears the overlay. Stale completions cannot publish notices or clear newer
+overlays. The overlay never mutates the snapshot or authorizes an action.
 
 Exports retain their admitted destination and strict source/frame contract. Their
 completion invalidates the current view only when its logical path and approved

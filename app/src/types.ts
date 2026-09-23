@@ -10,6 +10,7 @@ export type GameSummary = {
   summoner_spells: string[];
   keystone_id: number | null;
   items: GameItemSummary[];
+  participants: ReplayParticipant[];
   saved: boolean;
   incomplete: boolean;
   video_size_bytes: number;

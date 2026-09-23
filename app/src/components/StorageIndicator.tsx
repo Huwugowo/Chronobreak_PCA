@@ -1,6 +1,7 @@
 import { formatBytes } from "../format";
 import type { StorageUsage } from "../types";
-import styles from "../App.module.css";
+import { StorageIcon } from "../ui/icons";
+import styles from "./Chrome.module.css";
 
 type Props = {
   usage: StorageUsage;
@@ -10,15 +11,16 @@ type Props = {
 function StorageIndicator(props: Props) {
   return (
     <footer class={styles.storageIndicator}>
-      <div>
-        <span>RECORDINGS {formatBytes(props.usage.games_bytes)}</span>
+      <div class={styles.storageSummary}>
+        <StorageIcon size={16} />
+        <span>Recordings {formatBytes(props.usage.games_bytes)}</span>
         <i aria-hidden="true" />
-        <span>CLIPS {formatBytes(props.usage.clips_bytes)}</span>
+        <span>Clips {formatBytes(props.usage.clips_bytes)}</span>
         <i aria-hidden="true" />
-        <strong>TOTAL {formatBytes(props.usage.games_bytes + props.usage.clips_bytes)}</strong>
+        <strong>Total {formatBytes(props.usage.games_bytes + props.usage.clips_bytes)}</strong>
       </div>
       <button type="button" onClick={props.onManage}>
-        Manage storage <span aria-hidden="true">→</span>
+        Manage storage
       </button>
     </footer>
   );

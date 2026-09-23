@@ -4,7 +4,7 @@
 
 `app/src-tauri/src/lib.rs` loads shared configuration, creates synchronized app state, installs built-in music, starts the local playback server, launches asynchronous Data Dragon initialization, runs retention, and registers Tauri commands. Commands expose settings, library scans/mutations, playback probes, HEVC capability state, assets, music, export, and diagnostics to `app/src/api.ts`.
 
-SolidJS `app/src/App.tsx` owns screen navigation and resources for games, clips, storage, settings, and Data Dragon status. The frontend does not receive raw multi-gigabyte video bytes through Tauri IPC.
+SolidJS `app/src/App.tsx` owns screen navigation, a single `LibraryController` snapshot for games/clips/storage, and independent settings/Data Dragon resources. The frontend does not receive raw multi-gigabyte video bytes through Tauri IPC.
 
 ## Loopback playback server
 
@@ -39,9 +39,14 @@ unchanged full playback probe. Its game, URL and decoded media timeline must mat
 the descriptor before semantic arrays are admitted. Existing event/player/KDA
 views update reactively without reopening media or resetting rate, clip range,
 seek state or fullscreen. Pending/failed details are explicit, with a local retry;
-missing stats and game-time calibration stay unavailable. This is not a staged
-semantic timeline or a new ReplayTimeline UI. Strict JSON is read for each request;
+missing stats and game-time calibration stay unavailable. Strict JSON is read for each request;
 there is no persistent cache or claim that aggregate I/O is reduced.
+
+`ReplayTimeline` supplies the same seek, zoom, pan, clustered-event and clip rail
+in windowed and fullscreen layouts. Its viewport and exact frame clip draft live
+in the persistent playback surface; pending details do not gate basic media
+controls. Each disposable rail releases pointer capture, gesture listeners and its
+resize observer on cancellation or unmount, including a layout change mid-drag.
 
 `LibraryController` owns one active replay read and one replaceable latest intent
 across viewer/exporter lifetimes. Admission includes root epoch, request, token,
@@ -53,7 +58,9 @@ owner; export's existing source/frame and mutation contracts remain unchanged.
 `playback_payload_ready` still means the full semantic probe, now potentially after
 mount; it never means descriptor readiness. Benchmark scenarios require both full
 details and presented media, regardless of arrival order. Historical library
-milestones are unchanged; old payload-before-mount attribution is not a descriptor
+milestone meanings are unchanged. Paint and subsequent duration-drain admission
+check root/request/token/navigation identity; a stale Games view fails instead of
+emitting library_useful. Old payload-before-mount attribution is not a descriptor
 performance comparison.
 
 `playbackController.ts` owns the primary media lifecycle through

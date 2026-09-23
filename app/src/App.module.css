@@ -1,11 +1,26 @@
 .appShell {
   min-height: 100vh;
-  padding: 24px clamp(22px, 3.4vw, 58px) 104px;
+  padding: 24px clamp(16px, calc(9.17vw - 83px), 58px) 104px;
 }
 
 .mainContent {
   width: min(100%, 1540px);
   margin: 0 auto;
+}
+
+.appShell[data-screen="viewer"] {
+  box-sizing: border-box;
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  padding-bottom: 16px;
+  overflow: hidden;
+}
+
+.appShell[data-screen="viewer"] .mainContent {
+  flex: 1;
+  min-height: 0;
 }
 
 .header {
@@ -263,7 +278,7 @@
   place-content: center;
   justify-items: center;
   border: 1px solid var(--color-line);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-surface);
   background: var(--color-panel);
   text-align: center;
   box-shadow: var(--shadow-panel);
@@ -325,7 +340,7 @@
   padding: 28px;
   border: 1px solid var(--color-line-bright);
   border-top: 2px solid var(--color-red);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-surface);
   background: #111721;
   box-shadow: 0 30px 100px rgba(0, 0, 0, 0.7);
 }

@@ -18,7 +18,7 @@ const playbackWire = () => ({
     assists: 1,
     summoner_spells: ["Flash", "Teleport"],
     keystone_id: 8214,
-    items: [{ item_id: 1001, slot: 0 }],
+    items: [{ item_id: 1001, slot: 0 }], participants: [],
     saved: false,
     incomplete: false,
     video_size_bytes: 1024,
@@ -197,5 +197,32 @@ describe("decodeClipDurations", () => {
       { clip_id: "x", duration: { state: "unavailable" } },
       { clip_id: "x", duration: { state: "unavailable" } },
     ] })).toThrow();
+  });
+});
+
+
+describe("strict roster boundary", () => {
+  const snapshot = (game: unknown) => ({ token: "current", games: [game], clips: [],
+    usage: { games_bytes: 1, clips_bytes: 0, game_count: 1, clip_count: 0 } });
+  it.each([[], [{ summoner_name: "Unknown team", champion: "Ahri", relation: "neutral" }],
+    [{ summoner_name: "Blue", champion: "Ahri", relation: "ally" },
+     { summoner_name: "Red", champion: "Lux", relation: "enemy" }]].map(roster => ({ roster })))("admits the same roster in snapshot and probe ($roster)", ({ roster }) => {
+    const wire = playbackWire(); Object.assign(wire.game, { participants: roster });
+    wire.participants = roster;
+    expect(decodeLibrarySnapshot(snapshot(wire.game)).games[0].participants).toEqual(roster);
+    const probe = decodePlaybackProbe(wire);
+    expect(probe.game.participants).toEqual(probe.participants);
+  });
+  it.each([undefined, null, {}, [{ summoner_name: "P", champion: "Ahri" }],
+    [{ summoner_name: "P", champion: "Ahri", relation: "friend" }],
+    [{ summoner_name: 1, champion: "Ahri", relation: "ally" }],
+    [{ summoner_name: "P", champion: null, relation: "neutral" }],
+    [{ summoner_name: "P", champion: "Ahri", relation: "enemy", team: 200 }]].map(roster => ({ roster })))("rejects malformed or missing roster ($roster)", ({ roster }) => {
+    const wire = playbackWire(); Object.assign(wire.game, { participants: roster });
+    if (roster === undefined) delete (wire.game as Partial<typeof wire.game>).participants;
+    expect(() => decodeLibrarySnapshot(snapshot(wire.game))).toThrow();
+    expect(() => decodePlaybackProbe(wire)).toThrow();
+    const full = { ...playbackWire(), participants: roster };
+    expect(() => decodePlaybackProbe(full)).toThrow();
   });
 });
