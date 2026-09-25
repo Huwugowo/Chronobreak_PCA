@@ -1,4 +1,5 @@
 import { onCleanup, onMount } from "solid-js";
+import controlStyles from "../ui/controls.module.css";
 import styles from "../App.module.css";
 
 type Props = {
@@ -35,10 +36,10 @@ function ConfirmDialog(props: Props) {
         <h2 id="confirm-title">{props.title}</h2>
         <span id="confirm-message">{props.message}</span>
         <div>
-          <button ref={cancelButton} type="button" onClick={props.onCancel} disabled={props.busy}>
+          <button class={controlStyles.control} ref={cancelButton} type="button" onClick={props.onCancel} disabled={props.busy}>
             Cancel
           </button>
-          <button type="button" data-danger onClick={props.onConfirm} disabled={props.busy}>
+          <button class={`${controlStyles.control} ${styles.dangerControl}`} type="button" onClick={props.onConfirm} disabled={props.busy}>
             {props.busy ? "Working…" : props.confirmLabel}
           </button>
         </div>

@@ -1,5 +1,6 @@
 import type { DdragonStatus, LibraryTab, NavigationState } from "../types";
-import { ClipsIcon, MatchHistoryIcon, SettingsIcon } from "../ui/icons";
+import { ArrowLeftIcon, ClipsIcon, MatchHistoryIcon, SettingsIcon } from "../ui/icons";
+import controlStyles from "../ui/controls.module.css";
 import styles from "./Chrome.module.css";
 
 type Props = {
@@ -12,14 +13,22 @@ type Props = {
 
 function AppHeader(props: Props) {
   const activeTab = () => (props.navigation.screen === "library" ? props.navigation.tab : null);
-  const settingsActive = () => props.navigation.screen === "settings";
   const replayMode = () => props.navigation.screen === "viewer";
 
   return (
     <header class={styles.header} data-screen={props.navigation.screen}>
       <button class={styles.brandLockup} type="button" onClick={props.onHome} aria-label={replayMode() ? "Back to Match History" : "Open Match History"}>
-        <strong class={styles.brandWordmark}>{replayMode() ? "← MATCH HISTORY" : "CHRONOBREAK"}</strong>
-        <small>{replayMode() ? "CHRONOBREAK REPLAY" : "LEAGUE REPLAY"}</small>
+        <strong class={styles.brandWordmark}>
+          {replayMode() ? (
+            <>
+              <ArrowLeftIcon size={16} />
+              <span>Back</span>
+            </>
+          ) : (
+            "CHRONOBREAK"
+          )}
+        </strong>
+        {!replayMode() && <small>LEAGUE REPLAY</small>}
       </button>
 
       <nav class={styles.tabs} aria-label="Library">
@@ -55,12 +64,10 @@ function AppHeader(props: Props) {
             : props.ddragon.state.toUpperCase()}
         </span>
         <button
-          class={styles.settingsButton}
-          classList={{ [styles.settingsActive]: settingsActive() }}
+          class={`${controlStyles.control} ${styles.settingsButton}`}
           type="button"
           onClick={props.onSettings}
           aria-label="Open settings"
-          aria-current={settingsActive() ? "page" : undefined}
           title="Settings"
         >
           <SettingsIcon size={16} />

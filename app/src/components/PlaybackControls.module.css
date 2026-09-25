@@ -1,35 +1,187 @@
 .controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  color: inherit;
+  display: contents;
+  color: var(--color-muted-bright);
   font-family: var(--font-mono);
   font-size: 9px;
 }
 
-.speed, .volume {
+.volumeGroup {
+  --volume-level: 100%;
+  order: 20;
   display: inline-flex;
+  min-width: 30px;
   align-items: center;
-  gap: 5px;
-  white-space: nowrap;
+  gap: 0;
+  color: inherit;
 }
 
-.controls select, .controls button {
-  min-height: 28px;
-  border: 1px solid var(--color-line-bright);
-  padding: 3px 6px;
-  color: var(--color-text);
-  background: #10151e;
+.muteButton {
+  display: grid;
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.muteButton:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.volume {
+  display: inline-flex;
+  width: 0;
+  min-width: 0;
+  align-items: center;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    width 140ms cubic-bezier(.4, 0, .2, 1),
+    margin-left 140ms cubic-bezier(.4, 0, .2, 1),
+    opacity 100ms ease;
+}
+
+.volumeGroup:hover .volume,
+.volumeGroup:has(:focus-visible) .volume {
+  width: 84px;
+  margin-left: 2px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.volume input {
+  width: 78px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.volume input::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      to right,
+      var(--brand-yellow) 0 var(--volume-level),
+      rgba(255, 255, 255, 0.28) var(--volume-level) 100%
+    );
+}
+
+.volume input::-webkit-slider-thumb {
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+  transition:
+    width 100ms ease,
+    height 100ms ease,
+    margin-top 100ms ease;
+}
+
+.volume input:hover::-webkit-slider-thumb,
+.volume input:focus-visible::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+}
+
+.volume input::-moz-range-track {
+  height: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.volume input::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--brand-yellow);
+}
+
+.volume input::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.speed {
+  order: 50;
+  display: inline-flex;
+  align-items: center;
+}
+
+.speed select {
+  min-width: 48px;
+  min-height: 30px;
+  padding: 0 18px 0 7px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background-color: transparent;
   font: inherit;
   cursor: pointer;
 }
 
-.volume input { width: 65px; accent-color: #002fa7; }
-.volume span { min-width: 4ch; }
-.controls :focus-visible { outline: 2px solid #597be0; outline-offset: 3px; }
-.status { font-size: 8px; }
-.limited { color: #ffd099; }
-.dark { color: #f8f5ef; }
-.dark select, .dark button { background: #191919; border-color: #666; }
-.dark .limited { color: #ffd099; }
+.speed select:hover:not(:disabled) {
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.controls :focus-visible {
+  outline: 1px solid var(--color-blue-soft);
+  outline-offset: 2px;
+}
+
+.controls button:disabled,
+.controls select:disabled,
+.controls input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.status,
+.runtimeStatus,
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
+.limited {
+  color: #ffd099;
+}
+
+.dark {
+  color: #f8f5ef;
+}
+@media (prefers-reduced-motion: reduce) {
+  .volume {
+    transition: none;
+  }
+}

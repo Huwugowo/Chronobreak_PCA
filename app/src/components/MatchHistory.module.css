@@ -112,7 +112,7 @@
   min-height: 109px;
   overflow: visible;
   border: 1px solid var(--line-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-surface);
   background: var(--surface-panel);
 }
 .matchItem::before {
@@ -413,7 +413,7 @@
   width: 18px;
   height: 18px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--radius-surface);
   background: var(--surface-app);
 }
 
@@ -570,7 +570,7 @@
   place-content: center;
   justify-items: center;
   border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-panel-ui);
+  border-radius: var(--radius-surface);
   background: var(--surface-panel);
   text-align: center;
 }

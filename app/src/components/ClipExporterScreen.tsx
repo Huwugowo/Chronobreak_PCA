@@ -30,6 +30,9 @@ import {
   frameBoundaryToReplayTick,
 } from "../replayTime";
 import { clamp } from "../viewerUtils";
+import BackButton from "../ui/BackButton";
+import { ArrowRightIcon, CheckIcon, PauseIcon, PlayIcon } from "../ui/icons";
+import controlStyles from "../ui/controls.module.css";
 import styles from "./ClipExporterScreen.module.css";
 
 type Props = {
@@ -482,14 +485,12 @@ function ClipExporterScreen(props: Props) {
   return (
     <section class={styles.exporter} data-testid="clip-exporter">
       <header class={styles.exportHeader}>
-        <button
+        <BackButton
           class={styles.backButton}
-          type="button"
           disabled={exporting()}
+          label="BACK TO REPLAY"
           onClick={() => props.onBack(props.draft)}
-        >
-          <span aria-hidden="true">←</span> BACK TO REPLAY
-        </button>
+        />
         <div>
           <p>CLIP WORKBENCH</p>
           <h1>Publish the moment.</h1>
@@ -642,8 +643,14 @@ function ClipExporterScreen(props: Props) {
                   </Show>
                 </div>
                 <div class={styles.previewTransport}>
-                  <button type="button" disabled={!previewReady()} onClick={togglePreview}>
-                    {previewPlaying() ? "Ⅱ PAUSE" : "▶ PLAY CLIP"}
+                  <button
+                    class={`${controlStyles.control} ${controlStyles.iconLabel}`}
+                    type="button"
+                    disabled={!previewReady()}
+                    onClick={togglePreview}
+                  >
+                    {previewPlaying() ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                    <span>{previewPlaying() ? "PAUSE" : "PLAY CLIP"}</span>
                   </button>
                   <input
                     type="range"
@@ -657,7 +664,7 @@ function ClipExporterScreen(props: Props) {
                   <span>
                     {formatDuration(previewTimeMs() - clipStartMs())} / {formatDuration(durationMs())}
                   </span>
-                  <button type="button" disabled={!previewReady()} onClick={() => void playPreview(true)}>
+                  <button class={controlStyles.control} type="button" disabled={!previewReady()} onClick={() => void playPreview(true)}>
                     RESTART
                   </button>
                 </div>
@@ -718,15 +725,21 @@ function ClipExporterScreen(props: Props) {
                           {(track: BuiltInMusicTrack) => <option value={track.filename}>{track.display_name} · {track.mood}</option>}
                         </For>
                       </select>
-                      <button type="button" disabled={!selectedTrack()?.preview_url || !previewReady()} onClick={() => void playPreview(true)}>
-                        ▶ WITH CLIP
+                      <button
+                        class={`${controlStyles.control} ${controlStyles.iconLabel}`}
+                        type="button"
+                        disabled={!selectedTrack()?.preview_url || !previewReady()}
+                        onClick={() => void playPreview(true)}
+                      >
+                        <PlayIcon size={14} />
+                        <span>WITH CLIP</span>
                       </button>
                     </div>
                   </Show>
                   <label classList={{ [styles.musicActive]: musicMode() === "file" }}>
                     <input type="radio" name="music" checked={musicMode() === "file"} onChange={() => importedPath() && setMusicMode("file")} />
                     <span><strong>Import file</strong><small>{importedPath() ? importedFilename(importedPath()) : "MP3 or WAV"}</small></span>
-                    <button type="button" onClick={(event) => { event.preventDefault(); void chooseImport(); }}>BROWSE</button>
+                    <button class={controlStyles.control} type="button" onClick={(event) => { event.preventDefault(); void chooseImport(); }}>BROWSE</button>
                   </label>
                 </div>
                 <Show when={musicPreviewError()}>
@@ -783,7 +796,7 @@ function ClipExporterScreen(props: Props) {
                 <Show when={result()}>
                   {(complete) => (
                     <div class={styles.exportSuccess}>
-                      <strong>✓ EXPORTED IN {(complete().elapsed_ms / 1_000).toFixed(1)}S</strong>
+                      <strong><CheckIcon size={15} /> EXPORTED IN {(complete().elapsed_ms / 1_000).toFixed(1)}S</strong>
                       <span>{complete().outputs.length} file{complete().outputs.length === 1 ? "" : "s"} · {formatBytes(complete().total_file_size_bytes)}</span>
                       <ul>
                         <For each={complete().outputs}>
@@ -796,9 +809,9 @@ function ClipExporterScreen(props: Props) {
                         </For>
                       </ul>
                       <div>
-                        <button type="button" onClick={props.onOpenFolder}>OPEN FOLDER</button>
-                        <button type="button" onClick={() => void copyOutputPath()}>COPY PATH</button>
-                        <button type="button" onClick={props.onOpenClips}>VIEW CLIPS</button>
+                        <button class={controlStyles.control} type="button" onClick={props.onOpenFolder}>OPEN FOLDER</button>
+                        <button class={controlStyles.control} type="button" onClick={() => void copyOutputPath()}>COPY PATH</button>
+                        <button class={controlStyles.control} type="button" onClick={props.onOpenClips}>VIEW CLIPS</button>
                       </div>
                     </div>
                   )}
@@ -815,7 +828,7 @@ function ClipExporterScreen(props: Props) {
                     : exportError()
                       ? "TRY AGAIN"
                       : `EXPORT ${selectedPresets().length} MP4${selectedPresets().length === 1 ? "" : "S"}`}
-                  <span aria-hidden="true">→</span>
+                  <ArrowRightIcon size={16} />
                 </button>
               </section>
             </aside>

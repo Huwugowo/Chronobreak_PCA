@@ -4,36 +4,18 @@
 }
 
 .exportHeader {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.55fr) minmax(300px, 1fr) auto;
+display: grid;
+  grid-template-columns: auto minmax(260px, 1fr) auto;
   align-items: end;
-  gap: 32px;
-  margin-bottom: 24px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--color-line);
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line-subtle);
 }
 
 .backButton {
   align-self: start;
   justify-self: start;
-  padding: 8px 0;
-  border: 0;
-  color: var(--color-muted-bright);
-  background: transparent;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 720;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-}
-
-.backButton span {
-  margin-right: 8px;
-  color: var(--color-blue-soft);
-}
-
-.backButton:disabled {
-  opacity: 0.45;
 }
 
 .exportHeader p,
@@ -47,18 +29,18 @@
 }
 
 .exportHeader h1 {
-  margin: 0;
+margin: 0;
+  color: var(--text-primary);
   font-family: var(--font-display);
-  font-size: clamp(38px, 4vw, 60px);
-  font-weight: 800;
-  letter-spacing: -0.05em;
-  line-height: 0.9;
-  text-transform: uppercase;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
 }
 
 .exportHeader dl {
-  display: flex;
-  gap: 28px;
+display: flex;
+  gap: var(--space-5);
   margin: 0;
 }
 
@@ -94,15 +76,14 @@
 
 .previewPanel,
 .optionsPanel > section {
-  border: 1px solid var(--color-line-bright);
-  background: #0a0e15;
-  box-shadow: var(--shadow-panel);
+  padding: var(--space-4);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-surface);
+  background: var(--surface-panel);
+  box-shadow: none;
 }
 
-.previewPanel,
-.optionsPanel > section {
-  padding: 20px;
-}
+
 
 .optionsPanel {
   display: grid;
@@ -129,25 +110,29 @@
 }
 
 .presetGrid {
-  display: grid;
+display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 14px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .presetOption {
-  display: grid;
+display: grid;
   min-height: 102px;
   grid-template-rows: 1fr auto;
-  border: 1px solid var(--color-line);
-  color: var(--color-muted-bright);
-  background: #101620;
-  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+  overflow: hidden;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-surface);
+  color: var(--text-secondary);
+  background: var(--surface-app);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
 }
 
 .presetOption:hover {
-  transform: translateY(-1px);
-  border-color: rgba(111, 145, 237, 0.56);
+border-color: var(--line-strong);
+  background: var(--surface-raised);
 }
 
 .presetOption label {
@@ -161,74 +146,76 @@
 }
 
 .presetOption label input {
-  position: absolute;
+position: absolute;
   top: 12px;
   right: 12px;
   width: 15px;
   height: 15px;
-  accent-color: #4a70e0;
+  accent-color: var(--brand-yellow);
 }
 
 .presetOption label > span {
-  color: var(--color-blue-soft);
-  font-family: var(--font-mono);
-  font-size: 7px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--type-meta-size);
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 .presetOption label strong {
-  color: var(--color-text);
-  font-family: var(--font-display);
-  font-size: 18px;
-  text-transform: uppercase;
+color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: none;
 }
 
 .presetOption label small {
-  color: var(--color-muted);
-  font-size: 10px;
-  line-height: 1.35;
+color: var(--text-muted);
+  font-size: var(--type-secondary-size);
+  line-height: 1.4;
 }
 
 .presetOption > button {
-  min-height: 28px;
+min-height: var(--control-height);
   border: 0;
-  border-top: 1px solid var(--color-line);
-  color: var(--color-muted);
-  background: rgba(0, 0, 0, 0.16);
-  font-family: var(--font-mono);
-  font-size: 7px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+  border-top: 1px solid var(--line-subtle);
+  color: var(--text-muted);
+  background: var(--surface-panel);
+  font-family: var(--font-ui);
+  font-size: var(--type-meta-size);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   cursor: pointer;
 }
 
 .presetOption > button[aria-pressed="true"] {
-  color: #fff;
-  background: rgba(74, 112, 224, 0.36);
+color: var(--brand-yellow);
+  background: var(--selected-surface);
 }
 
 .presetGrid .presetActive {
-  border-color: #4a70e0;
-  background: linear-gradient(145deg, rgba(0, 47, 167, 0.34), #101620 72%);
-  box-shadow: inset 0 0 0 1px rgba(74, 112, 224, 0.18);
+border-color: var(--selected-line);
+  background: var(--selected-surface);
+  box-shadow: none;
 }
 
 .presetGrid .presetPreviewing {
-  border-color: #8aa6ff;
-  box-shadow: inset 0 0 0 1px rgba(138, 166, 255, 0.42), 0 0 18px rgba(38, 86, 214, 0.14);
+border-color: var(--selected-line);
+  box-shadow: inset 0 0 0 1px var(--selected-line);
 }
 
 .previewStage {
-  position: relative;
+position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
   min-height: 390px;
   place-items: center;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--space-2);
+  padding: var(--space-3);
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-surface);
   background: #020305;
 }
 
@@ -346,30 +333,11 @@
 }
 
 .previewTransport {
-  display: grid;
+display: grid;
   width: 100%;
   grid-template-columns: auto minmax(80px, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
-}
-
-.previewTransport button {
-  min-height: 31px;
-  padding: 0 11px;
-  border: 1px solid rgba(111, 145, 237, 0.46);
-  color: #fff;
-  background: rgba(0, 47, 167, 0.54);
-  font-family: var(--font-mono);
-  font-size: 7px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-}
-
-.previewTransport button:disabled {
-  color: var(--color-muted);
-  background: #111722;
-  cursor: not-allowed;
+  gap: var(--space-2);
 }
 
 .previewTransport > span,
@@ -423,24 +391,32 @@
 }
 
 input[type="range"] {
-  width: 100%;
-  accent-color: #4a70e0;
+width: 100%;
+  accent-color: var(--brand-yellow);
 }
 
 .musicChoices {
-  display: grid;
-  gap: 7px;
+display: grid;
+  gap: var(--space-2);
+}
+
+.musicChoices input[type="radio"] {
+  accent-color: var(--brand-yellow);
 }
 
 .musicChoices > label {
-  display: flex;
+display: flex;
   min-height: 54px;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   padding: 10px 11px;
-  border: 1px solid var(--color-line);
-  background: #101620;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-surface);
+  background: var(--surface-app);
   cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
 }
 
 .musicChoices > label > span {
@@ -454,9 +430,9 @@ input[type="range"] {
 }
 
 .musicChoices > label small {
-  overflow: hidden;
-  color: var(--color-muted);
-  font-size: 9px;
+overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -466,43 +442,25 @@ input[type="range"] {
 }
 
 .musicChoices .musicActive {
-  border-color: rgba(74, 112, 224, 0.72);
-  background: rgba(0, 47, 167, 0.18);
+border-color: var(--selected-line);
+  background: var(--selected-surface);
 }
 
 .trackPicker {
-  display: grid;
+display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
+  gap: var(--space-2);
   margin: 0 0 2px 25px;
-}
-
-.trackPicker select,
-.trackPicker button,
-.musicChoices button,
-.exportSuccess button {
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--color-line-bright);
-  color: var(--color-text);
-  background: #141b27;
-  font-family: var(--font-mono);
-  font-size: 8px;
-  cursor: pointer;
 }
 
 .trackPicker select {
   min-width: 0;
 }
 
-.trackPicker button:disabled {
-  opacity: 0.42;
-}
-
 .musicPreviewError {
-  margin: 9px 0 0;
-  color: #ff9baa;
-  font-size: 9px;
+margin: var(--space-2) 0 0;
+  color: var(--accent-red);
+  font-size: var(--type-meta-size);
   line-height: 1.4;
 }
 
@@ -540,9 +498,9 @@ input[type="range"] {
 }
 
 .progressBlock {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 14px;
+display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .progressBlock > div {
@@ -553,16 +511,15 @@ input[type="range"] {
 }
 
 .progressBlock > span {
-  height: 4px;
+height: 4px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--line-subtle);
 }
 
 .progressBlock i {
-  display: block;
+display: block;
   height: 100%;
-  background: #4a70e0;
-  box-shadow: 0 0 12px rgba(74, 112, 224, 0.8);
+  background: var(--brand-yellow);
   transition: width 120ms linear;
 }
 
@@ -577,10 +534,11 @@ input[type="range"] {
 }
 
 .exportError strong {
-  color: #ff7f91;
-  font-family: var(--font-mono);
-  font-size: 8px;
-  letter-spacing: 0.12em;
+color: var(--accent-red);
+  font-family: var(--font-ui);
+  font-size: var(--type-meta-size);
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 .exportError span,
@@ -598,9 +556,13 @@ input[type="range"] {
 }
 
 .exportSuccess > strong {
-  color: var(--color-green);
-  font-family: var(--font-mono);
-  font-size: 9px;
+display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--accent-green);
+  font-family: var(--font-ui);
+  font-size: var(--type-secondary-size);
+  font-weight: 600;
 }
 
 .exportSuccess ul {
@@ -640,40 +602,42 @@ input[type="range"] {
 }
 
 .exportButton {
-  display: flex;
+display: flex;
   width: 100%;
-  min-height: 48px;
+  min-height: 44px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  border: 1px solid #4a70e0;
-  color: #fff;
-  background: #002fa7;
-  font-family: var(--font-display);
-  font-size: 15px;
-  font-weight: 780;
-  letter-spacing: 0.06em;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: var(--type-secondary-size);
+  font-weight: 650;
+  letter-spacing: 0;
   cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
 }
 
 .exportButton:hover {
-  background: #0b3db8;
+border-color: var(--selected-line);
+  background: var(--surface-hover);
 }
 
 .exportButton:disabled {
-  border-color: var(--color-line);
-  color: var(--color-muted);
-  background: #151a22;
+border-color: var(--line-subtle);
+  color: var(--text-muted);
+  background: var(--surface-panel);
+  opacity: var(--disabled-opacity);
+  cursor: default;
 }
 
 .loadingState,
 .errorState {
-  display: grid;
-  min-height: 420px;
-  place-items: center;
-  border: 1px solid var(--color-line);
-  color: var(--color-muted-bright);
-  background: var(--color-panel);
+color: var(--accent-red);
 }
 
 .errorState {
@@ -725,4 +689,72 @@ input[type="range"] {
   .previewStatusLine {
     gap: 8px;
   }
+}
+
+/* Exporter normalized result states */
+.trackPicker select {
+  min-height: var(--control-height);
+  padding: 0 10px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-panel);
+  font-family: var(--font-ui);
+  font-size: var(--type-meta-size);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.exportError,
+.exportSuccess {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-surface);
+}
+
+.exportError {
+  border: 1px solid color-mix(in srgb, var(--accent-red) 45%, var(--line-subtle));
+  background: color-mix(in srgb, var(--accent-red) 7%, var(--surface-panel));
+}
+
+.exportSuccess {
+  border: 1px solid color-mix(in srgb, var(--accent-green) 38%, var(--line-subtle));
+  background: color-mix(in srgb, var(--accent-green) 6%, var(--surface-panel));
+}
+
+.exportError span,
+.exportSuccess > span,
+.exportSuccess li {
+  color: var(--text-secondary);
+}
+
+.exportSuccess li strong {
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.loadingState,
+.errorState {
+  display: grid;
+  min-height: 320px;
+  place-items: center;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-surface);
+  background: var(--surface-panel);
+  font-size: var(--type-secondary-size);
+}
+
+.loadingState {
+  color: var(--text-secondary);
+}
+
+.exportButton:active:not(:disabled) {
+  background: var(--surface-pressed);
+}
+
+.exportButton:focus-visible {
+  border-color: var(--line-strong);
+  outline: none;
 }

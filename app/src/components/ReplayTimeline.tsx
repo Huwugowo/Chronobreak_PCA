@@ -13,6 +13,13 @@ import {
   type ReplayTick,
 } from "../replayTime";
 import type { ViewerEvent } from "../types";
+import { timelineDisplayEvents } from "../timelineEventDisplay";
+import {
+  timelineClusterPresentation,
+  timelineEventPresentation,
+  type TimelineEventIconKey,
+} from "../timelineEventPresentation";
+import { SkullIcon, SwordIcon } from "../ui/icons";
 import { eventTitle } from "../viewerUtils";
 import {
   clusterTimelineEvents,
@@ -20,6 +27,7 @@ import {
   normalizeTimelineViewport,
   panTimelineViewport,
   timelineRatioAtTick,
+  timelineRulerTicks,
   timelineTickAtRatio,
   timelineViewportAroundRange,
   timelineViewportSpan,
@@ -42,6 +50,7 @@ type Props = {
   viewport: TimelineViewport;
   onViewportChange: (viewport: TimelineViewport) => void;
   events: readonly TimelineEvent[];
+  localPlayerName: string | null;
   clip: ClipWindow | null;
   onSeek: (tick: ReplayTick) => void;
   onEventSelect: (event: TimelineEvent) => void;
@@ -54,13 +63,200 @@ type Props = {
 };
 
 const MINIMUM_VIEWPORT_SPAN = REPLAY_TICKS_PER_SECOND as ReplayTick;
-const EVENT_GAP_PX = 18;
+const TIMELINE_EVENT_GLYPH_SIZE_PX = 15;
+const TIMELINE_EVENT_FALLBACK_SIZE_PX = 8;
+const TIMELINE_EVENT_ASSET_MAX_SIZE_PX = 18;
+const EVENT_ALLOWED_OVERLAP_RATIO = 0.35;
+const SCRUB_HOVER_MIN_Y_PX = 24;
+const WHEEL_HORIZONTAL_PAN_RATIO = 1.5;
+const WHEEL_ZOOM_SENSITIVITY = 0.0025;
+const MAX_WHEEL_ZOOM_DELTA_PX = 160;
+const RULER_TARGET_SPACING_PX = 100;
+const FLOATING_TIME_HALF_WIDTH_PX = 28;
 
 const replayTickToMilliseconds = (tick: ReplayTick): number =>
   (tick * 1_000) / REPLAY_TICKS_PER_SECOND;
 
 const clampRatio = (ratio: number): number =>
   Math.min(1, Math.max(0, ratio));
+
+const formatTimelineTick = (
+  tick: ReplayTick,
+  visibleSpan: ReplayTick,
+): string => {
+  const milliseconds = replayTickToMilliseconds(tick);
+
+  if (visibleSpan > 5 * REPLAY_TICKS_PER_SECOND) {
+    return formatDuration(milliseconds);
+  }
+
+  const totalTenths = Math.round(milliseconds / 100);
+  const minutes = Math.floor(totalTenths / 600);
+  const secondsTenths = totalTenths - minutes * 600;
+  const seconds = (secondsTenths / 10).toFixed(1).padStart(4, "0");
+
+  return `${minutes}:${seconds}`;
+};
+
+
+type TimelineEventGlyphProps = {
+  icon: TimelineEventIconKey;
+  relation: ViewerEvent["relation"];
+  size?: number;
+};
+
+const timelineEventAsset = (
+  icon: TimelineEventIconKey,
+  relation: ViewerEvent["relation"],
+): string | null => {
+  switch (icon) {
+    case "dragon":
+      return "/timeline-events/dragon.png";
+
+    case "dragon-air":
+      return "/timeline-events/dragon-air.png";
+
+    case "dragon-earth":
+      return "/timeline-events/dragon-earth.png";
+
+    case "dragon-fire":
+      return "/timeline-events/dragon-fire.png";
+
+    case "dragon-water":
+      return "/timeline-events/dragon-water.png";
+
+    case "dragon-hextech":
+      return "/timeline-events/dragon-hextech.png";
+
+    case "dragon-chemtech":
+      return "/timeline-events/dragon-chemtech.png";
+
+    case "dragon-elder":
+      return "/timeline-events/dragon-elder.png";
+
+    case "baron":
+      return "/timeline-events/baron.png";
+
+    case "herald":
+      return "/timeline-events/herald.png";
+
+    case "tower":
+      if (relation === "ally") {
+        return "/timeline-events/tower-blue.png";
+      }
+
+      if (relation === "enemy") {
+        return "/timeline-events/tower-red.png";
+      }
+
+      return null;
+
+    case "inhibitor":
+      if (relation === "ally") {
+        return "/timeline-events/inhibitor-blue.png";
+      }
+
+      if (relation === "enemy") {
+        return "/timeline-events/inhibitor-red.png";
+      }
+
+      return null;
+
+    default:
+      return null;
+  }
+};
+
+const timelineEventAssetScale = (
+  icon: TimelineEventIconKey,
+): number => {
+  switch (icon) {
+    case "tower":
+      return 1.19;
+
+    case "herald":
+      return 1.13;
+
+    case "dragon-water":
+      return 1.09;
+
+    case "dragon":
+    case "dragon-air":
+    case "dragon-earth":
+    case "dragon-elder":
+      return 1.05;
+
+    case "dragon-chemtech":
+      return 1.03;
+
+    case "inhibitor":
+      return 0.92;
+
+    default:
+      return 1;
+  }
+};
+
+const timelineEventVisualWidth = (
+  icon: TimelineEventIconKey,
+  relation: ViewerEvent["relation"],
+): number => {
+  if (icon === "swords" || icon === "skull") {
+    return TIMELINE_EVENT_GLYPH_SIZE_PX;
+  }
+
+  if (timelineEventAsset(icon, relation) !== null) {
+    return Math.min(
+      TIMELINE_EVENT_ASSET_MAX_SIZE_PX,
+      TIMELINE_EVENT_GLYPH_SIZE_PX *
+        timelineEventAssetScale(icon),
+    );
+  }
+
+  return TIMELINE_EVENT_FALLBACK_SIZE_PX;
+};
+function TimelineEventGlyph(props: TimelineEventGlyphProps) {
+  if (props.icon === "swords") {
+    return <SwordIcon size={props.size ?? TIMELINE_EVENT_GLYPH_SIZE_PX} />;
+  }
+
+  if (props.icon === "skull") {
+    return <SkullIcon size={props.size ?? TIMELINE_EVENT_GLYPH_SIZE_PX} />;
+  }
+
+  const asset = () =>
+    timelineEventAsset(
+      props.icon,
+      props.relation,
+    );
+
+  const assetSize = () =>
+    (props.size ?? TIMELINE_EVENT_GLYPH_SIZE_PX) *
+    timelineEventAssetScale(props.icon);
+
+  return (
+    <Show
+      when={asset()}
+      fallback={
+        <span
+          class={styles.markerFallback}
+          aria-hidden="true"
+        />
+      }
+    >
+      {(src) => (
+        <img
+          class={styles.markerAsset}
+          src={src()}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={`width:${assetSize()}px;height:${assetSize()}px`}
+        />
+      )}
+    </Show>
+  );
+}
 
 function ReplayTimeline(props: Props) {
   let rail!: HTMLDivElement;
@@ -104,12 +300,43 @@ function ReplayTimeline(props: Props) {
     () => viewport().start > 0 || viewport().end < props.duration,
   );
 
+  const displayEvents = createMemo(() =>
+    timelineDisplayEvents(props.events),
+  );
+
+  const anchorEvents = createMemo(() =>
+    displayEvents().filter((event) =>
+      isTickInTimelineViewport(
+        event.replay_tick,
+        viewport(),
+      ),
+    ),
+  );
+
   const clusters = createMemo(() =>
     clusterTimelineEvents(
-      props.events,
+      displayEvents(),
       viewport(),
       railWidth(),
-      EVENT_GAP_PX,
+      {
+        visualWidthOf: (event) => {
+          const presentation = timelineEventPresentation(
+            event.source,
+            props.localPlayerName ?? null,
+          );
+
+          return timelineEventVisualWidth(
+            presentation.icon,
+            presentation.relation,
+          );
+        },
+        allowedOverlapRatio: EVENT_ALLOWED_OVERLAP_RATIO,
+      },
+      (event) =>
+        timelineEventPresentation(
+          event.source,
+          props.localPlayerName ?? null,
+        ).localPriority,
     ),
   );
 
@@ -129,6 +356,31 @@ function ReplayTimeline(props: Props) {
     const ratio = hoverRatio();
     return ratio === null ? null : timelineTickAtRatio(ratio, viewport());
   });
+
+  const rulerTicks = createMemo(() =>
+    timelineRulerTicks(
+      viewport(),
+      railWidth(),
+      RULER_TARGET_SPACING_PX,
+    ),
+  );
+
+  const floatingLabelRatio = (ratio: number): number => {
+    const width = railWidth();
+    const bounded = clampRatio(ratio);
+
+    if (width <= 0) return bounded;
+
+    const edgeRatio = Math.min(
+      0.5,
+      FLOATING_TIME_HALF_WIDTH_PX / width,
+    );
+
+    return Math.min(
+      1 - edgeRatio,
+      Math.max(edgeRatio, bounded),
+    );
+  };
 
   const viewportOverviewLeft = createMemo(() =>
     props.duration <= 0 ? 0 : (viewport().start / props.duration) * 100,
@@ -186,16 +438,41 @@ function ReplayTimeline(props: Props) {
   const handlePointerMove = (
     event: PointerEvent & { currentTarget: HTMLDivElement },
   ) => {
-    setHoverRatio(ratioAtPointer(event.clientX));
-    if (seeking()) seekAtPointer(event.clientX);
+    const ratio = ratioAtPointer(event.clientX);
+
+    if (seeking()) {
+      setHoverRatio(ratio);
+      seekAtPointer(event.clientX);
+      return;
+    }
+
+    const bounds = rail.getBoundingClientRect();
+    const localY = event.clientY - bounds.top;
+
+    setHoverRatio(
+      localY >= SCRUB_HOVER_MIN_Y_PX
+        ? ratio
+        : null,
+    );
   };
 
   const finishSeek = (
     event: PointerEvent & { currentTarget: HTMLDivElement },
   ) => {
     if (!seeking()) return;
+
+    const ratio = ratioAtPointer(event.clientX);
+    const bounds = rail.getBoundingClientRect();
+    const localY = event.clientY - bounds.top;
+
     seekAtPointer(event.clientX);
     setSeeking(false);
+    setHoverRatio(
+      localY >= SCRUB_HOVER_MIN_Y_PX
+        ? ratio
+        : null,
+    );
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -205,29 +482,94 @@ function ReplayTimeline(props: Props) {
     event: WheelEvent & { currentTarget: HTMLDivElement },
   ) => {
     if (railWidth() <= 0) return;
+
+    const deltaX = event.deltaX;
+    const deltaY = event.deltaY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    /*
+     * Precision touchpads frequently emit a little horizontal
+     * movement during an intended vertical two-finger gesture.
+     *
+     * Only treat it as horizontal panning when that intent is
+     * clearly dominant. Browser trackpad pinch is generally
+     * represented as ctrl+wheel and must always remain zoom.
+     */
+    const horizontalIntent =
+      !event.ctrlKey &&
+      (
+        event.shiftKey ||
+        absX >
+          absY *
+            WHEEL_HORIZONTAL_PAN_RATIO
+      );
+
+    if (horizontalIntent) {
+      event.preventDefault();
+
+      const pixelDelta =
+        event.shiftKey
+          ? (
+              absX > absY
+                ? deltaX
+                : deltaY
+            )
+          : deltaX;
+
+      if (pixelDelta === 0) return;
+
+      const tickDelta = Math.round(
+        (pixelDelta / railWidth()) *
+          viewportSpan(),
+      ) as ReplayTick;
+
+      setViewport(
+        panTimelineViewport(
+          viewport(),
+          props.duration,
+          tickDelta,
+        ),
+      );
+
+      return;
+    }
+
+    if (deltaY === 0) return;
+
     event.preventDefault();
 
     const current = viewport();
 
-    if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
-      const pixelDelta = event.shiftKey ? event.deltaY : event.deltaX;
-      const tickDelta = Math.round(
-        (pixelDelta / railWidth()) * viewportSpan(),
-      ) as ReplayTick;
-
-      setViewport(
-        panTimelineViewport(current, props.duration, tickDelta),
+    const anchor =
+      timelineTickAtRatio(
+        ratioAtPointer(event.clientX),
+        current,
       );
-      return;
-    }
 
-    if (event.deltaY === 0) return;
+    /*
+     * Continuous exponential scaling works for both devices:
+     *
+     * - tiny trackpad deltas create tiny zoom changes
+     * - ordinary mouse-wheel deltas remain meaningfully sized
+     *
+     * Clamp extreme deltas so one unusual wheel event cannot
+     * jump across several zoom levels.
+     */
+    const boundedDelta =
+      Math.max(
+        -MAX_WHEEL_ZOOM_DELTA_PX,
+        Math.min(
+          MAX_WHEEL_ZOOM_DELTA_PX,
+          deltaY,
+        ),
+      );
 
-    const anchor = timelineTickAtRatio(
-      ratioAtPointer(event.clientX),
-      current,
-    );
-    const scale = event.deltaY < 0 ? 0.8 : 1.25;
+    const scale =
+      Math.exp(
+        boundedDelta *
+          WHEEL_ZOOM_SENSITIVITY,
+      );
 
     setViewport(
       zoomTimelineViewport(
@@ -393,6 +735,27 @@ function ReplayTimeline(props: Props) {
         onKeyDown={handleRailKey}
         data-testid="replay-timeline"
       >
+        <div class={styles.ruler} aria-hidden="true" data-testid="timeline-ruler">
+          <For each={rulerTicks()}>
+            {(tick) => {
+              const ratio = () => timelineRatioAtTick(tick, viewport());
+
+              return (
+                <span
+                  classList={{
+                    [styles.rulerTick]: true,
+                    [styles.rulerTickStart]: ratio() < 0.04,
+                    [styles.rulerTickEnd]: ratio() > 0.96,
+                  }}
+                  style={`left:${ratio() * 100}%`}
+                >
+                  {formatTimelineTick(tick, viewportSpan())}
+                </span>
+              );
+            }}
+          </For>
+        </div>
+
         <span class={styles.track} />
         <span
           class={styles.fill}
@@ -441,58 +804,211 @@ function ReplayTimeline(props: Props) {
           />
         </Show>
 
+
         <div class={styles.markers}>
+          <For each={anchorEvents()}>
+            {(event) => (
+              <span
+                class={styles.eventAnchor}
+                style={`left:${timelineRatioAtTick(
+                  event.replay_tick,
+                  viewport(),
+                ) * 100}%`}
+                data-event-anchor="true"
+                data-elapsed={
+                  event.replay_tick <= props.playhead
+                    ? "true"
+                    : undefined
+                }
+                aria-hidden="true"
+              />
+            )}
+          </For>
+
           <For each={clusters()}>
-            {(item) => (
-              item.kind === "event" ? (
+            {(item) => {
+              if (item.kind === "event") {
+                const source = () => item.event.source;
+
+                const presentation = () =>
+                  timelineEventPresentation(
+                    source(),
+                    props.localPlayerName ?? null,
+                  );
+
+                const multiplier = () =>
+                  item.event.multiplier ??
+                  presentation().multiplier;
+
+                const label = () =>
+                  presentation().kind === "death"
+                    ? "Your death"
+                    : eventTitle(source());
+
+                const locallyEmphasized = () =>
+                  presentation().localRole === "victim" ||
+                  presentation().localRole === "killer" ||
+                  presentation().localRole === "actor";
+
+                return (
+                  <button
+                    classList={{
+                      [styles.marker]: true,
+                      [styles[`event${presentation().relation}`]]: true,
+                      [styles.markerLocal]: locallyEmphasized(),
+                    }}
+                    style={`left:${railWidth() > 0 ? (item.x / railWidth()) * 100 : 0}%;--event-hit-width:${timelineEventVisualWidth(presentation().icon, presentation().relation)}px`}
+                    type="button"
+                    aria-label={`Seek to ${label()} at ${formatDuration(
+                      replayTickToMilliseconds(
+                        item.event.replay_tick,
+                      ),
+                    )}`}
+                    title={`${label()} / ${formatDuration(
+                      replayTickToMilliseconds(
+                        item.event.replay_tick,
+                      ),
+                    )}`}
+                    data-event-icon={presentation().icon}
+                    data-local-role={
+                      presentation().localRole ??
+                      undefined
+                    }
+                    data-local-emphasis={
+                      locallyEmphasized()
+                        ? "true"
+                        : undefined
+                    }
+                    onPointerDown={(event) =>
+                      event.stopPropagation()
+                    }
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onEventSelect(source());
+                    }}
+                  >
+                    <span class={styles.markerGlyph}>
+                      <TimelineEventGlyph
+                        icon={presentation().icon}
+                        relation={presentation().relation}
+                      />
+                    </span>
+
+                    <Show
+                      when={
+                        multiplier() !== null &&
+                        multiplier()! > 1
+                      }
+                    >
+                      <span
+                        class={styles.markerMultiplier}
+                      >
+                        {multiplier()}
+                      </span>
+                    </Show>
+                  </button>
+                );
+              }
+
+              const sources = () =>
+                item.events.map(
+                  (event) => event.source,
+                );
+
+              const presentation = () =>
+                timelineClusterPresentation(
+                  sources(),
+                  props.localPlayerName ?? null,
+                );
+
+              return (
                 <button
-                  class={`${styles.marker} ${styles[`marker${item.event.relation}`]}`}
-                  style={`left:${railWidth() > 0 ? (item.x / railWidth()) * 100 : 0}%`}
-                  type="button"
-                  aria-label={`Seek to ${eventTitle(item.event)} at ${formatDuration(replayTickToMilliseconds(item.event.replay_tick))}`}
-                  title={`${eventTitle(item.event)} / ${formatDuration(replayTickToMilliseconds(item.event.replay_tick))}`}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onEventSelect(item.event);
+                  classList={{
+                    [styles.cluster]: true,
+                    [styles[`event${presentation().relation}`]]: true,
                   }}
-                />
-              ) : (
-                <button
-                  class={styles.cluster}
                   style={`left:${railWidth() > 0 ? (item.x / railWidth()) * 100 : 0}%`}
                   type="button"
                   aria-label={`Zoom into ${item.events.length} events`}
                   title={`${item.events.length} events · click to zoom`}
-                  onPointerDown={(event) => event.stopPropagation()}
+                  data-cluster-kind={
+                    presentation().homogeneous
+                      ? "homogeneous"
+                      : "mixed"
+                  }
+                  data-cluster-icon={
+                    presentation().homogeneous
+                      ? presentation().icon
+                      : undefined
+                  }
+                  onPointerDown={(event) =>
+                    event.stopPropagation()
+                  }
                   onClick={(event) => {
                     event.stopPropagation();
-                    zoomCluster(item.start, item.end);
+                    zoomCluster(
+                      item.start,
+                      item.end,
+                    );
                   }}
                 >
-                  {item.events.length}
+                  <Show
+                    when={presentation().homogeneous}
+                    fallback={
+                      <span
+                        class={styles.clusterMixed}
+                      >
+                        +{item.events.length}
+                      </span>
+                    }
+                  >
+                    <span
+                      class={styles.clusterGlyph}
+                    >
+                      <TimelineEventGlyph
+                        icon={presentation().icon}
+                        relation={presentation().relation}
+                        size={13}
+                      />
+                    </span>
+
+                    <span
+                      class={styles.clusterCount}
+                    >
+                      {item.events.length}
+                    </span>
+                  </Show>
                 </button>
-              )
-            )}
+              );
+            }}
           </For>
         </div>
 
         <Show when={hoveredTick() !== null}>
           <span
             class={styles.hoverTime}
-            style={`left:${(hoverRatio() ?? 0) * 100}%`}
+            style={`left:${floatingLabelRatio(hoverRatio() ?? 0) * 100}%`}
           >
-            {formatDuration(replayTickToMilliseconds(hoveredTick()!))}
+            {formatTimelineTick(hoveredTick()!, viewportSpan())}
           </span>
         </Show>
       </div>
 
       <Show when={isZoomed()}>
-        <div class={styles.overview}>
-          <button type="button" class={styles.resetZoom} onClick={resetViewport}>
-            FULL MATCH
-          </button>
-          <div class={styles.overviewTrack} aria-hidden="true">
+        <div class={styles.overview} data-testid="timeline-viewport-readout">
+          <span
+            class={`${styles.viewportBoundary} ${styles.viewportBoundaryStart}`}
+          >
+            {formatTimelineTick(viewport().start, viewportSpan())}
+          </span>
+
+          <button
+            type="button"
+            class={styles.overviewTrack}
+            onClick={resetViewport}
+            aria-label="Show full match"
+            title="Show full match"
+          >
             <span
               class={styles.overviewWindow}
               style={`left:${viewportOverviewLeft()}%;width:${viewportOverviewWidth()}%`}
@@ -501,11 +1017,12 @@ function ReplayTimeline(props: Props) {
               class={styles.overviewPlayhead}
               style={`left:${playheadOverviewLeft()}%`}
             />
-          </div>
-          <span class={styles.viewportLabel}>
-            {formatDuration(replayTickToMilliseconds(viewport().start))}
-            {" - "}
-            {formatDuration(replayTickToMilliseconds(viewport().end))}
+          </button>
+
+          <span
+            class={`${styles.viewportBoundary} ${styles.viewportBoundaryEnd}`}
+          >
+            {formatTimelineTick(viewport().end, viewportSpan())}
           </span>
         </div>
       </Show>

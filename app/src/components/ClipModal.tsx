@@ -1,6 +1,7 @@
 import { onCleanup, onMount } from "solid-js";
 import { formatDate, formatDuration } from "../format";
 import type { ClipSummary } from "../types";
+import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
 
 type Props = {
@@ -38,7 +39,7 @@ function ClipModal(props: Props) {
               {` / ${formatDuration(props.clip.duration_ms)}`}
             </span>
           </div>
-          <button ref={closeButton} type="button" onClick={props.onClose} aria-label="Close clip player">
+          <button class={controlStyles.control} ref={closeButton} type="button" onClick={props.onClose} aria-label="Close clip player">
             Close
           </button>
         </header>

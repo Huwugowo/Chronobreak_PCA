@@ -56,11 +56,11 @@ it("marks only the persistent primary video across layout and recovery, then rel
     expect(host.querySelector('[data-testid="video-frame"]')?.getAttribute("data-fullscreen")).toBe("true");
     expect(host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!.value).toBe("4");
     expect(host.querySelector<HTMLInputElement>('[aria-label="Replay volume"]')!.value).toBe("37");
-    expect(host.querySelector('[aria-label="Unmute replay"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Mute replay"]')).not.toBeNull();
     primary.dispatchEvent(new Event("error"));
     expect(primary.src).not.toBe(source);
     expect(loads).toHaveBeenCalledTimes(2);
-    expect(primary.playbackRate).toBe(4); expect(primary.muted).toBe(true); expect(primary.volume).toBe(0.37);
+    expect(primary.playbackRate).toBe(4); expect(primary.muted).toBe(false); expect(primary.volume).toBe(0.37);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(host.querySelector("video")).toBe(primary);
     expect(host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!.value).toBe("4");
