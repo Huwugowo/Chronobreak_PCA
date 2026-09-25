@@ -27,6 +27,7 @@ import PlaybackControls, { type PlaybackControlsProps } from "./PlaybackControls
 import styles from "./FullscreenOverlay.module.css";
 
 type Props = {
+  ddragonAssetBaseUrl?: string | null;
   champion: string;
   localPlayerName: string | null;
   events: readonly ViewerEvent[];
@@ -142,6 +143,7 @@ function FullscreenOverlay(props: Props) {
         onFocusOut={releaseHud}
       >
         <ChampionFilter
+          ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
           participants={props.participants}
           selectedPlayers={props.selectedPlayers}
           localPlayerName={props.localPlayerName}

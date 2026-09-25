@@ -658,6 +658,7 @@ function App() {
           </Match>
           <Match when={navigation().screen === "viewer"}>
             <ViewerScreen
+              ddragonAssetBaseUrl={ddragon()?.asset_base_url ?? null}
               gameTimestamp={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).gameTimestamp
               }

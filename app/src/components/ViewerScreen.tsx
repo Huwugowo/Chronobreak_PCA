@@ -58,6 +58,7 @@ import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
 
 type Props = {
+  ddragonAssetBaseUrl?: string | null;
   gameTimestamp: string;
   onBack: () => void;
   initialClipDraft?: ClipDraft;
@@ -1175,6 +1176,7 @@ function PlaybackSurface(props: Props & { probe: PlaybackProbe }) {
             </Show>
 
             <FullscreenOverlay
+                ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
                 champion={props.probe.game.champion}
                 localPlayerName={props.probe.local_player_name}
                 events={visibleEvents()}

@@ -4,6 +4,7 @@ import { samePlayer } from "../viewerUtils";
 import styles from "./ChampionFilter.module.css";
 
 type Props = {
+  ddragonAssetBaseUrl?: string | null;
   participants: readonly ReplayParticipant[];
   selectedPlayers: readonly string[];
   localPlayerName: string | null;
@@ -14,6 +15,14 @@ type Props = {
 
 const monogram = (champion: string): string =>
   champion.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "??";
+
+const championPortraitUrl = (
+  assetBaseUrl: string | null | undefined,
+  champion: string,
+): string | null =>
+  assetBaseUrl
+    ? `${assetBaseUrl}/champion/${encodeURIComponent(champion)}`
+    : null;
 
 function ChampionFilter(props: Props) {
   const selected = (player: ReplayParticipant) =>
@@ -83,7 +92,30 @@ function ChampionFilter(props: Props) {
                       data-testid="champion-filter-option"
                       data-player-name={player.summoner_name}
                     >
-                      <span class={styles.portrait} aria-hidden="true">{monogram(player.champion)}</span>
+                      <span class={styles.portrait} aria-hidden="true">
+                        <span class={styles.portraitFallback}>
+                          {monogram(player.champion)}
+                        </span>
+                        <Show
+                          when={championPortraitUrl(
+                            props.ddragonAssetBaseUrl,
+                            player.champion,
+                          )}
+                        >
+                          {(src) => (
+                            <img
+                              class={styles.portraitImage}
+                              src={src()}
+                              alt=""
+                              decoding="async"
+                              draggable={false}
+                              onError={(event) =>
+                                event.currentTarget.remove()
+                              }
+                            />
+                          )}
+                        </Show>
+                      </span>
                       <Show when={props.mode === "panel"}>
                         <span class={styles.identity}>
                           <strong>{player.champion}</strong>
