@@ -125,35 +125,6 @@
   background: var(--accent-red);
 }
 
-.settingsButton {
-  display: inline-flex;
-  min-height: var(--control-height);
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 10px;
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
-  background: var(--surface-panel);
-  font-size: var(--type-secondary-size);
-  font-weight: 500;
-  line-height: var(--type-secondary-line);
-  cursor: pointer;
-  transition: color var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast);
-}
-
-.settingsButton:hover {
-  border-color: var(--line-strong);
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-.settingsActive {
-  border-color: var(--selected-line);
-  color: var(--brand-yellow);
-  background: var(--selected-surface);
-}
-
 .storageIndicator {
   position: fixed;
   z-index: 18;
@@ -220,8 +191,12 @@
 }
 
 .header[data-screen="viewer"] {
-  min-height: 44px;
-  margin-bottom: var(--space-3);
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--line-subtle);
 }
 
 .header[data-screen="viewer"] .tabs,
@@ -230,13 +205,15 @@
 }
 
 .header[data-screen="viewer"] .brandWordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: 13px;
   letter-spacing: 0.06em;
 }
 
 .header[data-screen="viewer"] .brandLockup small {
-  font-size: 7px;
-  letter-spacing: 0.08em;
+  display: none;
 }
 @media (max-width: 680px) {
   .brandLockup small {
@@ -263,4 +240,10 @@
     left: 12px;
     width: calc(100% - 24px);
   }
+}
+
+/* Selected navigation remains selected during pointer interaction. */
+.tabs .activeTab:hover {
+  color: var(--brand-yellow);
+  background: transparent;
 }

@@ -1,0 +1,52 @@
+.control {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 0 10px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-panel);
+  font-family: var(--font-ui);
+  font-size: var(--type-secondary-size);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.control:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+
+.control:active:not(:disabled) {
+  background: var(--surface-pressed);
+}
+
+.control:focus-visible {
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.control:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
+}
+
+.control svg,
+.iconLabel svg {
+  flex: 0 0 auto;
+}
+
+.iconLabel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}

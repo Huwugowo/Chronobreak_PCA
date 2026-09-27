@@ -45,8 +45,10 @@ there is no persistent cache or claim that aggregate I/O is reduced.
 `ReplayTimeline` supplies the same seek, zoom, pan, clustered-event and clip rail
 in windowed and fullscreen layouts. Its viewport and exact frame clip draft live
 in the persistent playback surface; pending details do not gate basic media
-controls. Each disposable rail releases pointer capture, gesture listeners and its
-resize observer on cancellation or unmount, including a layout change mid-drag.
+controls. The consolidated HUD and rail stay mounted across fullscreen changes,
+including mid-drag. Each rail releases pointer capture and gesture listeners when
+a gesture ends or is cancelled, and releases those resources and its resize
+observer on unmount.
 
 `LibraryController` owns one active replay read and one replaceable latest intent
 across viewer/exporter lifetimes. Admission includes root epoch, request, token,

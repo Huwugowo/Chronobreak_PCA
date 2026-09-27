@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { formatDuration } from "../format";
 import type {
   ClipRange,
@@ -6,25 +6,28 @@ import type {
   ReplayParticipant,
   ViewerEvent,
 } from "../types";
-import {
-  eventCategory,
-  eventSummary,
-  eventTitle,
-  nearestIndexAt,
-  replayTickAtFrameBoundary,
-} from "../viewerUtils";
+import { replayTickAtFrameBoundary } from "../viewerUtils";
 import {
   REPLAY_TICKS_PER_SECOND,
   type MediaTimelineV2,
   type ReplayTick,
 } from "../replayTime";
 import type { TimelineViewport } from "../replayTimelineGeometry";
+import {
+  ArrowRightIcon,
+  FullscreenExitIcon,
+  FullscreenIcon,
+  PauseIcon,
+  PlayIcon,
+  ScissorsIcon,
+} from "../ui/icons";
 import ReplayTimeline from "./ReplayTimeline";
 import ChampionFilter from "./ChampionFilter";
 import PlaybackControls, { type PlaybackControlsProps } from "./PlaybackControls";
 import styles from "./FullscreenOverlay.module.css";
 
 type Props = {
+  ddragonAssetBaseUrl?: string | null;
   champion: string;
   localPlayerName: string | null;
   events: readonly ViewerEvent[];
@@ -59,18 +62,14 @@ type Props = {
   onClipEndpointBlur: (endpoint: "start" | "end") => void;
   onExportClip: () => void;
   onCancelClip: () => void;
-  onExit: () => void;
+  fullscreen: boolean;
+  onFullscreenToggle: () => void;
 };
 
 function FullscreenOverlay(props: Props) {
   let idleTimer: number | undefined;
-  let dismissTimer: number | undefined;
-  let unmountTimer: number | undefined;
-  let lastTriggeredEvent: ViewerEvent | undefined;
 
   const [topBarVisible, setTopBarVisible] = createSignal(true);
-  const [displayedEvent, setDisplayedEvent] = createSignal<ViewerEvent | null>(null);
-  const [eventCardVisible, setEventCardVisible] = createSignal(false);
 
   const replayEnd = createMemo(() => props.mediaTimeline.video.replayEnd);
   const replayTickToMilliseconds = (tick: ReplayTick): number =>
@@ -78,7 +77,6 @@ function FullscreenOverlay(props: Props) {
   const replaySecond = createMemo(() =>
     Math.floor(replayTickToMilliseconds(props.replayTick) / 1_000),
   );
-  const gameTickToMilliseconds = (tick: string): number => Number(BigInt(tick) / 1_000n);
   const frameBoundaryTick = (frame: ClipRange["startFrame"]): ReplayTick =>
     replayTickAtFrameBoundary(frame, props.mediaTimeline);
   const mappedEvents = createMemo(() =>
@@ -86,13 +84,6 @@ function FullscreenOverlay(props: Props) {
       (event): event is ViewerEvent & { replay_tick: ReplayTick } => event.replay_tick !== undefined,
     ),
   );
-  const nearestEventIndex = createMemo(() => props.presentedTick === null ? -1 : nearestIndexAt(mappedEvents(), props.presentedTick));
-  const proximityEventIndex = createMemo(() => {
-    const index = nearestEventIndex();
-    return index >= 0 && Math.abs(mappedEvents()[index].replay_tick - (props.presentedTick ?? 0)) <= REPLAY_TICKS_PER_SECOND
-      ? index
-      : -1;
-  });
   const noteActivity = () => {
     setTopBarVisible(true);
     if (idleTimer !== undefined) window.clearTimeout(idleTimer);
@@ -110,95 +101,37 @@ function FullscreenOverlay(props: Props) {
     noteActivity();
   };
 
-  const dismissEventCard = () => {
-    setEventCardVisible(false);
-    if (unmountTimer !== undefined) window.clearTimeout(unmountTimer);
-    unmountTimer = window.setTimeout(() => setDisplayedEvent(null), 220);
-  };
-
-  const showEventCard = (event: ViewerEvent) => {
-    if (dismissTimer !== undefined) window.clearTimeout(dismissTimer);
-    if (unmountTimer !== undefined) window.clearTimeout(unmountTimer);
-    setDisplayedEvent(event);
-    setEventCardVisible(false);
-    requestAnimationFrame(() => requestAnimationFrame(() => setEventCardVisible(true)));
-    dismissTimer = window.setTimeout(dismissEventCard, 3_500);
-  };
-
-  createEffect(() => {
-    const index = proximityEventIndex();
-    if (index < 0) {
-      lastTriggeredEvent = undefined;
-      return;
-    }
-    const event = mappedEvents()[index];
-    if (event === lastTriggeredEvent) return;
-    lastTriggeredEvent = event;
-    showEventCard(event);
-  });
-
   onMount(() => {
     noteActivity();
-    window.addEventListener("mousemove", noteActivity, { passive: true });
+
+    // Wake fullscreen chrome from any pointer activity, even when the HUD
+    // itself is hidden and therefore cannot receive pointer events.
+    window.addEventListener("pointermove", noteActivity, {
+      passive: true,
+      capture: true,
+    });
+    window.addEventListener("pointerdown", noteActivity, {
+      passive: true,
+      capture: true,
+    });
+
     onCleanup(() => {
-      window.removeEventListener("mousemove", noteActivity);
+      window.removeEventListener("pointermove", noteActivity, true);
+      window.removeEventListener("pointerdown", noteActivity, true);
       if (idleTimer !== undefined) window.clearTimeout(idleTimer);
-      if (dismissTimer !== undefined) window.clearTimeout(dismissTimer);
-      if (unmountTimer !== undefined) window.clearTimeout(unmountTimer);
     });
   });
 
   return (
-    <div class={styles.overlayRoot} data-testid="fullscreen-overlay">
-      <header
-        classList={{
-          [styles.topBar]: true,
-          [styles.topBarHidden]: !topBarVisible(),
-        }}
-        onPointerEnter={holdHud}
-        onPointerLeave={releaseHud}
-        onFocusIn={holdHud}
-        onFocusOut={releaseHud}
-        data-testid="fullscreen-topbar"
-      >
-        <div class={styles.topIdentity}>
-          <span class={styles.replayMark}>REPLAY</span>
-          <span class={styles.topDivider} />
-          <div>
-            <small>{props.localPlayerName ?? "LOCAL PLAYER"}</small>
-            <strong>{props.champion}</strong>
-          </div>
-          <span class={styles.topKda}>
-            {props.currentKda?.kills ?? "—"} / {props.currentKda?.deaths ?? "—"} / {props.currentKda?.assists ?? "—"}
-          </span>
-        </div>
-        <div class={styles.topStatus}>
-          <strong>{props.beforeGameStart ? "--:--" : formatDuration(gameTickToMilliseconds(props.gameTick))}</strong>
-          <span class={styles.recStatus}><i aria-hidden="true" /> REC</span>
-          <button type="button" onClick={props.onExit} aria-label="Exit fullscreen replay">EXIT <span aria-hidden="true">×</span></button>
-        </div>
-      </header>
-
-      <Show when={displayedEvent()}>
-        {(event) => (
-          <article
-            classList={{
-              [styles.eventCard]: true,
-              [styles.eventCardVisible]: eventCardVisible(),
-              [styles.eventCardTopHidden]: !topBarVisible(),
-              [styles.eventAlly]: event().relation === "ally",
-              [styles.eventEnemy]: event().relation === "enemy",
-              [styles.eventNeutral]: event().relation === "neutral",
-            }}
-            data-testid="fullscreen-event-card"
-          >
-            <span>{eventCategory(event())}</span>
-            <strong>{eventTitle(event())}</strong>
-            <small>{eventSummary(event())}</small>
-          </article>
-        )}
-      </Show>
-
+    <div
+      classList={{
+        [styles.overlayRoot]: true,
+        [styles.overlayRootHudWake]: !topBarVisible(),
+      }}
+      onPointerMove={noteActivity}
+      onPointerDown={noteActivity}
+      data-testid="fullscreen-overlay"
+    >
       <div
         classList={{
           [styles.rosterHud]: true,
@@ -210,6 +143,7 @@ function FullscreenOverlay(props: Props) {
         onFocusOut={releaseHud}
       >
         <ChampionFilter
+          ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
           participants={props.participants}
           selectedPlayers={props.selectedPlayers}
           localPlayerName={props.localPlayerName}
@@ -229,7 +163,7 @@ function FullscreenOverlay(props: Props) {
         onFocusIn={holdHud}
         onFocusOut={releaseHud}
         onPointerMove={noteActivity}
-        aria-label="Fullscreen replay controls"
+        aria-label="Replay controls"
         data-testid="fullscreen-hud"
       >
         <div class={styles.timelineHud}>
@@ -239,6 +173,7 @@ function FullscreenOverlay(props: Props) {
             viewport={props.timelineViewport}
             onViewportChange={props.onTimelineViewportChange}
             events={mappedEvents()}
+            localPlayerName={props.localPlayerName}
             clip={
               props.clipRange
                 ? {
@@ -271,40 +206,23 @@ function FullscreenOverlay(props: Props) {
                   ? "Preview selected clip"
                   : "Play fullscreen replay"
             }
-          >
-            <span aria-hidden="true">{props.isPlaying ? "Ⅱ" : "▶"}</span>
-            {props.isPlaying ? "PAUSE" : props.clipRange ? "PREVIEW CLIP" : "PLAY"}
-          </button>
-
-          <Show
-            when={props.clipRange}
-            fallback={
-              <button
-                class={styles.clipControl}
-                type="button"
-                onClick={() => props.onActivateClip()}
-              >
-                <span aria-hidden="true">✦</span> CLIP
-              </button>
+            title={
+              props.isPlaying
+                ? "Pause"
+                : props.clipRange
+                  ? "Preview selected clip"
+                  : "Play"
             }
           >
-            <button
-              class={styles.cancelClipControl}
-              type="button"
-              onClick={props.onCancelClip}
-            >
-              CANCEL
-            </button>
-            <button
-              class={styles.exportClipControl}
-              type="button"
-              onClick={props.onExportClip}
-            >
-              EXPORT CLIP <span aria-hidden="true">→</span>
-            </button>
-          </Show>
-
-          <span class={styles.controlsDivider} />
+            {props.isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+            <span class={styles.srOnly}>
+              {props.isPlaying
+                ? "PAUSE"
+                : props.clipRange
+                  ? "PREVIEW CLIP"
+                  : "PLAY"}
+            </span>
+          </button>
 
           <PlaybackControls
             dark
@@ -314,13 +232,60 @@ function FullscreenOverlay(props: Props) {
             onVolume={props.onVolume}
           />
 
-          <span class={styles.fullscreenTime}>
-            <strong>{formatDuration(replaySecond() * 1_000)}</strong>
-            {" / "}
-            {formatDuration(replayTickToMilliseconds(replayEnd()))}
+          <span class={styles.fullscreenTime} data-testid="time-readout">
+            <strong class={styles.fullscreenTimeCurrent}>
+              {formatDuration(replaySecond() * 1_000)}
+            </strong>
+            <span class={styles.fullscreenTimeDivider}>/</span>
+            <span class={styles.fullscreenTimeDuration}>
+              {formatDuration(replayTickToMilliseconds(replayEnd()))}
+            </span>
           </span>
-        </div>
-      </section>
+
+          <Show
+            when={props.clipRange}
+            fallback={
+              <button
+                class={styles.clipControl}
+                type="button"
+                onClick={() => props.onActivateClip()}
+                title="Create clip"
+              >
+                <ScissorsIcon size={15} />
+                <span>Clip</span>
+              </button>
+            }
+          >
+            <button
+              class={styles.cancelClipControl}
+              type="button"
+              onClick={props.onCancelClip}
+            >
+              Cancel
+            </button>
+
+            <button
+              class={styles.exportClipControl}
+              type="button"
+              onClick={props.onExportClip}
+            >
+              Export clip
+              <ArrowRightIcon size={15} />
+            </button>
+          </Show>
+
+          <button
+            class={styles.exitFullscreenControl}
+            type="button"
+            onClick={props.onFullscreenToggle}
+            aria-label={props.fullscreen ? "Exit fullscreen replay" : "Open fullscreen replay"}
+            title={props.fullscreen ? "Exit fullscreen" : "Fullscreen"}
+          >
+            <Show when={props.fullscreen} fallback={<FullscreenIcon size={18} />}>
+              <FullscreenExitIcon size={18} />
+            </Show>
+          </button>
+        </div>      </section>
     </div>
   );
 }

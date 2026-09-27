@@ -121,3 +121,161 @@ it("exposes six native speed choices and independent keyboard-accessible audio c
     expect(host.querySelector('[role="status"]')!.textContent).toBe("8x unavailable; fallback 1x");
   } finally { window.removeEventListener("keydown", globalKey); dispose(); }
 });
+it("moving volume while muted restores audible playback", () => {
+  const [state, setState] = createSignal<NonNullable<PlaybackControlsProps["state"]>>({
+    rate: {
+      selected: 1,
+      effective: 1,
+      applied: 1,
+      observed: null,
+      outcome: "suspended",
+      limitation: null,
+    },
+    media: {
+      muted: true,
+      volume: 0.75,
+    },
+    audio: "available-but-unverified",
+    desiredPlaying: false,
+    readiness: "ready",
+  });
+
+  const mutedChanges = vi.fn();
+  const volumeChanges = vi.fn();
+
+  const host = document.createElement("div");
+  document.body.append(host);
+
+  const dispose = render(
+    () => (
+      <PlaybackControls
+        state={state()}
+        onRate={(selected) =>
+          setState((old) => ({
+            ...old,
+            rate: { ...old.rate, selected },
+          }))
+        }
+        onMuted={(muted) => {
+          mutedChanges(muted);
+          setState((old) => ({
+            ...old,
+            media: { ...old.media, muted },
+          }));
+        }}
+        onVolume={(volume) => {
+          volumeChanges(volume);
+          setState((old) => ({
+            ...old,
+            media: { ...old.media, volume },
+          }));
+        }}
+      />
+    ),
+    host,
+  );
+
+  try {
+    expect(host.querySelector('[aria-label="Unmute replay"]')).not.toBeNull();
+
+    const volume = host.querySelector<HTMLInputElement>(
+      '[aria-label="Replay volume"]',
+    )!;
+
+    volume.value = "37";
+    volume.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(mutedChanges).toHaveBeenCalledWith(false);
+    expect(volumeChanges).toHaveBeenCalledWith(0.37);
+
+    expect(state().media).toEqual({
+      muted: false,
+      volume: 0.37,
+    });
+
+    expect(host.querySelector('[aria-label="Mute replay"]')).not.toBeNull();
+  } finally {
+    dispose();
+  }
+});
+it("shows zero output while muted and restores the previous volume", () => {
+  const [state, setState] = createSignal<NonNullable<PlaybackControlsProps["state"]>>({
+    rate: {
+      selected: 1,
+      effective: 1,
+      applied: 1,
+      observed: null,
+      outcome: "suspended",
+      limitation: null,
+    },
+    media: {
+      muted: false,
+      volume: 0.65,
+    },
+    audio: "available-but-unverified",
+    desiredPlaying: false,
+    readiness: "ready",
+  });
+
+  const host = document.createElement("div");
+  document.body.append(host);
+
+  const dispose = render(
+    () => (
+      <PlaybackControls
+        state={state()}
+        onRate={vi.fn()}
+        onMuted={(muted) =>
+          setState((old) => ({
+            ...old,
+            media: { ...old.media, muted },
+          }))
+        }
+        onVolume={(volume) =>
+          setState((old) => ({
+            ...old,
+            media: { ...old.media, volume },
+          }))
+        }
+      />
+    ),
+    host,
+  );
+
+  try {
+    const volume = host.querySelector<HTMLInputElement>(
+      '[aria-label="Replay volume"]',
+    )!;
+    const mute = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Mute replay"]',
+    )!;
+
+    expect(volume.value).toBe("65");
+    expect(volume.getAttribute("aria-valuetext")).toBe("65%");
+
+    mute.click();
+
+    expect(state().media).toEqual({
+      muted: true,
+      volume: 0.65,
+    });
+    expect(volume.value).toBe("0");
+    expect(volume.getAttribute("aria-valuetext")).toBe("0%");
+    expect(
+      host.querySelector('[aria-label="Unmute replay"]'),
+    ).not.toBeNull();
+
+    host
+      .querySelector<HTMLButtonElement>('[aria-label="Unmute replay"]')!
+      .click();
+
+    expect(state().media).toEqual({
+      muted: false,
+      volume: 0.65,
+    });
+    expect(volume.value).toBe("65");
+    expect(volume.getAttribute("aria-valuetext")).toBe("65%");
+  } finally {
+    dispose();
+  }
+});

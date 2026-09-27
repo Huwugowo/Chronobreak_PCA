@@ -22,7 +22,7 @@ import {
   replayBenchmarkObserver,
   type ScenarioAction,
 } from "../benchmark";
-import { formatBytes, formatDate, formatDuration } from "../format";
+import { formatDate, formatDuration } from "../format";
 import type {
   ClipDraft,
   ClipRange,
@@ -44,28 +44,25 @@ import {
   clipEndpointPreviewTick,
   defaultClipRange,
   eventInvolvesPlayer,
-  eventTitle,
-  latestIndexAt,
   moveClipEndpoint,
   nearestIndexAt,
   replayTickAtFrameBoundary,
   timelineValue,
 } from "../viewerUtils";
+
 import {
   wholeTimelineViewport,
   type TimelineViewport,
 } from "../replayTimelineGeometry";
 import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot } from "../playbackController";
 import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
-import { createPlaybackDiagnostics, type DecoderSnapshot } from "../playbackDiagnostics";
-import ChampionFilter from "./ChampionFilter";
+import { createPlaybackDiagnostics } from "../playbackDiagnostics";
 import FullscreenOverlay from "./FullscreenOverlay";
-import PlaybackControls from "./PlaybackControls";
-import ReplayTimeline from "./ReplayTimeline";
 import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
 
 type Props = {
+  ddragonAssetBaseUrl?: string | null;
   gameTimestamp: string;
   game: GameSummary;
   readReplay: ReplayRead;
@@ -86,12 +83,6 @@ type SeekReason =
   | "recovery"
   | "event-jump"
   | "benchmark";
-
-type MediaDiagnosticEvent = {
-  at: number;
-  kind: string;
-  detail: string;
-};
 
 type EndpointHoldState = {
   endpoint: ClipEndpoint;
@@ -121,8 +112,6 @@ const millisecondsToReplayTick = (milliseconds: number, replayEnd: ReplayTick): 
   Math.round(
     clamp(milliseconds, 0, replayTickToMilliseconds(replayEnd)) * REPLAY_TICKS_PER_SECOND / 1_000,
   ) as ReplayTick;
-
-const gameTickToMilliseconds = (gameTick: string): number => Number(BigInt(gameTick) / 1_000n);
 
 function ViewerScreen(props: Props) {
   const [descriptor, { refetch }] = createResource(() => props.gameTimestamp,
@@ -242,7 +231,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
   const [presentedPosition, setPresentedPosition] = createSignal<ReplayTick | null>(null);
   const [playback, setPlayback] = createSignal<PlaybackSnapshot>();
-  const [decoder, setDecoder] = createSignal<DecoderSnapshot>();
   const [replayPosition, setReplayPosition] = createSignal<ReplayTick>(0 as ReplayTick);
   const [timelineViewport, setTimelineViewport] = createSignal<TimelineViewport>(
     wholeTimelineViewport(replayEnd as ReplayTick),
@@ -251,17 +239,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   const [mediaState, setMediaState] = createSignal<MediaPreviewState>("loading");
   const [mediaError, setMediaError] = createSignal<string | null>(null);
   const [editingEndpoint, setEditingEndpoint] = createSignal<ClipEndpoint | null>(null);
-  const [diagnosticEvents, setDiagnosticEvents] = createSignal<MediaDiagnosticEvent[]>([]);
-  const [seekQueueLabel, setSeekQueueLabel] = createSignal("IDLE");
-  const [recoveryCount, setRecoveryCount] = createSignal(0);
-  const [presentedFps, setPresentedFps] = createSignal(0);
   const [clockSource, setClockSource] = createSignal<"VIDEO FRAME" | "ANIMATION FRAME">(
     "VIDEO FRAME",
   );
-  const [droppedFrames, setDroppedFrames] = createSignal(0);
-  const [totalFrames, setTotalFrames] = createSignal(0);
-  const [heapBytes, setHeapBytes] = createSignal<number | null>(null);
-  const [seekLatencyMs, setSeekLatencyMs] = createSignal<number | null>(null);
   const [serverMetrics, setServerMetrics] = createSignal<ServerMetrics>({
     requests: 0,
     range_requests: 0,
@@ -303,7 +283,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     replayTickAtFrameBoundary(frame, mediaTimeline);
   const clipStartTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.startFrame);
   const clipEndTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.endFrameExclusive);
-  const videoSecond = createMemo(() => Math.floor(replayPosition() / REPLAY_TICKS_PER_SECOND));
   const replayTickAtGameZero = createMemo(() => {
     const point = events()[0] ?? playerTimeline()[0];
     return point ? BigInt(point.replay_tick) - BigInt(point.game_tick) * 48n : null;
@@ -316,9 +295,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   const beforeGameStart = createMemo(
     () => presentedPosition() === null || replayTickAtGameZero() === null || BigInt(currentGameTick()) < 0n,
   );
-  const gameClockSecond = createMemo(() =>
-    Math.max(0, Math.floor(gameTickToMilliseconds(currentGameTick()) / 1_000)),
-  );
   const visibleEvents = createMemo(() => {
     const selected = selectedPlayers();
     if (selected.length === 0) return events();
@@ -326,21 +302,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
       selected.some((player) => eventInvolvesPlayer(event, player)),
     );
   });
-  const activeEventIndex = createMemo(() => presentedPosition() === null ? -1 : latestIndexAt(visibleEvents(), presentedPosition()!));
-  const activeEvent = createMemo(() => {
-    const index = activeEventIndex();
-    return index < 0 ? undefined : visibleEvents()[index];
-  });
-  const currentPlayer = createMemo<PlayerTimelinePoint | undefined>(() =>
-    presentedPosition() === null ? undefined : timelineValue(playerTimeline(), presentedPosition()!),
-  );
   const currentKda = createMemo<KdaTimelinePoint | undefined>(() =>
     presentedPosition() === null ? undefined : timelineValue(kdaTimeline(), presentedPosition()!),
   );
-  const lastDiagnostic = createMemo(() => {
-    const events = diagnosticEvents();
-    return events[events.length - 1];
-  });
   const togglePlayerFilter = (summonerName: string) => {
     setSelectedPlayers((selected) =>
       selected.includes(summonerName)
@@ -351,21 +315,13 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
 
   const syncSnapshot = (value: PlaybackSnapshot) => {
     setPlayback(value);
-    if (value.readiness === "disposed") { decoderDiagnostics?.dispose(); setDecoder(undefined); }
+    if (value.readiness === "disposed") decoderDiagnostics?.dispose();
     else decoderDiagnostics?.bind(value, mediaTimeline);
     mediaGeneration = value.generation;
     setMediaState(value.readiness === "closed" || value.readiness === "disposed" ? "degraded" : value.readiness);
     setIsPlaying(value.desiredPlaying && !value.media.paused);
     setMediaError(value.error);
-    setSeekQueueLabel(value.queue);
-    setRecoveryCount(value.recoveryCount);
-    setPresentedFps(value.presentedFps);
-    setDroppedFrames(value.quality.droppedFrames ?? 0);
-    setTotalFrames(value.quality.totalFrames ?? 0);
-    setHeapBytes(value.quality.heapBytes);
-    setSeekLatencyMs(value.seekLatencyMs);
     setClockSource(value.authority === "rvfc" ? "VIDEO FRAME" : "ANIMATION FRAME");
-    setDiagnosticEvents(value.diagnostics.map((event) => ({ at: event.atMs, kind: event.kind, detail: JSON.stringify(event.payload) })));
     if (value.seek.presented === null) setPresentedPosition(null);
     if (value.queue !== "IDLE" && value.seek.requestedPreview !== null) setReplayPosition(value.seek.requestedPreview);
   };
@@ -1063,7 +1019,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     controller = createPlaybackController(createHtmlVideoPlaybackAdapter(primaryVideo), { generation: mediaGeneration, eventSink: onPlaybackEvent });
     primaryVideo = undefined;
     decoderDiagnostics = createPlaybackDiagnostics((value) => {
-      setDecoder(value);
       emitReplayBenchmarkEvent("decoder_observation", { status: value.status, reason: value.reason,
         decoder_name: value.decoder_name, platform_decoder: value.platform_decoder, runtime: value.runtime,
         protocol: value.protocol, associated: value.associated, transitions: value.transitions },
@@ -1264,16 +1219,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
             <Show when={playback()?.activationRequired}>
               <button type="button" onClick={() => void controller.play()}>Click to resume playback</button>
             </Show>
-            <Show when={!isFullscreen()}>
-              <div class={styles.videoClock}>
-                <span>{replayTickAtGameZero() === null ? "GAME TIME UNAVAILABLE" : beforeGameStart() ? "PRE-GAME" : "GAME TIME"}</span>
-                <strong>{beforeGameStart() ? "--:--" : formatDuration(gameClockSecond() * 1_000)}</strong>
-              </div>
-            </Show>
-            <Show when={isFullscreen()}>
-              <FullscreenOverlay
+
+            <FullscreenOverlay
+                ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
                 champion={props.game.champion}
-                localPlayerName={(details()?.local_player_name ?? null)}
+                localPlayerName={details()?.local_player_name ?? null}
                 events={visibleEvents()}
                 mediaTimeline={mediaTimeline}
                 replayTick={replayPosition()}
@@ -1308,231 +1258,16 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
                 onClipEndpointBlur={handleClipEndpointBlur}
                 onExportClip={exportSelectedClip}
                 onCancelClip={cancelClipMode}
-                onExit={() => exitFullscreen()}
+                fullscreen={isFullscreen()}
+                onFullscreenToggle={() =>
+                  isFullscreen() ? exitFullscreen() : enterFullscreen()
+                }
               />
-            </Show>
           </div>
 
-          <Show when={!isFullscreen()}>
-          <aside class={styles.sidePanel} aria-label="Synchronized game data">
-            <section class={styles.liveStats} data-testid="live-stats">
-              <div class={styles.panelLabel}>
-                <span>LIVE STATE</span>
-                <i aria-hidden="true" />
-              </div>
-              <div class={styles.championBlock}>
-                <span class={styles.championMonogram} aria-hidden="true">
-                  {props.game.champion.slice(0, 2).toUpperCase()}
-                </span>
-                <div>
-                  <p>CHAMPION</p>
-                  <strong>{props.game.champion}</strong>
-                </div>
-              </div>
-              <dl class={styles.liveStatGrid}>
-                <div class={styles.kdaStat}>
-                  <dt>K / D / A</dt>
-                  <dd data-testid="current-kda">
-                    {currentKda()?.kills ?? "—"}
-                    <span>/</span>
-                    {currentKda()?.deaths ?? "—"}
-                    <span>/</span>
-                    {currentKda()?.assists ?? "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>CS</dt>
-                  <dd data-testid="current-cs">{currentPlayer()?.cs ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>LEVEL</dt>
-                  <dd data-testid="current-level">{currentPlayer()?.level ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>GAME CLOCK</dt>
-                  <dd>{replayTickAtGameZero() === null ? "—" : beforeGameStart() ? "PRE" : formatDuration(gameClockSecond() * 1_000)}</dd>
-                </div>
-              </dl>
-            </section>
-
-            <ChampionFilter
-              participants={(details()?.participants ?? [])}
-              selectedPlayers={selectedPlayers()}
-              localPlayerName={(details()?.local_player_name ?? null)}
-              mode="panel"
-              onToggle={togglePlayerFilter}
-              onClear={() => setSelectedPlayers([])}
-            />
-          </aside>
-          </Show>
         </div>
 
-        <Show when={!isFullscreen()}>
-        <section class={styles.timelinePanel} aria-label="Replay timeline">
-          <ReplayTimeline
-            duration={replayEnd as ReplayTick}
-            playhead={replayPosition() as ReplayTick}
-            viewport={timelineViewport()}
-            onViewportChange={setTimelineViewport}
-            events={visibleEvents()}
-            clip={
-              clipRange()
-                ? {
-                    start: clipStartTick(clipRange()!),
-                    end: clipEndTick(clipRange()!),
-                  }
-                : null
-            }
-            onSeek={(tick) => {
-              setEditingEndpoint(null);
-              seekTo(tick);
-            }}
-            onEventSelect={selectEvent}
-            onClipEndpointEditStart={beginClipEndpointEdit}
-            onClipEndpointPreview={updateClipEndpoint}
-            onClipEndpointEditFinish={finishClipEndpointEdit}
-            onClipEndpointKeyDown={handleClipEndpointKeyDown}
-            onClipEndpointKeyUp={handleClipEndpointKeyUp}
-            onClipEndpointBlur={handleClipEndpointBlur}
-          />
-          <div class={styles.controlsRow}>
-            <button
-              class={styles.playButton}
-              type="button"
-              disabled={!props.descriptor.video_url || mediaState() !== "ready"}
-              onClick={() => void togglePlayback()}
-              aria-label={
-                isPlaying() ? "Pause replay" : clipRange() ? "Preview selected clip" : "Play replay"
-              }
-            >
-              <span aria-hidden="true">{isPlaying() ? "Ⅱ" : "▶"}</span>
-              {isPlaying() ? "PAUSE" : clipRange() ? "PREVIEW CLIP" : "PLAY"}
-            </button>
-            <Show
-              when={clipRange()}
-              fallback={
-                <button class={styles.clipButton} type="button" onClick={() => activateClip()}>
-                  <span aria-hidden="true">✦</span> CLIP
-                </button>
-              }
-            >
-              <div class={styles.clipActions}>
-                <button class={styles.cancelClipButton} type="button" onClick={cancelClipMode}>
-                  CANCEL
-                </button>
-                <button class={styles.exportClipButton} type="button" onClick={exportSelectedClip}>
-                  EXPORT CLIP <span aria-hidden="true">→</span>
-                </button>
-              </div>
-            </Show>
-            <PlaybackControls state={playback()}
-              onRate={(rate) => controller?.setRate(rate)}
-              onMuted={(muted) => controller?.setMuted(muted)}
-              onVolume={(volume) => controller?.setVolume(volume)} />
-            <div class={styles.timeReadout} data-testid="time-readout">
-              <strong>{formatDuration(videoSecond() * 1_000)}</strong>
-              <span>/</span>
-              <span>{formatDuration(durationMs)}</span>
-            </div>
-            <span class={styles.controlDivider} />
-            <div class={styles.nowPlaying}>
-              <span>NOW</span>
-              <strong>
-                {!details() ? (detailsError() ? "DETAILS UNAVAILABLE" : "LOADING DETAILS") : activeEvent()
-                  ? eventTitle(activeEvent()!)
-                  : selectedPlayers().length > 0
-                    ? "NO MATCHING EVENT"
-                    : "LOADING SCREEN"}
-              </strong>
-            </div>
-            <button
-              class={styles.fullscreenButton}
-              type="button"
-              onClick={() => enterFullscreen()}
-              title="Open fullscreen replay"
-            >
-              <span aria-hidden="true">⛶</span> FULLSCREEN
-            </button>
-          </div>
-        </section>
-        </Show>
 
-        <Show when={!isFullscreen()}>
-          <details class={styles.diagnostics}>
-            <summary>
-              <span>PLAYBACK DIAGNOSTICS</span>
-              <strong>{presentedFps().toFixed(1)} FPS</strong>
-            </summary>
-            <dl>
-              <div>
-                <dt>DECODER</dt>
-                <dd title={decoder()?.reason}>{decoder()?.status ?? "unknown"}: {decoder()?.decoder_name ?? "unobserved"}</dd>
-              </div>
-              <div>
-                <dt>CLOCK</dt>
-                <dd>{clockSource()}</dd>
-              </div>
-              <div>
-                <dt>RATE</dt>
-                <dd title={playback()?.rate.limitation ?? undefined}>
-                  {playback()?.rate.selected}x selected / {playback()?.rate.applied}x applied /
-                  {playback()?.rate.observed?.toFixed(2) ?? "unknown"} observed ({playback()?.rate.outcome})
-                </dd>
-              </div>
-              <div><dt>AUDIO</dt><dd>{playback()?.audio ?? "unknown"}</dd></div>
-              <div>
-                <dt>DROPPED</dt>
-                <dd>{droppedFrames()} / {totalFrames()}</dd>
-              </div>
-              <div>
-                <dt>LAST SEEK</dt>
-                <dd>{seekLatencyMs() === null ? "—" : `${seekLatencyMs()!.toFixed(0)} ms`}</dd>
-              </div>
-              <div>
-                <dt>STREAMED</dt>
-                <dd>{formatBytes(serverMetrics().response_bytes)}</dd>
-              </div>
-              <div>
-                <dt>RANGES</dt>
-                <dd>{serverMetrics().range_requests}</dd>
-              </div>
-              <div>
-                <dt>STREAMS</dt>
-                <dd>{serverMetrics().completed_streams} OK / {serverMetrics().cancelled_streams} CANCEL</dd>
-              </div>
-              <div>
-                <dt>JS HEAP</dt>
-                <dd>{heapBytes() === null ? "—" : formatBytes(heapBytes()!)}</dd>
-              </div>
-              <div>
-                <dt>ACTIVE EVENT</dt>
-                <dd>{activeEvent()?.event_type ?? "—"}</dd>
-              </div>
-              <div>
-                <dt>INDEXED</dt>
-                <dd>{details() ? `${visibleEvents().length} / ${events().length} EVENTS` : "DETAILS UNAVAILABLE"}</dd>
-              </div>
-              <div>
-                <dt>MEDIA</dt>
-                <dd>{mediaState().toUpperCase()}</dd>
-              </div>
-              <div>
-                <dt>SEEK QUEUE</dt>
-                <dd>{seekQueueLabel()}</dd>
-              </div>
-              <div>
-                <dt>RECOVERIES</dt>
-                <dd>{recoveryCount()}</dd>
-              </div>
-              <div>
-                <dt>LAST MEDIA EVENT</dt>
-                <dd title={lastDiagnostic()?.detail}>
-                  {lastDiagnostic()?.kind ?? "—"}
-                </dd>
-              </div>
-            </dl>
-          </details>
-        </Show>
       </div>
 
     </section>

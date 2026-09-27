@@ -67,11 +67,11 @@ it("marks only the persistent primary video across layout and recovery, then rel
     expect(host.querySelector('[data-testid="video-frame"]')?.getAttribute("data-fullscreen")).toBe("true");
     expect(host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!.value).toBe("4");
     expect(host.querySelector<HTMLInputElement>('[aria-label="Replay volume"]')!.value).toBe("37");
-    expect(host.querySelector('[aria-label="Unmute replay"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Mute replay"]')).not.toBeNull();
     primary.dispatchEvent(new Event("error"));
     expect(primary.src).not.toBe(source);
     expect(loads).toHaveBeenCalledTimes(2);
-    expect(primary.playbackRate).toBe(4); expect(primary.muted).toBe(true); expect(primary.volume).toBe(0.37);
+    expect(primary.playbackRate).toBe(4); expect(primary.muted).toBe(false); expect(primary.volume).toBe(0.37);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(host.querySelector("video")).toBe(primary);
     expect(host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!.value).toBe("4");
@@ -113,7 +113,8 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     const loadCount = loads.mock.calls.length;
     expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toContain("Loading replay details");
     expect(host.querySelectorAll('[aria-label^="Seek to"]')).toHaveLength(0);
-    expect(host.querySelector('[data-testid="current-cs"]')?.textContent).toBe("—");
+    expect(host.querySelector('[data-testid="fullscreen-hud"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="champion-filter-option"]')).toBeNull();
     expect(vi.mocked(emitReplayBenchmarkEvent).mock.calls.some(([kind]) => kind === "viewer_mounted")).toBe(true);
     expect(vi.mocked(emitReplayBenchmarkEvent).mock.calls.some(([kind]) => kind === "playback_payload_ready")).toBe(false);
     Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 }, paused: { get: () => paused } });
@@ -130,7 +131,8 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     await vi.waitFor(() => expect(play).toHaveBeenCalled());
     const rail = () => host.querySelector<HTMLElement>('[data-testid="replay-timeline"]')!;
     rail().dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
-    const viewport = () => [...host.querySelectorAll("button")].find(button => button.textContent === "FULL MATCH")?.parentElement?.textContent;
+    const viewport = () => [...host.querySelectorAll('[data-testid="timeline-viewport-readout"] > span')]
+      .map(boundary => boundary.textContent).join(" - ");
     const zoomed = viewport();
     expect(zoomed).toContain("0:00 - 3:12");
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "f" }));
@@ -161,7 +163,7 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     expect(viewport()).toBe(zoomed);
     expect(host.querySelector('[aria-label="Clip starts at 0:00"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Clip ends at 0:10"]')).not.toBeNull();
-    [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT CLIP"))!.click();
+    [...host.querySelectorAll("button")].find(button => button.textContent?.includes("Export clip"))!.click();
     expect(exported).toHaveBeenCalledWith(draft);
     host.querySelector<HTMLButtonElement>('[data-testid="champion-filter-option"]')!.click();
     const handle = host.querySelector<HTMLButtonElement>('[aria-label="Clip ends at 0:10"]')!;
@@ -176,7 +178,10 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     pointer(handle, "pointerdown", 52);
     pointer(handle, "pointermove", 100);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "f" }));
-    expect(handle.isConnected).toBe(false);
+    expect(handle.isConnected).toBe(true);
+    expect(host.querySelector('[aria-label^="Clip ends at"]')).toBe(handle);
+    expect(released).not.toHaveBeenCalled();
+    pointer(handle, "pointercancel", 100);
     expect(released).toHaveBeenCalledWith(7);
     for (const kind of ["pointermove", "pointerup", "pointercancel", "lostpointercapture"]) {
       expect(removed.mock.calls.some(([event]) => event === kind)).toBe(true);

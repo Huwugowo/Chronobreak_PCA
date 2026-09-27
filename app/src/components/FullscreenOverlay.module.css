@@ -21,48 +21,10 @@
   pointer-events: none;
 }
 
-.topBar {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  right: 68px;
-  left: 0;
-  display: flex;
-  height: 52px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 18px 0 20px;
-  background: linear-gradient(180deg, rgba(4, 5, 8, 0.94), rgba(4, 5, 8, 0.62) 70%, transparent);
-  opacity: 1;
-  pointer-events: auto;
-  transition: opacity 150ms ease;
-}
 
-.topBarHidden {
-  opacity: 0;
-  pointer-events: none;
-  transition-duration: 350ms;
-}
 
-.topIdentity,
-.topStatus {
-  display: flex;
-  align-items: center;
-}
 
-.topIdentity {
-  gap: 15px;
-}
 
-.replayMark {
-  padding: 5px 7px 4px;
-  border: 1px solid rgba(255, 255, 255, 0.38);
-  background: #002fa7;
-  font-family: var(--font-mono);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.13em;
-}
 
 .topDivider {
   width: 1px;
@@ -70,147 +32,16 @@
   background: rgba(255, 255, 255, 0.17);
 }
 
-.topIdentity > div {
-  display: grid;
-  gap: 1px;
-}
 
-.topIdentity small,
-.topStatus span {
-  color: rgba(248, 245, 239, 0.47);
-  font-family: var(--font-mono);
-  font-size: 6px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-}
 
-.topIdentity > div strong {
-  font-size: 17px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  line-height: 1;
-  text-transform: uppercase;
-}
 
-.topKda,
-.topIdentity > span:last-child {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-}
 
-.topStatus {
-  gap: 18px;
-}
 
-.topStatus > strong {
-  min-width: 48px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-align: right;
-}
 
-.recStatus {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: rgba(248, 245, 239, 0.72) !important;
-}
 
-.recStatus i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #c2001c;
-  box-shadow: 0 0 8px rgba(194, 0, 28, 0.82);
-  animation: rec-pulse 1.7s ease-in-out infinite;
-}
 
-.topStatus button {
-  min-height: 27px;
-  padding: 0 9px;
-  border: 1px solid rgba(255, 255, 255, 0.19);
-  color: rgba(248, 245, 239, 0.72);
-  background: rgba(0, 0, 0, 0.42);
-  font-family: var(--font-mono);
-  font-size: 7px;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-}
 
-.topStatus button:hover {
-  border-color: rgba(255, 255, 255, 0.46);
-  color: #fff;
-}
 
-.topStatus button span {
-  margin-left: 5px;
-  color: inherit;
-  font-size: 11px;
-}
-
-.eventCard {
-  --event-color: #7f8999;
-  position: absolute;
-  z-index: 7;
-  top: 58px;
-  left: 20px;
-  display: grid;
-  min-width: 210px;
-  gap: 4px;
-  padding: 12px 15px 12px 13px;
-  transform: translateX(-12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-left: 3px solid var(--event-color);
-  color: #f8f5ef;
-  background: rgba(6, 6, 10, 0.93);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.46);
-  opacity: 0;
-  pointer-events: none;
-  transition: top 200ms ease, opacity 220ms ease, transform 220ms ease;
-}
-
-.eventCardVisible {
-  transform: translateX(0);
-  opacity: 1;
-  transition: top 200ms ease, opacity 250ms cubic-bezier(.22, 1, .36, 1), transform 250ms cubic-bezier(.22, 1, .36, 1);
-}
-
-.eventCardTopHidden {
-  top: 20px;
-}
-
-.eventCard > span {
-  color: rgba(248, 245, 239, 0.42);
-  font-family: var(--font-mono);
-  font-size: 7px;
-  letter-spacing: 0.13em;
-}
-
-.eventCard strong {
-  color: var(--event-color);
-  font-size: 19px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-}
-
-.eventCard small {
-  color: rgba(248, 245, 239, 0.54);
-  font-family: var(--font-mono);
-  font-size: 8px;
-}
-
-.eventAlly {
-  --event-color: #4a70e0;
-}
-
-.eventEnemy {
-  --event-color: #c2001c;
-}
-
-.eventNeutral {
-  --event-color: #8d96a5;
-}
 
 .scrubberZone {
   position: absolute;
@@ -493,11 +324,6 @@
   cursor: not-allowed;
 }
 
-.controlsDivider {
-  width: 1px;
-  height: 19px;
-  background: rgba(255, 255, 255, 0.16);
-}
 
 .fullscreenTime,
 .ambientTime {
@@ -522,10 +348,6 @@
   opacity: 0;
 }
 
-@keyframes rec-pulse {
-  50% { opacity: 0.42; }
-}
-
 .rosterHud {
   position: absolute;
   z-index: 4;
@@ -542,7 +364,7 @@
   bottom: 0;
   left: 0;
   display: grid;
-  gap: 2px;
+  gap: 0;
   padding: 34px 12px 12px;
   background:
     linear-gradient(
@@ -587,4 +409,165 @@
   .bottomHud {
     padding-top: 22px;
   }
+}
+/* Standard player transport */
+.fullscreenControls {
+  align-items: center;
+  gap: 6px;
+}
+
+.fullscreenControls svg {
+  flex: 0 0 auto;
+}
+
+.fullscreenPlay {
+  order: 10;
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  place-items: center;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  background: transparent;
+}
+
+.fullscreenPlay:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.fullscreenPlay:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fullscreenTime {
+  order: 30;
+  margin-right: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.clipControl,
+.cancelClipControl,
+.exportClipControl {
+  order: 45;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.clipControl,
+.cancelClipControl {
+  border: 1px solid transparent;
+  color: rgba(248, 245, 239, 0.76);
+  background: transparent;
+}
+
+.clipControl span {
+  color: inherit;
+}
+
+.clipControl:hover,
+.cancelClipControl:hover {
+  border-color: transparent;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.exportClipControl {
+  border: 1px solid var(--selected-line);
+  color: var(--brand-yellow);
+  background: var(--selected-surface);
+}
+
+.exportClipControl:hover {
+  border-color: var(--brand-yellow);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.exitFullscreenControl {
+  order: 60;
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: rgba(248, 245, 239, 0.76);
+  background: transparent;
+  cursor: pointer;
+}
+
+.exitFullscreenControl:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+/*
+ * While fullscreen chrome is hidden, the normal HUD cannot receive pointer
+ * activity because it has pointer-events: none. Temporarily let the overlay
+ * root receive the first pointer interaction; noteActivity() immediately
+ * restores the HUD and removes this hit surface again.
+ */
+.overlayRootHudWake {
+  pointer-events: auto;
+}
+/* Canonical replay time hierarchy */
+.fullscreenTime {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-right: auto;
+  color: rgba(248, 245, 239, 0.5);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.fullscreenTimeCurrent {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.fullscreenTimeDivider {
+  color: rgba(248, 245, 239, 0.32);
+  font-size: 9px;
+}
+
+.fullscreenTimeDuration {
+  color: rgba(248, 245, 239, 0.62);
+  font-size: 10px;
+  font-weight: 650;
 }

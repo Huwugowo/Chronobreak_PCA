@@ -6,6 +6,8 @@ import type { DurationDisplay } from "../libraryController";
 import type { LibraryOrigin } from "../libraryController";
 import { MoreIcon, StarIcon } from "../ui/icons";
 import matchStyles from "./MatchHistory.module.css";
+import { ExternalLinkIcon, PlayIcon } from "../ui/icons";
+import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
 
 type Props = {
@@ -481,15 +483,16 @@ function MatchHistoryEmptyState() {
 function ClipsLibrary(props: Props) {
   return (
     <>
-      <section class={styles.libraryIntro}>
-        <div>
-          <p>EXPORTED MOMENTS</p>
-          <h1>Clips, ready to revisit.</h1>
-        </div>
+      <section class={`${styles.libraryIntro} ${styles.clipsIntro}`}>
         <div class={styles.introActions}>
           <span>{props.clips.length} LOCAL FILES</span>
-          <button type="button" onClick={props.onOpenClipsFolder}>
-            Open clips folder ↗
+          <button
+            class={`${controlStyles.control} ${controlStyles.iconLabel}`}
+            type="button"
+            onClick={props.onOpenClipsFolder}
+          >
+            <span>Open clips folder</span>
+            <ExternalLinkIcon size={14} />
           </button>
         </div>
       </section>
@@ -498,7 +501,6 @@ function ClipsLibrary(props: Props) {
         when={props.clips.length > 0}
         fallback={
           <EmptyState
-            label="NO CLIPS"
             title="Your exported moments will live here."
             detail="Open a recording, select a moment on its timeline, and export it for Discord or social video."
           />
@@ -537,7 +539,7 @@ function ClipsLibrary(props: Props) {
                         : clip.duration_ms === null ? "—" : formatDuration(clip.duration_ms);
                     })()}</em>
                     <i class={styles.playGlyph} aria-hidden="true">
-                      ▶
+                      <PlayIcon size={14} />
                     </i>
                   </span>
                   <span class={styles.clipContent}>
@@ -554,7 +556,7 @@ function ClipsLibrary(props: Props) {
                   <button type="button" disabled={!props.actionable} onClick={() => props.onRetryDuration!(clip.filename)}>Retry duration</button>
                 </Show>
                 <button
-                  class={styles.clipDelete}
+                  class={`${controlStyles.control} ${styles.clipDelete}`}
                   type="button"
                   data-danger
                   onClick={() => props.onDeleteClip(clip, props.snapshotOrigin)}
@@ -571,15 +573,12 @@ function ClipsLibrary(props: Props) {
   );
 }
 
-function EmptyState(props: { label: string; title: string; detail: string }) {
+function EmptyState(props: { title: string; detail: string }) {
   return (
     <section class={styles.emptyState}>
-      <span aria-hidden="true">LR</span>
-      <p>{props.label}</p>
       <h2>{props.title}</h2>
-      <small>{props.detail}</small>
+      <p>{props.detail}</p>
     </section>
   );
 }
-
 export default LibraryScreen;

@@ -147,8 +147,10 @@
 }
 
 .portrait {
+  position: relative;
   display: grid;
   flex: none;
+  overflow: hidden;
   place-items: center;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.76);
@@ -158,6 +160,21 @@
   font-family: var(--font-mono);
   font-weight: 800;
   letter-spacing: -0.07em;
+}
+
+.portraitFallback {
+  position: relative;
+  z-index: 0;
+}
+
+.portraitImage {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .panel .player {
@@ -345,10 +362,10 @@
 .fullscreen .player {
   width: 42px;
   height: 42px;
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(5, 7, 11, 0.62);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(4px);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .fullscreen .portrait {
@@ -356,6 +373,15 @@
   height: 100%;
   border: 0;
   font-size: 11px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.fullscreen .player:hover .portrait {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+.fullscreen .selected .portrait {
+  box-shadow: inset 0 0 0 1px var(--team-color);
 }
 
 .fullscreen .groupally .selected {

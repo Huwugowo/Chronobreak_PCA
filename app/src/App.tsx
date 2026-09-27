@@ -846,6 +846,7 @@ function App() {
             <ViewerScreen
               game={selected.game}
               readReplay={work => controller.readReplay(selected.origin, selected.game.timestamp, work)}
+              ddragonAssetBaseUrl={ddragon()?.asset_base_url ?? null}
               gameTimestamp={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).gameTimestamp
               }
