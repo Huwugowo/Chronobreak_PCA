@@ -8,6 +8,18 @@ The agent performs the mandatory `AGENTS.md` bootstrap, resolves X in `feature-l
 
 `feature-list.json` is the only lifecycle authority. An ExecPlan is immutable approved design. A per-feature execution record is the only detailed authority for implementation progress, obtained verification, blockers, and the next action. Do not create a second status narrative or active-plan index.
 
+## Local checkout and branches
+
+Use the main `Chronobreak` checkout on `main` for ordinary local work. Keep one
+active editing session in that checkout. UI and backend work follow the same
+feature lifecycle and integrate through the same codebase.
+
+Create a short-lived `codex/<topic>` branch and worktree only when a concrete task
+needs isolation. Give it bounded ownership, integrate and verify its changes, then
+remove it after preserving any outstanding work. Branch names are not feature
+status. Existing uncommitted changes must be preserved and identified before
+another session starts editing.
+
 ## 1. Draft -> ready
 
 If `stage` is `draft`, do not implement product code. Make the work implementable.
