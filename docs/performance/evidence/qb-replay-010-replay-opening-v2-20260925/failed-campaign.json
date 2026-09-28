@@ -1,0 +1,106 @@
+{
+    "contract":  "replay-opening-comparison-v1",
+    "status":  "insufficient-stopped-invalid-attempt",
+    "generated_utc":  "2026-09-26T16:01:25.3610288Z",
+    "campaign_sha256":  "cc681fb7fb648bc17c7fdd5dee96b52f58141fd62bb10640ebfb8a8e0e86e681",
+    "launch_ceiling":  100,
+    "attempted":  8,
+    "validated_completed":  7,
+    "unused":  92,
+    "retry_count":  0,
+    "preflights_passed":  100,
+    "comparison_eligible":  false,
+    "global_required_results_rejected":  true,
+    "global_rejection":  "partial, restarted, unreceipted or noncontiguous campaign slot",
+    "invalid_slot":  {
+                         "sequence":  8,
+                         "cell":  "N",
+                         "mode":  "warm",
+                         "arm":  "reference",
+                         "run_id":  "o-n-warm-ref-001-reference-trial-1-minimal",
+                         "reason":  "REPLAY-BENCHMARK-TERMINAL: The app did not publish terminal.json.",
+                         "app_exit_code":  0,
+                         "fixture_post_hashes_match":  true,
+                         "job_total":  118,
+                         "job_active":  0,
+                         "job_terminated":  0,
+                         "job_unobserved":  0,
+                         "runner_artifacts_preserved":  true
+                     },
+    "valid_prefix":  [
+                         {
+                             "arm":  "reference",
+                             "cell":  "E",
+                             "run_id":  "o-e-warm-ref-001-reference-trial-1-minimal",
+                             "sequence":  1,
+                             "mode":  "warm"
+                         },
+                         {
+                             "arm":  "candidate",
+                             "cell":  "E",
+                             "run_id":  "o-e-warm-can-001-candidate-trial-1-minimal",
+                             "sequence":  2,
+                             "mode":  "warm"
+                         },
+                         {
+                             "arm":  "candidate",
+                             "cell":  "N",
+                             "run_id":  "o-n-cold-can-001-candidate-trial-1-minimal",
+                             "sequence":  3,
+                             "mode":  "cold"
+                         },
+                         {
+                             "arm":  "reference",
+                             "cell":  "N",
+                             "run_id":  "o-n-cold-ref-001-reference-trial-1-minimal",
+                             "sequence":  4,
+                             "mode":  "cold"
+                         },
+                         {
+                             "arm":  "reference",
+                             "cell":  "S",
+                             "run_id":  "o-s-cold-ref-001-reference-trial-1-minimal",
+                             "sequence":  5,
+                             "mode":  "cold"
+                         },
+                         {
+                             "arm":  "candidate",
+                             "cell":  "S",
+                             "run_id":  "o-s-cold-can-001-candidate-trial-1-minimal",
+                             "sequence":  6,
+                             "mode":  "cold"
+                         },
+                         {
+                             "arm":  "candidate",
+                             "cell":  "N",
+                             "run_id":  "o-n-warm-can-001-candidate-trial-1-minimal",
+                             "sequence":  7,
+                             "mode":  "warm"
+                         }
+                     ],
+    "subjects":  {
+                     "reference":  {
+                                       "source_commit":  "3b14df20aa7ab4e567fd0372c1abc72c07bbe18e",
+                                       "binary_sha256":  "34bd87bda70ea723a9c2d874a8c612038be3fb2149073d6753fc24ea48bd41c0"
+                                   },
+                     "candidate":  {
+                                       "source_commit":  "a840c645e5080ec13a7cb23c540eabc388676a83",
+                                       "binary_sha256":  "46323b37c1bb7e29d2df89f5dca115e7837796c1eacc5d7342b517ebbe854f1f"
+                                   }
+                 },
+    "preparation":  {
+                        "source_files_unchanged":  409,
+                        "decoded_media_count":  203,
+                        "media_bytes":  1010895291,
+                        "twenty_matrix_plans":  20
+                    },
+    "limitations":  [
+                        "Seven valid slots are preserved as individual diagnostics; no balanced five-process comparison or speedup/regression pass is supported.",
+                        "The invalid slot is not repaired, retried or pooled."
+                    ],
+    "evidence_paths":  [
+                           "docs/performance/evidence/qb-replay-010-replay-opening-v2-20260925/disposition.md",
+                           "build/perf/qb-replay-010-replay-opening-v2/.chronobreak-replay-benchmark/live/008.log",
+                           "build/perf/qb-replay-010-replay-opening-v2/.chronobreak-replay-benchmark/results/o-n-warm-ref-001-reference-trial-1-minimal/runner-error.json"
+                       ]
+}

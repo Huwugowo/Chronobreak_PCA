@@ -93,6 +93,19 @@ clears the overlay. Stale completions cannot publish notices or clear newer
 overlays. The overlay never mutates the snapshot or authorizes an action.
 
 Exports retain their admitted destination and strict source/frame contract. Their
+one admitted blocking worker owns filesystem reads/parsing, child execution,
+staging and publication. Dropping the IPC waiter requests cancellation but cannot
+release mutation admission before child reaping and staged cleanup. Progress
+records are capped at 8 KiB and retained stderr at 64 KiB. Encoding stops after
+120 seconds without advancing progress or its absolute deadline (20 times clip
+duration plus 120 seconds, minimum five minutes, maximum six hours). Thumbnails
+have a 30-second deadline; validation keeps its five-second bounded probe.
+Cancellation and supervision faults are fatal, while ordinary encoder exit
+failures retain the existing software fallback. Cancellation is checked between
+filesystem stages; an indivisible filesystem call retains ownership until it
+returns. Batch publication finishes or rolls back under that same owner.
+
+Export
 completion invalidates the current view only when its logical path and approved
 root match that destination, including a return to the same root after A/B/A. A
 root epoch and selected token separately reject stale export responses. Completion
@@ -101,6 +114,13 @@ originating snapshot token through dispatch and reconcile the captured root
 after every admitted mutation attempt, including stale or partial completions.
 Response admission additionally checks root, request, token, and navigation
 identity, so late work cannot publish into a newer view.
+
+The same mounted clip editor may adopt only its own successfully refreshed
+origin, with unchanged root epoch/navigation and surviving source membership.
+Its probe reloads for the new token and validates the original draft's media
+identity before another export. Failed refreshes or invalid source/admission
+disable dispatch and direct the user back to games; no replacement token is
+borrowed from unrelated refreshes or navigation.
 
 ## Game bundles
 

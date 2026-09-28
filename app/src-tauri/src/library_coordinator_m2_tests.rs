@@ -495,6 +495,48 @@ async fn settings_worker_survives_cancel_and_serializes_root_capture() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn export_blocking_worker_retains_admission_and_cleans_before_release() {
+    let directory = tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("games/100")).unwrap();
+    let source = directory.path().join("games/100/video.mp4");
+    fs::write(&source, b"original recording fixture").unwrap();
+    let partial = directory.path().join("test.part.mp4");
+    fs::write(&partial, b"partial clip fixture").unwrap();
+    let roots = Arc::new(MediaRoots::new(directory.path().into()).unwrap());
+    let coordinator = LibraryCoordinator::new();
+    let snapshot = coordinator.refresh(&roots, ORIGIN).await.unwrap();
+    let completion = coordinator.admit_export(&roots, &snapshot.token, "100").unwrap();
+    let executor_thread = std::thread::current().id();
+    let (started, ready) = oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let (finished, cleaned) = oneshot::channel();
+    let cleanup_path = partial.clone();
+    let task = tokio::spawn(crate::export_process::run_owned(move |cancel| {
+        assert_ne!(std::thread::current().id(), executor_thread);
+        started.send(()).unwrap();
+        held.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(cancel.check().is_err());
+        fs::remove_file(cleanup_path).unwrap();
+        drop(completion);
+        finished.send(()).unwrap();
+    }));
+    signalled(ready).await;
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    // A single-thread executor still services timers while synchronous work is held.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(partial.exists());
+    assert!(coordinator.mutate(&roots, &snapshot.token, Selection::Library, |_| Ok(()))
+        .await.unwrap_err().contains("busy"));
+    release.send(()).unwrap();
+    signalled(cleaned).await;
+    assert!(!partial.exists());
+    assert_eq!(fs::read(source).unwrap(), b"original recording fixture");
+    assert!(coordinator.publication.lock().unwrap().selected_token.is_none());
+    let _permit = coordinator.mutation_slot.try_acquire().unwrap();
+}
+
 #[tokio::test]
 async fn late_export_invalidates_returned_root_but_never_admits_old_response() {
     for switch_away in [false, true] {

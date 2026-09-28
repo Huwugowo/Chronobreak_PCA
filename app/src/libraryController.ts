@@ -57,6 +57,7 @@ export class LibraryController {
   private navigation = 0;
   private scanActive = false;
   private scanPending = false;
+  private refreshCompletion: ((origin: LibraryOrigin | null) => void) | null = null;
   private mutationActive = false;
   private durationActive: DurationIntent | null = null;
   private durationPending: DurationIntent | null = null;
@@ -102,7 +103,9 @@ export class LibraryController {
     this.refresh();
   }
   refresh(mutationRefresh: LibraryState["mutationRefresh"] = null) {
-    if (this.closed || this.state.root === null) return;
+    if (this.closed || this.state.root === null) return Promise.resolve(null);
+    this.refreshCompletion?.(null);
+    const completion = new Promise<LibraryOrigin | null>(resolve => { this.refreshCompletion = resolve; });
     this.scanPending = true;
     this.supersedeReplay();
     this.supersedeDurations();
@@ -111,10 +114,11 @@ export class LibraryController {
       // while the backend has invalidated the old selected token.
       actionable: false, error: null, mutationRefresh });
     this.pumpRefresh();
+    return completion;
   }
   /** Reconcile a completed export even when its UI response was superseded. */
   invalidateRoot(root: string) {
-    if (!this.closed && this.state.root === root) this.refresh();
+    return !this.closed && this.state.root === root ? this.refresh() : Promise.resolve(null);
   }
   private pumpRefresh() {
     if (this.closed || this.scanActive || this.mutationActive || !this.scanPending) return;
@@ -122,6 +126,7 @@ export class LibraryController {
     this.scanActive = true;
     const request = this.state.request;
     const rootEpoch = this.rootEpoch;
+    const completion = this.refreshCompletion;
     const current = () => !this.closed && request === this.state.request && rootEpoch === this.rootEpoch;
     void (async () => {
       try {
@@ -137,6 +142,10 @@ export class LibraryController {
       } catch (error) {
         if (current()) this.publish({ refreshing: false, actionable: false, error: libraryError(error) });
       } finally {
+        if (this.refreshCompletion === completion) {
+          this.refreshCompletion = null;
+          completion?.(current() && this.state.actionable ? this.origin() : null);
+        }
         this.scanActive = false;
         this.pumpRefresh();
       }
@@ -341,6 +350,8 @@ export class LibraryController {
   }
   dispose() {
     this.closed = true;
+    this.refreshCompletion?.(null);
+    this.refreshCompletion = null;
     this.supersedeReplay();
     this.scanPending = false;
     this.durationPending = null;

@@ -84,10 +84,30 @@ public sealed class QueueBackReplaySystemTimes
 
 public sealed class QueueBackReplayJobNotification
 {
+    // Already in the existing artifact shape: avoid per-record PowerShell projection
+    // inside the acquisition deadline, including its first-use binder overhead.
+    public uint message_id { get; set; }
+    public string message { get; set; }
+    public long process_id { get; set; }
+    public string observed_utc { get; set; }
+}
+
+public sealed class QueueBackReplayJobNotificationBatch
+{
+    public QueueBackReplayJobNotification[] Notifications { get; set; }
+    public int NativeErrorCode { get; set; }
+    public uint NewProcessCount { get; set; }
+    public string NativeErrorMessage { get; set; }
+    public bool QueueEmpty { get; set; }
+    public bool HitBatchLimit { get; set; }
+}
+
+public sealed class QueueBackReplayJobDequeueResult
+{
+    public bool Success { get; set; }
+    public int ErrorCode { get; set; }
     public uint MessageId { get; set; }
-    public string Message { get; set; }
     public long ProcessId { get; set; }
-    public DateTime ObservedUtc { get; set; }
 }
 
 public sealed class QueueBackReplayProcessSnapshot
@@ -489,39 +509,70 @@ public static class QueueBackReplayJob
         }
     }
 
-    public static QueueBackReplayJobNotification[] DrainNotifications(
-        IntPtr completionPort,
-        uint initialWaitMilliseconds)
+    public static QueueBackReplayJobNotificationBatch DrainNotifications(
+        IntPtr completionPort, uint initialWaitMilliseconds, int maximumMessages)
     {
-        List<QueueBackReplayJobNotification> result = new List<QueueBackReplayJobNotification>();
-        uint wait = initialWaitMilliseconds;
-        while (true)
+        return DrainNotificationBatch(delegate(uint wait)
         {
             uint message;
             UIntPtr completionKey;
             IntPtr value;
-            if (!GetQueuedCompletionStatus(
-                completionPort,
-                out message,
-                out completionKey,
-                out value,
-                wait))
+            bool success = GetQueuedCompletionStatus(
+                completionPort, out message, out completionKey, out value, wait);
+            int error = success ? 0 : Marshal.GetLastWin32Error();
+            return new QueueBackReplayJobDequeueResult
             {
-                int error = Marshal.GetLastWin32Error();
-                if (error == WAIT_TIMEOUT)
+                Success = success, ErrorCode = error,
+                MessageId = message, ProcessId = value.ToInt64()
+            };
+        }, initialWaitMilliseconds, maximumMessages);
+    }
+
+    // The same finite loop is used by the native adapter and deterministic tests.
+    public static QueueBackReplayJobNotificationBatch DrainNotificationBatch(
+        Func<uint, QueueBackReplayJobDequeueResult> dequeue,
+        uint initialWaitMilliseconds, int maximumMessages)
+    {
+        if (maximumMessages < 1 || maximumMessages > 256)
+            throw new ArgumentOutOfRangeException("maximumMessages");
+        List<QueueBackReplayJobNotification> records = new List<QueueBackReplayJobNotification>();
+        QueueBackReplayJobNotificationBatch batch = new QueueBackReplayJobNotificationBatch();
+        uint wait = initialWaitMilliseconds;
+        try
+        {
+            while (records.Count < maximumMessages)
+            {
+                QueueBackReplayJobDequeueResult item = dequeue(wait);
+                if (!item.Success)
+                {
+                    if (item.ErrorCode == WAIT_TIMEOUT) batch.QueueEmpty = true;
+                    else
+                    {
+                        batch.NativeErrorCode = item.ErrorCode == 0 ? -1 : item.ErrorCode;
+                        batch.NativeErrorMessage = "GetQueuedCompletionStatus failed";
+                    }
                     break;
-                throw new Win32Exception(error, "GetQueuedCompletionStatus failed");
+                }
+                records.Add(new QueueBackReplayJobNotification
+                {
+                    message_id = item.MessageId,
+                    message = JobMessageName(item.MessageId),
+                    process_id = item.ProcessId,
+                    observed_utc = DateTime.UtcNow.ToString("o")
+                });
+                if (item.MessageId == 6) batch.NewProcessCount++;
+                wait = 0;
             }
-            result.Add(new QueueBackReplayJobNotification
-            {
-                MessageId = message,
-                Message = JobMessageName(message),
-                ProcessId = value.ToInt64(),
-                ObservedUtc = DateTime.UtcNow
-            });
-            wait = 0;
+            batch.HitBatchLimit = records.Count == maximumMessages;
         }
-        return result.ToArray();
+        catch (Exception error)
+        {
+            // Never discard records already dequeued, including on unexpected errors.
+            batch.NativeErrorCode = -1;
+            batch.NativeErrorMessage = error.Message;
+        }
+        batch.Notifications = records.ToArray();
+        return batch;
     }
 
     private static string JobMessageName(uint message)
@@ -1206,52 +1257,154 @@ function Get-BenchmarkJobSnapshot {
     catch { Stop-Benchmark "PROCESS_JOB" "Could not query benchmark Job Object accounting: $($_.Exception.Message)" }
 }
 
-function Receive-JobNotifications {
-    param([ValidateRange(0, 1000)][int]$WaitMilliseconds = 0)
+function Get-JobNotificationBatch {
+    param(
+        [ValidateRange(0, 10)][int]$WaitMilliseconds = 0,
+        [ValidateRange(1, 256)][int]$MaximumMessages = 256
+    )
     if ($script:BenchmarkCompletionPort -eq [IntPtr]::Zero) {
-        Stop-Benchmark "PROCESS_JOB" "The benchmark Job Object completion port is unavailable."
+        throw "The benchmark Job Object completion port is unavailable."
     }
-    try {
-        $received = @([QueueBackReplayJob]::DrainNotifications(
-            $script:BenchmarkCompletionPort,
-            [uint32]$WaitMilliseconds
-        ))
-    }
-    catch {
-        Stop-Benchmark "PROCESS_JOB" "Could not drain benchmark Job Object notifications: $($_.Exception.Message)"
-    }
-    $records = New-Object 'System.Collections.Generic.List[object]'
-    foreach ($notification in $received) {
-        $record = [ordered]@{
-            message_id = [uint32]$notification.MessageId
-            message = [string]$notification.Message
-            process_id = [int64]$notification.ProcessId
-            observed_utc = ([DateTime]$notification.ObservedUtc).ToString("o")
-        }
-        $script:JobNotifications.Add($record)
-        $records.Add($record)
-        if ([uint32]$notification.MessageId -eq 6) {
-            $script:JobNewProcessNotificationCount = [uint64]$script:JobNewProcessNotificationCount + 1
-        }
-    }
-    return $records.ToArray()
+    return [QueueBackReplayJob]::DrainNotifications(
+        $script:BenchmarkCompletionPort, [uint32]$WaitMilliseconds, $MaximumMessages)
 }
 
-function Sync-JobNotifications {
+function Receive-JobNotifications {
     param(
-        [uint64]$ExpectedTotalProcesses,
-        [ValidateRange(0, 1000)][int]$BudgetMilliseconds = 100
+        [ValidateRange(0, 10)][int]$WaitMilliseconds = 0,
+        [ValidateRange(1, 256)][int]$MaximumMessages = 256
     )
-    $records = New-Object 'System.Collections.Generic.List[object]'
-    foreach ($record in @(Receive-JobNotifications -WaitMilliseconds 0)) { $records.Add($record) }
-    $timer = [System.Diagnostics.Stopwatch]::StartNew()
-    while (
-        [uint64]$script:JobNewProcessNotificationCount -lt $ExpectedTotalProcesses -and
-        $timer.Elapsed.TotalMilliseconds -lt $BudgetMilliseconds
-    ) {
-        foreach ($record in @(Receive-JobNotifications -WaitMilliseconds 10)) { $records.Add($record) }
+    $batch = Get-JobNotificationBatch -WaitMilliseconds $WaitMilliseconds -MaximumMessages $MaximumMessages
+    # The native batch already owns the existing wire records and exact NEW count.
+    # Apply partial records before the acquisition handles a native error.
+    $script:JobNotifications.AddRange([object[]]$batch.Notifications)
+    $script:JobNewProcessNotificationCount = [uint64]$script:JobNewProcessNotificationCount + [uint64]$batch.NewProcessCount
+    return $batch
+}
+
+function Get-JobObservationElapsedMs {
+    param([long]$StartedTimestamp)
+    return ([System.Diagnostics.Stopwatch]::GetTimestamp() - $StartedTimestamp) * 1000.0 / [System.Diagnostics.Stopwatch]::Frequency
+}
+
+function Write-JobReconciliationFailure {
+    param([object]$Value)
+    if ([string]::IsNullOrWhiteSpace($script:ResultRootCreated)) {
+        throw "No created result root is available for reconciliation evidence."
     }
-    return $records.ToArray()
+    $path = Join-Path $script:ResultRootCreated "job-reconciliation-error.json"
+    $partial = "$path.$([Guid]::NewGuid().ToString('N')).partial"
+    $stream = $null
+    try {
+        $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 100) + "`n")
+        $stream = [System.IO.File]::Open($partial, [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+        $stream.Dispose()
+        $stream = $null
+        # Move refuses an existing destination. Failed publication retains the partial.
+        [System.IO.File]::Move($partial, $path)
+    }
+    finally { if ($null -ne $stream) { $stream.Dispose() } }
+}
+
+function Get-ReconciledJobObservation {
+    param(
+        [switch]$Final,
+        [ValidateRange(1, 256)][int]$MaximumMessages = 256
+    )
+    $budget = if ($Final) { 500 } else { 100 }
+    $maximumPasses = if ($Final) { 128 } else { 32 }
+    $started = [System.Diagnostics.Stopwatch]::GetTimestamp()
+    $firstNotification = $script:JobNotifications.Count
+    $snapshot = $null
+    $batch = $null
+    $capturedCount = [uint64]$script:JobNewProcessNotificationCount
+    $passes = 0
+    $elapsed = 0.0
+    try {
+        while ($true) {
+            $elapsed = Get-JobObservationElapsedMs $started
+            if ($elapsed -ge $budget) { throw "deadline-exhausted-before-drain" }
+            if ($passes -ge $maximumPasses) { throw "pass-cap-exhausted" }
+            $wait = if ($passes -eq 0) { 0 } else { [int][Math]::Min(10, [Math]::Floor($budget - $elapsed)) }
+            $passes++
+            $batch = Receive-JobNotifications -WaitMilliseconds $wait -MaximumMessages $maximumMessages
+            $count = @($batch.Notifications).Count
+            if (
+                $batch.QueueEmpty -isnot [bool] -or $batch.HitBatchLimit -isnot [bool] -or
+                $null -eq $batch.NativeErrorCode -or
+                $count -gt $maximumMessages -or
+                $batch.NewProcessCount -gt $count -or
+                ($batch.QueueEmpty -and $batch.HitBatchLimit) -or
+                ($batch.HitBatchLimit -ne ($count -eq $maximumMessages)) -or
+                ($batch.NativeErrorCode -ne 0 -and ($batch.QueueEmpty -or $batch.HitBatchLimit)) -or
+                ($batch.NativeErrorCode -eq 0 -and -not ($batch.QueueEmpty -or $batch.HitBatchLimit))
+            ) { throw "invalid-batch-metadata" }
+            if ($batch.NativeErrorCode -ne 0) {
+                throw "native-dequeue-error $($batch.NativeErrorCode): $($batch.NativeErrorMessage)"
+            }
+            $elapsed = Get-JobObservationElapsedMs $started
+            if ($elapsed -ge $budget) { throw "deadline-exhausted-before-snapshot" }
+            $snapshot = Get-BenchmarkJobSnapshot
+            $capturedCount = [uint64]$script:JobNewProcessNotificationCount
+            $elapsed = Get-JobObservationElapsedMs $started
+            if ($elapsed -ge $budget) { throw "deadline-exhausted-after-snapshot" }
+            if ($batch.QueueEmpty -and [uint64]$snapshot.TotalProcesses -eq $capturedCount) {
+                $received = $script:JobNotifications.GetRange(
+                    $firstNotification, $script:JobNotifications.Count - $firstNotification).ToArray()
+                return [pscustomobject]@{
+                    Snapshot = $snapshot
+                    NewProcessNotificationCount = $capturedCount
+                    Notifications = $received
+                    ElapsedMilliseconds = $elapsed
+                    Passes = $passes
+                }
+            }
+        }
+    }
+    catch {
+        $cause = $_.Exception.Message
+        $elapsed = Get-JobObservationElapsedMs $started
+        $diagnostic = [ordered]@{
+            reason = $cause
+            elapsed_ms = $elapsed
+            budget_ms = $budget
+            passes = $passes
+            maximum_passes = $maximumPasses
+            maximum_messages_per_batch = $maximumMessages
+            last_snapshot = $snapshot
+            new_process_notification_count = [uint64]$script:JobNewProcessNotificationCount
+            last_snapshot_notification_count = $(if ($null -eq $snapshot) { $null } else { $capturedCount })
+            last_batch = $batch
+            notifications = $script:JobNotifications.GetRange(
+                $firstNotification, $script:JobNotifications.Count - $firstNotification).ToArray()
+        }
+        try { Write-JobReconciliationFailure -Value $diagnostic }
+        catch { $cause += "; failure evidence write/publication also failed: $($_.Exception.Message)" }
+        Stop-Benchmark "PROCESS_JOB" "Job reconciliation failed: $cause"
+    }
+}
+
+function Get-FinalJobAccounting {
+    $observation = Get-ReconciledJobObservation -Final
+    $snapshot = $observation.Snapshot
+    return [ordered]@{
+        cpu_time_100ns = [uint64]$snapshot.CpuTime100ns
+        total_processes = [uint32]$snapshot.TotalProcesses
+        active_processes = [uint32]$snapshot.ActiveProcesses
+        terminated_processes = [uint32]$snapshot.TotalTerminatedProcesses
+        unobserved_process_count = [uint64][Math]::Abs(
+            [int64]$snapshot.TotalProcesses - [int64]$observation.NewProcessNotificationCount)
+        new_process_notification_count = [uint64]$observation.NewProcessNotificationCount
+        io_read_operations = [uint64]$snapshot.ReadOperations
+        io_write_operations = [uint64]$snapshot.WriteOperations
+        io_other_operations = [uint64]$snapshot.OtherOperations
+        io_read_bytes = [uint64]$snapshot.ReadBytes
+        io_write_bytes = [uint64]$snapshot.WriteBytes
+        io_other_bytes = [uint64]$snapshot.OtherBytes
+    }
 }
 
 function Close-BenchmarkJob {
@@ -1968,12 +2121,8 @@ function New-ObserverSample {
         [string]$Profile,
         [int]$LogicalProcessors
     )
-    $newJobNotifications = New-Object 'System.Collections.Generic.List[object]'
-    foreach ($record in @(Receive-JobNotifications -WaitMilliseconds 0)) { $newJobNotifications.Add($record) }
-    $jobSnapshot = Get-BenchmarkJobSnapshot
-    foreach ($record in @(Sync-JobNotifications -ExpectedTotalProcesses ([uint64]$jobSnapshot.TotalProcesses))) {
-        $newJobNotifications.Add($record)
-    }
+    $jobObservation = Get-ReconciledJobObservation
+    $jobSnapshot = $jobObservation.Snapshot
     $byPid = Update-CreatedProcessTree `
         -Rows $Rows `
         -RootPid ([int]$script:AppProcess.Id) `
@@ -2096,7 +2245,7 @@ function New-ObserverSample {
     }
     $script:PreviousJobMembers = $currentJobMembers
     $unobservedProcessCount = [Math]::Abs(
-        [int64]$jobSnapshot.TotalProcesses - [int64]$script:JobNewProcessNotificationCount
+        [int64]$jobSnapshot.TotalProcesses - [int64]$jobObservation.NewProcessNotificationCount
     )
     $gpu = Get-GpuObservation -ProcessIds @($alive | ForEach-Object { [int]$_.ProcessId }) -Profile $Profile
     return [ordered]@{
@@ -2113,8 +2262,8 @@ function New-ObserverSample {
             active_processes = [uint32]$jobSnapshot.ActiveProcesses
             terminated_processes = [uint32]$jobSnapshot.TotalTerminatedProcesses
             unobserved_process_count = [uint64]$unobservedProcessCount
-            new_process_notification_count = [uint64]$script:JobNewProcessNotificationCount
-            completion_notifications = $newJobNotifications.ToArray()
+            new_process_notification_count = [uint64]$jobObservation.NewProcessNotificationCount
+            completion_notifications = $jobObservation.Notifications
         }
         aggregate = [ordered]@{
             process_count = $processes.Count
@@ -2134,7 +2283,7 @@ function New-ObserverSample {
             job_active_processes = [uint32]$jobSnapshot.ActiveProcesses
             job_terminated_processes = [uint32]$jobSnapshot.TotalTerminatedProcesses
             job_unobserved_process_count = [uint64]$unobservedProcessCount
-            job_new_process_notification_count = [uint64]$script:JobNewProcessNotificationCount
+            job_new_process_notification_count = [uint64]$jobObservation.NewProcessNotificationCount
         }
         whole_system_cpu_percent = Get-SystemCpuPercent -PreviousSystemTimes $PreviousSystemTimes
         gpu = $gpu
@@ -3015,17 +3164,8 @@ try {
         }
     }
     Complete-BenchmarkOutput
-    $finalJobSnapshot = Get-BenchmarkJobSnapshot
-    $null = @(Sync-JobNotifications `
-        -ExpectedTotalProcesses ([uint64]$finalJobSnapshot.TotalProcesses) `
-        -BudgetMilliseconds 250)
-    $finalJobSnapshot = Get-BenchmarkJobSnapshot
-    $null = @(Sync-JobNotifications `
-        -ExpectedTotalProcesses ([uint64]$finalJobSnapshot.TotalProcesses) `
-        -BudgetMilliseconds 250)
-    $finalUnobservedProcessCount = [Math]::Abs(
-        [int64]$finalJobSnapshot.TotalProcesses - [int64]$script:JobNewProcessNotificationCount
-    )
+    $finalJobAccounting = Get-FinalJobAccounting
+    $finalUnobservedProcessCount = $finalJobAccounting.unobserved_process_count
 
     $integrityStarted = [System.Diagnostics.Stopwatch]::StartNew()
     $postHashes = Get-PostHashes `
@@ -3055,20 +3195,7 @@ try {
         forced_termination_reason = $script:ForcedTerminationReason
         fixture_hashes_match = [bool]$postHashes.all_match
         discovered_process_identities = $script:KnownProcesses
-        job_accounting = [ordered]@{
-            cpu_time_100ns = [uint64]$finalJobSnapshot.CpuTime100ns
-            total_processes = [uint32]$finalJobSnapshot.TotalProcesses
-            active_processes = [uint32]$finalJobSnapshot.ActiveProcesses
-            terminated_processes = [uint32]$finalJobSnapshot.TotalTerminatedProcesses
-            unobserved_process_count = [uint64]$finalUnobservedProcessCount
-            new_process_notification_count = [uint64]$script:JobNewProcessNotificationCount
-            io_read_operations = [uint64]$finalJobSnapshot.ReadOperations
-            io_write_operations = [uint64]$finalJobSnapshot.WriteOperations
-            io_other_operations = [uint64]$finalJobSnapshot.OtherOperations
-            io_read_bytes = [uint64]$finalJobSnapshot.ReadBytes
-            io_write_bytes = [uint64]$finalJobSnapshot.WriteBytes
-            io_other_bytes = [uint64]$finalJobSnapshot.OtherBytes
-        }
+        job_accounting = $finalJobAccounting
         job_completion_notifications = $script:JobNotifications.ToArray()
         webview2_runtime_versions = @($script:WebViewVersions.Keys | Sort-Object)
     }

@@ -467,6 +467,7 @@ def _compile(
             "seed",
             "cooldown_seconds",
             "timeout_seconds",
+            "isolate_launch_roots",
             "plan_root",
             "arms",
             "order",
@@ -480,6 +481,9 @@ def _compile(
     )
     if specification["schema_version"] != SCHEMA_VERSION:
         raise MatrixError("matrix specification schema_version must be 1")
+    isolate_roots = specification.get("isolate_launch_roots", False)
+    if not isinstance(isolate_roots, bool):
+        raise MatrixError("isolate_launch_roots must be boolean")
     matrix_id = _identifier(specification["matrix_id"], "matrix_id")
     seed = _integer(specification["seed"], "seed", 0, 2**63 - 1)
     cooldown = _number(specification["cooldown_seconds"], "cooldown_seconds", 0, 86400)
@@ -703,6 +707,10 @@ def _compile(
         launch_manifest["result_root"] = result_root
         launch_manifest["observer_profile"] = arm["observer_profile"]
         launch_manifest["scenarios"] = [scenario]
+        if isolate_roots:
+            launch_manifest["app_data_root"] = ntpath.join(str(template["app_data_root"]), run_id)
+            launch_manifest["scratch_root"] = ntpath.join(str(template["scratch_root"]), run_id)
+            launch_manifest["ddragon"]["cache_root"] = ntpath.join(launch_manifest["app_data_root"], "ddragon")
         launch_timeout = arm.get("timeout_seconds", timeout_override)
         if launch_timeout is not None:
             launch_manifest["timeout_seconds"] = launch_timeout
@@ -746,6 +754,8 @@ def _compile(
             "run.ps1 currently performs out-of-window integrity hashes per trial; the final launch proof is bound to the matrix, but those earlier reads can warm the OS cache.",
         ],
     }
+    if isolate_roots:
+        plan["isolate_launch_roots"] = True
     if timeout_override is not None:
         plan["timeout_seconds"] = timeout_override
     return plan, manifest_outputs

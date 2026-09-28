@@ -23,6 +23,30 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 describe("LibraryController", () => {
+  it("settles only the requested refresh and releases superseded/disposed waiters", async () => {
+    let next = deferred<LibrarySnapshot>();
+    const controller = new LibraryController({ refresh: () => next.promise,
+      durations: async () => ({ snapshot_token: "", clips: [] }) });
+    controller.setRoot("A");
+    next.resolve(snapshot("initial", "1")); await flush();
+    next = deferred<LibrarySnapshot>();
+    const old = controller.invalidateRoot("A");
+    const pending = controller.refresh();
+    await expect(old).resolves.toBeNull();
+    const held = next;
+    next = deferred<LibrarySnapshot>();
+    held.resolve(snapshot("superseded", "1")); await flush();
+    next.resolve(snapshot("fresh", "1"));
+    await expect(pending).resolves.toMatchObject({ token: "fresh", root: "A" });
+    next = deferred<LibrarySnapshot>();
+    const failure = controller.refresh(); next.reject(new Error("scan failed"));
+    await expect(failure).resolves.toBeNull();
+    next = deferred<LibrarySnapshot>();
+    const disposed = controller.refresh(); controller.dispose();
+    await expect(disposed).resolves.toBeNull();
+    next.resolve(snapshot("too late")); await flush();
+  });
+
   it("bounds replay reads across remounts to one active and one latest intent", async () => {
     const active = deferred<string>();
     const calls: string[] = [];

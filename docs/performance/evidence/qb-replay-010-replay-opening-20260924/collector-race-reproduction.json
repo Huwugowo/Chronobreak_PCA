@@ -1,0 +1,42 @@
+{
+    "schema_version":  1,
+    "diagnostic":  "actual-runner-offline-ordering-reproduction",
+    "runner_sha256":  "3312dfbec9852e5f5d4f74ded174152bab41265f124a988b773d18babc733811",
+    "probe_sha256":  "3c780190e59f4a77c649755c21a9b0deb3f0c0cd893506654f8e01ebd78d290f",
+    "runner_unchanged":  true,
+    "extracted_functions":  [
+                                "Sync-JobNotifications",
+                                "New-ObserverSample",
+                                "Test-ProcessTelemetryComplete"
+                            ],
+    "native_boundaries_mocked":  true,
+    "cases":  [
+                  {
+                      "case":  "stable-control",
+                      "calls":  [
+                                    "drain:1",
+                                    "snapshot:1",
+                                    "drain:2"
+                                ],
+                      "snapshot_total":  28,
+                      "captured_notification_count":  28,
+                      "unobserved_count":  0,
+                      "strict_telemetry_accepted":  true,
+                      "native_processes_launched":  0
+                  },
+                  {
+                      "case":  "creation-during-post-snapshot-drain",
+                      "calls":  [
+                                    "drain:1",
+                                    "snapshot:1",
+                                    "drain:2"
+                                ],
+                      "snapshot_total":  28,
+                      "captured_notification_count":  29,
+                      "unobserved_count":  1,
+                      "strict_telemetry_accepted":  false,
+                      "native_processes_launched":  0
+                  }
+              ],
+    "limitation":  "Deterministic producer-order reproduction, not a native Windows or performance pass; the failed live result remains invalid."
+}

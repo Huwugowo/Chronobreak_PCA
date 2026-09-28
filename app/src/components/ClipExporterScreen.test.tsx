@@ -54,6 +54,7 @@ it("retries the same imported file after preparation fails and releases the succ
     outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "C:\\output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }} onBack={() => {}} onExported={() => {}}
     onOpenClips={() => {}} onOpenFolder={() => {}}
     readReplay={work => work("test-snapshot")}
+    admissionError={null}
   />, host);
   let audio: HTMLAudioElement | null = null;
   try {

@@ -120,6 +120,30 @@ Normal production playback keeps its existing cheap atomics. Benchmark mode addi
 
 The external collector creates the production app suspended, associates an I/O completion port with a non-breakaway, kill-on-close Windows Job Object, assigns the app, then resumes it. Exact `NEW_PROCESS` and exit notifications cover members—including short-lived WebView helpers—that can exist entirely between samples. One-second Toolhelp/direct-PInvoke snapshots supply live identities and counters without managed `Process.MainModule` enumeration, while cumulative Job counters retain CPU and I/O from exited members. The collector observes root exit before taking its final snapshot, then has a separate finite finalization window. Job total-process accounting must exactly match creation notifications, forced termination and collector timeout are invalid, post-hash identity must match the app terminal evidence, and collector finalization may not exceed 15 seconds. Core samples include per-process and aggregate CPU time, private/working memory, I/O bytes/operations, handles, threads, process appearance/disappearance, whole-system CPU, cadence gaps, and process-tree identity.
 
+Job accounting uses one completion-port consumer and a bounded reconciled
+observation for both samples and final accounting. Each pass drains at most 256
+messages, then queries a fresh Job snapshot and captures the creation count.
+Success requires an observed empty queue, exact total/count equality, no native
+error, and completion within one deadline: 100 ms / 32 passes for a sample or
+500 ms / 128 passes for final accounting. The first drain is nonblocking;
+subsequent requested waits are at most 10 ms and the remaining whole-millisecond
+budget. A full batch requires another pass; neither mismatched direction uses a
+cached expected total. The captured count and snapshot supply all aggregate,
+membership and final CPU/I/O/accounting fields. Live PID lists and process rows
+remain sampled views, not an atomic Windows process-table snapshot.
+
+A native batch preserves partial records and any non-timeout error. Deadline,
+pass-cap, malformed-batch and native failures remain strict PROCESS_JOB failures.
+The collector preserves consumed records and the last available observation in
+failure-only job-reconciliation-error.json, published from an exclusive partial
+file without overwriting earlier evidence. Failed publication retains the partial
+and reports both errors. This artifact cannot make a run valid. Sample acquisition
+cost remains in collection_duration_ms; one-second cadence, the 1500 ms cadence
+flag, 2500 ms adjacent-gap validity ceiling and 15-second finalizer gate are
+unchanged. Bounds limit requested waits and work, not Windows native-return time.
+Frozen tool hashes distinguish this acquisition correction; historical invalid
+runs remain invalid and are never promoted by reprocessing with a newer collector.
+
 GPU engine/memory evidence is optional. Windows' in-process GPU performance-counter CIM provider has no runner-enforced finite deadline and has demonstrated multi-second stalls after a fast prelaunch query, so it is disabled in the core one-second sampler and every sample carries that explicit limitation. Missing GPU data is never emitted as zero. A future GPU collector must be independently bounded before it can join accepted full-observer evidence.
 
 Before full-instrumentation baseline runs, collect four interleaved 60-second minimal/full observer pairs against the same representative fixture and deterministic actions. Warm normal playback first, then stay paused between repeated control seeks so continuous decoder read-ahead does not dominate observer CPU/byte repeatability. Each seek briefly resumes playback until its authoritative presented frame arrives and pauses again; playing-seek behavior remains covered by the baseline matrix itself. The observer-control analyzer gate requires:

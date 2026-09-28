@@ -1,22 +1,47 @@
 # QB-REPLAY-010 execution checkpoint
 
 Feature: `QB-REPLAY-010`
-ExecPlan: `docs/exec-plans/qb-replay-010-ui-reconciliation.md`
-Updated: 2026-09-23
+ExecPlan: `docs/exec-plans/qb-replay-010-replay-opening-collector-reconciliation-v2.md`
+Updated: 2026-09-26
 
 ## Current milestone
 
-UI reconciliation M1-M3 complete, 2026-09-23: combined automated checks, both
-desktop builds, review and user-operated native acceptance passed. The
-noncommitting integration combines
-root `3426cfa0340373b13a9aa4930b75f41271b7c0d2` with the user-confirmed current UI
-line `6c7174fd8edb4f299e0a0ee0b77a1683a96ee629` and its five uncommitted CSS edits.
-The original input patches are preserved under build/qb010-ui-reconciliation.
-The three conflicts have verified working-tree resolutions and are resolved in
-the Git index; the merge is intentionally uncommitted. The diagnostic gate was
-restored, subject/listener closure verified and final source audit passed. Full
-QB-REPLAY-010 remains in progress for separately planned replay/performance scope;
-no new semantic backend pipeline or performance campaign was authorized.
+2026-09-26 user clarification: the replacement stopped because the user manually
+closed the terminal. It is an externally interrupted measurement, not an
+application or benchmark-infrastructure defect. Do not investigate terminal
+publication. The incomplete slot remains excluded from performance evidence.
+The user now authorizes at most five new reference/candidate pairs, reusing the
+prepared inputs, and prohibits another 100-slot campaign or full decode pass.
+Screen use must be brief; native measurement is pending clarification because
+the existing protocol requires a visible always-on-top window, which cannot be
+embedded in ChatGPT's browser panel.
+
+Collector reconciliation v2 M1 is complete (2026-09-25): actual-code deterministic
+and native gates, full replay tooling suite and focused implementation reviews
+pass. The correction preserves the strict 100/500 ms deadlines, 256-message
+production batches, 32/128-pass caps, wire fields and original campaign invalidity.
+
+M2 replacement collection is closed invalid after the frozen r3 campaign stopped
+at launch 8. Seven slots are individually valid; slot 8 (N warm/reference/trial 1)
+has preserved artifacts but no terminal.json, so the strict runner rejected it.
+The app exited 0, fixture post-hashes matched and final Job accounting was
+118/118 with zero active, terminated or unobserved processes. The new campaign
+uses no retries or pooling; its remaining 92 slots are forfeited. The original
+seven-attempt campaign remains separately closed with 93 slots forfeited. The
+lifetime opening ceiling remains 107 attempted slots; no performance comparison
+or feature pass is claimed. Candidate remains a840c645e5080ec13a7cb23c540eabc388676a83;
+reference remains 3b14df20aa7ab4e567fd0372c1abc72c07bbe18e. Full feature stays
+in progress.
+
+### Closed UI reconciliation
+
+UI reconciliation M1-M3 and combined native acceptance completed 2026-09-23.
+The repository has since advanced to merge commit a840c645 (parents 3426cfa and
+6c7174f), with a clean worktree at this resume. This supersedes the prior
+checkpoint's uncommitted-merge statement; the agent did not create that commit.
+The accepted captured CSS, original input patches, normal subject, diagnostic
+receipts and source audits remain preserved. No UI or native acceptance is
+reopened; no subsequent sibling edits are included.
 
 ### Closed descriptor unit
 
@@ -51,6 +76,24 @@ descriptor, timeline and playback scope. The immutable attribution plan remains 
 `docs/exec-plans/qb-replay-010-measured-library-and-replay-opening.md`.
 
 ## Active unit
+
+Narrow performance feasibility and prepared-input reuse. A 14.017-second hash
+audit matched all 409 source/staged file identities and write times, both frozen
+subjects/archives/build receipts/runtimes, all 20 matrix seals, 100 existing
+manifest seals, configs and frozen tools. The 203 successful decode receipts
+remain applicable; zero decodes, builds, preparation passes or app launches ran.
+Receipt: build/qb010-replay-comparison-v2/checks/reuse-20260926.json.
+
+Criterion 6 remains the combined replay/resource comparison gate. Its current
+design requires five processes per arm in each S/R/L/N/E cold/warm stratum.
+Ten launches can establish one stratum only, with unchanged metric/validity
+thresholds; it cannot establish the complete gate. E cold is the brief candidate
+because it exercises the largest selected log and 50-game/50-clip library.
+E warm took about 42 seconds per process before overhead/cooldown, so five pairs
+would take roughly eight minutes. No native launch is authorized while the
+user's inside-ChatGPT versus brief-visible-window constraint remains unresolved.
+
+### Closed reconciliation implementation and verification
 
 No active reconciliation implementation or verification unit remains. M1-M3 are
 complete: controller/token/descriptor ownership, participant cards, strict roster
@@ -173,6 +216,78 @@ Canonical evidence is retained at
 
 ## Completed
 
+- 2026-09-25 collector M1 complete: bounded native dequeue with partial errors,
+  exact native creation count and existing wire-record projection; shared
+  snapshot/count acquisition; sample/final captured output; exclusive failure
+  evidence preserving original and publication errors. Deterministic tests cover
+  both race directions, churn/caps/deadlines, true loss, errors and integrations.
+  Native ordinary/final tests and owned cleanup pass. Protocol updated; initial
+  implementation review and focused changed-cone review have no remaining finding.
+- 2026-09-25 M2 preparation and freeze completed after the first supervisor
+  interruption. The original partial roots and a distinct r2 partial retry are
+  preserved with no receipts and are not evidence. Distinct r3 S/R/L, N and E
+  preparations passed source/copy hashes, write times and 203 packaged-runtime
+  full decodes with zero errors; 20 matrices and all 100 no-launch preflights
+  passed. No app launch occurred before the sealed one-shot driver.
+
+- 2026-09-25 replacement collection stopped invalid at launch 8 after seven
+  valid slots. Slot 8 was N warm/reference/trial 1; the app exited 0 and fixture
+  post-hashes and final Job accounting 118/118 with zero active/terminated/
+  unobserved passed, but terminal.json was never published. The runner preserved
+  the full artifact and stopped; no retry/top-up/pooling is allowed. The new 92
+  unused slots are forfeited and no comparison or performance result is claimed.
+
+- 2026-09-24 first replay-opening collection stopped invalid at launch 7 after
+  six valid slots; no retry/top-up. All 100 preflights passed, source/config/cache
+  hashes match, six viewer cycles completed and app exit 0. The strict runner
+  rejected the first active 28/29 Job/creation-count pair. All 40 sample timings
+  satisfy cadence; final Job is 118/118 with zero active/terminated/unobserved.
+  The app, descendants and supervisor are closed. Sanitized raw-derived
+  evidence and engineering disposition:
+  `docs/performance/evidence/qb-replay-010-replay-opening-20260924/`.
+- 2026-09-24 deterministic offline reproduction used actual AST-extracted
+  `Sync-JobNotifications`, `New-ObserverSample` and
+  `Test-ProcessTelemetryComplete`: stable 28/28 passes, post-snapshot creation
+  28/29 rejects with unobserved=1. No native child/app launch; runner hash unchanged.
+  Probe source and receipt are retained beside the failed campaign disposition.
+- 2026-09-24 collector v2 plan finalized after independent design review and
+  a fresh focused resolution review. Native partial-error return, production
+  test seams, total pass/message caps and failure-artifact write preservation
+  are explicit. Final review found no remaining blocking gap; Windows timing
+  and sampled-process-table limitations remain declared. No runner implementation
+  or replacement launch occurred in this planning pass.
+
+- 2026-09-24 comparison M1 preparation: both exact-commit optimized builds passed;
+  identical packaged r6 runtimes; all archived source files unchanged. Fresh
+  S/R/L and replacement N/E preparation passed with 203 full media decodes and
+  409 unchanged source/copy file identities, 1,010,895,291 accepted media bytes.
+  Twenty local plans and one sealed global plan freeze all 100 unused launches,
+  unique profiles/scratch/results, exact scenario/config and normalized identity.
+  Global precollection verifier and all 100 preflights passed. M2 collection
+  has started; no performance result is yet claimed.
+
+- 2026-09-24 comparison tooling gate: full replay suite ran 122 tests, 121 passed
+  and one existing opt-in skipped (exit 0). Independent follow-up review found no
+  cycle/order/no-retry defect. Environment evidence limits are explicitly retained:
+  exact independently measured CPU-quantum equality can reject a run; prelaunch
+  installed WebView hash plus actual descendant version is not live byte identity.
+  Existing normalized identity is unchanged. Partial preflight is preserved and
+  requires diagnosis/disposition before another preparation attempt, never a live
+  retry. These are conservative admission/evidence limits, not permission to relax
+  the approved strict fingerprint or change runner semantics.
+
+- Comparison M1 initial tooling (2026-09-23): descriptor-agnostic extraction,
+  signed payload ordering, symmetric metric inventory, five-process warm
+  aggregation and seeded 100-slot global campaign ownership. Exact-byte seals,
+  OS lock and durable receipts preserve immutable attempted slots. No subjects,
+  corpus or live campaign have been prepared. Review fixes remain in verification.
+
+- 2026-09-23 next-unit planning: confirmed committed integration a840c645 and
+  pre-descriptor reference 3b14df2; scoped a tooling-only, minimal-observer opening
+  comparison. Independent review tightened payload correlation limits, symmetric
+  metric eligibility, global launch verification and workload coverage limits.
+  Historical plans, product code and campaigns are unchanged.
+
 - UI reconciliation M3 (2026-09-23): final full affected automated checks, normal
   and benchmark desktop builds, focused review and native acceptance passed.
   User-operated tests cover real A/V, seek/zoom/pan, clip edits and fullscreen
@@ -180,7 +295,7 @@ Canonical evidence is retained at
   reload, semantic filters, normal editor/return, immediate/persistent Star state,
   Garen selection and overlapping-ID A/B/A. Gate restored; no pending requests;
   normal subject and scoped listener closed. Only Ahri save metadata reserialized
-  (optional capture absent → null, saved remains its original true); all video/log
+  (optional capture absent ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ null, saved remains its original true); all video/log
   hashes, all B files and generated source are unchanged. Work remains uncommitted.
 
 - UI reconciliation M1-M2 (2026-09-23): retained captured UI/CSS work with existing
@@ -339,8 +454,67 @@ Canonical evidence is retained at
 
 ## In flight
 
+No new benchmark is in flight. The r3 preparation and matrices remain valid;
+original/r2 partial preparation artifacts remain excluded and preserved.
+The prior replacement is closed with seven valid observations and one externally
+interrupted slot. Await the screen-use constraint before any new native launch.
+
+### Closed first replay-opening campaign
+
+No benchmark or subject is in flight. Supervisor PID 29160 stopped with exit 2
+at 08:52:57.345792 UTC, after starting at 08:48:41.418295 UTC on 2026-09-24.
+Durable result/log: workspace `checks/run-result.json` / `checks/run.log`.
+The campaign has seven started and six completed receipts; launch 7 is
+`o-n-warm-can-001-candidate-trial-1-minimal`. Preserve the failed slot and
+all 93 unused slots. Never restart the closed driver or use its remaining slots.
+Root inspection confirmed the dedicated app, WebView/media children and Python
+driver are closed. No timeout or forced Job termination occurred.
+
+Launch 7 app terminal: six cycles, 231 accepted events, zero drops, exit 0.
+Final Job totals: 118 created / 118 creation notifications, zero active,
+terminated or unobserved processes. Its 40 active samples include one initial
+28/29 mismatch at 1028.8903 ms; the other 39 reconcile. No cadence flag occurred
+and adjacent gaps are 1000.2247-1021.4098 ms, below the 2500 ms validity ceiling.
+All source/config/cache post-hashes match. Runner TELEMETRY_INCOMPLETE and generic
+bundle rejection remain authoritative; the partial global campaign also rejects.
+
+`New-ObserverSample` drains notifications, queries a Job snapshot, then
+`Sync-JobNotifications` drains again without refreshing that snapshot.
+A new creation during that drain advances the global count past the older Job
+total; Abs(total-count) then reports one unobserved process. A similar final
+snapshot/drain boundary needs the same producer-level analysis. Do not clamp,
+ignore the first sample, relax validity, reinterpret old raw data or retry.
+
+All 100 preflights passed (exit 0), 08:45:07ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“08:47:43 UTC on 2026-09-24;
+workspace `checks/preflight-result.json` and sentinel `preflight/complete.json`
+bind the complete log set to the sealed campaign. Zero live receipts existed
+before admission.
+
+Campaign SHA-256: 649e49466929f19d575d0deac752487e0a2247dbebab831d4b9f52ecf621ee80.
+Plan: `build/perf/qb-replay-010-replay-opening/.chronobreak-replay-benchmark/campaign-plan.json`.
+Preparation verifier receipt: sentinel `inputs/preparation-verification.json`.
+Fresh accepted N/E roots are `library-n-complete` / `library-e-complete`; both
+preparation receipts report exit 0. Preserved initial partials have 47 games each
+and were abandoned after the tool session ended, without a final decode receipt.
+No live attempt or source mutation followed that interruption.
+
+The first freeze stopped because the preparation helper omitted the matrix-plans
+parent directory. Corrected helper verifies existing provisional inputs by exact
+equality, then creates the missing parent and remaining plans. Final freeze
+passed in `checks/freeze-corrected-20260924.log`; both prior failure logs remain.
+No immutable plan was overwritten or runner/schema validation weakened.
+
+Reference executable SHA-256: 34bd87bda70ea723a9c2d874a8c612038be3fb2149073d6753fc24ea48bd41c0.
+Candidate executable SHA-256: 46323b37c1bb7e29d2df89f5dca115e7837796c1eacc5d7342b517ebbe854f1f.
+All 344 reference and 366 candidate archive files remain unchanged after builds.
+Reference initial build lacked the runtime required by tauri.windows.conf.json;
+failed log/receipt preserved, staged runtime supplied, corrected build passed.
+
+### Closed reconciliation context
+
 No implementation, test, native subject, held response or diagnostic listener is
-in flight. Reconciliation is complete and remains uncommitted as requested.
+in flight. Reconciliation was completed without an agent commit; the subsequent repository
+merge commit a840c645 is now the accepted baseline.
 Original input patches, exact receipts, frozen normal subject, diagnostic history
 and source audits are retained under build/qb010-ui-reconciliation/.
 The independent review finding in App benchmark paint admission was repaired and
@@ -431,11 +605,12 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
 
 ## Remaining
 
-No reconciliation milestone remains. Full-feature replay scope and criterion 6
-performance acceptance still require a separately bounded design and evidence.
-Retain all uncommitted work; do not fold later sibling changes into this accepted
-input, remerge it, or reopen closed descriptor/M4 campaigns. No new replay
-performance campaign is authorized by this reconciliation unit.
+Collector and preparation work are complete. Obtain and analyze only the
+user-authorized bounded comparison if compatible with their screen constraint.
+Preserve full-feature criterion 6 coverage gaps: one cold stratum does not cover
+the remaining workload classes or five independent warm processes per arm.
+Criteria 1-5 retain the accepted library/descriptor/UI and manual evidence for
+unchanged product bytes. No extra semantic pipeline requirement is established.
 
 ### Closed descriptor boundary and historical remaining scope
 
@@ -468,6 +643,77 @@ below were completed by the recorded M4 closure; do not repeat them.
   initial absolute-root rendering was observed, not alias/root-switch acceptance.
 
 ## Verification
+
+- 2026-09-26 reuse audit passed in 14.017 seconds: 409 source/staged identities,
+  sizes and write times; subjects, runtime, archives/build receipts; 20 matrices,
+  100 manifest seals, configs and frozen tools. Reused 203 prior full-decode
+  receipts; zero new decodes or app launches. Exact receipt is linked above.
+
+- 2026-09-25 final collector tree: python -m unittest discover -s
+  tools/replay_benchmark/tests -v ran 124 tests: 123 passed, one existing opt-in
+  skipped, exit 0, 160.043 seconds. Receipt/log:
+  build/qb010-replay-comparison-v2/checks/python-final-native-count-20260925.*.
+  Focused final two harness cases pass; native acquisition 80.2378 ms in ten
+  four-message test batches, 18 creations/exits (root, 16 shells, owned conhost),
+  final active/terminated/unobserved=0, verified root/Job/port closure. Production
+  batch limit remains 256. py_compile, canonical 60-item/eight-pair validator
+  and git diff --check pass. No product checks or app launch repeated.
+- First full 124-test run failed only the ordinary native deadline; all other
+  tests passed except the existing skip. A later focused pass again failed at
+  118.4479 ms/pass two. Remaining per-record PowerShell count/projection overhead
+  was removed: native batch captures exact NEW count; Receive only appends it.
+  No prewarm, deadline relaxation or discarded notifications. The subsequent
+  focused and full passes above supersede this failure. A later-query failure
+  now retains the last snapshot-associated count separately from current count;
+  its deterministic regression passes. Earlier logger console UTF-8 decoding
+  failed after preserving exact child exit receipts; logger is corrected.
+
+- 2026-09-25 collector focused tests passed (two Python cases, actual deterministic
+  and native harnesses). Initial native fixture assumed 17 processes; retained
+  identity diagnostic proved Windows adds its owned conhost, so the fixture now
+  reconciles that observed helper explicitly. The ordinary 100 ms acquisition
+  initially failed at 122.4452 ms before snapshot. Native record construction now
+  emits the existing wire shape directly, removing per-record PowerShell map/date
+  projection; the unchanged 100 ms ordinary and 500 ms final paths then passed.
+  No prewarm or drain outside acquisition. Failure artifacts were copied into
+  build/qb010-replay-comparison-v2/checks/collector-gate/; cost diagnostic is retained at
+  build/qb010-replay-comparison-v2/checks/native-cost-1/. Full suite pending.
+
+- 2026-09-24 v2 handoff: canonical validator passed 60 roadmap items / eight
+  plan-checkpoint pairs; git diff --check passed. Retained diagnostic source and
+  runner hashes match the reproduction receipt, both expected control/race gate
+  outcomes match, and the four evidence files pass JSON/whitespace/sanitization
+  checks. Runner remains unchanged; no corrected-collector test is claimed.
+
+- 2026-09-24 collector diagnosis:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File build/qb010-replay-comparison/collector_race_probe.ps1 -RunnerPath tools/replay_benchmark/run.ps1 -OutputPath build/qb010-replay-comparison/checks/collector-race-reproduction.json`
+  exited 0 with `QB010-COLLECTOR-RACE-REPRODUCED`. Both expected gate outcomes
+  and the exact drain/snapshot/drain order passed. This verifies the existing
+  defect only; it is not a corrected collector/native/performance pass.
+
+- 2026-09-24 final tooling suite: `python -m unittest discover -s
+  tools/replay_benchmark/tests -v`, 122 run / 121 passed / one existing skip,
+  exit 0; log `build/qb010-replay-comparison/checks/python-final-20260924.log`.
+  Focused campaign/environment suite: 13 passed in 70.159s; its PowerShell
+  redirection produced a shell error wrapper around successful unittest stderr,
+  so the final full suite used direct subprocess logging and retained exit 0.
+  Read-only environment capture matched twice exactly: CPU quantum 15.625 ms,
+  registered WebView 153.0.4234.48. No QueueBack/WebView app pilot was run.
+  After the full suite, only two explanatory limitation strings were added.
+
+- Comparison M1 first focused `python -m unittest discover -s
+  tools/replay_benchmark/tests -p test_opening*.py -v`: 28 passed (session 58218).
+  Initial synthetic-template identity failure was corrected only in the fixture.
+  A missing exact-byte campaign-plan seal was fixed with a passing regression.
+  Expanded provenance/reliability/fake-driver tests subsequently passed: 31 focused
+  tests (session 81866); superseded for the full tooling gate by the 122-test run above.
+  No production application or benchmark launch occurred.
+
+- New comparison planning pass: no product checks, builds or benchmark launches
+  were run. Previous combined acceptance remains bound to the integrated product.
+  Canonical validator passed: 60 roadmap items/eight linked plan-checkpoint pairs.
+  Git diff whitespace checks passed. Independent design review passed after its
+  bounded amendments; no product or benchmark result is inferred from planning.
 
 - Reconciliation native acceptance closed 2026-09-23 08:27 UTC. User confirms
   A/B/A with correct Lux then Ahri/Garen labels and A/V; config returned to root-a
@@ -656,7 +902,7 @@ below were completed by the recorded M4 closure; do not repeat them.
   non-fatal. No subject was launched.
 - Supported computer-use preflight: imported `@oai/sky` through `node_repl` as
   instructed, then `sky.list_windows()` returned `Computer Use native pipe is
-  unavailable: failed to connect native pipe: Le fichier spécifié est introuvable.
+  unavailable: failed to connect native pipe: Le fichier spÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©cifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© est introuvable.
   (os error 2)`. Reset the JavaScript session, reinitialized and retried discovery;
   the identical error persisted. **Environment-blocked**, not a product failure.
   A subsequent resume repeated discovery and reset/retry with the same error;
@@ -882,6 +1128,12 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Deviations
 
+- Replay-opening launch 7 materially contradicts the unchanged-collector
+  assumption: a newer notification drain is paired with an older Job snapshot.
+  The rejected sample is preserved without reinterpretation. The reviewed
+  collector-reconciliation-v2 plan supersedes only this measurement unit;
+  the predecessor plan and closed product evidence remain immutable.
+
 - M4 sequence 15 (N-warm candidate trial 2) began at
   `2026-09-16T14:11:16.8087295Z` and ended without finalization during cycle six.
   Empty outer receipt/log and all partial raw artifacts remain. No process was
@@ -911,6 +1163,26 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Decisions
 
+- Comparison M1 found matrix expansion shares app-data/scratch roots between
+  trials, and the app uses the exact app-data root for WebView storage. Added
+  opt-in `isolate_launch_roots` to the tooling matrix specification/compiler;
+  default false preserves historical plans. The new campaign requires it and
+  prepares unique empty app-data/Data Dragon/scratch directories. No app manifest,
+  event schema, scenario driver or product source changes.
+- Prelaunch environment freeze uses read-only `opening_environment.ps1`, importing
+  only the existing runner identity functions and literal metadata through its AST.
+  Registered installed WebView bytes are hashed without launching it. The receipt
+  is frozen and rechecked before each slot; actual result normalized identity must
+  match exactly, including independently measured quantum and descendant versions.
+  No tolerance, substitute frozen CPU sample, live byte-proof claim or runner
+  schema change is introduced. Any mismatch stops without replacement.
+
+- New comparison uses existing events with a separate offline contract. Optional
+  full-payload timing is boundary-local, not generation-correlated. Five warm
+  processes per arm avoid treating remounts as independent trials. A global
+  immutable campaign plan/verifier supplements twenty plan-local checks. The five
+  cells cover workload axes, with no complete Cartesian-product claim.
+
 - Reconciliation review (2026-09-23): fix the concrete pre-existing App benchmark
   fallback that emitted library_useful after the admitted Games view changed
   before painting. Fail this case with phase library_paint, include navigation
@@ -938,7 +1210,7 @@ below were completed by the recorded M4 closure; do not repeat them.
 - Replacement gate disposition: Games-usable medians R/C (ms) are S 166.4/168.2,
   N 2092.6/197.7, E 2386.6/493.3 cold and N 2087.3/209.7, E 2404.8/483.6 warm.
   N/E improvement exceeds both required thresholds and S has no material
-  regression. Historical useful is slower by 22–27% because the compatibility
+  regression. Historical useful is slower by 22ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“27% because the compatibility
   drain adds about 2.45 seconds; protected-route requests/delivery and read I/O
   rise as documented in replacement evidence.
 - Replacement engineering disposition (full table:
@@ -998,6 +1270,16 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Blockers
 
+No collector or preparation blocker. The prior replacement was manually
+interrupted by the user; this does not establish an application or infrastructure
+defect. The current blocker is the native screen requirement: the user asked
+whether the benchmark can run inside ChatGPT, and the native executable cannot
+be embedded in the browser panel. Brief visible execution has not been accepted.
+Default sandbox commands work again on 2026-09-26. The full n=5 per-stratum
+criterion 6 gate remains unmet; the proposed ten-launch check has narrower scope.
+
+### Historical environment context
+
 The shell sandbox helper still cannot start; reviewed elevated execution works.
 The 2026-09-22 pending patch/test action was not executed because automatic approval
 review hit an account usage limit (not a safety finding). On 2026-09-23 approved
@@ -1023,10 +1305,11 @@ campaign's coverage gaps remain explicit and are not repaired by pooling.
 
 ## Next action
 
-Use completed reconciliation M1-M3 as the restart baseline. Keep the merge and
-all changes uncommitted. Before further QB-REPLAY-010 implementation or full replay
-performance work, resolve the next concrete remaining unit against the unchanged
-feature criteria and finalize its separately reviewed design through WORKFLOW.md.
-Do not remerge the accepted UI input, include later sibling edits, rerun this
-completed acceptance without a concrete invalidation, or reopen descriptor/M4
-campaigns. The current immutable reconciliation plan remains unchanged.
+Resolve whether the user permits a roughly 3-4 minute native visible block or
+requires execution entirely inside ChatGPT. In the latter case, stop native
+measurement: the browser panel cannot substitute for Tauri/WebView performance.
+If the brief block is allowed, use the retained E fixture/subjects with a separate
+ten-launch paired cold comparison, unchanged thresholds and fresh isolated output
+roots. Stop on excessive runtime or invalid evidence. Do not rerun preparation,
+decode media, launch the old 100-slot driver, pool old measurements or commit.
+Report this stratum's result separately and retain all wider coverage gaps.

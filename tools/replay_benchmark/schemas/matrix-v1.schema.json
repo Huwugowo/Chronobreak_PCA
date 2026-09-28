@@ -20,6 +20,7 @@
     "seed": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
     "cooldown_seconds": { "type": "number", "minimum": 0, "maximum": 86400 },
     "timeout_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
+    "isolate_launch_roots": { "type": "boolean", "default": false, "description": "Generate unique app-data, Data Dragon and scratch paths per launch. Preparation must materialize them before runner preflight." },
     "plan_root": { "$ref": "#/$defs/absoluteWindowsPath" },
     "arms": {
       "type": "array",

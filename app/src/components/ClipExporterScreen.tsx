@@ -45,6 +45,7 @@ type Props = {
   onBack: (draft: ClipDraft) => void;
   onExported: (origin: LibraryOrigin, completed: boolean) => void | Promise<void>;
   snapshotOrigin: LibraryOrigin;
+  admissionError: string | null;
   readReplay: ReplayRead;
   onOpenClips: () => void;
   onOpenFolder: () => void;
@@ -95,8 +96,8 @@ function ClipExporterScreen(props: Props) {
   let pendingPreviewSeekMs: number | undefined;
   let lastPreviewSeekAt = Number.NEGATIVE_INFINITY;
 
-  const [probe] = createResource(() => props.draft.gameTimestamp,
-    id => props.readReplay(token => loadPlaybackProbe(id, token)));
+  const [probe] = createResource(() => ({ id: props.draft.gameTimestamp, token: props.snapshotToken }),
+    source => props.readReplay(token => loadPlaybackProbe(source.id, token)));
   const [tracks] = createResource(loadBuiltInMusic);
   const [selectedPresets, setSelectedPresets] = createSignal<readonly ClipExportPreset[]>([
     "horizontal",
@@ -127,17 +128,21 @@ function ClipExporterScreen(props: Props) {
   const [result, setResult] = createSignal<ClipExportResult | null>(null);
   const [exportError, setExportError] = createSignal<string | null>(null);
 
-  const clipRange = createMemo(() => {
+  const clipValidation = createMemo(() => {
     const timeline = probe()?.media_timeline;
-    return timeline
-      ? createClipRange(
+    if (!timeline || probe.loading) return { range: null, error: null };
+    try {
+      return { range: createClipRange(
           timeline,
           props.draft.startFrame,
           props.draft.endFrameExclusive,
           props.draft.mediaId,
-        )
-      : null;
+        ), error: null };
+    } catch (error) {
+      return { range: null, error: `The recording changed. Return to games and select the clip again. ${String(error)}` };
+    }
   });
+  const clipRange = () => clipValidation().range;
   const clipStartMs = createMemo(() => {
     const timeline = probe()?.media_timeline;
     const range = clipRange();
@@ -446,7 +451,9 @@ function ClipExporterScreen(props: Props) {
   };
 
   const runExport = async () => {
-    if (exporting()) return;
+    if (exporting() || props.admissionError || probe.loading || !clipRange()) return;
+    const exportOrigin = props.snapshotOrigin;
+    const snapshotToken = props.snapshotToken;
     pausePreview();
     setExporting(true);
     setExportError(null);
@@ -482,7 +489,7 @@ function ClipExporterScreen(props: Props) {
           music_volume: musicVolume(),
         },
         setProgress,
-        props.snapshotToken,
+        snapshotToken,
       );
       setResult(exported);
       completed = true;
@@ -491,7 +498,7 @@ function ClipExporterScreen(props: Props) {
     } finally {
       // A stale/superseded backend response can still represent published files.
       // Reconcile the captured root even when the exporter UI has unmounted.
-      if (backendAttempted) await props.onExported(props.snapshotOrigin, completed);
+      if (backendAttempted) await props.onExported(exportOrigin, completed);
       setExporting(false);
     }
   };
@@ -527,6 +534,9 @@ function ClipExporterScreen(props: Props) {
         </Match>
         <Match when={probe.error}>
           <div class={styles.errorState} role="alert">{String(probe.error)}</div>
+        </Match>
+        <Match when={clipValidation().error}>
+          <div class={styles.errorState} role="alert">{clipValidation().error}</div>
         </Match>
         <Match when={probe()}>
           <div class={styles.exportGrid}>
@@ -811,6 +821,9 @@ function ClipExporterScreen(props: Props) {
                 <Show when={exportError()}>
                   {(message) => <div class={styles.exportError} role="alert"><strong>EXPORT FAILED</strong><span>{message()}</span></div>}
                 </Show>
+                <Show when={!exporting() && props.admissionError}>
+                  {(message) => <div class={styles.exportError} role="alert">{message()}</div>}
+                </Show>
 
                 <Show when={result()}>
                   {(complete) => (
@@ -839,7 +852,7 @@ function ClipExporterScreen(props: Props) {
                 <button
                   class={styles.exportButton}
                   type="button"
-                  disabled={exporting() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
+                  disabled={exporting() || !!props.admissionError || probe.loading || !clipRange() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
                   onClick={() => void runExport()}
                 >
                   {exporting()

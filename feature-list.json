@@ -713,9 +713,14 @@
       "area": "match-data",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-DATA-001"],
+      "dependencies": [
+        "QB-DATA-001"
+      ],
       "evidence": [],
-      "execution": {"workflow": "planned", "plan": null},
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
       "acceptance_criteria": [
         "After a game, the recorder/app retrieves the final result from authoritative League Client/LCU post-game or equivalent client state; Live Client Data events alone never determine Victory/Defeat.",
         "Acquisition reconciles missed or duplicate notifications, delayed client state, reconnect/resubscribe, and process restart through bounded post-game retrieval rather than depending on one ephemeral GameEnd event.",
@@ -723,8 +728,16 @@
         "Retrieval is scoped to match-result acquisition and does not control League or become general LCU automation."
       ],
       "verification": [
-        {"type": "automated", "description": "Exercise deterministic fixtures for missed/delayed events, reconnect/restart, duplicate notifications, successful reconciliation, and unknown/unavailable result.", "command": null},
-        {"type": "manual", "description": "Verify a completed test match becomes searchable with the authoritative result after delayed post-game client state.", "command": null}
+        {
+          "type": "automated",
+          "description": "Exercise deterministic fixtures for missed/delayed events, reconnect/restart, duplicate notifications, successful reconciliation, and unknown/unavailable result.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Verify a completed test match becomes searchable with the authoritative result after delayed post-game client state.",
+          "command": null
+        }
       ],
       "notes": "The acquisition/reconciliation contract is ready to plan, but exact LCU endpoints and client-version behavior require implementation research. Never infer a result from absence/presence of Live Client Data events.",
       "user_value": 4.5,
@@ -928,12 +941,14 @@
       "description": "Provide fast keyboard navigation for common replay operations such as seeking and moving between events.",
       "priority": "P2",
       "area": "replay",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-REPLAY",
       "dependencies": [
         "QB-REPLAY-001"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-09-28 reconciliation: integrated viewer-wide Space/Arrow/F/Escape shortcuts ignore editable controls, and the focused timeline supports seek/zoom/pan keys. Existing UI tests cover rail/layout behavior; documented viewer-wide mapping, event traversal and feature-specific manual verification remain incomplete."
+      ],
       "execution": {
         "workflow": "direct",
         "plan": null
@@ -955,7 +970,7 @@
           "command": null
         }
       ],
-      "notes": "The scrubber and clip endpoints already have focused keyboard behavior; this item covers documented viewer-wide navigation and event traversal.",
+      "notes": "Reuse the integrated viewer and focused rail handlers. This feature owns documented viewer-wide navigation and event traversal; coarse Arrow seeks and clip endpoint edits are existing behavior, not previous/next-event traversal or QB-REPLAY-015 exact frame stepping.",
       "user_value": 3.5,
       "differentiation": 3,
       "difficulty": 2,
@@ -1082,7 +1097,9 @@
         "QB-LIB-008",
         "QB-CLIP-007"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-09-28 reconciliation: clip filenames/summaries and cards retain source-game identity and labels. The UI still lacks match-to-clips navigation and clip-to-source replay at the original time range; no relationship-persistence or navigation completion is claimed."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
@@ -1384,7 +1401,9 @@
       "dependencies": [
         "QB-DATA-001"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-09-28 reconciliation: replayTimelineGeometry groups overlapping visual markers for display only; viewerUtils supplies multikill-aware heuristic clip defaults. Neither provides the deterministic semantic sequence model with stable clip-reusable start/end bounds required here."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
@@ -1510,7 +1529,7 @@
       ],
       "evidence": [
         "The completed preset exporter always creates compatible H.264/AAC output with hardware/software fallback and preserves sources; it does not currently use stream copy/remux when compatible.",
-        "QB-REPLAY-008 accepted current-tree evidence measured the production full-reencode path at 1.767–4.480 seconds for three horizontal requests, 2.542–5.449 seconds for three vertical requests, 3.916–4.850 seconds for two Discord requests, and 13.591 seconds for the near-limit Discord request. Encode time dominated every arm; validation passed, retries were zero, outputs met their size contracts, and source hashes were unchanged. This supports planning a compatibility/copy decision matrix but does not prove that any request is copy-safe."
+        "QB-REPLAY-008 accepted current-tree evidence measured the production full-reencode path at 1.767ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“4.480 seconds for three horizontal requests, 2.542ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“5.449 seconds for three vertical requests, 3.916ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“4.850 seconds for two Discord requests, and 13.591 seconds for the near-limit Discord request. Encode time dominated every arm; validation passed, retries were zero, outputs met their size contracts, and source hashes were unchanged. This supports planning a compatibility/copy decision matrix but does not prove that any request is copy-safe."
       ],
       "execution": {
         "workflow": "planned",
@@ -1885,11 +1904,19 @@
         "2026-09-22 minimal replay descriptor unit complete under its separately finalized immutable plan: four-field strict-v2 media-first opening, one owned token-bound descriptor/full-probe read slot, bounded latest-intent navigation and optional details without media reload. Required automated verification passed: Rust 90 (one existing opt-in ignored), frontend 123, Python replay 94 passed/one existing opt-in skipped, fmt/Clippy/typecheck and normal/benchmark builds. Fresh normal-build user-operated native acceptance passed on dedicated strict-v2 A/B fixtures: A/V, play/pause/seek/fullscreen, held/failed/late details, retry, clip preservation, stale navigation/root rejection and final ungated replay. Gate restored, subject/listener closed, all source hashes unchanged. No descriptor defect or further product change was required. No replay latency/I/O or full-feature pass is claimed; QB-REPLAY-010 stays in progress. V2/M4 remains closed; no ReplayTimeline, payload split or persistent ReplayIndex was implemented. Detailed evidence: docs/execution/qb-replay-010.md.",
         "Benchmark tooling: repeat-transform AAC-priming correction passed real packaged-media regression/full decode; the pre-replacement Python replay suite passed 88 tests with one opt-in skipped (passed separately), and the replacement-ready suite ran 91 tests with one opt-in skipped. Warm extraction passed all 28 first-campaign valid runs and all 50 replacement runs with separate frontend/native clocks and initial/remount observations. Resource growth and aggregate Job I/O remain watchpoints, not a non-regression pass.",
         "2026-09-22 reviewed UI-reconciliation plan finalized with canonical checkpoint before implementation: include ui/app-wide-foundations-v1 at 6c7174f, its newer participant summaries/redesigned cards, and five current uncommitted CSS edits. Preserve root 3426cfa descriptor/controller authority, strict roster decoding, optimistic save reconciliation and stable late-details timeline/media state. At that planning boundary no product merge or combined verification had run; no commit is authorized. V2/M4 and descriptor evidence remain closed.",
-        "2026-09-23 UI reconciliation M1-M3 complete without committing: preserved 6c7174f UI/captured five CSS edits with 3426cfa controller/descriptor authority; strict shared rosters, optimistic save reconciliation and shared rail cleanup. Final frontend 166 tests, Rust 92 tests (one existing opt-in ignored), typecheck/build/fmt/Clippy and normal/benchmark desktop builds pass. Review repaired stale benchmark paint admission. Fresh normal-build user-operated native acceptance passed: A/V, seek/zoom/pan, clip/fullscreen mid-drag, held/failed/retried details without media reload, filters, normal exporter return, Star updates and overlapping-ID A/B/A. The reported exporter wait was the intentional response hold; release and ungated return passed, with an added regression. Gate restored, subject/listener closed, media/log and generated source hashes unchanged; only expected schema-equivalent save metadata rewrite. Full replay performance/feature completion is not claimed. Detailed evidence: docs/execution/qb-replay-010.md."
+        "2026-09-23 UI reconciliation M1-M3 complete without committing: preserved 6c7174f UI/captured five CSS edits with 3426cfa controller/descriptor authority; strict shared rosters, optimistic save reconciliation and shared rail cleanup. Final frontend 166 tests, Rust 92 tests (one existing opt-in ignored), typecheck/build/fmt/Clippy and normal/benchmark desktop builds pass. Review repaired stale benchmark paint admission. Fresh normal-build user-operated native acceptance passed: A/V, seek/zoom/pan, clip/fullscreen mid-drag, held/failed/retried details without media reload, filters, normal exporter return, Star updates and overlapping-ID A/B/A. The reported exporter wait was the intentional response hold; release and ungated return passed, with an added regression. Gate restored, subject/listener closed, media/log and generated source hashes unchanged; only expected schema-equivalent save metadata rewrite. Full replay performance/feature completion is not claimed. Detailed evidence: docs/execution/qb-replay-010.md.",
+        "2026-09-23 next comparison plan finalized after independent review: current repository is clean integrated a840c645 (the prior uncommitted UI handoff has been committed), with 3b14df2 selected as pre-descriptor reference. Tooling-only replay-opening-comparison-v1 uses existing minimal-observer events, boundary-local full-payload timing, five independent cold/warm processes per arm in S/R/L/N/E, and an immutable globally verified ceiling of 100 launches. No product change, build or benchmark ran in this planning pass; full-feature performance acceptance remains unrun. Historical M4, descriptor and UI evidence is preserved; next action is measurement/driver implementation and focused tests.",
+        "2026-09-24 replay-opening comparison tooling implemented and reviewed: strict boundary-local cold/warm extraction, required symmetric metrics, explicit reliability signals, exact subject provenance and global 100-slot no-retry ownership. Full replay tooling suite: 122 tests run, 121 passed and one existing opt-in skipped; no product code changed. Exact-commit subject builds and fresh copied/full-decoded fixtures are in preparation; no live benchmark or performance pass is claimed. Detailed limits/results and resume cursor: docs/execution/qb-replay-010.md.",
+        "2026-09-24 replay-opening campaign closed insufficient: both exact-commit subject builds and 203 media decodes / 409 copied-source hashes passed; all 100 preflights passed. Seven launches attempted, six individually valid; N-warm candidate launch 7 failed strict telemetry because the first sample paired Job total 28 with 29 creation notifications. Six cycles completed, app exit 0, all source/config/cache hashes unchanged, final Job 118/118 with zero active/terminated/unobserved. All dedicated processes closed; no retries/top-ups, no comparison or feature pass. Sanitized evidence: docs/performance/evidence/qb-replay-010-replay-opening-20260924/failed-campaign.json.",
+        "2026-09-24 collector-reconciliation-v2 design finalized after independent review and a fresh review of the resolved findings: native partial-batch/error preservation, mockable real-code seams, 256-message batches with 32/128 pass caps and 100/500 ms deadlines, sample/final captured accounting and durable strict failure evidence. Actual unchanged-runner offline reproduction passes its stable control and reproduces strict rejection of the 28/29 race; no app/native child launched. Next unit is collector implementation and verification; only afterward may the separately sealed 100-launch replacement run (lifetime maximum 107). No corrected collector or performance pass is claimed.",
+        "2026-09-25 collector v2 M1 complete: bounded native partial-batch/error preservation, strict shared snapshot/count acquisition, captured sample/final output and exclusive failure diagnostics. First-use PowerShell overhead failures were resolved by native wire-record/count construction without changing 100/500 ms deadlines or validation. Actual deterministic/native gates and reviews pass; full replay suite ran 124 tests, 123 passed and one existing opt-in skipped. Native 18/18 accounting, zero active/terminated/unobserved and closure verified. No app benchmark or performance pass; next is fresh replacement preparation with unchanged verified subjects.",
+        "2026-09-25 r3 replacement prelaunch freeze: original and r2 partial preparation roots remain preserved without receipts and are excluded; distinct r3 S/R/L, N and E preparations passed source/copy SHA-256 and write-time checks with 203 packaged-runtime full decodes and zero decode errors. Twenty matrices, immutable campaign plan cc681fb7fb648bc17c7fdd5dee96b52f58141fd62bb10640ebfb8a8e0e86e681 and all 100 no-launch preflights passed. No replacement app launch or performance result is claimed; the one-shot 100-launch collection is next. Evidence: docs/performance/evidence/qb-replay-010-replay-opening-v2-20260925/ and build/perf/qb-replay-010-replay-opening-v2/.chronobreak-replay-benchmark/.",
+        "2026-09-25 replacement collection stopped invalid at launch 8 after seven individually valid slots. Slot 8 was N warm/reference/trial 1; the runner preserved its full artifact but rejected it because terminal.json was not published. The app exited 0, fixture post-hashes matched, and final Job accounting was 118/118 with zero active/terminated/unobserved. No retry, top-up or pooling is permitted; 92 new slots are forfeited. Fewer than five paired processes per arm means no comparison or performance pass is claimed. Evidence: docs/performance/evidence/qb-replay-010-replay-opening-v2-20260925/ and the frozen sentinel results.",
+        "2026-09-26 user confirms the prior launch-8 stop was manual terminal closure, not an application or benchmark-infrastructure defect; no terminal investigation is needed. Narrow reuse audit passed in 14.017 seconds: all 409 source/staged hashes, sizes and write times; frozen subjects/runtime/build provenance; 20 matrix and 100 manifest seals/configs/tools match. All 203 prior full-decode receipts remain applicable; zero new decodes or app launches. User requests at most five paired reference/candidate measurements and brief screen use. One ten-launch stratum cannot satisfy the current full S/R/L/N/E cold/warm gate; native measurement awaits the screen constraint. Receipt: build/qb010-replay-comparison-v2/checks/reuse-20260926.json."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-replay-010-ui-reconciliation.md",
+        "plan": "docs/exec-plans/qb-replay-010-replay-opening-collector-reconciliation-v2.md",
         "progress": "docs/execution/qb-replay-010.md"
       },
       "acceptance_criteria": [
@@ -1917,7 +1944,7 @@
           "command": null
         }
       ],
-      "notes": "This is a measured library/open optimization, not authorization for an opaque database or durable ReplayIndex. Attribution and its one narrower diagnostic are complete; v2 M1, M2 and M3 are implemented, verified and reviewed. The first M4 campaign's 14 valid runs and one invalid interruption remain preserved and closed; the fresh replacement has 50 valid runs and all required matrices. Its N/E games-usable improvement passes. The benchmark-only detail drain explains the historical/request/I/O cost, the N-cold working-set increase is a bounded WebView effect without sustained monotonic growth, the E-warm handle delta is a process-sampler startup-baseline artifact with equal peak/late-half growth, and cancellations are incomplete HTTP bodies with no child-failure evidence; no production change is warranted. Manual acceptance passed on the prepared disposable roots: user-confirmed save/delete, A/B/A switching, export and cleanup during verified optional work, source/export playback, and H.264/AAC/full-decode export audits. M4 is closed. Full engineering table: docs/performance/evidence/qb-replay-010-m4-replacement-20260917/engineering-disposition.md. The configured-path versus resolved-root identity mismatch remains a follow-up risk, not reproduced or cleared by initial absolute-root startup. V2 covers only the attributed library unit: original acceptance criteria remain intact, including separate descriptor acceptance and full replay performance/manual gates. The minimal replay descriptor unit is complete under the 2026-09-21 separately finalized plan. Required automated verification and both desktop builds pass; 2026-09-22 user-operated native acceptance on the fresh normal subject and dedicated strict-v2 fixtures passed, including held/failed/late details, retry, clip preservation, stale navigation/A-B-A roots and ordinary A/V/controls. The diagnostic gate was restored, app/listener closure verified and final source hashes unchanged. No latency/I/O improvement, full-feature completion or semantic timeline implementation is claimed; the finalized UI-reconciliation plan now governs adoption of the user's existing ReplayTimeline, newer participant/card work and current sibling CSS edits. UI reconciliation M1-M3 and combined native acceptance are complete: full affected checks and both builds pass; user-operated generated-media tests verified controls, details ordering, editor return, saved state and A/B/A. Diagnostic removed, test app/listener closed, source hashes preserved with only the expected save metadata serialization. The missing native computer-use pipe was handled through user observations. Full-feature replay/performance scope still needs a separate design and acceptance. No commit was created; no new semantic backend pipeline or performance campaign is authorized, and the user forbids committing. Preserve historical library-useful semantics and games-library-usable-v1. QB-REPLAY-012 strict schema-v2 authority and QB-REPLAY-011 delivery security remain mandatory; QB-REPLAY-009 human A/V verification remains deferred and optional QB-REPLAY-015 controls are not prerequisites.",
+      "notes": "This is a measured library/open optimization, not authorization for an opaque database or durable ReplayIndex. Attribution and its one narrower diagnostic are complete; v2 M1, M2 and M3 are implemented, verified and reviewed. The first M4 campaign's 14 valid runs and one invalid interruption remain preserved and closed; the fresh replacement has 50 valid runs and all required matrices. Its N/E games-usable improvement passes. The benchmark-only detail drain explains the historical/request/I/O cost, the N-cold working-set increase is a bounded WebView effect without sustained monotonic growth, the E-warm handle delta is a process-sampler startup-baseline artifact with equal peak/late-half growth, and cancellations are incomplete HTTP bodies with no child-failure evidence; no production change is warranted. Manual acceptance passed on the prepared disposable roots: user-confirmed save/delete, A/B/A switching, export and cleanup during verified optional work, source/export playback, and H.264/AAC/full-decode export audits. M4 is closed. Full engineering table: docs/performance/evidence/qb-replay-010-m4-replacement-20260917/engineering-disposition.md. The configured-path versus resolved-root identity mismatch remains a follow-up risk, not reproduced or cleared by initial absolute-root startup. V2 covers only the attributed library unit: original acceptance criteria remain intact, including separate descriptor acceptance and full replay performance/manual gates. The minimal replay descriptor unit is complete under the 2026-09-21 separately finalized plan. Required automated verification and both desktop builds pass; 2026-09-22 user-operated native acceptance on the fresh normal subject and dedicated strict-v2 fixtures passed, including held/failed/late details, retry, clip preservation, stale navigation/A-B-A roots and ordinary A/V/controls. The diagnostic gate was restored, app/listener closure verified and final source hashes unchanged. No latency/I/O improvement, full-feature completion or semantic timeline implementation is claimed; the UI-reconciliation plan governed adoption of the user's existing ReplayTimeline, newer participant/card work and current sibling CSS edits. UI reconciliation M1-M3 and combined native acceptance are complete: full affected checks and both builds pass; user-operated generated-media tests verified controls, details ordering, editor return, saved state and A/B/A. Diagnostic removed, test app/listener closed, source hashes preserved with only the expected save metadata serialization. The missing native computer-use pipe was handled through user observations. Full-feature replay/performance acceptance remains unrun. The separately reviewed replay-opening comparison plan now governs the next tooling-only measurement unit. The repository has since committed the accepted integration at a840c645; this agent made no commit and new work must remain uncommitted. The sealed replay-opening campaign passed all 100 preflights and stopped invalid at launch 7: six valid, one invalid, 93 unused, zero retries. Its first active sample mixed an older Job total (28) with a newer creation-notification count (29); no timeout, forced termination, source mutation or application cycle failure occurred. Preserve the failed campaign without continuation or pooling. The actual-function offline probe reproduced the collector race without launching an app. The reviewed collector-reconciliation-v2 plan now governs the bounded acquisition fix, strict failure diagnostics and deterministic/native verification. After that gate, it permits one fresh fixed 100-launch comparison, lifetime opening maximum 107, with unchanged verified subjects; no old-slot reuse or pooling. Collector M1 is now implemented, reviewed and verified; M2 replacement preparation, freeze and all 100 preflights passed, then the one-shot campaign stopped invalid at launch 8 with no replacement performance result. No new semantic backend pipeline is authorized. Preserve historical library-useful semantics and games-library-usable-v1. QB-REPLAY-012 strict schema-v2 authority and QB-REPLAY-011 delivery security remain mandatory; QB-REPLAY-009 human A/V verification remains deferred and optional QB-REPLAY-015 controls are not prerequisites. The 2026-09-26 user clarification attributes launch 8 to manual terminal closure and authorizes only a bounded five-pair comparison with reused prepared inputs. Hash reuse verification passed without decodes. Screen constraints and the difference between one n=5 stratum and the full multi-stratum gate remain explicit in the checkpoint; no new performance result or completion is claimed.",
       "user_value": 4.5,
       "differentiation": 3,
       "difficulty": 4,
@@ -2043,8 +2070,8 @@
     {
       "id": "QB-REPLAY-013",
       "kind": "feature",
-      "name": "Versioned Replay Index and Staged Opening",
-      "description": "Build a versioned, rebuildable post-finalization ReplayIndex that can stage useful replay opening and derived-artifact discovery without becoming the sole authority for media or match data.",
+      "name": "Versioned Replay Index",
+      "description": "Build a measured, versioned, rebuildable post-finalization ReplayIndex for reusable derived data, integrating with the descriptor-first opening already owned by QB-REPLAY-010 without becoming the sole authority for media or match data.",
       "priority": "P2",
       "area": "replay-index",
       "status": "not-started",
@@ -2057,7 +2084,7 @@
         "QB-REPLAY-012"
       ],
       "evidence": [
-        "No ReplayIndex exists. Opening a replay currently returns one monolithic payload after parsing full metadata/game logs, and derived replay artifacts have no common ownership, version, identity, rebuild, cleanup, or degraded-state contract."
+        "2026-09-28 reconciliation: QB-REPLAY-010 already opens a minimal strict replay descriptor before optional full semantic details. No versioned ReplayIndex, reusable derived cache or common source/revision identity, rebuild and cleanup contract exists. Descriptor staging is an implemented prerequisite, not unstarted duplicate work under this feature."
       ],
       "execution": {
         "workflow": "planned",
@@ -2089,7 +2116,7 @@
           "command": null
         }
       ],
-      "notes": "The exact index content/location is selected in its ExecPlan from measured consumers and the QB-LIB-005 rebuildability contract. A narrow PreviewManifest from QB-REPLAY-003 may remain independent or become one versioned index section; avoid parallel authoritative mechanisms.",
+      "notes": "Reuse QB-REPLAY-010 descriptor-first opening and its keyed resource ownership. This feature owns only the measured reusable index/derived-artifact addition and its integration into that path. Select exact index fields/location in the ExecPlan from measured consumers and QB-LIB-005 rebuildability; a QB-REPLAY-003 PreviewManifest may remain independent or become a versioned section. Do not create parallel authoritative mechanisms or weaken the original performance gate.",
       "user_value": 4,
       "differentiation": 4,
       "difficulty": 5,
@@ -2160,11 +2187,17 @@
       "area": "replay",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-REPLAY-009", "QB-REPLAY-012"],
+      "dependencies": [
+        "QB-REPLAY-009",
+        "QB-REPLAY-012"
+      ],
       "evidence": [
         "2026-09-15 product decision: exact user-facing previous/next-frame stepping is deferred/opportunistic and does not block subsequent replay work. Exact timing, frame identity, frame-aligned clip/export boundaries and event/media alignment remain independently owned by completed QB-REPLAY-012; this is a scope/priority decision, not implementation evidence."
       ],
-      "execution": {"workflow": "planned", "plan": null},
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
       "acceptance_criteria": [
         "While paused, previous-frame and next-frame controls and documented keyboard shortcuts target the exact adjacent video frame for canonical Chronobreak CFR recordings.",
         "Stepping uses exact frame/rational replay-time identity and authoritative presented-frame timing, not repeated approximate floating-point millisecond arithmetic or assignment of currentTime alone.",
@@ -2173,9 +2206,21 @@
         "Representative recordings meet a measured stepping correctness and latency target, and stepping does not regress playback recovery, audio synchronization, or resource stability."
       ],
       "verification": [
-        {"type": "automated", "description": "Test adjacent-frame arithmetic, boundary behavior, stale generations, keyboard controls, presented-frame reconciliation, and unsupported-media degradation with deterministic fixtures.", "command": "npm run test --prefix app"},
-        {"type": "benchmark", "description": "Measure previous/next-frame latency and correctness on representative canonical recordings and compare WebView presented-frame evidence.", "command": null},
-        {"type": "manual", "description": "Pause, step in both directions at early/middle/late timestamps, and verify visible frame identity and keyboard behavior.", "command": null}
+        {
+          "type": "automated",
+          "description": "Test adjacent-frame arithmetic, boundary behavior, stale generations, keyboard controls, presented-frame reconciliation, and unsupported-media degradation with deterministic fixtures.",
+          "command": "npm run test --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure previous/next-frame latency and correctness on representative canonical recordings and compare WebView presented-frame evidence.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Pause, step in both directions at early/middle/late timestamps, and verify visible frame identity and keyboard behavior.",
+          "command": null
+        }
       ],
       "notes": "Deferred/opportunistic only; no replay feature depends on delivery of these user controls. Keep QB-REPLAY-012 exact timing, frame identity, frame-aligned clip/export boundaries and event/media alignment independent of this feature. Use the existing QB-REPLAY-009 HTMLVideoElement/WebView boundary. Inability to prove exact adjacent-frame presentation cleanly within this stack is an acceptable reason to leave the feature deferred, never authorization for WebCodecs, libmpv, native decoding, a custom playback backend, or replacement/substantial re-architecture of current playback. Any future implementation must still satisfy the exact-stepping acceptance criteria; unavailable or approximate behavior is not completion.",
       "user_value": 4.5,
@@ -2190,11 +2235,19 @@
       "description": "Let users zoom and pan continuously from whole-match overview to precise canonical-time inspection while deterministically adapting eligible timeline detail to the visible temporal scale.",
       "priority": "P1",
       "area": "replay",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-REPLAY-001", "QB-REPLAY-012"],
-      "evidence": [],
-      "execution": {"workflow": "planned", "plan": null},
+      "dependencies": [
+        "QB-REPLAY-001",
+        "QB-REPLAY-012"
+      ],
+      "evidence": [
+        "2026-09-28 reconciliation: the integrated ReplayTimeline already has a shared windowed/fullscreen viewport, canonical-time zoom/pan, bounds and deterministic display collision aggregation, covered by replayTimelineGeometry and ReplayTimeline tests. Full filter composition, bookmark/preview alignment and long/event-heavy responsiveness/manual acceptance remain open; no benchmark or full LOD completion claim."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
       "acceptance_criteria": [
         "Zoom changes the visible window on the canonical replay timeline around a stable cursor/playhead/viewport anchor; panning is bounded at recording start/end and preserves playhead correctness.",
         "Events, bookmarks, clip boundaries, previews, and precise canonical-time navigation remain aligned to canonical time through repeated zoom/pan operations, and viewport manipulation alone never triggers an authoritative media seek.",
@@ -2203,11 +2256,23 @@
         "Basic zoom/pan remains Solid/WebView-first and does not require a custom GPU/native renderer unless measured validation proves the default path insufficient."
       ],
       "verification": [
-        {"type": "automated", "description": "Verify deterministic canonical-time/viewport mapping, anchor preservation, bounds, repeated-cycle stability, LOD selection, filter composition, alignment, and no-seek viewport changes on sparse and event-heavy fixtures.", "command": "npm run test --prefix app"},
-        {"type": "benchmark", "description": "Measure rendering and interaction responsiveness on representative long/event-heavy matches across zoom levels.", "command": null},
-        {"type": "manual", "description": "Navigate whole match -> event cluster -> precise moment -> canonical frame-aligned boundaries while zooming and panning; optional previous/next-frame stepping is not required.", "command": null}
+        {
+          "type": "automated",
+          "description": "Verify deterministic canonical-time/viewport mapping, anchor preservation, bounds, repeated-cycle stability, LOD selection, filter composition, alignment, and no-seek viewport changes on sparse and event-heavy fixtures.",
+          "command": "npm run test --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure rendering and interaction responsiveness on representative long/event-heavy matches across zoom levels.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Navigate whole match -> event cluster -> precise moment -> canonical frame-aligned boundaries while zooming and panning; optional previous/next-frame stepping is not required.",
+          "command": null
+        }
       ],
-      "notes": "Filtering and LOD are separate concerns. Use QB-REPLAY-001 event semantics, QB-REPLAY-002 filters, QB-REPLAY-003 previews, and QB-REPLAY-012 canonical time; do not invent a second timeline, thumbnail system, or speculative semantic-density feature. Exact frame-aligned coordinates remain supplied by QB-REPLAY-012; zoom/LOD does not require QB-REPLAY-015 user stepping controls.",
+      "notes": "The partial UI was integrated through QB-REPLAY-010 reconciliation; reuse it rather than building another timeline. A finalized plan is still required before implementing the remaining planned scope. Filtering and LOD remain separate: compose QB-REPLAY-002 filters, QB-REPLAY-003 previews and QB-REPLAY-012 canonical time. Display collision grouping is not QB-CLIP-001 semantic event clustering. Optional QB-REPLAY-015 stepping is not a prerequisite. Benchmarks were explicitly excluded from this reconciliation pass.",
       "user_value": 4.5,
       "differentiation": 4.5,
       "difficulty": 4,
@@ -2594,7 +2659,7 @@
       "id": "EPIC-AUDIO",
       "kind": "epic",
       "name": "Replay and Clip Audio Control",
-      "description": "Record exactly two user-controllable audio groups—League audio and everything else—for replay and exported clips without becoming a general-purpose multitrack recorder or mixer.",
+      "description": "Record exactly two user-controllable audio groupsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂLeague audio and everything elseÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Âfor replay and exported clips without becoming a general-purpose multitrack recorder or mixer.",
       "priority": "P1",
       "area": "audio",
       "status": "in-progress",
@@ -2618,7 +2683,7 @@
       "id": "QB-AUDIO-001",
       "kind": "feature",
       "name": "Separate Audio Tracks",
-      "description": "Capture the product-scoped two-group audio model—League audio and everything else—and expose independent mute/volume controls in replay and clip/export production.",
+      "description": "Capture the product-scoped two-group audio modelÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂLeague audio and everything elseÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Âand expose independent mute/volume controls in replay and clip/export production.",
       "priority": "P1",
       "area": "audio",
       "status": "not-started",
@@ -2770,6 +2835,299 @@
       "user_value": 3.5,
       "differentiation": 4,
       "difficulty": 2,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-008",
+      "kind": "feature",
+      "name": "Bounded Clip Export Child Ownership",
+      "description": "Ensure export subprocesses remain owned through error, cancellation, timeout and cleanup, with bounded diagnostic buffers.",
+      "priority": "P1",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "2026-09-27: owned blocking export job retains mutation admission through cancellation, supervised kill/reap and cleanup. Bounded progress/diagnostics, stall/deadline and generated-media/source-preservation checks passed. App tests/fmt/Clippy and benchmark-feature compilation passed; detailed evidence in docs/execution/qb-clip-008.md."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-clip-008-owned-export.md",
+        "progress": "docs/execution/qb-clip-008.md"
+      },
+      "acceptance_criteria": [
+        "Every started export child is killed and reaped or completes before its ownership and library mutation admission are released.",
+        "Progress-read failures, stalled children and diagnostic floods produce bounded actionable failures without orphan processes or unbounded retained output.",
+        "Failure paths preserve source recordings and never publish partial output as completed clips."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use disposable child fixtures for invalid UTF-8 stdout, stalled progress, caller cancellation and stderr flooding; prove finite cleanup and no write after release. Run app Rust tests/fmt/Clippy and relevant export fixture checks.",
+          "command": null
+        }
+      ],
+      "notes": "User authorized implementation of the review findings. The reviewed shared design coordinates process ownership and filesystem isolation; per-feature checkpoints own results.",
+      "stage": "ready"
+    },
+    {
+      "id": "QB-CLIP-009",
+      "kind": "feature",
+      "name": "Refresh Exporter Admission for Retry and Re-export",
+      "description": "Reconcile the exporter with the refreshed current-library snapshot after a completed or failed export so retry and another preset export remain usable.",
+      "priority": "P2",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "2026-09-28: same-editor export success/repeat and failure/retry use a freshly validated snapshot token while retaining draft/options. Invalid refresh/source disables stale dispatch; replacement media and root/navigation/refresh supersession are rejected. All 216 frontend tests and TypeScript/Vite build passed; no benchmarks run. Detailed acceptance evidence: docs/execution/qb-clip-009.md."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-clip-009-export-retry.md",
+        "progress": "docs/execution/qb-clip-009.md"
+      },
+      "acceptance_criteria": [
+        "After success or an admitted failure, a second export from the same editor uses a newly validated current snapshot origin.",
+        "The clip draft, media identity and selected options survive valid same-root reconciliation.",
+        "Root, navigation or source changes still reject stale export intent and never grant a replacement token blindly."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "App-plus-exporter integration covers success then another preset and failure then Retry; assert the second command receives the new token, with root/source-change negative cases.",
+          "command": null
+        }
+      ],
+      "notes": "Reviewed bounded design; user authorized fixing the review. Checkpoint owns implementation and verification results.",
+      "stage": "ready"
+    },
+    {
+      "id": "QB-LIB-012",
+      "kind": "feature",
+      "name": "Recover Library Scan Failure Through Settings",
+      "description": "Allow users to choose a readable library when the current root cannot produce an initial library snapshot.",
+      "priority": "P2",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-008"
+      ],
+      "evidence": [
+        "2026-09-26 whole-codebase review confirmed the issue; docs/reviews/codebase-review-2026-09-26.md. No fix is implemented."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A failed first library scan leaves storage settings and folder selection reachable.",
+        "Changing the output root can recover without requiring a successful snapshot of the failed root.",
+        "Settings writes retain serialized ownership, atomic configuration persistence and validated paired root publication; library mutations remain snapshot-gated."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Inject initial read/scan failure, navigate to Settings, choose a valid disposable root and prove recovery; cover persistence failure and concurrent publication ordering.",
+          "command": null
+        }
+      ],
+      "notes": "Review follow-up only; refine the implementation and verification scope before promoting to ready. Existing feature acceptance and historical evidence remain unchanged.",
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CLIP-010",
+      "kind": "feature",
+      "name": "Keep Export Filesystem Stages Off Async Workers",
+      "description": "Move synchronous export authority reads, setup and publication/cleanup filesystem work into bounded owned blocking jobs.",
+      "priority": "P2",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "evidence": [
+        "2026-09-27: owned blocking export job retains mutation admission through cancellation, supervised kill/reap and cleanup. Bounded progress/diagnostics, stall/deadline and generated-media/source-preservation checks passed. App tests/fmt/Clippy and benchmark-feature compilation passed; detailed evidence in docs/execution/qb-clip-010.md."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-clip-008-owned-export.md",
+        "progress": "docs/execution/qb-clip-010.md"
+      },
+      "acceptance_criteria": [
+        "Blocking filesystem operations and strict bundle parsing do not run directly on async executor workers.",
+        "Worker admission survives caller cancellation until filesystem work finishes.",
+        "Slow fixture filesystem work does not prevent unrelated async tasks from advancing and does not weaken atomic batch/source preservation."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use a deterministic held-worker fixture on a single-thread runtime to prove progress and permit retention; run app tests/fmt/Clippy and export publication regressions.",
+          "command": null
+        }
+      ],
+      "notes": "User authorized implementation of the review findings. The reviewed shared design coordinates process ownership and filesystem isolation; per-feature checkpoints own results.",
+      "stage": "ready"
+    },
+    {
+      "id": "QB-MAINT-001",
+      "kind": "feature",
+      "name": "Remove Obsolete Library IPC and Unused Benchmark Helpers",
+      "description": "Remove consumer-proven unused loadGames/loadClips wrappers, their registered Tauri commands, and unused benchmark predicates/percentile helper plus isolated tests.",
+      "priority": "P3",
+      "area": "maintenance",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [
+        "QB-REPLAY-010"
+      ],
+      "evidence": [
+        "2026-09-26 whole-codebase review confirmed the issue; docs/reviews/codebase-review-2026-09-26.md. No fix is implemented."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Only obsolete wrappers and consumer-free helpers are removed; the shared library scanners and active snapshot command remain.",
+        "Normal and benchmark handler registration compile and existing library/frontend tests pass.",
+        "No security, lifecycle, test adapter or preserved benchmark provenance mechanism is removed."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Repeat whole-tree consumer searches; run frontend tests/typecheck/build and app normal/benchmark compilation and Clippy.",
+          "command": null
+        }
+      ],
+      "notes": "Review follow-up only; refine the implementation and verification scope before promoting to ready. Existing feature acceptance and historical evidence remain unchanged.",
+      "stage": "draft"
+    },
+    {
+      "id": "QB-DIST-005",
+      "kind": "feature",
+      "name": "Preserve Locked Source Patch Bytes on Windows",
+      "description": "Make Windows checkout line-ending behavior preserve the byte identity of the hash-locked FFmpeg source patch.",
+      "priority": "P2",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": [
+        "QB-DIST-001"
+      ],
+      "evidence": [
+        "2026-09-26 review reproduced the exact build-script hash rejection: tracked LF patch checks out CRLF; LF-normalized bytes match the lock. See docs/reviews/codebase-review-2026-09-26.md. No fix is implemented."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Windows checkout preserves the locked patch bytes regardless of the developer's ordinary autocrlf setting.",
+        "The build's raw SHA-256 check accepts the intended patch and still rejects actual content drift.",
+        "The runtime lock and staged binary identity remain unchanged unless a separate intentional runtime revision is approved."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use disposable Windows checkout fixtures with autocrlf enabled and disabled; run the exact patch integrity check without source acquisition or rebuilding and prove tampered content still fails.",
+          "command": null
+        }
+      ],
+      "notes": "Draft review follow-up. Prefer an explicit LF attribute for hash-locked patches and deliberate working-copy normalization; do not weaken integrity checks or merely pin platform-dependent CRLF bytes.",
+      "stage": "draft"
+    },
+    {
+      "id": "QB-MAINT-002",
+      "kind": "feature",
+      "name": "Reconcile Historical FFmpeg Capture Documentation",
+      "description": "Align durable media-runtime architecture claims with the retained patch and the current native-only recorder backend.",
+      "priority": "P3",
+      "area": "maintenance",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [
+        "2026-09-26 review found media-runtime.md claiming latest-frame draining and an explicit FFmpeg capture backend, while the patch retains single-frame acquisition and windows-capture.md describes the backend as retired. See docs/reviews/codebase-review-2026-09-26.md."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Durable architecture clearly distinguishes historical compiled capabilities from callable production recorder behavior.",
+        "Descriptions of frame acquisition and superseded-frame diagnostics match the retained patch; immutable historical plans/evidence are not rewritten.",
+        "No retired capture implementation is revived and no locked runtime artifact changes as part of documentation reconciliation."
+      ],
+      "verification": [
+        {
+          "type": "manual",
+          "description": "Cross-check updated architecture against the native recorder selection, retained patch, and locked source/build provenance; run canonical-state and diff checks.",
+          "command": null
+        }
+      ],
+      "notes": "Draft documentation follow-up, not a claim of a production native-frame-loss defect. Hash-locked packaged notices require separate provenance handling if changed.",
+      "stage": "draft"
+    },
+    {
+      "id": "EPIC-CODE-QUALITY",
+      "kind": "epic",
+      "name": "Reduce Concentrated Code Complexity",
+      "description": "Decompose measured control-flow hotspots into cohesive units while preserving replay, validation, capture and benchmark contracts.",
+      "priority": "P3",
+      "area": "maintenance",
+      "status": "in-progress",
+      "parent_id": null,
+      "dependencies": [],
+      "evidence": [
+        "2026-09-26 Lizard 1.24 measured 3230 functions with 117 above CCN 15; separate PowerShell AST measurement found 22 of 205 named functions above 15. Highest playback dispatch CCN 73 and capture telemetry normalization CCN 133. Method and limits: docs/reviews/codebase-review-2026-09-26.md.",
+        "2026-09-28: first bounded child QB-MAINT-003 completed; viewer scenario dispatch is separated with unchanged lifecycle ownership and deterministic tests. Larger controller/analyzer refactors remain future work."
+      ],
+      "success_criteria": [
+        "Split the broad objective into bounded child features prioritized by correctness risk and expected maintenance value.",
+        "Use reproducible before/after measurements and preserve observable behavior with existing contract fixtures.",
+        "Retain all input validation, ownership, timing and evidence gates; lower complexity is not itself proof of correctness."
+      ],
+      "notes": "QB-MAINT-003 is the bounded first child: separate viewer benchmark actions while retaining lifecycle ownership. Remaining playback dispatch and capture/replay analyzer hotspots are future work, not an active rewrite. Historical complexity scores describe the inspected tree and are not a new CI threshold.",
+      "stage": "draft"
+    },
+    {
+      "id": "QB-MAINT-003",
+      "kind": "feature",
+      "name": "Separate Viewer Benchmark Actions",
+      "description": "Extract the existing benchmark action dispatcher from the replay view into one typed module while preserving action ordering, events and viewer lifecycle ownership.",
+      "priority": "P3",
+      "area": "maintenance",
+      "status": "done",
+      "parent_id": "EPIC-CODE-QUALITY",
+      "dependencies": [],
+      "evidence": [
+        "2026-09-28: moved the unchanged action dispatcher into viewerBenchmarkActions.ts behind typed view-owned operations; readiness, cancellation, media disposal and completion remain in ViewerScreen. ViewerScreen reduced from 1277 to 1009 lines. Eight deterministic dispatcher tests plus seven viewer tests passed; final frontend suite 224/224, TypeScript/Vite build and focused review passed. No benchmarks run or performance improvement claimed. Receipts: build/targeted-simplification-20260928/{runner-tests,runner-build,final-frontend-tests}.log and extraction-check.txt."
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The benchmark action switch is owned by one module; ViewerScreen retains readiness, cancellation, media disposal, scenario completion and fullscreen effects.",
+        "Action routing, time/frame conversion, event metadata, waits and errors remain behaviorally equivalent; normal playback and newer UI structure are unchanged.",
+        "Focused deterministic runner tests, existing viewer lifecycle tests, frontend typecheck and production build pass; record before/after source size without claiming performance improvement."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run deterministic runner and ViewerScreen tests, frontend typecheck/build, canonical-state validation and diff checks. Do not launch benchmark campaigns or native media processes.",
+          "command": null
+        }
+      ],
+      "notes": "User requested one small targeted simplification on 2026-09-28 and explicitly prohibited benchmark reruns. Direct extraction only; no controller redesign, App orchestration rewrite, new benchmark protocol or changed thresholds.",
       "stage": "ready"
     }
   ]

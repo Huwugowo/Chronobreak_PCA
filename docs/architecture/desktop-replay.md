@@ -69,7 +69,10 @@ performance comparison.
 `htmlVideoPlaybackAdapter.ts`: source/load, native play/pause, seek scheduling,
 presentation callbacks, recovery, preferences, metrics and disposal. The viewer
 retains layout and clip-selection policy and routes benchmark actions through the
-same controller. Public play completion and internal presentation nudges have
+same controller. `viewerBenchmarkActions.ts` owns the scripted action dispatcher;
+the viewer retains benchmark readiness, cancellation, media disposal, completion
+and fullscreen effects. The dispatcher uses view-owned operations and owns no
+media, timers or subscriptions. Public play completion and internal presentation nudges have
 separate ownership; seeks explicitly settle superseded play operations. Invalid
 open inputs are rejected before the current generation changes.
 
@@ -120,4 +123,8 @@ A supported replay event or timeline action enters clip mode with heuristic pre/
 
 `app/src-tauri/src/clip_export.rs` validates the source bundle and request, selects H.264 hardware encoders with software fallback, and invokes ffmpeg directly without a shell. It emits progress, stages all outputs, verifies Discord size with corrective retry, generates thumbnails, and atomically exposes the completed batch. Failure removes partial outputs while preserving source media. Successful MP4/JPEG pairs become visible on the next filesystem library scan; source association comes from the MP4 filename.
 
-Development builds currently discover ffmpeg from the environment. Bundled ffmpeg/ffprobe and a unified installed-tool path are future self-contained distribution work.
+The app and recorder resolve the same locked packaged FFmpeg/ffprobe pair.
+Production uses `resources/media-runtime` beside the executable; development may
+use the validated `QUEUEBACK_MEDIA_RUNTIME_DIR` override. See the packaged runtime
+checks in [verification](../development/VERIFICATION.md). Installer work remains
+separate from this existing portable runtime layout.

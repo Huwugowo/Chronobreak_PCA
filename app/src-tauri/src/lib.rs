@@ -4,6 +4,7 @@ mod clip_duration;
 mod clip_export;
 mod config;
 mod ddragon;
+mod export_process;
 mod library;
 mod library_coordinator;
 mod music;
@@ -390,15 +391,27 @@ async fn export_clip(
             )
             .map_err(error_string)?;
     }
-    let result = clip_export::export(
-        &output_directory,
-        &music_directory,
-        media_tools.ffmpeg(),
-        media_tools.ffprobe(),
-        request,
-        progress,
-    )
-    .await;
+    let ffmpeg = media_tools.ffmpeg().to_owned();
+    let ffprobe = media_tools.ffprobe().to_owned();
+    let runtime = tokio::runtime::Handle::current();
+    let (result, current) = export_process::run_owned(move |cancellation| {
+        // The admitted worker owns all subprocess and filesystem side effects,
+        // even when the IPC caller drops its future.
+        let result = runtime.block_on(clip_export::export(
+            &output_directory,
+            &music_directory,
+            &ffmpeg,
+            &ffprobe,
+            request,
+            progress,
+            &cancellation,
+        ));
+        let current = completion.selection_is_current();
+        drop(completion);
+        (result, current)
+    })
+    .await
+    .map_err(error_string)?;
     #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         let (kind, payload) = match &result {
@@ -427,8 +440,6 @@ async fn export_clip(
             .record_app_event(kind, payload)
             .map_err(error_string)?;
     }
-    let current = completion.selection_is_current();
-    drop(completion);
     let result = result.map_err(error_string)?;
     if !current {
         return Err(command_error(LibraryRefreshError::Superseded));

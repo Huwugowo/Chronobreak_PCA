@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -14,9 +13,9 @@ use chronobreak_replay_time::{
 use queueback_media_runtime::{BoundedProcessErrorKind, run_bounded_process};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::export_process::{self, Cancellation, Interrupted, Limits};
 use crate::{library, music};
 
 const MINIMUM_CLIP_SECONDS: u64 = 5;
@@ -152,7 +151,14 @@ struct ExportPaths {
     partial_thumbnail: PathBuf,
 }
 
+impl Drop for ExportPaths {
+    fn drop(&mut self) {
+        cleanup_export_paths(self, false);
+    }
+}
+
 struct EncodingContext<'a> {
+    cancellation: &'a Cancellation,
     ffmpeg: &'a Path,
     ffprobe: &'a Path,
     source_video: &'a Path,
@@ -229,7 +235,9 @@ pub async fn export(
     ffprobe: &Path,
     request: ClipExportRequest,
     progress: Channel<ClipExportProgress>,
+    cancellation: &Cancellation,
 ) -> Result<ClipExportResult> {
+    cancellation.check()?;
     validate_request(&request)?;
     let started_at = Instant::now();
     let game_directory = output_directory.join("games").join(&request.game_timestamp);
@@ -249,6 +257,7 @@ pub async fn export(
         .with_context(|| format!("failed to create {}", clips_directory.display()))?;
     let encoders = encoder_candidates(&authority.encoder_used);
     let encoding = EncodingContext {
+        cancellation,
         ffmpeg,
         ffprobe,
         source_video: &source_video,
@@ -266,6 +275,7 @@ pub async fn export(
     let setup_elapsed_ms = elapsed_ms(started_at);
 
     for (output_index, preset) in request.presets.iter().copied().enumerate() {
+        cancellation.check()?;
         let paths = unique_paths(
             &clips_directory,
             &request.game_timestamp,
@@ -279,31 +289,15 @@ pub async fn export(
             last_percent: ((output_index * 100) / total_outputs) as u8,
             last_stage: None,
         };
-        let diagnostics = match encode_output(&encoding, preset, &paths, &mut reporter).await {
-            Ok(diagnostics) => diagnostics,
-            Err(error) => {
-                cleanup_export_paths(&paths, false);
-                for (_, staged_paths, _, _) in &staged {
-                    cleanup_export_paths(staged_paths, false);
-                }
-                return Err(error);
-            }
-        };
-        let file_size_bytes =
-            match fs::metadata(&paths.partial_video).context("failed to inspect staged clip") {
-                Ok(metadata) => metadata.len(),
-                Err(error) => {
-                    cleanup_export_paths(&paths, false);
-                    for (_, staged_paths, _, _) in &staged {
-                        cleanup_export_paths(staged_paths, false);
-                    }
-                    return Err(error);
-                }
-            };
+        let diagnostics = encode_output(&encoding, preset, &paths, &mut reporter).await?;
+        let file_size_bytes = fs::metadata(&paths.partial_video)
+            .context("failed to inspect staged clip")?
+            .len();
         staged.push((preset, paths, diagnostics, file_size_bytes));
     }
 
     let finalize_started = Instant::now();
+    cancellation.check()?;
     let staged_paths = staged
         .iter()
         .map(|(_, paths, _, _)| paths)
@@ -316,7 +310,7 @@ pub async fn export(
         total_file_size_bytes = total_file_size_bytes.saturating_add(file_size_bytes);
         outputs.push(ClipExportOutput {
             preset,
-            filename: paths.filename,
+            filename: paths.filename.clone(),
             output_path: paths.video.to_string_lossy().into_owned(),
             thumbnail_path: paths.thumbnail.to_string_lossy().into_owned(),
             file_size_bytes,
@@ -394,6 +388,7 @@ async fn encode_output(
     let encode_elapsed_ms = elapsed_ms(encode_started);
 
     progress.send(ExportStage::Validating, 96);
+    encoding.cancellation.check()?;
     let validation_started = Instant::now();
     let validation = validate_exported_media(
         encoding.ffprobe,
@@ -404,6 +399,7 @@ async fn encode_output(
     )
     .await?;
     let validation_elapsed_ms = elapsed_ms(validation_started);
+    encoding.cancellation.check()?;
 
     progress.send(ExportStage::Thumbnail, 97);
     let thumbnail_started = Instant::now();
@@ -411,6 +407,7 @@ async fn encode_output(
         encoding.ffmpeg,
         &paths.partial_video,
         &paths.partial_thumbnail,
+        encoding.cancellation,
     )
     .await?;
     // Keep 100% reserved for the atomically published batch result.
@@ -703,6 +700,7 @@ async fn encode_with_fallback(
     let mut errors = Vec::new();
     let mut attempts = Vec::new();
     for encoder in encoding.encoders {
+        encoding.cancellation.check()?;
         fs::remove_file(output).ok();
         let arguments = ffmpeg_arguments(
             encoding.source_video,
@@ -719,6 +717,7 @@ async fn encode_with_fallback(
             arguments,
             encoding.timing.duration_replay_ticks,
             progress,
+            encoding.cancellation,
         )
         .await
         {
@@ -735,6 +734,9 @@ async fn encode_with_fallback(
                 });
             }
             Err(error) => {
+                if error.is::<Interrupted>() {
+                    return Err(error);
+                }
                 attempts.push(ClipExportAttempt {
                     encoder: encoder_name(*encoder).to_owned(),
                     elapsed_ms: elapsed_ms(attempt_started),
@@ -908,60 +910,33 @@ async fn run_ffmpeg(
     arguments: Vec<OsString>,
     duration_replay_ticks: u64,
     progress: &mut BatchProgress<'_>,
+    cancellation: &Cancellation,
 ) -> Result<()> {
     let mut command = Command::new(ffmpeg);
-    command
-        .args(arguments)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.args(arguments);
     hide_console(&mut command);
-    let mut child = command.spawn().context("failed to start ffmpeg")?;
-    let stdout = child
-        .stdout
-        .take()
-        .context("failed to read ffmpeg progress")?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .context("failed to read ffmpeg errors")?;
-    let stderr_task = tokio::spawn(async move {
-        let mut message = String::new();
-        stderr.read_to_string(&mut message).await.ok();
-        message
-    });
-    let mut lines = BufReader::new(stdout).lines();
+    anyhow::ensure!(
+        duration_replay_ticks > 0,
+        "export duration must be positive"
+    );
     let mut last_percent = 0_u8;
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .context("failed to read ffmpeg progress")?
-    {
-        let Some(value) = line.strip_prefix("out_time_us=") else {
-            continue;
-        };
-        let Ok(microseconds) = value.parse::<u64>() else {
-            continue;
-        };
-        let progress_ticks = u128::from(microseconds)
-            .checked_mul(u128::from(REPLAY_TICKS_PER_SECOND / 1_000_000))
-            .context("ffmpeg progress timestamp overflowed")?;
-        let scaled_percent = progress_ticks
-            .checked_mul(94)
-            .context("ffmpeg progress percentage overflowed")?
-            / u128::from(duration_replay_ticks);
-        let percent = u8::try_from(scaled_percent.min(94))
-            .context("ffmpeg progress percentage is out of range")?;
-        if percent > last_percent {
-            last_percent = percent;
-            progress.send(ExportStage::Encoding, percent);
-        }
-    }
-    let status = child.wait().await.context("failed to wait for ffmpeg")?;
-    let stderr = stderr_task.await.unwrap_or_default();
-    if !status.success() {
-        bail!("{}", concise_error(&stderr))
-    }
-    Ok(())
+    export_process::run(
+        command,
+        cancellation,
+        Limits::encoding(duration_replay_ticks.div_ceil(REPLAY_TICKS_PER_SECOND)),
+        |microseconds| {
+            // u64 microseconds * ticks-per-microsecond * 94 fits in u128.
+            let progress_ticks =
+                u128::from(microseconds) * u128::from(REPLAY_TICKS_PER_SECOND / 1_000_000);
+            let scaled_percent = progress_ticks * 94 / u128::from(duration_replay_ticks);
+            let percent = scaled_percent.min(94) as u8;
+            if percent > last_percent {
+                last_percent = percent;
+                progress.send(ExportStage::Encoding, percent);
+            }
+        },
+    )
+    .await
 }
 
 async fn validate_exported_media(
@@ -1093,7 +1068,12 @@ fn expected_output_frame_count(
     .context("output frame count exceeds the replay contract")
 }
 
-async fn generate_thumbnail(ffmpeg: &Path, video: &Path, output: &Path) -> Result<()> {
+async fn generate_thumbnail(
+    ffmpeg: &Path,
+    video: &Path,
+    output: &Path,
+    cancellation: &Cancellation,
+) -> Result<()> {
     let mut command = Command::new(ffmpeg);
     command
         .args(strings(&[
@@ -1108,21 +1088,11 @@ async fn generate_thumbnail(ffmpeg: &Path, video: &Path, output: &Path) -> Resul
         ]))
         .arg(video)
         .args(strings(&["-frames:v", "1", "-q:v", "3"]))
-        .arg(output)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .arg(output);
     hide_console(&mut command);
-    let output_result = command
-        .output()
+    export_process::run(command, cancellation, Limits::thumbnail(), |_| {})
         .await
-        .context("failed to start ffmpeg thumbnail generation")?;
-    if !output_result.status.success() {
-        bail!(
-            "thumbnail generation failed: {}",
-            concise_error(&String::from_utf8_lossy(&output_result.stderr))
-        )
-    }
-    Ok(())
+        .context("thumbnail generation failed")
 }
 
 fn concise_error(message: &str) -> String {
@@ -1458,5 +1428,104 @@ mod tests {
             vec![H264Encoder::Nvenc, H264Encoder::Software]
         );
         assert_eq!(encoder_candidates("unknown"), vec![H264Encoder::Software]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the explicitly materialized pinned media runtime; generates only temporary media"]
+    async fn generated_export_is_decodable_and_preserves_source() {
+        let root = std::env::var_os("QUEUEBACK_TEST_MEDIA_RUNTIME")
+            .map(PathBuf::from)
+            .expect("set QUEUEBACK_TEST_MEDIA_RUNTIME to the prepared runtime");
+        let tools = queueback_media_runtime::resolve_root(&root).await.unwrap();
+        let runtime = tokio::runtime::Handle::current();
+        export_process::run_owned(move |cancellation| {
+            runtime.block_on(async move {
+                let temporary = tempfile::tempdir().unwrap();
+                let game = library::tests::write_game(
+                    temporary.path(),
+                    "1786000000",
+                    "2026-09-27T00:00:00Z",
+                    false,
+                );
+                let metadata_path = game.join("metadata.json");
+                let mut metadata: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+                metadata["encoder_used"] = json!("libx264");
+                metadata["recording_resolution"] = json!("320x180");
+                fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+                let source = game.join("video.mp4");
+                let mut generate = Command::new(tools.ffmpeg());
+                generate
+                    .args([
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "testsrc2=size=320x180:rate=60",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "sine=frequency=440:sample_rate=48000",
+                        "-t",
+                        "10",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-profile:v",
+                        "high",
+                        "-threads",
+                        "1",
+                        "-c:a",
+                        "aac",
+                    ])
+                    .arg(&source);
+                hide_console(&mut generate);
+                export_process::run(generate, &cancellation, Limits::thumbnail(), |_| {})
+                    .await
+                    .unwrap();
+                let original = fs::read(&source).unwrap();
+                let result = export(
+                    temporary.path(),
+                    temporary.path(),
+                    tools.ffmpeg(),
+                    tools.ffprobe(),
+                    request(ClipExportPreset::Horizontal, 300),
+                    Channel::new(|_| Ok(())),
+                    &cancellation,
+                )
+                .await
+                .unwrap();
+                assert_eq!(result.outputs.len(), 1);
+                assert_eq!(result.outputs[0].validated_frame_count, "300");
+                assert_eq!(fs::read(&source).unwrap(), original);
+                assert!(
+                    fs::metadata(&result.outputs[0].thumbnail_path)
+                        .unwrap()
+                        .len()
+                        > 0
+                );
+                assert_eq!(
+                    fs::read_dir(temporary.path().join("clips"))
+                        .unwrap()
+                        .count(),
+                    2
+                );
+                let mut decode = Command::new(tools.ffmpeg());
+                decode
+                    .args(["-hide_banner", "-v", "error", "-xerror", "-i"])
+                    .arg(&result.outputs[0].output_path)
+                    .args(["-f", "null", "-"]);
+                hide_console(&mut decode);
+                export_process::run(decode, &cancellation, Limits::thumbnail(), |_| {})
+                    .await
+                    .unwrap();
+            })
+        })
+        .await
+        .unwrap();
     }
 }

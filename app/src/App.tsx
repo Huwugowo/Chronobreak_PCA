@@ -97,6 +97,18 @@ function App() {
     const selected = viewerSelection();
     return selected && controller.mayPublish(selected.origin) ? selected : null;
   });
+  const exportAdmissionError = createMemo(() => {
+    const state = libraryState();
+    const current = navigation();
+    if (current.screen !== "clip-export") return null;
+    if (state.refreshing) return "The library is refreshing. Please wait before exporting again.";
+    if (state.error) return `The library could not be refreshed: ${state.error}. Return to games to reload it.`;
+    if (!current.snapshotOrigin || !controller.mayPublish(current.snapshotOrigin) ||
+        !state.snapshot?.games.some(game => game.timestamp === current.draft.gameTimestamp)) {
+      return "The library or source recording changed. Return to games and select the clip again.";
+    }
+    return null;
+  });
   const [saveOverlay, setSaveOverlay] = createSignal<SavedOverlay | null>(null);
   createEffect(() => {
     const state = libraryState();
@@ -870,6 +882,7 @@ function App() {
               outputPath={settings()?.output_path ?? "~/LeagueReplays"}
               snapshotToken={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin?.token ?? ""}
               snapshotOrigin={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin!}
+              admissionError={exportAdmissionError()}
               readReplay={work => {
                 const current = navigation() as Extract<NavigationState, { screen: "clip-export" }>;
                 if (!current.snapshotOrigin) return Promise.reject(new Error("Replay selection is unavailable"));
@@ -877,7 +890,14 @@ function App() {
               }}
               onBack={(draft) => openViewer(draft.gameTimestamp, draft)}
               onExported={async (exportOrigin, completed) => {
-                controller.invalidateRoot(exportOrigin.root);
+                const editor = navigation();
+                const fresh = await controller.invalidateRoot(exportOrigin.root);
+                if (editor.screen !== "clip-export" || navigation() !== editor ||
+                    editor.snapshotOrigin !== exportOrigin || !fresh ||
+                    fresh.rootEpoch !== exportOrigin.rootEpoch ||
+                    fresh.navigation !== exportOrigin.navigation || !controller.mayPublish(fresh) ||
+                    !controller.value.snapshot?.games.some(game => game.timestamp === editor.draft.gameTimestamp)) return;
+                setNavigation({ ...editor, snapshotOrigin: fresh });
                 if (completed) showNotice("Clip exported.");
               }}
               onOpenClips={() => openTab("clips")}

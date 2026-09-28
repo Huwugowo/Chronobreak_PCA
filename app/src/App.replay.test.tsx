@@ -6,11 +6,11 @@ import App from "./App";
 import type ViewerScreen from "./components/ViewerScreen";
 import type LibraryScreen from "./components/LibraryScreen";
 import type ClipExporterScreen from "./components/ClipExporterScreen";
-import { ensureHevcCapability, resolveClipDurations } from "./api";
+import { ensureHevcCapability, refreshLibrary, resolveClipDurations } from "./api";
 import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
 
-const harness = vi.hoisted(() => ({ root: "A", revision: 0,
+const harness = vi.hoisted(() => ({ root: "A", revision: 0, missingGame: false,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
   exporter: null as ComponentProps<typeof ClipExporterScreen> | null,
 }));
@@ -20,14 +20,14 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
   loadSettings: async () => ({ output_path: harness.root, auto_delete_days: 0 }),
   loadDdragonStatus: () => new Promise(() => {}),
   ensureHevcCapability: vi.fn(() => new Promise(() => {})),
-  chooseOutputFolder: async () => "B",
+  chooseOutputFolder: async () => harness.root === "A" ? "B" : "A",
   persistSettings: async (value: { output_path: string }) => { harness.root = value.output_path; return value; },
-  refreshLibrary: async () => ({ token: `${harness.root}-${++harness.revision}`, games: [{
+  refreshLibrary: vi.fn(async () => ({ token: `${harness.root}-${++harness.revision}`, games: [{
     timestamp: "1", champion: harness.root, game_mode: "CLASSIC", recorded_at: "2026-09-21T00:00:00Z",
     kills: 0, deaths: 0, assists: 0, duration_ms: 10000, summoner_spells: [], keystone_id: null,
     items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true,
-  }], clips: [{ filename: "1_2.mp4" }],
-    usage: { games_bytes: 1, clips_bytes: 1, game_count: 1, clip_count: 1 } }),
+  }].filter(() => !harness.missingGame), clips: [{ filename: "1_2.mp4" }],
+    usage: { games_bytes: 1, clips_bytes: 1, game_count: 1, clip_count: 1 } })),
   resolveClipDurations: vi.fn(() => new Promise(() => {})),
 }));
 vi.mock("./components/LibraryScreen", () => ({ default: (props: ComponentProps<typeof LibraryScreen>) =>
@@ -55,7 +55,7 @@ let dispose: (() => void) | undefined;
 afterEach(() => {
   dispose?.(); dispose = undefined;
   document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); vi.restoreAllMocks();
-  harness.root = "A"; harness.revision = 0; harness.viewer = null; harness.exporter = null;
+  harness.root = "A"; harness.revision = 0; harness.missingGame = false; harness.viewer = null; harness.exporter = null;
 });
 const mount = async () => {
   const host = document.createElement("div"); document.body.append(host);
@@ -63,6 +63,89 @@ const mount = async () => {
   await vi.waitFor(() => expect(host.querySelector('[data-testid="open"]')).not.toBeNull());
   return { host, click: (id: string) => host.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click() };
 };
+
+it.each(["missing", "navigation", "root"])("does not renew stale exporter intent after %s changes", async change => {
+  const { host, click } = await mount(); click("open");
+  harness.viewer!.onExportClip({ gameTimestamp: "1", mediaId: parseMediaId("11111111-2222-4333-8444-555555555555"),
+    startFrame: 0 as FrameBoundary, endFrameExclusive: 300 as FrameBoundary });
+  const exporter = harness.exporter!;
+  const token = exporter.snapshotToken;
+  const origin = exporter.snapshotOrigin;
+  if (change === "missing") harness.missingGame = true;
+  if (change === "navigation") click("games");
+  if (change === "root") {
+    click("settings"); click("root");
+    await vi.waitFor(() => expect(harness.root).toBe("B"));
+  }
+  await exporter.onExported(origin, true);
+  if (change === "missing") expect(exporter.snapshotToken).toBe(token);
+  else expect(host.querySelector('[data-testid="exporter"]')).toBeNull();
+  expect(host.textContent).not.toContain("Clip exported.");
+});
+
+it.each(["navigation", "root"])("does not give a returned editor an old export's refreshed token (%s round trip)", async change => {
+  const { host, click } = await mount();
+  const draft = { gameTimestamp: "1", mediaId: parseMediaId("11111111-2222-4333-8444-555555555555"),
+    startFrame: 0 as FrameBoundary, endFrameExclusive: 300 as FrameBoundary };
+  click("open"); harness.viewer!.onExportClip(draft);
+  const oldEditor = harness.exporter!;
+  const oldOrigin = oldEditor.snapshotOrigin;
+  if (change === "root") {
+    click("settings"); click("root");
+    await vi.waitFor(() => {
+      expect(harness.root).toBe("B");
+      expect(host.querySelector('[data-testid="root"]')).not.toBeNull();
+    });
+    click("root");
+    await vi.waitFor(() => {
+      expect(harness.root).toBe("A");
+      expect(host.querySelector('[data-testid="root"]')).not.toBeNull();
+    });
+  }
+  click("games");
+  await vi.waitFor(() => expect(host.querySelector('[data-testid="open"]')).not.toBeNull());
+  // Let the same-root refresh publish before selecting a new editor.
+  await vi.waitFor(() => {
+    click("open");
+    expect(host.querySelector('[data-testid="viewer"]')).not.toBeNull();
+  });
+  harness.viewer!.onExportClip(draft);
+  const returnedEditor = harness.exporter!;
+  const returnedToken = returnedEditor.snapshotToken;
+  expect(returnedEditor).not.toBe(oldEditor);
+  await oldEditor.onExported(oldOrigin, true);
+  expect(returnedEditor.snapshotToken).toBe(returnedToken);
+  expect(host.textContent).not.toContain("Clip exported.");
+  await expect(returnedEditor.readReplay(async () => "must not publish")).rejects.toThrow("stale");
+});
+
+it.each(["failed", "superseded"])("does not borrow another refresh result when export reconciliation is %s", async outcome => {
+  const { host, click } = await mount(); click("open");
+  harness.viewer!.onExportClip({ gameTimestamp: "1", mediaId: parseMediaId("11111111-2222-4333-8444-555555555555"),
+    startFrame: 0 as FrameBoundary, endFrameExclusive: 300 as FrameBoundary });
+  const editor = harness.exporter!;
+  const origin = editor.snapshotOrigin;
+  if (outcome === "failed") {
+    vi.mocked(refreshLibrary).mockRejectedValueOnce(new Error("scan fixture failed"));
+    await editor.onExported(origin, true);
+    expect(editor.snapshotToken).toBe(origin.token);
+    await expect(editor.readReplay(async () => "must not publish")).rejects.toThrow("stale");
+  } else {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const scan = vi.mocked(refreshLibrary).getMockImplementation()!;
+    vi.mocked(refreshLibrary).mockImplementationOnce(async () => { await gate; return scan(); });
+    const oldCompletion = editor.onExported(origin, true);
+    const newCompletion = editor.onExported(origin, false);
+    await oldCompletion;
+    expect(editor.snapshotToken).toBe(origin.token);
+    expect(host.textContent).not.toContain("Clip exported.");
+    release(); await newCompletion;
+    expect(editor.snapshotToken).not.toBe(origin.token);
+    await expect(editor.readReplay(async token => token)).resolves.toBe(editor.snapshotToken);
+  }
+  expect(host.textContent).not.toContain("Clip exported.");
+});
 
 it("opens independently of held assets/durations and reacquires origins on Settings/exporter return", async () => {
   const { host, click } = await mount();
