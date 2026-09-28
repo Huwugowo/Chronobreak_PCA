@@ -11,7 +11,7 @@ League process presence remains the automatic lifecycle authority:
 1. appearance makes the process eligible while its visible capture HWND is discovered;
 2. an owned cancellable startup task starts the native recorder inside one 15-second deadline;
 3. PID replacement cancels/reaps startup or finalizes the old session before a new generation can start;
-4. disappearance gracefully finalizes an active recording;
+4. disappearance or closure of the active game HWND gracefully finalizes an active recording;
 5. application shutdown cancels startup and finalizes an active recording before emitting completion.
 
 Live Client readiness and `GameEnd` are not start/stop signals. A process with no ready window is retried on the next watcher tick. Retryable startup failures follow the bounded 2/5/10/30-second schedule only after cleanup, while terminal incompatibility and an unexpected active-backend exit suppress runaway retries for that process generation.
@@ -22,7 +22,7 @@ On Windows, the sole production video path is in-process exact-HWND Windows Grap
 
 The service owns one native implementation: a supervised GPU worker, bounded completion thread, four NVENC slots, diagnostics receiver, and one FFmpeg child restricted to audio encoding and fragmented-MP4 muxing. Startup is announced only after a real first WGC frame and advancing encode/mux evidence. Cooperative cleanup performs the blocking worker join off the async executor; child pipes are continuously drained and reaped under finite deadlines.
 
-The service validates the captured HWND/PID/adapter identity while active. A closed or replaced HWND while the League process is still present produces a failed/partial outcome. Focus loss, occlusion, and temporary minimize do not change identity; WGC may pause while minimized and resume after restore.
+The service validates the captured HWND/PID/adapter identity while active. A closed HWND is a terminal capture boundary because League can destroy the game window before its process disappears; after a ready recording, that boundary follows the normal flush/finalization path. A replaced HWND or changed process/adapter identity remains a failed/partial outcome. Focus loss, occlusion, and temporary minimize do not change identity; WGC may pause while minimized and resume after restore.
 
 Normal stop ends native capture, drains bounded GPU/encoder/mux work, flushes the muxer, and reaps every owned task/thread/child under finite deadlines. A clean result requires an intentional stop boundary, terminal WGC/encode/mux evidence, consistent frame accounting, successful mux exit, and nonempty output. The common finalizer validates the private candidate before renaming it to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixtures remain recoverable.
 

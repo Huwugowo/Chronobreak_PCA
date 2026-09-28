@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("steady", "resize", "minimize_restore", "occlusion", "close_window")]
+    [ValidateSet("steady", "resize", "tiny_resize", "minimize_restore", "occlusion", "close_window")]
     [string]$Scenario = "steady",
     [ValidateSet("none", "nvenc_failure", "mux_failure", "pre_first_fragment")]
     [string]$Interruption = "none",
@@ -23,6 +23,9 @@ if ($ReplayTimeMarkers -and ($Scenario -ne "steady" -or $Interruption -ne "none"
 }
 if ($ReplayTimeMarkers -and ($DurationSeconds -lt 6 -or $DurationSeconds -gt 120)) {
     throw "Replay-time marker verification requires a duration from 6 through 120 seconds."
+}
+if ($Scenario -eq "tiny_resize" -and ($DurationSeconds -lt 10 -or $Interruption -ne "none")) {
+    throw "Tiny-resize recovery requires at least 10 seconds and no injected interruption."
 }
 
 function Invoke-BoundedProcess {
@@ -510,6 +513,7 @@ if (-not $expectedFailure) {
 $probe = $null
 $decodedFrames = 0
 $uniqueHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$lastSecondHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $fullDecode = "not-applicable"
 $videoBytes = if (Test-Path -LiteralPath $video -PathType Leaf) {
     (Get-Item -LiteralPath $video).Length
@@ -583,7 +587,11 @@ if ($Interruption -eq "pre_first_fragment") {
     foreach ($line in [System.IO.File]::ReadLines($frameMd5Path)) {
         if ($line -match '^\d') {
             $decodedFrames++
-            [void]$uniqueHashes.Add(($line.Split(',')[-1]).Trim())
+            $frameHash = ($line.Split(',')[-1]).Trim()
+            [void]$uniqueHashes.Add($frameHash)
+            if ($decodedFrames -gt ($DurationSeconds - 1) * 60) {
+                [void]$lastSecondHashes.Add($frameHash)
+            }
         }
     }
     if (-not $expectedFailure) {
@@ -598,6 +606,9 @@ if ($Interruption -eq "pre_first_fragment") {
         }
         if ($uniqueHashes.Count -lt $minimumUnique) {
             throw "Native fixture did not prove changing media ($decodedFrames frames, $($uniqueHashes.Count) unique hashes)."
+        }
+        if ($Scenario -eq "tiny_resize" -and $lastSecondHashes.Count -lt 30) {
+            throw "Tiny-resize fixture did not resume changing video after restoration ($($lastSecondHashes.Count) distinct frames in the final second)."
         }
     } elseif ($decodedFrames -lt 60 -or $uniqueHashes.Count -lt 10) {
         throw "Native failed-partial output is too short or static ($decodedFrames frames, $($uniqueHashes.Count) unique hashes)."
@@ -704,6 +715,7 @@ if ($ReplayTimeMarkers) {
     }
 }
 
+$telemetry = Get-NativeTelemetry -Line ([string]$passLine)
 $actionLines = @(Get-Content -LiteralPath $fixtureStdout -ErrorAction SilentlyContinue |
     Where-Object { $_ -like "QUEUEBACK_WGC_ACTION *" })
 if ($Scenario -notin @("steady", "close_window") -and $actionLines.Count -lt 2) {
@@ -711,6 +723,23 @@ if ($Scenario -notin @("steady", "close_window") -and $actionLines.Count -lt 2) 
 }
 if ($Scenario -eq "close_window" -and $actionLines.Count -lt 1) {
     throw "The native close-window fixture did not close its target."
+}
+if ($Scenario -eq "tiny_resize") {
+    $sizeLines = @(Get-Content -LiteralPath $fixtureStdout |
+        Where-Object { $_ -like "QUEUEBACK_WGC_SIZE *" })
+    $tinySizeIndex = [Array]::IndexOf($sizeLines, "QUEUEBACK_WGC_SIZE width=1 height=1")
+    $restoredSizeIndex = [Array]::LastIndexOf($sizeLines, "QUEUEBACK_WGC_SIZE width=1920 height=1080")
+    if ($tinySizeIndex -lt 0 -or $restoredSizeIndex -le $tinySizeIndex) {
+        throw "Tiny-resize fixture did not observe a real 1x1 window followed by 1920x1080 restoration."
+    }
+    if (
+        [uint64]$telemetry.unusable_size_frames -eq 0 -or
+        [uint64]$telemetry.worker_frame_discards -lt [uint64]$telemetry.unusable_size_frames -or
+        [uint32]$telemetry.first_unusable_width -ne 1 -or
+        [uint32]$telemetry.first_unusable_height -ne 1
+    ) {
+        throw "Tiny-resize fixture must actually receive and account for unusable 1x1 WGC frames."
+    }
 }
 
 $resourceSummary = $null
@@ -748,7 +777,6 @@ if ($CollectResources) {
     Write-Json -Path (Join-Path $runRoot "resource-summary.json") -Value $resourceSummary
 }
 
-$telemetry = Get-NativeTelemetry -Line ([string]$passLine)
 $result = [ordered]@{
     schema = 1
     scope = "generated non-League native-backend fixture"
@@ -763,6 +791,7 @@ $result = [ordered]@{
     action_lines = @($actionLines | ForEach-Object { [string]$_ })
     decoded_frames = $decodedFrames
     unique_frame_hashes = $uniqueHashes.Count
+    last_second_unique_frame_hashes = $lastSecondHashes.Count
     video_bytes = $videoBytes
     video_sha256 = $videoSha256
     ffprobe = $probe

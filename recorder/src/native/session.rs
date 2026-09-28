@@ -38,6 +38,8 @@ pub struct NativeSessionTelemetrySnapshot {
     pub maximum_catch_up_batch: u64,
     pub injected_worker_stalls: u64,
     pub injected_worker_stall_100ns: u64,
+    pub unusable_size_frames: u64,
+    pub first_unusable_size: Option<(u32, u32)>,
     pub target_closed: bool,
 }
 
@@ -75,6 +77,8 @@ pub struct NativeRecorderSession {
     output: PathBuf,
     snapshot_ready: bool,
     pending_resize: Option<(u32, u32)>,
+    unusable_size_frames: u64,
+    first_unusable_size: Option<(u32, u32)>,
     no_slot_admission_failures: u64,
     unstaged_tick_admission_failures: u64,
     maximum_catch_up_batch: u64,
@@ -111,6 +115,8 @@ impl NativeRecorderSession {
             output: output.to_path_buf(),
             snapshot_ready: false,
             pending_resize: None,
+            unusable_size_frames: 0,
+            first_unusable_size: None,
             no_slot_admission_failures: 0,
             unstaged_tick_admission_failures: 0,
             maximum_catch_up_batch: 0,
@@ -311,7 +317,16 @@ impl NativeRecorderSession {
                     )?);
             }
             if self.target_closed && stop_at.is_none() {
-                bail!("native WGC target closed while recording");
+                // WGC reports the game HWND closing before the process watcher
+                // necessarily observes the League process disappearing. Treat
+                // that terminal target event as the stop boundary and flush the
+                // frames already captured through the normal finalization path.
+                let observed_stop = Instant::now();
+                stop_at = Some(observed_stop);
+                catch_up_deadline =
+                    Some(observed_stop.checked_add(FINAL_CATCH_UP_TIMEOUT).context(
+                        "native target-close catch-up deadline exceeded the monotonic clock range",
+                    )?);
             }
             let next_deadline = self
                 .clock
@@ -352,11 +367,6 @@ impl NativeRecorderSession {
     }
 
     pub fn finish(mut self) -> Result<NativeSessionTelemetrySnapshot> {
-        let capture = self
-            .source
-            .take()
-            .context("native WGC source was already closed")?
-            .close();
         let encode = self
             .encoder
             .take()
@@ -367,6 +377,15 @@ impl NativeRecorderSession {
             .take()
             .context("native mux process was already closed")?
             .finish();
+        // Drain encoder and mux output before releasing the WGC source/device.
+        // NVENC owns resources created from the same D3D11 device, so keeping
+        // capture alive through their bounded teardown avoids a cross-stack
+        // lifetime race when the target window disappears.
+        let capture = self
+            .source
+            .take()
+            .context("native WGC source was already closed")?
+            .close();
         let conversion = self.converter.telemetry();
 
         match (capture, encode, mux) {
@@ -447,6 +466,8 @@ impl NativeRecorderSession {
                     maximum_catch_up_batch: self.maximum_catch_up_batch,
                     injected_worker_stalls: self.injected_worker_stalls,
                     injected_worker_stall_100ns: self.injected_worker_stall_100ns,
+                    unusable_size_frames: self.unusable_size_frames,
+                    first_unusable_size: self.first_unusable_size,
                     target_closed: self.target_closed,
                 })
             }
@@ -506,12 +527,23 @@ impl NativeRecorderSession {
         let qpc_100ns = frame.qpc_100ns();
         let pool_dimensions = source.pool_dimensions();
         if dimensions != pool_dimensions {
+            let can_resize = self
+                .converter
+                .can_convert_content_size(dimensions.0, dimensions.1);
             let close_result = frame.close();
             self.source
                 .as_mut()
                 .context("native WGC source is closed")?
                 .record_worker_frame_discard();
             close_result?;
+            if !can_resize {
+                record_unusable_size(
+                    dimensions,
+                    &mut self.unusable_size_frames,
+                    &mut self.first_unusable_size,
+                );
+                return Ok(());
+            }
             self.source
                 .as_mut()
                 .context("native WGC source is closed")?
@@ -523,34 +555,12 @@ impl NativeRecorderSession {
             return Ok(());
         }
 
-        if let Some(pending_resize) = self.pending_resize {
-            ensure!(
-                dimensions == pending_resize,
-                "native WGC recreated {:?} but delivered {:?}",
-                pending_resize,
-                dimensions
-            );
-            let texture_ready = source_texture_contains_content(&frame);
-            if !matches!(&texture_ready, Ok(true)) {
-                let close_result = frame.close();
-                self.source
-                    .as_mut()
-                    .context("native WGC source is closed")?
-                    .record_worker_frame_discard();
-                texture_ready?;
-                close_result?;
-                return Ok(());
-            }
-            self.encoder
-                .as_mut()
-                .context("native NVENC encoder is closed")?
-                .drain()?;
-            self.converter
-                .reconfigure_input(dimensions.0, dimensions.1)?;
-            self.pending_resize = None;
-        }
-
-        let stage_result = self.converter.stage_latest_source(&frame);
+        let stage_result = stage_source_snapshot(
+            &frame,
+            &mut self.encoder,
+            &mut self.converter,
+            &mut self.pending_resize,
+        );
         let close_result = frame.close();
         if !matches!(&stage_result, Ok(true)) {
             self.source
@@ -589,15 +599,15 @@ impl NativeRecorderSession {
             clock,
             snapshot_ready,
             pending_resize,
+            unusable_size_frames,
+            first_unusable_size,
             target_closed,
             ..
         } = self;
         let source = source.as_mut().context("native WGC source is closed")?;
+        let clock = clock.as_mut().context("native CFR clock disappeared")?;
         let replacements = source.drain_handoff_to_pending()?;
-        clock
-            .as_mut()
-            .context("native CFR clock disappeared")?
-            .record_source_discards(replacements);
+        clock.record_source_discards(replacements);
         let pool_dimensions = source.pool_dimensions();
         let Some(frame) = source.take_pending() else {
             *target_closed = source.telemetry().closed;
@@ -605,10 +615,26 @@ impl NativeRecorderSession {
         };
         let dimensions = frame.dimensions();
         let qpc_100ns = frame.qpc_100ns();
-        if dimensions != pool_dimensions {
+        let latest_source_qpc_100ns = clock.telemetry().latest_source_qpc_100ns;
+        if qpc_100ns <= latest_source_qpc_100ns {
+            // A duplicate or out-of-order compositor frame must not replace the
+            // last good GPU snapshot or terminate an otherwise healthy graph.
             let close_result = frame.close();
             source.record_worker_frame_discard();
             close_result?;
+            return Ok(());
+        }
+        if dimensions != pool_dimensions {
+            let can_resize = converter.can_convert_content_size(dimensions.0, dimensions.1);
+            let close_result = frame.close();
+            source.record_worker_frame_discard();
+            close_result?;
+            if !can_resize {
+                // Window transitions can surface a 1-pixel or otherwise
+                // unusable crop. Keep the pool and last valid GPU snapshot.
+                record_unusable_size(dimensions, unusable_size_frames, first_unusable_size);
+                return Ok(());
+            }
             source.recreate_for_content_size(dimensions.0, dimensions.1)?;
             // Keep converting the last valid GPU snapshot while the recreated
             // WGC pool produces its first new-size surface.
@@ -616,35 +642,7 @@ impl NativeRecorderSession {
             return Ok(());
         }
 
-        if let Some(expected_dimensions) = *pending_resize {
-            ensure!(
-                dimensions == expected_dimensions,
-                "native WGC recreated {:?} but delivered {:?}",
-                expected_dimensions,
-                dimensions
-            );
-            let texture_ready = source_texture_contains_content(&frame);
-            if !matches!(&texture_ready, Ok(true)) {
-                let close_result = frame.close();
-                source.record_worker_frame_discard();
-                texture_ready?;
-                close_result?;
-                return Ok(());
-            }
-            encoder
-                .as_mut()
-                .context("native NVENC encoder is closed")?
-                .drain()?;
-            converter.reconfigure_input(dimensions.0, dimensions.1)?;
-            *pending_resize = None;
-        }
-
-        let clock = clock.as_mut().context("native CFR clock disappeared")?;
-        ensure!(
-            qpc_100ns > clock.telemetry().latest_source_qpc_100ns,
-            "native WGC source timestamp did not advance monotonically"
-        );
-        let stage_result = converter.stage_latest_source(&frame);
+        let stage_result = stage_source_snapshot(&frame, encoder, converter, pending_resize);
         let close_result = frame.close();
         if !matches!(&stage_result, Ok(true)) {
             source.record_worker_frame_discard();
@@ -877,8 +875,8 @@ impl NativeRecorderSession {
                 .handoff_drops
                 .saturating_add(capture.pending_frame_replacements),
             pool_recreations: capture.recreations,
-            first_qpc: capture.first_accepted_qpc_100ns,
-            latest_qpc: capture.latest_accepted_qpc_100ns,
+            first_qpc: cfr.map(|snapshot| snapshot.first_source_qpc_100ns),
+            latest_qpc: cfr.map(|snapshot| snapshot.latest_source_qpc_100ns),
             encoded_frames: encode.completed_frames,
             muxed_bytes: mux.muxed_bytes.max(mux.output_file_bytes),
             output_time_us: mux.output_time_us,
@@ -888,6 +886,47 @@ impl NativeRecorderSession {
             protocol_error,
         })
     }
+}
+
+fn record_unusable_size(dimensions: (u32, u32), count: &mut u64, first: &mut Option<(u32, u32)>) {
+    *count = count.saturating_add(1);
+    if first.is_none() {
+        *first = Some(dimensions);
+        tracing::warn!(
+            width = dimensions.0,
+            height = dimensions.1,
+            "discarding an unusable WGC content size; retaining the last valid source image"
+        );
+    }
+}
+
+/// Keep all fallible resize preparation inside the staging result so callers
+/// close and count an un-copied frame before propagating any GPU error.
+fn stage_source_snapshot(
+    frame: &super::CapturedWgcFrame<'_>,
+    encoder: &mut Option<NativeNvencEncoder>,
+    converter: &mut NativeNv12Converter,
+    pending_resize: &mut Option<(u32, u32)>,
+) -> Result<bool> {
+    if let Some(expected_dimensions) = *pending_resize {
+        let dimensions = frame.dimensions();
+        ensure!(
+            dimensions == expected_dimensions,
+            "native WGC recreated {:?} but delivered {:?}",
+            expected_dimensions,
+            dimensions
+        );
+        if !source_texture_contains_content(frame)? {
+            return Ok(false);
+        }
+        encoder
+            .as_mut()
+            .context("native NVENC encoder is closed")?
+            .drain()?;
+        converter.reconfigure_input(dimensions.0, dimensions.1)?;
+        *pending_resize = None;
+    }
+    converter.stage_latest_source(frame)
 }
 
 fn source_texture_contains_content(frame: &super::CapturedWgcFrame<'_>) -> Result<bool> {
@@ -917,8 +956,8 @@ impl NativeSessionTelemetrySnapshot {
                 .handoff_drops
                 .saturating_add(self.capture.pending_frame_replacements),
             pool_recreations: self.capture.recreations,
-            first_qpc: self.capture.first_accepted_qpc_100ns,
-            latest_qpc: self.capture.latest_accepted_qpc_100ns,
+            first_qpc: Some(self.cfr.first_source_qpc_100ns),
+            latest_qpc: Some(self.cfr.latest_source_qpc_100ns),
             encoded_frames: self.encode.completed_frames,
             muxed_bytes: self.mux.muxed_bytes.max(self.mux.output_file_bytes),
             output_time_us: self.mux.output_time_us,

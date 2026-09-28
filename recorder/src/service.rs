@@ -657,13 +657,25 @@ pub async fn run(
                             control_telemetry.target_failures =
                                 control_telemetry.target_failures.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
-                            warn!(error = %target_error, "the active League capture target became invalid");
-                            stop_recording_with_failure(
-                                recording,
-                                &events,
-                                format!("the exact League capture target became invalid: {target_error:#}"),
-                            )
-                            .await;
+                            if is_closed_capture_target_error(&target_error) {
+                                // League destroys the game HWND during a normal return to
+                                // the client. The native worker treats that callback as its
+                                // terminal boundary, so let the ordinary finalizer flush the
+                                // captured media instead of converting a completed match into
+                                // an explicit partial recording.
+                                info!(error = %target_error, "the League capture target closed; finalizing the active recording");
+                                if stop_recording(recording, &events).await {
+                                    events(ServiceEvent::Idle);
+                                }
+                            } else {
+                                warn!(error = %target_error, "the active League capture target became invalid");
+                                stop_recording_with_failure(
+                                    recording,
+                                    &events,
+                                    format!("the exact League capture target became invalid: {target_error:#}"),
+                                )
+                                .await;
+                            }
                             startup_retry.block_active_process(current_process);
                         }
                     }
@@ -1251,8 +1263,8 @@ async fn startup_cancelled(cancellation: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn stop_recording(recording: ActiveRecording, events: &EventSink) {
-    stop_recording_inner(recording, events, None).await;
+async fn stop_recording(recording: ActiveRecording, events: &EventSink) -> bool {
+    stop_recording_inner(recording, events, None).await
 }
 
 async fn stop_recording_with_failure(
@@ -1260,14 +1272,20 @@ async fn stop_recording_with_failure(
     events: &EventSink,
     failure_reason: String,
 ) {
-    stop_recording_inner(recording, events, Some(failure_reason)).await;
+    let _ = stop_recording_inner(recording, events, Some(failure_reason)).await;
+}
+
+fn is_closed_capture_target_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == "the selected League HWND was closed")
 }
 
 async fn stop_recording_inner(
     recording: ActiveRecording,
     events: &EventSink,
     failure_reason: Option<String>,
-) {
+) -> bool {
     let ActiveRecording {
         media_id,
         ffprobe_path,
@@ -1352,7 +1370,8 @@ async fn stop_recording_inner(
             .await;
             match published {
                 Ok(directory) => {
-                    info!(directory = %directory.display(), "validated recording published")
+                    info!(directory = %directory.display(), "validated recording published");
+                    true
                 }
                 Err(error) => {
                     error!(error = %error, "recording finalization/publication failed");
@@ -1361,6 +1380,7 @@ async fn stop_recording_inner(
                             "Recording media could not prove the canonical replay-time contract; no canonical video or metadata was published. Any recoverable output remains under an explicit .partial.mp4 name: {error:#}"
                         ),
                     });
+                    false
                 }
             }
         }
@@ -1371,6 +1391,7 @@ async fn stop_recording_inner(
                     "Recording stopped unexpectedly; no canonical video was published. Any recoverable output remains under an explicit .partial.mp4 name: {stop_error:#}"
                 ),
             });
+            false
         }
     }
 }
@@ -1566,6 +1587,17 @@ mod tests {
         assert!(!retry.permits(process, now + Duration::from_secs(300)));
         retry.reset();
         assert!(retry.permits(process, now));
+    }
+
+    #[test]
+    fn only_an_exact_closed_league_hwnd_is_a_graceful_capture_boundary() {
+        let closed = anyhow::anyhow!("the selected League HWND was closed")
+            .context("capture target query failed");
+        assert!(is_closed_capture_target_error(&closed));
+
+        let replaced =
+            anyhow::anyhow!("the selected League HWND now belongs to a different process");
+        assert!(!is_closed_capture_target_error(&replaced));
     }
 
     #[test]

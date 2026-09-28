@@ -278,6 +278,12 @@ impl NativeNv12Converter {
         })
     }
 
+    /// Transient WGC content sizes must admit a nonempty chroma-aligned crop
+    /// before the worker recreates its pool or replaces the last good image.
+    pub(crate) fn can_convert_content_size(&self, width: u32, height: u32) -> bool {
+        center_crop_rect(width, height, self.output_width, self.output_height).is_ok()
+    }
+
     /// Rebuild the size-dependent processor and lightweight views after WGC
     /// pool recreation. The four full-size NV12 textures are retained.
     pub fn reconfigure_input(&mut self, input_width: u32, input_height: u32) -> Result<()> {
@@ -992,7 +998,7 @@ fn center_crop_rect(
     let mut crop_height = input_height & !1;
     ensure!(
         crop_width >= 2 && crop_height >= 2,
-        "native WGC input is too small for NV12"
+        "native WGC input is too small for NV12: {input_width}x{input_height}"
     );
 
     if u64::from(crop_width) * u64::from(output_height)
@@ -1008,7 +1014,7 @@ fn center_crop_rect(
     }
     ensure!(
         crop_width >= 2 && crop_height >= 2,
-        "native center crop collapsed"
+        "native center crop collapsed: {input_width}x{input_height} to {output_width}x{output_height}"
     );
     let left = ((input_width - crop_width) / 2) & !1;
     let top = ((input_height - crop_height) / 2) & !1;
@@ -1067,6 +1073,19 @@ mod tests {
         assert_eq!((tall.right - tall.left) % 2, 0);
         assert_eq!((tall.bottom - tall.top) % 2, 0);
         assert!(tall.right <= 1100 && tall.bottom <= 720);
+    }
+
+    #[test]
+    fn transient_source_sizes_require_a_nonempty_nv12_crop() {
+        for (width, height) in [(0, 1080), (1920, 0), (1, 1), (1, 1080), (1920, 1), (2, 2)] {
+            assert!(
+                center_crop_rect(width, height, 1920, 1080).is_err(),
+                "unusable source {width}x{height} must be rejected before pool recreation"
+            );
+        }
+        for (width, height) in [(4, 2), (1600, 900), (1920, 1080)] {
+            assert!(center_crop_rect(width, height, 1920, 1080).is_ok());
+        }
     }
 
     #[test]
