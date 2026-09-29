@@ -2,7 +2,7 @@
 
 Feature: `QB-PERF-002`
 ExecPlan: `docs/exec-plans/qb-perf-002-low-overhead-native-windows-capture-v3.md`
-Updated: 2026-09-28
+Updated: 2026-09-29
 
 ## Current milestone
 
@@ -10,7 +10,7 @@ Superseding-plan Milestone 5: valid target League capped/uncapped performance pr
 
 ## Active unit
 
-No product-code unit is active. The 2026-09-28 timestamp-order, tiny-content-size, teardown-order, and target-close finalization corrections are built and locally verified. The prior timestamp correction survived approximately 76 seconds of real practice-tool capture before the separate tiny-size error. The next release survived the tiny-size path but exposed a shutdown access violation in `GraphicsCapture.dll_unloaded`; teardown ordering and incomplete-callback containment are corrected locally. The latest real game reached a decodable 709-second partial and complete Live Client data but exercised the pre-fix target-close error path, so a post-fix League transition/finalization confirmation is still required. `QB-PERF-002` remains incomplete; its separate capped/uncapped performance matrix has not been run.
+No product-code unit is active. The fragmented-MP4 finalizer correction passed synthetic checks, temporary-copy validation/publication of both prior partials, the locked release rebuild, and the subsequent real Practice Tool run `1790670285`. That run finalized normally, passed full decode, and the user confirmed playback in the app. Previous timestamp/size/teardown fixes remain in place. The formal performance matrix remains outstanding; the user has deferred audio work and selected data-feature refinement after committing these fixes.
 
 Do not substitute current-workstation generated-window evidence, the historical native/external A/B, the accepted-invalid QB-PERF-001 report, or a different GPU/CPU target for that matrix.
 
@@ -24,10 +24,11 @@ Do not substitute current-workstation generated-window evidence, the historical 
 - After a 2026-09-28 live League capture stopped on a non-advancing WGC source timestamp, made the pending slot retain the greatest timestamp and discard equal/older admitted frames with exact worker-discard accounting. The stale frame no longer replaces the last good GPU snapshot or terminates the graph. Built the corrected release recorder and started it for the next match.
 - Reproduced the subsequent practice-tool error with a generated 1x1 window transition, then prevented unusable NV12 crop sizes from reaching pool recreation. Resize preparation now shares the close/count staging path, and the watchdog follows copied source QPC rather than callback admission. Added bounded first-size logging, native unusable-size telemetry, and a hardware regression that proves actual 1x1 frames were discarded and video resumed after restore.
 - Corrected the League end-of-game lifecycle: an exact selected HWND closure is now treated as the terminal capture boundary and routed through graceful native worker stop, mux flush, metadata publication, and `Idle` projection; replaced/foreign HWND identity failures remain explicit partial failures. Added a service classification test and documented the lifecycle contract.
+- Corrected fragmented-MP4 finalized-media validation: a private fixed-memory header reader supplies the missing actual sample count, skips media payload, enforces the shared five-second deadline, and rejects malformed/truncated fragments. Shared replay-time checks and producer reconciliation remain unchanged. Finalization errors now log their full cause chain.
 
 ## In flight
 
-No partial implementation is in flight. The release executable includes both corrections. Later QB-REPLAY-012 work may share recorder files but does not satisfy this feature's missing formal League matrix.
+None. Fragmented-MP4 correction, focused checks, release build, and real recording/app playback confirmation are complete. Prior partial recordings were not rewritten. Later QB-REPLAY-012 work may share recorder files but does not satisfy this feature's missing formal League matrix.
 
 ## Remaining
 
@@ -35,7 +36,6 @@ No partial implementation is in flight. The release executable includes both cor
 - Pass every unchanged capped frame/resource gate and disposition every substantial capped or uncapped finding.
 - Keep unimplemented native AMD/AMF and Intel/QSV adapters explicitly unsupported; draft `QB-PERF-003` and `QB-PERF-004` own any future implementation plus physical validation.
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
-- Confirm the combined 2026-09-28 corrections during a subsequent real League recording including window transitions and successful finalization; the latest game was captured with the pre-fix release and therefore does not prove the new target-close path.
 
 ## Verification
 
@@ -67,6 +67,16 @@ No valid League matrix, negligible-impact claim, AMD/Intel implementation or har
 - The target-close correction was then implemented and verified locally: 121 recorder library tests, 3 binary tests, and 3 fixture tests passed (5 ignored), strict all-target/all-feature Clippy passed, formatting passed, the locked release build passed, and `--diagnose` resolved the staged r6 runtime. A real post-fix League finalization run remains required.
 - Capture-benchmark analyzer/collector tests passed 60/60; canonical validation passed for 60 items and 8 plan/checkpoint pairs; diff hygiene passed. The corrected release initialized at 12:48:59 UTC (PID 18552) with the verified r6 runtime. Its existing silent-audio fallback remains unchanged. The separate API diagnostic completed its 40-minute duration at 12:04:03 UTC and is stopped.
 
+2026-09-29 fragmented-MP4 finalizer correction:
+
+- Run `1790608674` logged graceful selected-HWND closure, reconciled 4,705 encoded frames, and a 118,909,806-byte partial, then failed publication. Its ffprobe summary omitted `nb_frames`; a separate read-only packet count found exactly 4,705. The live poller reported 87 successful responses and zero JSON write failures. This failure was the validator's missing fragmented-container count, not capture or target-close teardown.
+- Added five fragment-reader unit tests covering video/audio separation, malformed/truncated/missing media boxes, ambiguous tracks, nonempty initial tables, optional sample fields, deadline/box limits, and an 8-GiB virtual media payload that must never be read. Focused finalizer tests passed 8/8; the opt-in real-file test was then exercised separately.
+- `cargo test --manifest-path recorder/Cargo.toml --all-features finalizer::tests::real_fragmented_media_validates_and_publishes_a_copy -- --ignored --exact --nocapture` passed using the staged r6 ffprobe and `QUEUEBACK_FINALIZER_MEDIA`/`QUEUEBACK_FINALIZER_FRAMES` for `1790608674` (4,705 samples, 46.5447 ms validation) and `1790606051` (42,540 samples, 91.6437 ms). Both rejected an intentional one-frame producer mismatch and successfully published only disposable copies. Original SHA-256 hashes were unchanged before/after each check; the user library remains partial and has not been recovered or modified.
+- Recorder all-target/all-feature check and tests passed (126 library, 3 binary, 3 fixture tests; 6 opt-in tests ignored in the default suite, including the separately exercised real-file test). Formatting and strict all-target/all-feature Clippy passed. These are focused correctness/latency observations, not a new formal long-file benchmark or a full live-game success claim.
+- `cargo build --release --locked --manifest-path recorder/Cargo.toml` passed, replacing `recorder/target/release/recorder.exe`. Canonical validation passed for 60 items and 8 plan/checkpoint pairs; diff hygiene passed.
+- Release `--diagnose` resolved the staged r6 runtime and NVENC/H.264 High. The default-log attempt was sandbox-denied under AppData; rerunning with `LEAGUE_REPLAY_LOG_DIR` under `build/perf/finalizer-fix-diagnostics` passed. Diagnostics still reports the existing silent-stereo fallback (no Windows loopback device found); this fix does not change audio discovery.
+- Real post-fix Practice Tool run `1790670285` produced canonical `video.mp4`, `metadata.json`, and identity-matched schema-v2 `game_log.json`. Selected-HWND closure at 08:25:28.136 UTC followed the normal finalization path and publication completed at 08:25:28.200 UTC with no recorder error. The 63,752,518-byte video contains exactly 2,463 H.264 1920x1080/60-FPS frames (41.05 seconds); packaged ffprobe packet count matches producer/metadata, and strict single-thread full decode passed. The poller retained available calibration, 2 events and 4 snapshots with 45 successful responses and zero JSON write failures. The independent diagnostic captured LCU phases and Live data; raw captures remain local/ignored. The user subsequently launched the app and confirmed it all worked. This is real finalization/playback evidence, not a formal performance or long-match reliability pass. Audio remains the known silent fallback and is explicitly deferred by the user.
+
 ## Deviations
 
 The original approved plan retained a packaged external FFmpeg WGC backend as an explicit alternative and current AMF/QSV route. The 2026-09-01 product architecture decision and capability audit materially invalidated that design: the external path had no unique validated production obligation, duplicated capture/lifecycle ownership, and exposed only unvalidated codec/vendor combinations. The original plan remains unchanged as history; the versioned v3 plan is the current design.
@@ -83,8 +93,8 @@ The first 1,800-second wrapper discarded its in-memory resource samples after a 
 
 ## Blockers
 
-The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target has not been run. The timestamp and tiny-size failures are corrected with local evidence, and the subsequent WGC teardown crash has a local containment/order fix, but a complete League recording with transitions and successful finalization has not yet been verified on the combined release. Generated-window evidence cannot substitute for the formal performance matrix.
+The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target has not been run. The combined release now has a successful real short-session finalization and user-confirmed app playback, but that is not the required sustained capture/performance matrix. Generated-window or short-session evidence cannot substitute for that matrix.
 
 ## Next action
 
-Verify a real League match using the rebuilt release recorder, including window transitions and successful finalization. Inspect any unusable-size warning and recording progress; the independent API diagnostic's prior 40-minute run is complete and must be restarted if needed. The formal performance matrix remains a separate next step under the approved v3 design.
+Recorder-fix verification is complete. The user's next requested work is refinement of the data features using existing captures, with audio deferred. When returning to QB-PERF-002, run the outstanding formal performance matrix under the approved v3 design; do not reopen the verified finalizer correction without new contradictory evidence.

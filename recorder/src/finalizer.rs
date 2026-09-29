@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use chronobreak_replay_time::{
@@ -12,6 +12,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::storage::{METADATA_JSON, VIDEO_MP4};
+
+mod fragments;
 
 const FINALIZATION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const FINALIZATION_PROBE_OUTPUT_LIMIT: usize = 1024 * 1024;
@@ -121,11 +123,16 @@ pub(crate) async fn validate_candidate(
         bail!("finalization expectations do not match the private candidate evidence");
     }
     expectations.require_zero_video_start = true;
-    let output = run_packaged_probe(ffprobe, candidate.partial_path()).await?;
+    let deadline = Instant::now() + FINALIZATION_PROBE_TIMEOUT;
+    let mut output = run_packaged_probe(ffprobe, candidate.partial_path()).await?;
     #[cfg(feature = "replay-time-fixture")]
     let probe_stdout_bytes = output.stdout.len();
     #[cfg(feature = "replay-time-fixture")]
     let probe_stderr_bytes = output.stderr.len();
+    if output.success && !output.timed_out && !output.exceeded_output_limit {
+        complete_fragmented_frame_count(&mut output.stdout, candidate.partial_path(), deadline)
+            .await?;
+    }
     let timeline = evaluate_probe_output(output, expectations)?;
     Ok(ValidatedVideoCandidate {
         candidate,
@@ -135,6 +142,37 @@ pub(crate) async fn validate_candidate(
         #[cfg(feature = "replay-time-fixture")]
         probe_stderr_bytes,
     })
+}
+
+async fn complete_fragmented_frame_count(
+    stdout: &mut Vec<u8>,
+    media: &Path,
+    deadline: Instant,
+) -> Result<()> {
+    let mut summary: serde_json::Value = serde_json::from_slice(stdout)?;
+    let streams = summary["streams"]
+        .as_array_mut()
+        .context("ffprobe streams missing")?;
+    let mut videos = streams
+        .iter_mut()
+        .filter(|stream| stream["codec_type"] == "video");
+    let video = videos.next().context("ffprobe video stream missing")?;
+    if videos.next().is_some() || !video["nb_frames"].is_null() {
+        return Ok(()); // The strict parser still rejects ambiguous/malformed summaries.
+    }
+    let path = media.to_path_buf();
+    let count = tokio::time::timeout(
+        deadline.saturating_duration_since(Instant::now()),
+        tokio::task::spawn_blocking(move || fragments::video_sample_count(&path, deadline)),
+    )
+    .await
+    .context("finalized-media fragment scan exceeded its five-second deadline")?
+    .context("fragment scan worker failed")??;
+    // This is an independent count from actual fragment tables, never duration * FPS
+    // or the producer's expected value. All existing consistency checks still run.
+    video["nb_frames"] = count.to_string().into();
+    *stdout = serde_json::to_vec(&summary)?;
+    Ok(())
 }
 
 /// Successful observation from the production finalized-media validator.
@@ -506,5 +544,73 @@ mod tests {
         assert!(partial.exists());
         assert!(!directory.path().join(VIDEO_MP4).exists());
         assert!(!directory.path().join(METADATA_JSON).exists());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires QUEUEBACK_FINALIZER_MEDIA, QUEUEBACK_FINALIZER_FFPROBE and QUEUEBACK_FINALIZER_FRAMES; reads source unchanged and publishes only a temporary copy"]
+    async fn real_fragmented_media_validates_and_publishes_a_copy() {
+        let source = PathBuf::from(std::env::var_os("QUEUEBACK_FINALIZER_MEDIA").unwrap());
+        let ffprobe = PathBuf::from(std::env::var_os("QUEUEBACK_FINALIZER_FFPROBE").unwrap());
+        let frames = std::env::var("QUEUEBACK_FINALIZER_FRAMES")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let partial = directory.path().join("video.partial.mp4");
+        std::fs::copy(&source, &partial).unwrap();
+        let expectations = FinalizationExpectationsV2 {
+            media_id: media_id(),
+            expected_video_codec: "h264".to_owned(),
+            expected_audio_codec: Some("aac".to_owned()),
+            producer: ProducerEvidenceV2 {
+                expected_frame_count: FrameBoundary::new(frames).unwrap(),
+                ..timeline().producer
+            },
+            capture: None,
+            require_zero_video_start: true,
+        };
+        let probe = run_packaged_probe(&ffprobe, &partial).await.unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+        assert!(
+            raw["streams"][0]["nb_frames"].is_null(),
+            "fixture must exercise fragmented MP4 with no nb_frames"
+        );
+        let make = |count| {
+            CompletedVideoCandidate::new(
+                directory.path().to_path_buf(),
+                partial.clone(),
+                rational(60, 1),
+                FrameBoundary::new(count).unwrap(),
+            )
+            .unwrap()
+        };
+        let mut wrong = expectations.clone();
+        wrong.producer.expected_frame_count = FrameBoundary::new(frames + 1).unwrap();
+        let error = validate_candidate(&ffprobe, make(frames + 1), wrong)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("video frame count does not match"));
+        assert!(partial.is_file());
+        let started = Instant::now();
+        let validated = validate_candidate(&ffprobe, make(frames), expectations)
+            .await
+            .unwrap();
+        assert_eq!(validated.timeline.video.frame_count.get(), frames);
+        println!(
+            "fragmented finalization: {} samples in {:?}",
+            frames,
+            started.elapsed()
+        );
+        let metadata = TestMetadata {
+            schema_version: 2,
+            media_timeline: validated.timeline.clone(),
+        };
+        publish_validated_candidate(validated, &media_id(), &metadata)
+            .await
+            .unwrap();
+        assert!(directory.path().join(VIDEO_MP4).is_file());
+        assert!(directory.path().join(METADATA_JSON).is_file());
+        assert!(!partial.exists());
+        assert!(source.is_file());
     }
 }

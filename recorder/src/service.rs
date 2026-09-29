@@ -1374,7 +1374,7 @@ async fn stop_recording_inner(
                     true
                 }
                 Err(error) => {
-                    error!(error = %error, "recording finalization/publication failed");
+                    error!(error = %format!("{error:#}"), "recording finalization/publication failed");
                     events(ServiceEvent::Error {
                         message: format!(
                             "Recording media could not prove the canonical replay-time contract; no canonical video or metadata was published. Any recoverable output remains under an explicit .partial.mp4 name: {error:#}"

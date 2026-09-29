@@ -30,6 +30,8 @@ All rational multiplication/division is checked for overflow. A conversion must 
 
 The recorder writes only a private `video.partial.mp4` while recording. On stop, it performs a bounded packaged-ffprobe stream-summary probe (five seconds and one MiB combined output maximum), reconciles the candidate against recorder evidence, constructs v2 metadata, and atomically publishes canonical video and metadata. Uncertain, malformed, timeout, or identity-mismatched candidates remain partial and are never promoted.
 
+For the native empty-moov fragmented MP4, ffprobe omits `nb_frames`. The finalizer obtains that missing fact by counting the selected video track's `trun` samples in complete `moof`/`mdat` pairs, seeking past encoded media rather than scanning or decoding it. This fixed-memory header reader shares the five-second probe deadline and rejects malformed/truncated tables, nonempty initial sample tables, and ambiguous video tracks. The independently observed count then passes through the unchanged strict timeline/producer reconciliation; it is never inferred from duration or copied from the expected producer count.
+
 ## Viewer synchronization
 
 The viewer tracks four distinct facts: requested preview target, dispatched seek, seeked observation, and presented frame. Every dispatched seek has a monotonically increasing epoch within a media generation. Recovery increments the generation and invalidates every older event. A qualifying RVFC frame settles only its current generation/epoch; a stale or off-target callback cannot overwrite presentation state.
