@@ -8,13 +8,15 @@ Updated: 2026-10-08
 
 Milestone 4: real app-closed validation. Implementation, automated checks,
 production builds and generated missing-data media validation pass. The feature
-remains in-progress until actual WIN/LOSS/aborted/delayed/consecutive-game evidence.
+remains in-progress. The first current-build app-closed WIN recording passes;
+LOSS, aborted/remake, delayed/consecutive-game and full resource evidence remain.
 
 ## Active unit
 
-The rebuilt recorder is ready for an ordinary match with the viewer closed.
-Inspect exact provisional/result association after the match and collect the
-primary-local LOSS encoding before enabling LOSS. No minimum duration applies.
+The first real Co-op vs AI recording passed exact association, final-stat,
+production-consumer and full-media inspection. The recorder remains ready for the
+next match; the user agreed to run a LOSS case. Inspect the next bundle and collect
+the primary-local LOSS encoding before enabling LOSS. No minimum duration applies.
 
 ## Completed
 
@@ -39,6 +41,10 @@ primary-local LOSS encoding before enabling LOSS. No minimum duration applies.
 - Added bounded optional app reading in the existing replay slot, a compact result
   summary in library scans, typed frontend decoding and EOG-labelled viewer totals.
   Descriptor/media mounting and recorded totals remain independent of result facts.
+- Validated the first actual current-build app-closed WIN recording on 2026-10-08:
+  exact candidate/result game identity, consistent core media identity, ten-player
+  final facts, unchanged sidecars during production-consumer inspection and clean
+  full H.264/AAC decode. Detailed evidence is below.
 - Read-only implementation audit identified expiry/cancellation, nested parsing,
   false-local flags, conflicting team winner flags, coverage and optional-startup
   issues. Corrected these paths and added focused tests.
@@ -71,12 +77,15 @@ the test config was corrected to High. The
 viewer is closed. `build/qb-data-002/active-validation.json` records the local
 PID, executable and paths; verify these before relying on the process on resume.
 This local process/config/evidence is not transferred to another PC by Git.
+The first bundle is `library/games/1791450934`; it finalized and received a confirmed
+WIN result. PID 14560 was verified alive/idle after publication. Keep it running
+for consecutive-game validation; the user agreed to run a LOSS case next.
 
 ## Remaining
 
-1. Record actual app-closed WIN and local LOSS sessions, plus aborted/remake,
-   delayed and consecutive games as available. Verify exact candidate/EOG game ID,
-   source/result stats, media/events and saved-state compatibility.
+1. Record an actual app-closed local LOSS session, plus aborted/remake, delayed and
+   consecutive games as available. The first WIN case passes. Verify exact
+   candidate/EOG game ID, source/result stats, media/events and saved-state compatibility.
 2. Establish the real primary-local LOSS encoding (aggregate confirmation logs
    distinguish binary 1/0 without emitting identifiers), then enable LOSS and
    rerun the affected outcome checks.
@@ -85,6 +94,42 @@ This local process/config/evidence is not transferred to another PC by Git.
 
 ## Verification
 
+- 2026-10-08 real app-closed Co-op vs AI WIN, current release build at `03a50a9`:
+  ignored root `build/qb-data-002/live-b9526871-6d9f-4695-8fab-9cff146cb20a`,
+  bundle `library/games/1791450934`. Target closure at 09:28:06.053 UTC, healthy
+  canonical publication at 09:28:06.395, EOG confirmation at 09:28:16.120.
+  The exact decimal candidate/result game IDs agree; metadata, log, provisional
+  and result media UUIDs agree. Local Riot ID and champion agree; Live ORDER maps
+  to EOG team 100. Candidate queue 890 and EOG SWIFTPLAY labels are compatible.
+  Source is `lcu_eog`, confirmed WIN, not ended early, no label mismatch.
+  Aggregate primary WIN counters are one binary 1 and zero binary 0 observations.
+  This confirms WIN only; it does not establish primary-local LOSS encoding.
+- Final result: 21,785 bytes, two teams/five players each; local 21/4/2 KDA,
+  76 minions, 17,722 gold earned, 31,910 champion damage, seven retained item slots,
+  six rune/perk counters. Combat/economy/damage/support/vision/objectives/runes are
+  present and loadout is explicitly partial. No PUUID is stored in the result.
+- Existing production app functions were exercised read-only through the ignored
+  source-import harness `build/qb-data-002/consumer-verifier`: `replay_descriptor`,
+  `playback_probe` and `list_games` all accepted the real bundle. Descriptor/full
+  probe timelines agree; both result summaries agree and are 52 bytes. All 85
+  events map inside media; 18 player and 27 KDA timeline points project. Recorded
+  and final KDA both equal 21/4/2. Saved remains false and the four JSON sidecars
+  are byte-identical before/after inspection. One combined read/projection took
+  49,424 us; this is diagnostic timing, not a performance-budget claim.
+- Packaged r6 ffprobe verifies 1920x1080 H.264 at exact 60 FPS and stereo 48-kHz
+  AAC, duration 750.464 seconds, 1,138,203,185 bytes. Metadata records 45,027
+  encoded frames with terminal progress; game log has available five-sample
+  calibration, 73 snapshots, 85 chronological events and 343 derived changes.
+  Packaged FFmpeg strict single-thread full video/audio decode
+  (`-nostdin -v error -xerror -threads 1`, both streams, null output) exited 0
+  without errors. The existing no-loopback-device silent-track fallback was used;
+  this validates the media stream, not actual game-audio capture.
+- Current real-run resource evidence is partial: 003 collector logged four
+  requests/18,868 response bytes; post-game confirmation logged primary counters
+  and result size is known. EOG request/latency/pending/write totals emit only at
+  joined coordinator shutdown; this hidden headless instance has no external
+  shutdown command. They are not yet collected, and the process remains alive
+  for consecutive-game coverage. Do not force-kill it to claim those metrics.
 - 2026-10-08: production recorder release and Tauri desktop build passed. The
   current release recorder is the executable used by the isolated live run.
 - Generated 10-second missing-Live service fixture passed with healthy canonical
@@ -162,13 +207,17 @@ duration remains outside acceptance.
 
 ## Blockers
 
-Real local LOSS and remake/early-surrender encoding remain unobserved. Three
-older successful EOG captures prove local WIN=1 and opposing-roster WIN=0, but
-these are not current integrated-recorder evidence and do not enable LOSS.
+Real local LOSS and remake/early-surrender encoding remain unobserved. The current
+integrated WIN case and three older successful EOG captures prove local WIN=1;
+older opposing-roster WIN=0 does not enable LOSS. Full real EOG resource totals
+remain uncollected until an owned joined coordinator shutdown can be exercised.
 
 ## Next action
 
-Tell the user the recorder is running and ready; ask them to start an ordinary
-match with the viewer closed and report when it ends. Then inspect the isolated
-recording non-destructively, require exact provisional/result game ID equality,
-and record actual result coverage. No recording duration condition applies.
+The user agreed to play a LOSS case and has been told the recorder remains ready.
+When they report completion, verify PID/path and inspect the next isolated bundle
+non-destructively: exact provisional/result IDs, primary-local binary observation,
+corroborating team outcome, final stats and healthy media. Establish the actual
+local loss encoding before changing LOSS projection; then validate only the affected
+outcome dependency cone. Preserve the prior WIN bundle for consecutive identity
+isolation. No recording duration condition applies.
