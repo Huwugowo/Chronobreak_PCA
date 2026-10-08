@@ -293,6 +293,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chronobreak-league-data"
+version = "0.1.0"
+dependencies = [
+ "chronobreak-replay-time",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chronobreak-replay-time"
 version = "0.1.0"
 dependencies = [
@@ -1283,6 +1292,7 @@ name = "league-replay-recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chronobreak-league-data",
  "chronobreak-replay-time",
  "directories",
  "queueback-media-runtime",

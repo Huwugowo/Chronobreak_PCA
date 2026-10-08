@@ -112,6 +112,7 @@ pub(super) fn fixture_epoch(rotated: bool) -> Epoch {
 
 /// One owned blocking worker per discovery; callers always await it, even at stop.
 pub(super) async fn discover() -> Result<Discovered, &'static str> {
+    let _permit = DISCOVERY.acquire().await.map_err(|_| "discovery_permit")?;
     tokio::task::spawn_blocking(discover_blocking)
         .await
         .map_err(|_| "discovery_worker")?
@@ -193,6 +194,7 @@ fn discover_blocking() -> Result<Discovered, &'static str> {
 
 /// Recheck the same credentials/path/process after the round, with no new discovery.
 pub(super) async fn unchanged(discovered: Discovered) -> Result<bool, &'static str> {
+    let _permit = DISCOVERY.acquire().await.map_err(|_| "discovery_permit")?;
     tokio::task::spawn_blocking(move || {
         let credentials = parse_lockfile(&read_bounded(&discovered.lockfile, LOCKFILE_LIMIT)?)?;
         if credentials != discovered.credentials {
@@ -244,6 +246,10 @@ pub(super) struct Transport {
     http: Client,
 }
 
+// Shared with the provisional collector across consecutive recording lifetimes.
+static HTTP: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+static DISCOVERY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 #[derive(Default, Serialize)]
 pub(super) struct Metrics {
     pub requests: u64,
@@ -255,17 +261,30 @@ pub(super) struct Metrics {
 enum Endpoint {
     Summoner,
     Gameflow,
+    Eog,
 }
 impl Endpoint {
     fn path(&self) -> &'static str {
         match self {
             Self::Summoner => "/lol-summoner/v1/current-summoner",
             Self::Gameflow => "/lol-gameflow/v1/session",
+            Self::Eog => "/lol-end-of-game/v1/eog-stats-block",
         }
     }
 }
 
 impl Transport {
+    pub(super) async fn eog(
+        &self,
+        discovered: &Discovered,
+        metrics: &mut Metrics,
+        directory: &super::sidecar::DirectoryGuard,
+    ) -> Result<super::result::Eog, &'static str> {
+        self.get_if(&discovered.credentials, Endpoint::Eog, metrics, || {
+            directory.available()
+        })
+        .await
+    }
     pub(super) fn new() -> Result<Self, &'static str> {
         Ok(Self {
             http: Client::builder()
@@ -301,6 +320,19 @@ impl Transport {
         endpoint: Endpoint,
         metrics: &mut Metrics,
     ) -> Result<T, &'static str> {
+        self.get_if(credentials, endpoint, metrics, || true).await
+    }
+    async fn get_if<T: DeserializeOwned>(
+        &self,
+        credentials: &Credentials,
+        endpoint: Endpoint,
+        metrics: &mut Metrics,
+        admissible: impl FnOnce() -> bool,
+    ) -> Result<T, &'static str> {
+        let _permit = HTTP.acquire().await.map_err(|_| "http_permit")?;
+        if !admissible() {
+            return Err("lcu_admission_closed");
+        }
         metrics.requests += 1;
         metrics.last_endpoint = Some(endpoint.path());
         metrics.last_http_status = None;

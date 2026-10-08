@@ -716,13 +716,14 @@
         "description": "Confirm a provisional in-game League match candidate through exact post-game LCU game identity, then attach authoritative results and useful participant/team statistics to the correct recording.",
       "priority": "P1",
       "area": "match-data",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-REPLAY",
       "dependencies": ["QB-DATA-001", "QB-DATA-003", "QB-REPLAY-012"],
         "evidence": [
           "2026-09-29 planning evidence only: three existing completed-match captures contain matching gameflow/end-of-game/history IDs. End-of-game supplies ten participants and two teams, while captured history supplies one participant; aborted practice can lack end-of-game data. See docs/product/league-data-capabilities.md.",
-          "User-approved data refinement expands the original result-only scope to useful allowlisted final gameplay statistics; no production acquisition or verification is claimed.",
-          "2026-10-01 design boundary: QB-DATA-003 records only a provisional gameId/queueId candidate. QB-DATA-002 must require exact gameId equality from /lol-end-of-game/v1/eog-stats-block before attaching final result/statistics; optional completed participant/champion data may corroborate recorded Live observations."
+          "User-approved data refinement expands the original result-only scope to useful allowlisted final gameplay statistics; the reviewed v2 is the current implementation design.",
+          "2026-10-01 design boundary: QB-DATA-003 records only a provisional gameId/queueId candidate. QB-DATA-002 must require exact gameId equality from /lol-end-of-game/v1/eog-stats-block before attaching final result/statistics; optional completed participant/champion data may corroborate recorded Live observations.",
+          "2026-10-08 implementation in progress: exact EOG confirmation, typed nullable final facts, 18-attempt/180-second/four-job in-memory coordinator, delete-shared generation-bound result writer and optional replay/library projections implemented. Automated recorder/app/frontend checks pass; real integrated WIN/LOSS/aborted/delayed/consecutive-game evidence remains required. Detailed results in docs/execution/qb-data-002.md; LOSS is disabled until a real primary-local encoding is observed."
         ],
       "execution": {
         "workflow": "planned",
@@ -2594,7 +2595,8 @@
         "QB-DIST-001"
       ],
       "evidence": [
-        "The recorder already supports tray/headless lifecycle and hides release console windows, but the app does not supervise an installed recorder or own login registration."
+        "The recorder already supports tray/headless lifecycle and hides release console windows, but the app does not supervise an installed recorder or own login registration.",
+        "2026-10-08 QB-DATA-002 setup discovery: recorder/src/main.rs run_headless waits for Ctrl+C before awaiting the service JoinHandle. An unsupported Medium native profile caused service initialization to fail while the headless process remained alive with no idle/recording state. Route early-service-failure visibility and supervision to this lifecycle unit; no fix is claimed by QB-DATA-002."
       ],
       "execution": {
         "workflow": "planned",

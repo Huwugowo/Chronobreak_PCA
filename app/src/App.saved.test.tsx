@@ -24,7 +24,7 @@ vi.mock("./components/SettingsScreen", () => ({ default: (props: { onBack: () =>
 </> }));
 const game: GameSummary = { timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-23T00:00:00Z",
   duration_ms: 10000, kills: 1, deaths: 2, assists: 3, items: [], participants: [], summoner_spells: [],
-  keystone_id: null, saved: false, incomplete: false, video_size_bytes: 1, video_available: true };
+  keystone_id: null, saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
 const snapshot = (token: string, saved = false): LibrarySnapshot => ({ token,
   games: [{ ...game, saved }], clips: [], usage: { games_bytes: 1, clips_bytes: 0, game_count: 1, clip_count: 0 } });
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (error: Error) => void;

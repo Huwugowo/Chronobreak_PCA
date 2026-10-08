@@ -26,6 +26,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
     incomplete: false,
     video_size_bytes: 1,
     video_available: true,
+    league_result: { outcome: "unknown", ended_early: true, partial: true },
   };
   const ddragon: DdragonStatus = {
     state: "offline",
@@ -57,6 +58,9 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
     onOpenClipsFolder={() => {}}
   />, host);
   expect(host.textContent).toContain("Ahri");
+  expect(host.textContent).toContain("Unknown");
+  expect(host.textContent).not.toContain("Defeat");
+  expect(host.textContent).not.toContain("Remake");
   expect(host.querySelector('[aria-label="Match History"]')).not.toBeNull();
   const roster = host.querySelector('[aria-label="Team rosters"]')!;
   expect(roster.querySelector('[data-team="ally"]')?.textContent).toContain("Ally");

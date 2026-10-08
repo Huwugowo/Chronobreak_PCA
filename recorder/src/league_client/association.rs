@@ -118,6 +118,17 @@ pub(crate) struct ProvisionalCandidate {
 }
 
 impl ProvisionalCandidate {
+    pub(super) fn result_binding(&self) -> super::result::Binding {
+        super::result::Binding {
+            media_id: self.media_id.clone(),
+            game_id: self.game_id.clone(),
+            puuid: self.local_puuid.clone(),
+            riot_id: self.local_riot_id.clone(),
+            map_id: self.live_map_id,
+            mode: self.live_mode.clone(),
+            queue_id: self.queue_id,
+        }
+    }
     pub(super) fn matches_media(&self, media_id: &MediaId) -> bool {
         self.media_id == *media_id
     }
@@ -273,6 +284,10 @@ impl Association {
     pub fn finish(&mut self) -> Option<ProvisionalCandidate> {
         self.close();
         self.candidate.take()
+    }
+
+    pub(super) fn snapshot(&self) -> Option<ProvisionalCandidate> {
+        self.candidate.clone()
     }
 }
 

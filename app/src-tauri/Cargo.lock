@@ -402,6 +402,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chronobreak-league-data"
+version = "0.1.0"
+dependencies = [
+ "chronobreak-replay-time",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chronobreak-replay-time"
 version = "0.1.0"
 dependencies = [
@@ -1741,6 +1750,7 @@ dependencies = [
  "anyhow",
  "atomicwrites",
  "axum",
+ "chronobreak-league-data",
  "chronobreak-replay-time",
  "directories",
  "getrandom 0.3.4",

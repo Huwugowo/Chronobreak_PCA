@@ -2,7 +2,9 @@
 
 mod association;
 pub(crate) mod collector;
+pub(crate) mod post_game;
 pub mod probe;
+mod result;
 pub(crate) mod sidecar;
 mod transport;
 

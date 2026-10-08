@@ -77,6 +77,28 @@ Optional completed participant/champion facts can corroborate recorded Live data
 but cannot replace exact game-ID confirmation. A provisional candidate remains
 explicitly non-authoritative until that handoff succeeds.
 
+The service snapshots that candidate at capture closure and starts a separate
+in-memory EOG job alongside poller/video shutdown. One coordinator owns at most
+four pending jobs, dropping the oldest on overflow: 18 attempts maximum, at least
+ten seconds between attempts, and expiry 180 seconds after closure. Transport
+permits serialize LCU HTTP and joined discovery workers across both collectors.
+Cancellation, expiry and deletion remain observable during acquisition. No journal
+or restart recovery exists, and optional setup failure leaves recording available.
+
+Confirmed facts wait for healthy canonical publication. The late result writer
+retains the allocation directory identity and installs one immutable, at-most-
+256-KiB `league_result.json` through exclusive creation, flush and handle-relative
+no-replace rename. Directory, temporary and read handles permit deletion. Before
+rename it rechecks the directory generation, core media UUID/timeline, provisional
+game ID and canonical video presence. Failure removes only its own temporary and
+cannot change media readiness, saved state or provisional context.
+
+`chronobreak-league-data` owns the shared typed result contract. The recorder skips
+unlisted fields, retains nullable numeric counters and coarse family coverage,
+rejects association contradictions, and keeps stats with an unknown outcome when
+binary WIN corroboration disagrees. WIN:0 remains unknown until a real local LOSS
+payload establishes that encoding; aggregate team.stats.WIN is never outcome proof.
+
 ## Performance constraints
 
 Watcher cadence is two seconds; event polling is one second; snapshots are ten seconds. Tokio missed ticks use delay semantics to avoid burst catch-up. Capture diagnostics are aggregate first/progress/terminal messages, not per-frame logs. Video remains in a bounded GPU-resident graph, and no full-video pass occurs at match end.

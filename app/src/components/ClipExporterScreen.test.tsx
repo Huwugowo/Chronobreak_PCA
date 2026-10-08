@@ -27,13 +27,13 @@ it("retries the same imported file after preparation fails and releases the succ
   const probe: PlaybackProbe = {
     game: { timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-14T00:00:00Z",
       kills: 1, deaths: 2, assists: 3, duration_ms: 240_000, summoner_spells: [], keystone_id: null,
-      items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true },
+      items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null },
     video_url: "http://127.0.0.1:123/games/1/video.mp4",
     media_timeline: { mediaId: parseMediaId("11111111-2222-4333-8444-555555555555"),
       video: { codec: "h264", profile: "High", timeBase: { numerator: 1n, denominator: 60n }, firstPts: 0n,
         frameRate: { numerator: 60n, denominator: 1n }, frameCount: 14_400 as FrameBoundary,
         onePastLastPts: 14_400n, replayEnd: 11_520_000_000 as ReplayTick }, audio: { present: true } },
-    local_player_name: null, league_match: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
+    local_player_name: null, league_match: null, league_result: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
   };
   const path = "C:\\Music\\same.wav";
   const preview = { url: "http://127.0.0.1:123/music-preview/retry", token: "retry" };

@@ -15,6 +15,7 @@ export type GameSummary = {
   incomplete: boolean;
   video_size_bytes: number;
   video_available: boolean;
+  league_result: import("./leagueResult").LeagueResultSummary | null;
 };
 
 export type GameItemSummary = {
@@ -198,6 +199,7 @@ export type PlaybackProbe = {
   media_timeline: import("./replayTime").MediaTimelineV2;
   local_player_name: string | null;
   league_match: LeagueMatch | null;
+  league_result: import("./leagueResult").LeagueResult | null;
   participants: ReplayParticipant[];
   player_timeline: PlayerTimelinePoint[];
   kda_timeline: KdaTimelinePoint[];

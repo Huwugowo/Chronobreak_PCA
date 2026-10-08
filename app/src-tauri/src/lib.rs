@@ -5,6 +5,7 @@ mod clip_export;
 mod config;
 mod ddragon;
 mod league_match;
+mod league_result;
 mod library;
 mod library_coordinator;
 mod music;

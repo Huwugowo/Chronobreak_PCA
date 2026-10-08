@@ -21,6 +21,7 @@ default = []
 replay-benchmark = []
 
 [dependencies]
+chronobreak-league-data = { path = "../../league-data" }
 anyhow = "1"
 atomicwrites = "0.4"
 axum = "0.8"

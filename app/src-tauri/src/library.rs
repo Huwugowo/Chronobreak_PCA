@@ -37,6 +37,7 @@ pub struct GameSummary {
     pub incomplete: bool,
     pub video_size_bytes: u64,
     pub video_available: bool,
+    pub league_result: Option<chronobreak_league_data::Summary>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -152,6 +153,7 @@ pub struct PlaybackProbe {
     pub media_timeline: MediaTimelineV2,
     pub local_player_name: Option<String>,
     pub league_match: Option<crate::league_match::LeagueMatch>,
+    pub league_result: Option<chronobreak_league_data::ResultFile>,
     pub participants: Vec<ReplayParticipant>,
     pub player_timeline: Vec<PlayerTimelinePoint>,
     pub kda_timeline: Vec<KdaTimelinePoint>,
@@ -539,7 +541,14 @@ pub fn playback_probe(
     let video_size_bytes = fs::metadata(game_directory.join(VIDEO_MP4))
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let game = game_summary_from_bundle(video_size_bytes, timestamp.to_owned(), &metadata, &log);
+    let mut game =
+        game_summary_from_bundle(video_size_bytes, timestamp.to_owned(), &metadata, &log);
+    let league_match = crate::league_match::read(&game_directory, &metadata.media_id);
+    let league_result =
+        crate::league_result::read(&game_directory, &metadata.media_id, league_match.as_ref());
+    game.league_result = league_result
+        .as_ref()
+        .map(chronobreak_league_data::ResultFile::summary);
     if !game.video_available {
         bail!("recording video is unavailable");
     }
@@ -591,7 +600,8 @@ pub fn playback_probe(
         game,
         media_timeline: metadata.media_timeline,
         local_player_name,
-        league_match: crate::league_match::read(&game_directory, &metadata.media_id),
+        league_match,
+        league_result,
         participants,
         player_timeline,
         kda_timeline,
@@ -781,7 +791,14 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let Ok((metadata, game_log)) = read_recording_bundle(directory) else {
         return incomplete_summary(timestamp, video_size_bytes);
     };
-    game_summary_from_bundle(video_size_bytes, timestamp, &metadata, &game_log)
+    let mut game = game_summary_from_bundle(video_size_bytes, timestamp, &metadata, &game_log);
+    if game.video_available {
+        let candidate = crate::league_match::read(directory, &metadata.media_id);
+        game.league_result =
+            crate::league_result::read(directory, &metadata.media_id, candidate.as_ref())
+                .map(|r| r.summary());
+    }
+    game
 }
 
 fn game_summary_from_bundle(
@@ -822,6 +839,7 @@ fn game_summary_from_bundle(
         incomplete: false,
         video_size_bytes,
         video_available: video_size_bytes > 0,
+        league_result: None,
     }
 }
 
@@ -843,6 +861,7 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
         incomplete: true,
         video_size_bytes,
         video_available: video_size_bytes > 0,
+        league_result: None,
     }
 }
 

@@ -24,6 +24,9 @@ use crate::encoder::{
 };
 use crate::finalizer::{CompletedVideoCandidate, publish_validated_candidate, validate_candidate};
 use crate::league_client::collector::ContextSession;
+use crate::league_client::post_game::{
+    Coordinator as PostGameCoordinator, Handle as PostGameHandle,
+};
 use crate::league_client::sidecar::{ContextWriter, DirectoryGuard};
 #[cfg(target_os = "windows")]
 use crate::native::{
@@ -69,6 +72,7 @@ struct ActiveRecording {
     poller: PollerSession,
     match_context: Option<ContextSession>,
     match_directory: Option<DirectoryGuard>,
+    post_game: Option<PostGameHandle>,
     details: RecordingDetails,
 }
 
@@ -482,6 +486,13 @@ pub async fn run(
     let mut control_telemetry = RecorderControlTelemetry::default();
     let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
+    let post_game = match PostGameCoordinator::start() {
+        Ok(coordinator) => Some(coordinator),
+        Err(code) => {
+            warn!(code, "optional post-game enrichment unavailable");
+            None
+        }
+    };
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
@@ -493,6 +504,7 @@ pub async fn run(
                         stop_recording(recording, &events).await;
                     }
                     log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
+                    if let Some(post_game)=post_game { post_game.stop().await; }
                     events(ServiceEvent::ShutdownComplete);
                     return Ok(());
                 }
@@ -530,7 +542,8 @@ pub async fn run(
                     let attempt = starting.take().expect("finished startup attempt exists");
                     let process = attempt.process;
                     match attempt.task.await {
-                        Ok(Ok(recording)) if current_process == Some(process) => {
+                        Ok(Ok(mut recording)) if current_process == Some(process) => {
+                            recording.post_game = post_game.as_ref().map(PostGameCoordinator::handle);
                             control_telemetry.startup_ready =
                                 control_telemetry.startup_ready.saturating_add(1);
                             startup_retry.reset();
@@ -1242,6 +1255,7 @@ async fn start_recording(
         poller,
         match_context,
         match_directory,
+        post_game: None,
         details: RecordingDetails {
             encoder_used: plan.encoder().label().to_owned(),
             codec: plan.codec().label().to_owned(),
@@ -1324,12 +1338,20 @@ async fn stop_recording_inner(
         poller,
         match_context,
         match_directory,
+        post_game,
         mut details,
     } = recording;
     let recorded_at = session.recorded_at();
     let duration = session.video_started_at().elapsed();
     if let Some(context) = &match_context {
-        context.close_admission();
+        let candidate = context.close_and_snapshot();
+        if failure_reason.is_none()
+            && let (Some(handle), Some(candidate), Some(directory)) =
+                (&post_game, candidate, &match_directory)
+            && let Ok(directory) = directory.try_clone()
+        {
+            handle.submit(&candidate, directory);
+        }
     }
     let context_stop = async {
         match match_context {
@@ -1431,10 +1453,16 @@ async fn stop_recording_inner(
             .await;
             match published {
                 Ok(directory) => {
+                    if let Some(handle) = &post_game {
+                        handle.published(media_id.clone());
+                    }
                     info!(directory = %directory.display(), "validated recording published");
                     true
                 }
                 Err(error) => {
+                    if let Some(handle) = &post_game {
+                        handle.cancel(media_id.clone());
+                    }
                     error!(error = %format!("{error:#}"), "recording finalization/publication failed");
                     events(ServiceEvent::Error {
                         message: format!(
@@ -1446,6 +1474,9 @@ async fn stop_recording_inner(
             }
         }
         Err(stop_error) => {
+            if let Some(handle) = &post_game {
+                handle.cancel(media_id.clone());
+            }
             error!(error = %stop_error, "recording stopped with an error");
             events(ServiceEvent::Error {
                 message: format!(

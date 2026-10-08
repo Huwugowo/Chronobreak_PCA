@@ -140,6 +140,15 @@ impl ContextSession {
         self.cancellation.send_replace(true);
     }
 
+    pub(crate) fn close_and_snapshot(&self) -> Option<ProvisionalCandidate> {
+        let candidate = self.state.lock().ok().and_then(|mut state| {
+            state.close();
+            state.snapshot()
+        });
+        self.cancellation.send_replace(true);
+        candidate
+    }
+
     pub async fn stop(mut self) -> Result<ContextResult, &'static str> {
         self.close_admission();
         // Await rather than abort: a blocking OS worker may extend this join.

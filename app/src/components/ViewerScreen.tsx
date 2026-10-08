@@ -1134,12 +1134,25 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
           <span>{details()?.local_player_name ?? "LOCAL PLAYER"}</span>
           <Show when={details()?.league_match}>{(context) =>
             <p data-testid="league-match-context">
-              {context().status === "provisional" ? "Match provisional" : "Match confirmed"}
+              {details()?.league_result ? "Match confirmed" : "Match provisional · Result unknown"}
               {` · GAME ${context().game_id} · QUEUE ${context().queue_id}`}
+            </p>
+          }</Show>
+          <Show when={details()?.league_result}>{(result) =>
+            <p data-testid="league-result">
+              EOG · {result().outcome === "win" ? "WIN" : result().outcome === "loss" ? "LOSS" : "Outcome unknown"}
+              {Object.values(result().coverage).some(v => v !== "present") ? " · Partial final facts" : " · Final facts complete"}
+              {result().ended_early ? " · Ended early" : ""}
             </p>
           }</Show>
         </div>
         <dl>
+          <Show when={details()?.league_result?.local_player}>{(player) =>
+            <div>
+              <dt>FINAL EOG K / D / A</dt>
+              <dd>{player().stats.kills ?? "—"} / {player().stats.deaths ?? "—"} / {player().stats.assists ?? "—"}</dd>
+            </div>
+          }</Show>
           <div>
             <dt>RECORDED K / D / A</dt>
             <dd>

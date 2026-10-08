@@ -23,6 +23,7 @@ const playbackWire = () => ({
     incomplete: false,
     video_size_bytes: 1024,
     video_available: true,
+    league_result: null,
   },
   video_url: "http://127.0.0.1:9000/games/1787904000/video.mp4",
   media_timeline: {
@@ -63,6 +64,7 @@ const playbackWire = () => ({
   },
   local_player_name: "QB-Blue-1#TEST",
   league_match: null as unknown,
+  league_result: null as unknown,
   participants: [
     { summoner_name: "QB-Blue-1#TEST", champion: "Ahri", relation: "ally" },
   ],

@@ -53,11 +53,16 @@ const formatKdaRatio = (game: GameSummary): string => {
   return `${((game.kills + game.assists) / game.deaths).toFixed(2)}:1 KDA`;
 };
 
-const displayedOutcome = (game: GameSummary): PreviewMatchOutcome | null =>
-  game.incomplete ? null : previewMatchOutcomeFor(game.timestamp);
+const displayedOutcome = (game: GameSummary): PreviewMatchOutcome | "unknown" | null => {
+  if (game.incomplete) return null;
+  if (game.league_result) return game.league_result.outcome === "win" ? "victory" : game.league_result.outcome === "loss" ? "defeat" : "unknown";
+  return previewMatchOutcomeFor(game.timestamp);
+};
 
-const outcomeLabel = (outcome: PreviewMatchOutcome): string => {
+const outcomeLabel = (outcome: PreviewMatchOutcome | "unknown"): string => {
   switch (outcome) {
+    case "unknown":
+      return "Unknown";
     case "victory":
       return "Victory";
     case "defeat":

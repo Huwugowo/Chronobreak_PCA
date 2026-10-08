@@ -12,6 +12,7 @@ The configured output directory is the library root:
       game_log.json
       metadata.json
       league_match.json  # optional provisional context
+      league_result.json # optional confirmed EOG facts
   clips/
     <source-timestamp>_<clip-timestamp>.mp4
     <source-timestamp>_<clip-timestamp>.jpg
@@ -109,15 +110,31 @@ identity, so late work cannot publish into a newer view.
 
 The app treats malformed or incomplete entries conservatively: recognized bundles are parsed into summaries; playback requires mandatory properties such as a usable recording frame rate. Missing League data is represented as absent rather than inferred.
 
-Only the full PlaybackProbe reads optional `league_match.json`, within its existing
+The full PlaybackProbe reads optional `league_match.json`, within its existing
 owned replay-read slot after strict core bundle validation. The reader accepts a
 regular file with at most 64 KiB of actual bytes, schema version 1, matching media ID,
 canonical positive decimal game ID, required u32 queue ID, bounded full Riot ID,
 compatible map/mode and ordered two-round provenance. Invalid or absent context
 becomes null and never invalidates playback. The projection omits PUUID, epoch nonce
-and request evidence. Core scans, ReplayDescriptor and replay-time schemas do not
-read or depend on this sidecar. Version 1 is provisional; a bare confirmed marker
-is rejected until QB-DATA-002 supplies its confirmation contract.
+and request evidence. Core scans use this context only to validate optional final
+facts; ReplayDescriptor and replay-time schemas remain independent. Version 1 is
+provisional; a bare confirmed marker
+is rejected: confirmation belongs to a separate `league_result.json`.
+
+The result reader is capped at 256 KiB, validates the shared typed schema and array
+bounds, and requires the core media UUID and validated provisional game ID to
+agree. Invalid, missing, unsupported or mismatched facts are absent. Full replay
+details expose nullable final statistics and EOG provenance separately from recorded
+totals. The library scan reads optional facts once per valid video bundle and emits
+only outcome, ended-early and partial flags (no scoreboard in the core IPC payload).
+Confirmed unknown outcomes never become Defeat or Remake. ReplayDescriptor and
+video mounting do not read either optional sidecar.
+
+Result writing yields to existing deletion without adding a deletion protocol.
+A narrow delete/write race can leave an empty directory or stray sidecar. Existing
+scans can show timestamp-named directories without valid core data as incomplete
+entries; they cannot supply confirmed facts or playable media from a stray result.
+This is the existing library behavior, including the deliberate v2 race acceptance.
 
 ## Clips
 
