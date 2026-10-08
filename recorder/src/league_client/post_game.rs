@@ -111,7 +111,10 @@ mod tests {
             settle().await;
             assert!(joined.load(std::sync::atomic::Ordering::SeqCst));
             stop.send_replace(true);
-            worker.await.unwrap();
+            let totals = worker.await.unwrap();
+            assert_eq!(totals.cancelled, u64::from(action == 0));
+            assert_eq!(totals.deleted, u64::from(action == 1));
+            assert_eq!(totals.expired, u64::from(action == 2));
         }
     }
     #[tokio::test(start_paused = true)]
@@ -137,7 +140,15 @@ mod tests {
             settle().await;
         }
         stop.send_replace(true);
-        worker.await.unwrap();
+        let totals = worker.await.unwrap();
+        assert_eq!(totals.peak, MAX_PENDING);
+        assert_eq!(totals.dropped, 1);
+        assert_eq!(totals.expired, MAX_PENDING as u64);
+        assert_eq!(
+            totals.attempts,
+            (MAX_PENDING as u64) * u64::from(MAX_ATTEMPTS)
+        );
+        assert_eq!(totals.not_ready_responses, totals.attempts);
         let times = calls.lock().unwrap();
         assert_eq!(times.len(), 4 * 18);
         for batch in times.chunks_exact(4).collect::<Vec<_>>().windows(2) {
@@ -226,7 +237,7 @@ impl Handle {
 pub(crate) struct Coordinator {
     handle: Handle,
     stop: watch::Sender<bool>,
-    task: Option<JoinHandle<()>>,
+    task: Option<JoinHandle<Totals>>,
     runtime: tokio::runtime::Handle,
 }
 impl Coordinator {
@@ -281,6 +292,9 @@ trait Source: Send {
         directory: &DirectoryGuard,
     ) -> impl Future<Output = Option<Eog>> + Send;
     fn totals(&self) -> (u64, u64);
+    fn last_http_status(&self) -> Option<u16> {
+        None
+    }
 }
 struct LocalSource {
     transport: Transport,
@@ -303,6 +317,9 @@ impl Source for LocalSource {
     fn totals(&self) -> (u64, u64) {
         (self.metrics.requests, self.metrics.response_bytes)
     }
+    fn last_http_status(&self) -> Option<u16> {
+        self.metrics.last_http_status
+    }
 }
 struct Job {
     binding: Binding,
@@ -321,12 +338,75 @@ struct Totals {
     primary_win_zero: u64,
     rejected: u64,
     expired: u64,
+    deleted: u64,
+    cancelled: u64,
     dropped: u64,
     abandoned: u64,
     writes: u64,
     result_bytes: u64,
     peak: usize,
     latency_ms: u128,
+    unavailable_attempts: u64,
+    not_ready_responses: u64,
+}
+impl Totals {
+    fn terminal_count(&self) -> u64 {
+        self.rejected
+            + self.expired
+            + self.deleted
+            + self.cancelled
+            + self.dropped
+            + self.abandoned
+            + self.writes
+    }
+}
+fn retain_available(jobs: &mut VecDeque<Job>, now: Instant, totals: &mut Totals) {
+    jobs.retain(|job| {
+        if now >= job.expires {
+            totals.expired += 1;
+            false
+        } else if !job
+            .directory
+            .as_ref()
+            .is_some_and(DirectoryGuard::available)
+        {
+            totals.deleted += 1;
+            false
+        } else {
+            true
+        }
+    });
+}
+fn log_totals(source: &impl Source, totals: &Totals, pending: usize, joined: bool) {
+    let (requests, response_bytes) = source.totals();
+    tracing::info!(
+        requests, response_bytes, pending,
+        attempts = totals.attempts,
+        confirmed = totals.confirmed,
+        primary_win_one = totals.primary_win_one,
+        primary_win_zero = totals.primary_win_zero,
+        rejected = totals.rejected,
+        expired = totals.expired,
+        deleted = totals.deleted,
+        cancelled = totals.cancelled,
+        dropped = totals.dropped,
+        abandoned = totals.abandoned,
+        writes = totals.writes,
+        result_bytes = totals.result_bytes,
+        peak_pending = totals.peak,
+        latency_ms = totals.latency_ms,
+        unavailable_attempts = totals.unavailable_attempts,
+        not_ready_responses = totals.not_ready_responses,
+        last_http_status = ?source.last_http_status(),
+        "{}", if joined { "post-game coordinator joined" } else { "post-game coordinator totals" }
+    );
+}
+fn log_terminal_change(source: &impl Source, totals: &Totals, pending: usize, last: &mut u64) {
+    let terminal = totals.terminal_count();
+    if terminal != *last {
+        log_totals(source, totals, pending, false);
+        *last = terminal;
+    }
 }
 fn command(jobs: &mut VecDeque<Job>, cmd: Command, totals: &mut Totals) {
     match cmd {
@@ -354,16 +434,21 @@ fn command(jobs: &mut VecDeque<Job>, cmd: Command, totals: &mut Totals) {
                 }
             }
         }
-        Command::Cancel(media) => jobs.retain(|job| job.binding.media_id != media),
+        Command::Cancel(media) => {
+            let before = jobs.len();
+            jobs.retain(|job| job.binding.media_id != media);
+            totals.cancelled += (before - jobs.len()) as u64;
+        }
     }
 }
 async fn work(
     mut receive: mpsc::Receiver<Command>,
     mut cancel: watch::Receiver<bool>,
     mut source: impl Source,
-) {
+) -> Totals {
     let mut jobs = VecDeque::<Job>::new();
     let mut totals = Totals::default();
+    let mut logged_terminal = 0;
     loop {
         if *cancel.borrow() {
             break;
@@ -372,14 +457,8 @@ async fn work(
             command(&mut jobs, cmd, &mut totals);
         }
         let now = Instant::now();
-        jobs.retain(|j| {
-            let keep =
-                now < j.expires && j.directory.as_ref().is_some_and(DirectoryGuard::available);
-            if !keep {
-                totals.expired += 1;
-            }
-            keep
-        });
+        retain_available(&mut jobs, now, &mut totals);
+        log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
         if let Some(index) = jobs.iter().position(|j| j.published && j.result.is_some()) {
             let mut job = jobs.remove(index).expect("job exists");
             let result = job.result.take().expect("confirmed facts");
@@ -392,6 +471,7 @@ async fn work(
                 }
                 _ => totals.abandoned += 1,
             }
+            log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
             continue;
         }
         if let Some(index) = jobs
@@ -416,6 +496,7 @@ async fn work(
             .await;
             totals.latency_ms += began.elapsed().as_millis();
             let Some(index) = jobs.iter().position(|j| j.binding.media_id == media) else {
+                log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
                 continue;
             };
             let job = &mut jobs[index];
@@ -438,9 +519,12 @@ async fn work(
                         jobs.remove(index);
                         totals.rejected += 1;
                     }
-                    Err(Rejection::NotReady) => {}
+                    Err(Rejection::NotReady) => totals.not_ready_responses += 1,
                 }
+            } else {
+                totals.unavailable_attempts += 1;
             }
+            log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
             continue;
         }
         let deadline = jobs
@@ -459,24 +543,8 @@ async fn work(
             _=async {match deadline {Some(deadline)=>tokio::time::sleep_until(deadline).await,None=>std::future::pending().await}}=>{}
         }
     }
-    let (requests, response_bytes) = source.totals();
-    tracing::info!(
-        requests,
-        response_bytes,
-        attempts = totals.attempts,
-        confirmed = totals.confirmed,
-        primary_win_one = totals.primary_win_one,
-        primary_win_zero = totals.primary_win_zero,
-        rejected = totals.rejected,
-        expired = totals.expired,
-        dropped = totals.dropped,
-        abandoned = totals.abandoned,
-        writes = totals.writes,
-        result_bytes = totals.result_bytes,
-        peak_pending = totals.peak,
-        latency_ms = totals.latency_ms,
-        "post-game coordinator joined"
-    );
+    log_totals(&source, &totals, jobs.len(), true);
+    totals
 }
 
 // Commands, expiry and deletion remain observable while discovery is in flight.
@@ -508,8 +576,9 @@ async fn acquire_owned(
                 if !jobs.iter().any(|j|&j.binding.media_id==media){stop.send_replace(true);let _=acquisition.await;return None;}
             }
             _=tokio::time::sleep_until((Instant::now()+Duration::from_secs(1)).min(expires))=>{
-                if Instant::now()>=expires || !jobs.iter().find(|j|&j.binding.media_id==media).is_some_and(|j|j.directory.as_ref().is_some_and(DirectoryGuard::available)) {
-                    jobs.retain(|j|&j.binding.media_id!=media);stop.send_replace(true);let _=acquisition.await;return None;
+                retain_available(jobs, Instant::now(), totals);
+                if !jobs.iter().any(|j|&j.binding.media_id==media) {
+                    stop.send_replace(true);let _=acquisition.await;return None;
                 }
             }
             response=&mut acquisition=>return response,

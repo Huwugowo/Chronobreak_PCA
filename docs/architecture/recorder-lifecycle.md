@@ -84,6 +84,10 @@ ten seconds between attempts, and expiry 180 seconds after closure. Transport
 permits serialize LCU HTTP and joined discovery workers across both collectors.
 Cancellation, expiry and deletion remain observable during acquisition. No journal
 or restart recovery exists, and optional setup failure leaves recording available.
+Aggregate request/byte/latency, pending, result-write and terminal counters emit
+when jobs terminate and at joined shutdown. Expiry, deletion and cancellation are
+counted separately, including during an owned acquisition. Diagnostics include
+the last HTTP status and unavailable/not-ready attempt counts, never identities.
 
 Confirmed facts wait for healthy canonical publication. The late result writer
 retains the allocation directory identity and installs one immutable, at-most-
