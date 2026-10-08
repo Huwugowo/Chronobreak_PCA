@@ -703,7 +703,7 @@
           "command": null
         }
       ],
-      "notes": "Existing shipped baseline. The Live Client API can disappear independently; video capture continues and unavailable fields remain missing.",
+      "notes": "Existing shipped baseline. The Live Client API can disappear independently; video capture continues and unavailable fields remain missing. Original evidence predates QB-REPLAY-012 and its current schema-v2 timing contract; it does not authorize restoring precomputed video_time_ms. The 2026-09-29 source/consumer inventory is docs/product/league-data-capabilities.md; new collection work is split across QB-DATA-003, QB-DATA-002 and QB-DATA-004.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,
@@ -712,28 +712,153 @@
     {
       "id": "QB-DATA-002",
       "kind": "feature",
-      "name": "Authoritative Match Result Acquisition",
-      "description": "Reliably acquire and persist the authoritative final League match result (Victory/Defeat) from League Client/LCU post-game state so library and search metadata never fabricate an outcome.",
+      "name": "Authoritative Post-game Results and Statistics",
+        "description": "Confirm a provisional in-game League match candidate through exact post-game LCU game identity, then attach authoritative results and useful participant/team statistics to the correct recording.",
       "priority": "P1",
       "area": "match-data",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-DATA-001"],
-      "evidence": [],
-      "execution": {"workflow": "planned", "plan": null},
-      "acceptance_criteria": [
-        "After a game, the recorder/app retrieves the final result from authoritative League Client/LCU post-game or equivalent client state; Live Client Data events alone never determine Victory/Defeat.",
-        "Acquisition reconciles missed or duplicate notifications, delayed client state, reconnect/resubscribe, and process restart through bounded post-game retrieval rather than depending on one ephemeral GameEnd event.",
-        "The result is durably persisted with the match and exposed to library/search consumers; unavailable or ambiguous results remain explicitly unknown.",
-        "Retrieval is scoped to match-result acquisition and does not control League or become general LCU automation."
+      "dependencies": ["QB-DATA-001", "QB-DATA-003", "QB-REPLAY-012"],
+        "evidence": [
+          "2026-09-29 planning evidence only: three existing completed-match captures contain matching gameflow/end-of-game/history IDs. End-of-game supplies ten participants and two teams, while captured history supplies one participant; aborted practice can lack end-of-game data. See docs/product/league-data-capabilities.md.",
+          "User-approved data refinement expands the original result-only scope to useful allowlisted final gameplay statistics; no production acquisition or verification is claimed.",
+          "2026-10-01 design boundary: QB-DATA-003 records only a provisional gameId/queueId candidate. QB-DATA-002 must require exact gameId equality from /lol-end-of-game/v1/eog-stats-block before attaching final result/statistics; optional completed participant/champion data may corroborate recorded Live observations."
+        ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-data-002-post-game-confirmation-v2.md",
+        "progress": "docs/execution/qb-data-002.md"
+      },
+        "acceptance_criteria": [
+          "The recorder acquires post-game data with the app closed and confirms a QB-DATA-003 provisional candidate only when `/lol-end-of-game/v1/eog-stats-block` exposes a valid gameId exactly equal to the candidate gameId. It uses at most 18 attempts over a 180-second in-memory retry window; stale blocks, account switches and latest-history/display-name/timestamp heuristics cannot attach another match.",
+          "Confirmation is a distinct persisted result sidecar from 003's provisional candidate. Missing, delayed, malformed, mismatched, expired or unavailable EOG leaves the provisional recording playable with no result sidecar and never attaches WIN/LOSS or final facts.",
+          "After exact gameId confirmation, retain available allowlisted result and final identity/loadout, duration/version/queue/map, KDA/CS, earned/spent gold, damage, healing/shielding, vision/wards, multikill/objective and rune/stat-counter facts from validated EOG data. Live GameEnd events alone never establish Victory/Defeat; early-surrender/remake indicators preserve an unknown outcome unless the binary result evidence agrees.",
+          "The primary EOG localPlayer WIN field must be a binary integer. WIN/LOSS is projected only when the observed loss encoding is established and optional team/roster corroborators do not conflict; absent, invalid or conflicting outcome evidence remains unknown while valid stats are retained.",
+          "Represent field-family coverage as present, partial or missing with confirmed identity and source provenance. Invalid, negative, overflowing, error-object and conflicting-alias values become null; credentials, rewards, raw bodies and unlisted keys are discarded.",
+          "Bounded reconciliation is in-memory only: at most four pending jobs, one request in flight per job, ten-second-or-slower retry spacing, oldest-job overflow and cancellation on confirmation, expiry, deletion, shutdown or failed publication. Recorder restart may lose the optional result but never invalidates healthy media.",
+          "Install at most one generation-bound result sidecar after healthy canonical publication. The writer never creates directories, rewrites metadata.saved or blocks app deletion; it revalidates directory/media/provisional identity immediately before no-replace rename and abandons safely on mismatch or concurrent deletion.",
+          "Expose typed confirmed, partial and unknown post-game facts to replay details and a compact authoritative library/search summary without delaying media-first playback or requiring a broad analytics UI. A missing result file means unknown; no unavailable sidecar is created.",
+          "Only the bounded read-only loopback EOG endpoint and allowlisted gameplay fields are used. No history endpoint, credentials, raw bodies, unrelated account/social data or real identifiers in diagnostics/public fixtures are included.",
+          "Deterministic confirmation/retry/writer/consumer tests, actual app-closed post-game evidence, bounded-resource checks and applicable recorder/app verification pass before completion."
       ],
       "verification": [
-        {"type": "automated", "description": "Exercise deterministic fixtures for missed/delayed events, reconnect/restart, duplicate notifications, successful reconciliation, and unknown/unavailable result.", "command": null},
-        {"type": "manual", "description": "Verify a completed test match becomes searchable with the authoritative result after delayed post-game client state.", "command": null}
+        {"type": "automated", "description": "Use sanitized synthetic normal/practice/mode fixtures and fake time/transport to test field coverage, source conflicts, delayed/restarted acquisition, identity isolation, bounded retries and deletion-safe persistence in temporary libraries.", "command": null},
+        {"type": "inspection", "description": "Review endpoint/field allowlists, late-writer ownership, missingness/provenance and media-first consumer compatibility; raw diagnostic captures remain ignored and local.", "command": null},
+        {"type": "manual", "description": "Verify a completed match collected with the app closed exposes correct authoritative results/statistics; verify an unavailable/aborted case stays explicitly partial or unknown.", "command": null}
       ],
-      "notes": "The acquisition/reconciliation contract is ready to plan, but exact LCU endpoints and client-version behavior require implementation research. Never infer a result from absence/presence of Live Client Data events.",
+        "notes": "Second data collection unit, after QB-DATA-003. QB-DATA-003 supplies only a provisional gameId/queueId candidate; this feature owns exact EOG gameId confirmation, optional completed participant/champion corroboration against recorded Live observations, final result/statistics and bounded in-memory retries. The user-reviewed v2 design is docs/exec-plans/qb-data-002-post-game-confirmation-v2.md; v1 remains superseded history. No Match-V5/RSO, history endpoint, audio work, general LCU automation or analytics UI.",
       "user_value": 4.5,
       "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-DATA-003",
+      "kind": "feature",
+      "name": "Recording-bound League Match Context",
+        "description": "Record a provisional local League match candidate for each new recording using exact local identity and in-game session signals; authoritative confirmation and final facts belong to QB-DATA-002.",
+      "priority": "P0",
+      "area": "match-data",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-DATA-001",
+        "QB-REPLAY-012"
+      ],
+      "evidence": [
+        "2026-10-01 real-client feasibility passed after root evidence review: v3 startup/mid-match, standalone diagnostic restart, bot closure, distinct Practice Tool session and its closure show exact local Riot ID, required game/queue and compatible map/queue-mode agreement. Incomplete bot-game LCU arrays invalidated roster/champion binding; v3 excludes those and process-proof mechanisms. Detailed sanitized reports and limitations remain in docs/execution/qb-data-003.md.",
+        "2026-10-01 provisional reducer/recording-owned collector, existing Live tap and pre-publication 64-KiB no-clobber sidecar are implemented. Owned cancellation/abandonment, fresh consecutive identity, directory replacement/reparse and concurrent-writer fixtures passed. Recorder all-target/all-feature tests: 159 library, 3 binary and 3 example passed, 6 existing checks ignored; check/Clippy/fmt passed. Virtual-hour fixtures establish bounded request work, not a measured memory/performance claim.",
+        "2026-10-01 optional full-probe/TypeScript projection and visible provisional marker implemented; core scan/descriptor/time schemas unchanged. Missing/corrupt/oversized/wrong-media/unsupported context preserves playback, save protection and delete behavior. App Rust tests 96 passed/1 ignored, frontend 216 passed; TypeScript/build/Clippy/fmt passed. Bare confirmed markers remain unsupported until QB-DATA-002 supplies its exact EOG contract.",
+          "2026-10-01 ten-minute generated production-service capture passed with missing Live data: healthy H.264/AAC canonical publication, 36,284 frames at 60 FPS, strict full decode, 61 resident-memory samples (70,045,696 initial/72,630,272 peak/72,593,408 final bytes), and joined zero-request LCU collector. This proves missing-data isolation, not delayed LCU acquisition or League performance. A real isolated recorder run then published a 612.053-second H.264/AAC recording with 61 snapshots, 70 events, four LCU requests, and an 859-byte provisional sidecar whose media ID matched metadata and game log. The user accepted this run as the integrated QB-DATA-003 evidence; recording duration is not an acceptance criterion. Exact post-game confirmation and final facts remain owned by QB-DATA-002."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-data-003-recording-match-context-v3.md",
+        "progress": "docs/execution/qb-data-003.md"
+      },
+        "acceptance_criteria": [
+          "The recorder owns collection with the app closed. Windows LCU discovery validates process/path and adjacent lockfile identity; private loopback HTTPS uses finite GET allowlists, redacted credentials and bounded time/bytes/concurrency. Denied, absent or ambiguous clients and non-Windows remain explicitly unavailable.",
+          "A bounded read-only real-client probe establishes that LCU InProgress exposes positive gameId and explicit queueId, current-summoner exposes a full Riot ID, Live active-player exposes the exact same full Riot ID, and map/game-mode values are compatible through ordinary startup and mid-match observation. Synthetic evidence cannot pass this gate.",
+          "Provisional binding requires two consecutive fresh coherent rounds agreeing on InProgress, gameId, queueId, local full Riot ID and compatible map/game mode. No LCU teamOne/teamTwo/playerChampionSelections, roster equality, champion mapping, bot semantics or account-only fallback participates in 003 binding. A provisional candidate is explicitly not authoritative until QB-DATA-002 confirms its gameId after the match.",
+          "Inspect no game/client command lines, process memory or listener-owner tables for association. Do not add launch-ID/platform endpoints or new Live requests. Use only the allowlisted LCU gameflow/current-summoner GETs and the existing Live active-player/game-data snapshot round without changing polling cadence or replay clocks.",
+          "Preserve provisional game_id as a canonical decimal string, required queue_id, local full Riot ID, compatible source map/mode values and comparison provenance attached to media_id. Status is provisional; final result/statistics and authoritative confirmation belong to QB-DATA-002.",
+          "Install at most one size-bounded versioned league_match.json before canonical publication through an owned, joined writer. Never overwrite an existing sidecar, recreate removed directories, modify metadata.saved or permit writes after publication. Directory identity checks reject replacement/reparse targets without claiming to protect sibling media from deletion.",
+          "Full PlaybackProbe and its TypeScript contract expose optional status-aware provisional/confirmed context including game_id and queue_id; old schema-v2 bundles and missing/corrupt/wrong-media/unsupported sidecars retain valid playback. ReplayDescriptor, core library scan and metadata/game-log/time schemas remain unchanged.",
+          "LCU/Live availability or provisional identity failure does not gate video readiness, drive shutdown, add Live requests or create unbounded work. Optional failure preserves existing snapshots/events. Async network cancellation meets the planned deadline; blocking discovery/filesystem workers remain owned and joined without a false bounded-cancellation claim.",
+          "Synthetic provisional reducer/transport/service/temporary-library tests cover exact identity, required IDs, compatible modes, stale/changed rounds, provisional persistence and failure isolation; integrated app-closed verification proves provisional publication. Exact EOG confirmation and final facts are outside QB-DATA-003 and owned by QB-DATA-002; applicable project-wide verification passes before completion."
+        ],
+      "verification": [
+        {
+          "type": "manual",
+                                 "description": "First-milestone read-only real-client probe: establish required game/queue fields, exact local full Riot ID agreement, compatible map/mode and ordinary lifecycle coverage for a provisional candidate; roster arrays are diagnostic only.",
+          "command": null
+        },
+        {
+          "type": "automated",
+                                 "description": "Test two-round provisional identity association, required IDs, compatible map/mode, stale/changed rounds, ordering/freshness, credential rotation, bounded transport/workers, existing Live request reuse and provisional sidecar isolation; prove roster arrays do not gate 003.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features"
+        },
+        {
+          "type": "automated",
+          "description": "Test optional full-probe projection, strict size/version/media checks, old bundles and save/delete compatibility using dedicated temporary libraries.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "benchmark",
+          "description": "Run the plan's 60-minute virtual-clock bounded-work fixture and 10-minute generated capture with delayed/failed LCU; record resource/request/byte/write aggregates, not account identities.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Review endpoint/field/logging allowlists, writer ownership and no post-publication mutation; run applicable recorder/app baseline and canonical validation from VERIFICATION.md.",
+          "command": null
+        },
+        {
+          "type": "manual",
+                                 "description": "With the app closed, verify provisional game/queue identity during recording, normal publication and unchanged playback. Exact EOG confirmation and final facts are verified by the separate QB-DATA-002 unit.",
+          "command": null
+        }
+      ],
+        "notes": "Execute v3 as saved; v2 and v1 remain superseded design history. The first real bot-game evidence showed incomplete/mode-dependent roster arrays, so 003 is provisional identity only: exact local Riot ID, InProgress, gameId/queueId and compatible map/mode. The user accepted the 2026-10-01 integrated recording as sufficient evidence; duration has no acceptance meaning. QB-DATA-002 owns exact EOG gameId confirmation and final facts. Do not restore roster/process proof or request EOG from 003. Existing poller retains timing/event ownership; no raw archive, audio or analytics UI.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "ready"
+    },
+    {
+      "id": "QB-DATA-004",
+      "kind": "feature",
+      "name": "Richer Timed League Observations",
+      "description": "Retain useful timed Live Client events and descriptive player state with measured collection cadence, bounded persistence and honest temporal/source coverage for future replay and analytics consumers.",
+      "priority": "P1",
+      "area": "match-data",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-DATA-001", "QB-DATA-003", "QB-REPLAY-012"],
+      "evidence": [
+        "2026-09-29 planning evidence only: current poller retains a subset of observed roster/local-player fields and omits FirstBlood.Recipient from the normalized event contract. docs/product/league-data-capabilities.md distinguishes available facts from unsupported all-player histories.",
+        "Existing deduplicated 10-second diagnostics establish field availability, not an optimal faster polling cadence or collection overhead budget."
+      ],
+      "execution": {"workflow": "planned", "plan": null},
+      "acceptance_criteria": [
+        "Finalize a source/consumer/field matrix before implementation, distinguishing static facts, source events, sampled state, derived observations and unavailable data. Preserve useful available gameplay facts without promising all-player gold/health, movement, ward-location or per-hit histories absent from these sources.",
+        "Retain source event IDs, kinds, game timestamps and supported event-specific participants/objectives, including FirstBlood.Recipient, with deduplication and explicit handling of unknown/partial variants rather than silent fabrication.",
+        "Retain allowlisted available roster KDA/CS/ward score, level, inventory, death/respawn observations and local gold/health/resource/combat-stat/ability-level observations, with stable roster/loadout context and per-field missingness/provenance.",
+        "Choose and justify event/roster/local-state cadences through measurements of focused versus aggregate endpoints, bytes/latency/CPU/I/O, freshness and missed transitions. Avoid overlapping steady-state requests without evidence; store stable metadata once, ingest events incrementally and bound sampled-state work.",
+        "Use QB-REPLAY-012's canonical timing model and retain observation intervals/gaps. Snapshot inventory/level differences are observations, not exact purchases or action times; final post-game totals cannot invent historical samples.",
+        "Approve a versioned persistence/reader compatibility contract with bounded in-memory work, crash behavior and long-match storage growth before implementation. Preserve valid existing recordings and one owner for each canonical writer.",
+        "Expose typed timed data to existing replay consumers without a new analytics UI, provider framework or independent clock. API failure degrades coverage without disrupting recording and logs contain only non-identifying aggregate diagnostics.",
+        "Deterministic sanitized fixture tests, measured cadence/resource benchmarks, long-match/restart compatibility checks and applicable recorder/app verification pass before completion."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Use synthetic normal/bot/practice/partial payloads, fake time and cumulative event streams to test field coverage, deduplication, unknowns, temporal uncertainty and bounded persistence.", "command": null},
+        {"type": "benchmark", "description": "Measure candidate endpoint/cadence combinations and long-match persistence costs before selecting production defaults; report coverage gains and resource budgets separately from formal capture-performance claims.", "command": null},
+        {"type": "manual", "description": "Check representative event/state facts against their recorded replay interval and prove API gaps remain visible as missing coverage.", "command": null}
+      ],
+      "notes": "Recommended third collection unit after post-game acquisition, but QB-DATA-002 is not an artificial dependency. Remains draft until field contracts, cadence measurements and storage/compatibility decisions are settled. Reuse existing captures before requesting new field-discovery games. Viewer presentation gaps are separate consumer work; no audio, Match-V5/RSO or OPGG-like UI implementation.",
+      "user_value": 5,
+      "differentiation": 5,
       "difficulty": 4,
       "stage": "draft"
     },
@@ -920,7 +1045,7 @@
           "command": null
         }
       ],
-      "notes": "Existing shipped baseline; no coaching or inferred unavailable state is part of this feature.",
+      "notes": "Existing shipped baseline; no coaching or inferred unavailable state is part of this feature. The 2026-09-29 data inventory identified a scoped consumer-review follow-up: ViewerScreen computes playhead state, but current visible state usage needs verification against this feature's historical evidence. Do not increase collection cadence to compensate for a presentation gap; no UI implementation or re-verification is claimed by the data planning pass.",
       "user_value": 4,
       "differentiation": 5,
       "difficulty": 4,

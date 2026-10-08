@@ -151,6 +151,7 @@ pub struct PlaybackProbe {
     pub video_url: String,
     pub media_timeline: MediaTimelineV2,
     pub local_player_name: Option<String>,
+    pub league_match: Option<crate::league_match::LeagueMatch>,
     pub participants: Vec<ReplayParticipant>,
     pub player_timeline: Vec<PlayerTimelinePoint>,
     pub kda_timeline: Vec<KdaTimelinePoint>,
@@ -590,6 +591,7 @@ pub fn playback_probe(
         game,
         media_timeline: metadata.media_timeline,
         local_player_name,
+        league_match: crate::league_match::read(&game_directory, &metadata.media_id),
         participants,
         player_timeline,
         kda_timeline,
@@ -1388,6 +1390,7 @@ pub(crate) mod tests {
     }
 
     include!("replay_descriptor_tests.rs");
+    include!("league_match_tests.rs");
 
     fn core_snapshot(root: &Path) -> Result<LibrarySnapshot> {
         build_library_snapshot(

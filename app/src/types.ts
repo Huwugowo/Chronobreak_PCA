@@ -182,11 +182,22 @@ export type ReplayDescriptor = {
   media_timeline: import("./replayTime").MediaTimelineV2;
 };
 
+export type LeagueMatch = {
+  media_id: import("./replayTime").MediaId;
+  status: "provisional" | "confirmed";
+  game_id: string;
+  queue_id: number;
+  local_riot_id: string;
+  map_id: number;
+  game_mode: string;
+};
+
 export type PlaybackProbe = {
   game: GameSummary;
   video_url: string;
   media_timeline: import("./replayTime").MediaTimelineV2;
   local_player_name: string | null;
+  league_match: LeagueMatch | null;
   participants: ReplayParticipant[];
   player_timeline: PlayerTimelinePoint[];
   kda_timeline: KdaTimelinePoint[];

@@ -27,11 +27,13 @@ const replayProbe = (): PlaybackProbe => ({
       video: { codec: "h264", profile: "High", timeBase: { numerator: 1n, denominator: 60n }, firstPts: 0n,
         frameRate: { numerator: 60n, denominator: 1n }, frameCount: 14_400 as FrameBoundary,
         onePastLastPts: 14_400n, replayEnd: 11_520_000_000 as ReplayTick }, audio: { present: true } },
-    local_player_name: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
+    local_player_name: null, league_match: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
 });
 
 it("marks only the persistent primary video across layout and recovery, then releases it", async () => {
   const probe = replayProbe();
+  probe.league_match = { media_id: probe.media_timeline.mediaId, status: "provisional", game_id: "9007199254740993",
+    queue_id: 0, local_riot_id: "Player#EUW", map_id: 11, game_mode: "CLASSIC" };
   vi.mocked(loadPlaybackProbe).mockResolvedValue(probe);
   vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
     video_url: probe.video_url, media_timeline: probe.media_timeline });
@@ -46,6 +48,10 @@ it("marks only the persistent primary video across layout and recovery, then rel
   try {
     await vi.waitFor(() => expect(host.querySelectorAll("video")).toHaveLength(1));
     const primary = host.querySelector("video")!;
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="league-match-context"]')?.textContent)
+      .toContain("Match provisional · GAME 9007199254740993 · QUEUE 0"));
+    expect(host.textContent).toContain("RECORDED K / D / A");
+    expect(host.textContent).not.toContain("FINAL K / D / A");
     expect(primary.closest('[data-testid="video-frame"]')).not.toBeNull();
     expect([...document.querySelectorAll('[data-qb-primary-playback="true"]')]).toEqual([primary]);
     expect(probeVideo.hasAttribute("data-qb-primary-playback")).toBe(false);

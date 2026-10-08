@@ -60,6 +60,63 @@ $env:LEAGUE_REPLAY_AUDIO_DEVICE = "Your loopback device"
 
 Set the value to `silent` to force the silent-track fallback.
 
+## Provisional League context
+
+The recording service uses the existing Live identity observation and bounded LCU
+current-summoner/gameflow GETs to bind a provisional game/queue candidate after two
+consecutive fresh coherent rounds. It stops LCU requests after binding and may save
+one optional `league_match.json` before canonical media publication. Context failure
+does not stop video. Game IDs remain decimal strings; no result or final statistics
+are attached. QB-DATA-002 owns exact post-game confirmation. Playback projection and
+the accepted app-closed recording check are complete; see
+`docs/execution/qb-data-003.md` for evidence and the post-game handoff.
+
+## League context feasibility probe
+
+From the repository root, with the recorder and viewer closed:
+
+```powershell
+cargo run --manifest-path recorder/Cargo.toml --example league_context_probe -- --seconds 60 --scenario mid_match
+```
+
+This standalone QB-DATA-003 diagnostic makes the existing snapshot request trio at
+ten-second-or-slower intervals and only the allowlisted LCU current-summoner/gameflow
+GETs. Its active design gate is provisional identity: exact local Riot ID, LCU
+`InProgress`, positive game ID, explicit queue ID (zero is valid), and compatible
+map/queue mode. No roster array or champion manifest is parsed for association.
+The Live observation uses the active-player and game-data request windows, even if
+the existing roster request fails. It does not start capture, write a game log, change configuration or
+install match context. Do not run another Live collector alongside it for the
+feasibility session. It needs no packaged media runtime, elevation or process command
+lines.
+`QUEUEBACK_LCU_LOCKFILE`, if used, must name an absolute adjacent lockfile with the
+same discovered LeagueClient PID/path; it is not a URL or identity bypass.
+
+Output is version-2 JSON Lines marked `contract: provisional_v3`, containing
+comparison booleans, timing and sanitized
+availability/status codes; identities, credentials, raw bodies and game/queue ID
+values remain in memory. `two_rounds_coherent` requires distinct fresh rounds with
+the same required evidence and credential epoch; a failed or incoherent round clears
+the pending comparison. It remains a diagnostic flag, not a persisted candidate.
+The aggregate coherent-game counter detects an ID change after closure while keeping
+one last-coherent ID private; it never supplies evidence for pair admission.
+Ctrl+C or the 1–3600-second duration cancels network work; already-started OS workers
+are joined, so an uninterruptible OS call can extend shutdown.
+
+Scenario labels are `startup`, `mid_match`, `consecutive_games`, `recorder_restart`,
+`normal_closure`, `app_closed`, `practice`, and `reconnect`. A label records operator
+intent, not evidence that the scenario actually occurred. Preserve separate sanitized
+reports and record actual coverage in the feature checkpoint. In particular,
+restarting this diagnostic is not integrated-recorder restart acceptance.
+
+The probe always emits `feasibility_pass: false` and `authoritative_confirmed: false`:
+a reviewer must establish ordinary
+lifecycle coverage before implementing provisional association. A provisional result
+is not authoritative; QB-DATA-002 must later confirm its exact `gameId` through
+`/lol-end-of-game/v1/eog-stats-block` before final results or statistics are attached.
+See the QB-DATA-003 ExecPlan and checkpoint for the current contract and accepted
+evidence. Recording duration is not a QB-DATA-003 acceptance condition.
+
 ## Development mode
 
 `--headless` runs the recorder without a tray and stops cleanly on Ctrl+C. The
@@ -117,6 +174,7 @@ fallback when the optimized graph is unsupported.
    interruption. A normal League process disappearance is the automatic match-end
    signal and is finalized gracefully.
 
-The recorder connects only to the local Live Client API at `127.0.0.1:2999`. It never
-connects to the League Client API, and API disappearance never stops video capture;
-only the League game process watcher does that.
+The production recording service connects to the local Live Client API at
+`127.0.0.1:2999` and the allowlisted League Client endpoints described above.
+API disappearance never stops video capture; the game process/HWND lifecycle
+remains the capture authority.

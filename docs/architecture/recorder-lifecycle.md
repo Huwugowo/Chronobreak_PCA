@@ -45,6 +45,38 @@ New recordings use only the strict schema-v2 contract; old timing fields, schema
 
 Live Client poller degradation does not invalidate otherwise healthy video. Encoder/capture failure remains an explicit recorder error while the fragmented partial output and latest atomically written game log stay recoverable. The app does not infer clean completion from the new diagnostics object.
 
+## Match-context ownership
+
+The recording service owns a bounded LCU collector fed by the existing poller's
+latest active-player/game-data observation. It adds no Live requests. Two consecutive
+fresh coherent rounds with unchanged credentials bind one immutable candidate;
+failure clears pending evidence, and binding stops further LCU requests. Admission
+closes before network cancellation and owned-worker joins. API availability never
+drives capture readiness or shutdown. The standalone diagnostic remains separate.
+
+QB-DATA-003 records only a provisional in-game candidate: exact local Riot ID
+agreement between LCU current-summoner and Live active-player, LCU `InProgress`,
+positive `gameId`, explicit `queueId`, and compatible map/queue mode. LCU
+`teamOne`, `teamTwo`, and `playerChampionSelections` are diagnostic observations,
+not binding requirements, because bot and mode responses can be incomplete.
+
+Before canonical media publication, an owned filesystem worker may install one
+versioned, at-most-64-KiB `league_match.json`. It retains the allocation directory's
+Windows file identity, rejects missing/replaced/reparse directories, and creates
+and atomically renames an exclusive temporary relative to the pinned directory
+handle without replacing an existing destination. It never recreates directories
+or changes metadata. Worker completion precedes publication, including abandonment
+of its awaiting future; optional failures preserve healthy media publication.
+These checks protect the context destination, not sibling media from deletion.
+Blocking discovery/filesystem calls remain owned and joined and may extend shutdown.
+
+QB-DATA-002 owns post-game confirmation through the read-only LCU
+`/lol-end-of-game/v1/eog-stats-block` response. It may attach final result and
+statistics only when its `gameId` exactly equals the provisional candidate's `gameId`.
+Optional completed participant/champion facts can corroborate recorded Live data,
+but cannot replace exact game-ID confirmation. A provisional candidate remains
+explicitly non-authoritative until that handoff succeeds.
+
 ## Performance constraints
 
 Watcher cadence is two seconds; event polling is one second; snapshots are ten seconds. Tokio missed ticks use delay semantics to avoid burst catch-up. Capture diagnostics are aggregate first/progress/terminal messages, not per-frame logs. Video remains in a bounded GPU-resident graph, and no full-video pass occurs at match end.

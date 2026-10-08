@@ -42,6 +42,12 @@ seek state or fullscreen. Pending/failed details are explicit, with a local retr
 missing stats and game-time calibration stay unavailable. Strict JSON is read for each request;
 there is no persistent cache or claim that aggregate I/O is reduced.
 
+Optional match context arrives with full details and displays its provisional status
+and game/queue IDs in the viewer header. It never gates media or supplies final
+result/statistics. Existing Live-derived totals are labeled recorded K/D/A. The
+TypeScript projection preserves decimal game IDs as strings and discards malformed
+or wrong-media optional context locally.
+
 `ReplayTimeline` supplies the same seek, zoom, pan, clustered-event and clip rail
 in windowed and fullscreen layouts. Its viewport and exact frame clip draft live
 in the persistent playback surface; pending details do not gate basic media

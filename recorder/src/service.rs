@@ -23,6 +23,8 @@ use crate::encoder::{
     VideoCodec,
 };
 use crate::finalizer::{CompletedVideoCandidate, publish_validated_candidate, validate_candidate};
+use crate::league_client::collector::ContextSession;
+use crate::league_client::sidecar::{ContextWriter, DirectoryGuard};
 #[cfg(target_os = "windows")]
 use crate::native::{
     NATIVE_ENCODER_SLOT_COUNT, NativeRecordingSession, NativeRecordingStartupFailureDisposition,
@@ -65,6 +67,8 @@ struct ActiveRecording {
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
     poller: PollerSession,
+    match_context: Option<ContextSession>,
+    match_directory: Option<DirectoryGuard>,
     details: RecordingDetails,
 }
 
@@ -954,6 +958,15 @@ async fn start_recording(
     let timestamp = unix_timestamp_now().terminal_startup()?;
     let directory = create_game_directory(&output_path, timestamp).terminal_startup()?;
     let media_id = MediaId::new_v4();
+    let match_directory = tokio::task::block_in_place(|| {
+        match DirectoryGuard::capture(&directory, media_id.clone()) {
+            Ok(directory) => Some(directory),
+            Err(code) => {
+                warn!(code, "optional League context directory unavailable");
+                None
+            }
+        }
+    });
 
     #[cfg(target_os = "windows")]
     let (session, plan) = {
@@ -1206,6 +1219,17 @@ async fn start_recording(
         false,
     );
     let now = Instant::now();
+    let match_context = match ContextSession::start(
+        media_id.clone(),
+        session.video_started_at(),
+        poller.identity_observations(),
+    ) {
+        Ok(context) => Some(context),
+        Err(code) => {
+            warn!(code, "optional League context collector unavailable");
+            None
+        }
+    };
     Ok(ActiveRecording {
         media_id,
         ffprobe_path: ffmpeg.ffprobe_path().to_path_buf(),
@@ -1216,6 +1240,8 @@ async fn start_recording(
         progress_watchdog: CaptureProgressWatchdog::new(&initial_diagnostics, now),
         progress_report_due: now + Duration::from_secs(10),
         poller,
+        match_context,
+        match_directory,
         details: RecordingDetails {
             encoder_used: plan.encoder().label().to_owned(),
             codec: plan.codec().label().to_owned(),
@@ -1296,17 +1322,43 @@ async fn stop_recording_inner(
         progress_watchdog: _,
         progress_report_due: _,
         poller,
+        match_context,
+        match_directory,
         mut details,
     } = recording;
     let recorded_at = session.recorded_at();
     let duration = session.video_started_at().elapsed();
+    if let Some(context) = &match_context {
+        context.close_admission();
+    }
+    let context_stop = async {
+        match match_context {
+            Some(context) => Some(context.stop().await),
+            None => None,
+        }
+    };
     let video_stop = async {
         match failure_reason {
             Some(reason) => session.stop_with_failure(reason).await,
             None => session.stop().await,
         }
     };
-    let (summary, video_result) = tokio::join!(poller.stop(), video_stop);
+    let (summary, video_result, context_result) =
+        tokio::join!(poller.stop(), video_stop, context_stop);
+    if let Some(Ok(context)) = &context_result {
+        info!(
+            requests = context.requests,
+            response_bytes = context.response_bytes,
+            provisional_candidate = context.candidate.is_some(),
+            "League context collector joined"
+        );
+    }
+    if let Some(Err(code)) = &context_result {
+        warn!(
+            code,
+            "optional League context collector failed while joining"
+        );
+    }
 
     let final_diagnostics = diagnostics.borrow().clone();
     log_capture_progress(
@@ -1359,6 +1411,15 @@ async fn stop_recording_inner(
                     require_zero_video_start: true,
                 };
                 let validated = validate_candidate(&ffprobe_path, candidate, expectations).await?;
+                if let (Some(directory), Some(Ok(context))) = (match_directory, context_result)
+                    && let Some(candidate) = context.candidate
+                {
+                    let installed =
+                        async { ContextWriter::start(directory, candidate)?.finish().await }.await;
+                    if let Err(code) = installed {
+                        warn!(code, "optional provisional League context unavailable");
+                    }
+                }
                 let metadata = RecordingMetadata::new(
                     recorded_at_label,
                     validated.timeline().clone(),

@@ -62,6 +62,7 @@ const playbackWire = () => ({
     capture: null,
   },
   local_player_name: "QB-Blue-1#TEST",
+  league_match: null as unknown,
   participants: [
     { summoner_name: "QB-Blue-1#TEST", champion: "Ahri", relation: "ally" },
   ],
@@ -143,6 +144,32 @@ describe("decodeReplayDescriptor", () => {
 });
 
 describe("decodePlaybackProbe", () => {
+  it("projects optional provisional identity without rounding game IDs or supplying final facts", () => {
+    const wire = playbackWire();
+    wire.league_match = { media_id: wire.media_timeline.media_id, status: "provisional", game_id: "9007199254740993",
+      queue_id: 0, local_riot_id: "Player#EUW", map_id: 11, game_mode: "SWIFTPLAY" };
+    const probe = decodePlaybackProbe(wire);
+    expect(probe.league_match?.game_id).toBe("9007199254740993");
+    expect(probe.league_match?.status).toBe("provisional");
+    expect(probe.league_match?.queue_id).toBe(0);
+    expect(probe.game.kills).toBe(1);
+    expect(probe.league_match).not.toHaveProperty("result");
+  });
+
+  it.each([
+    { game_id: "09007199254740993" }, { game_id: "18446744073709551616" }, { game_id: 9007199254740992 },
+    { queue_id: null }, { queue_id: -1 }, { queue_id: 0x1_0000_0000 },
+    { media_id: "11111111-2222-4333-8444-555555555555" }, { status: "unknown" },
+    { local_riot_id: "Player" }, { local_riot_id: "Player#EUW#TAG" }, { game_mode: "x".repeat(257) },
+    { result: "WIN" },
+  ])("keeps playback available with invalid optional context %j", invalid => {
+    const wire = playbackWire();
+    wire.league_match = { media_id: wire.media_timeline.media_id, status: "provisional", game_id: "9007199254740993",
+      queue_id: 0, local_riot_id: "Player#EUW", map_id: 11, game_mode: "SWIFTPLAY", ...invalid };
+    const probe = decodePlaybackProbe(wire);
+    expect(probe.league_match).toBeNull();
+    expect(probe.game.video_available).toBe(true);
+  });
   it("decodes the strict snake-case schema-v2 wire payload for viewer use", () => {
     const probe = decodePlaybackProbe(playbackWire());
 

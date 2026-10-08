@@ -11,6 +11,7 @@ The configured output directory is the library root:
       video.mp4
       game_log.json
       metadata.json
+      league_match.json  # optional provisional context
   clips/
     <source-timestamp>_<clip-timestamp>.mp4
     <source-timestamp>_<clip-timestamp>.jpg
@@ -107,6 +108,16 @@ identity, so late work cannot publish into a newer view.
 `video.mp4` is a fragmented capture intended to remain seekable after an interrupted process. `game_log.json` stores normalized events, snapshots, derived item/level changes, diagnostics, and video/game clock mapping. `metadata.json` stores recording format details, duration, local-player metadata, save protection, and display fields.
 
 The app treats malformed or incomplete entries conservatively: recognized bundles are parsed into summaries; playback requires mandatory properties such as a usable recording frame rate. Missing League data is represented as absent rather than inferred.
+
+Only the full PlaybackProbe reads optional `league_match.json`, within its existing
+owned replay-read slot after strict core bundle validation. The reader accepts a
+regular file with at most 64 KiB of actual bytes, schema version 1, matching media ID,
+canonical positive decimal game ID, required u32 queue ID, bounded full Riot ID,
+compatible map/mode and ordered two-round provenance. Invalid or absent context
+becomes null and never invalidates playback. The projection omits PUUID, epoch nonce
+and request evidence. Core scans, ReplayDescriptor and replay-time schemas do not
+read or depend on this sidecar. Version 1 is provisional; a bare confirmed marker
+is rejected until QB-DATA-002 supplies its confirmation contract.
 
 ## Clips
 

@@ -33,7 +33,7 @@ it("retries the same imported file after preparation fails and releases the succ
       video: { codec: "h264", profile: "High", timeBase: { numerator: 1n, denominator: 60n }, firstPts: 0n,
         frameRate: { numerator: 60n, denominator: 1n }, frameCount: 14_400 as FrameBoundary,
         onePastLastPts: 14_400n, replayEnd: 11_520_000_000 as ReplayTick }, audio: { present: true } },
-    local_player_name: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
+    local_player_name: null, league_match: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
   };
   const path = "C:\\Music\\same.wav";
   const preview = { url: "http://127.0.0.1:123/music-preview/retry", token: "retry" };

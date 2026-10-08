@@ -3,6 +3,7 @@
 pub mod config;
 pub mod encoder;
 pub(crate) mod finalizer;
+pub mod league_client;
 #[cfg(feature = "replay-time-fixture")]
 pub use finalizer::{
     FINALIZER_FIXTURE_PROBE_OUTPUT_LIMIT, FINALIZER_FIXTURE_PROBE_TIMEOUT,

@@ -1132,10 +1132,16 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
           <p>LOCAL RECORDING / {props.game.game_mode}</p>
           <h1>{props.game.champion}</h1>
           <span>{details()?.local_player_name ?? "LOCAL PLAYER"}</span>
+          <Show when={details()?.league_match}>{(context) =>
+            <p data-testid="league-match-context">
+              {context().status === "provisional" ? "Match provisional" : "Match confirmed"}
+              {` · GAME ${context().game_id} · QUEUE ${context().queue_id}`}
+            </p>
+          }</Show>
         </div>
         <dl>
           <div>
-            <dt>FINAL K / D / A</dt>
+            <dt>RECORDED K / D / A</dt>
             <dd>
               {props.game.kills} / {props.game.deaths} / {props.game.assists}
             </dd>
