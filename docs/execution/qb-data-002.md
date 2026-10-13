@@ -6,26 +6,26 @@ Updated: 2026-10-13
 
 ## Current milestone
 
-Milestone 4: real app-closed validation. Implementation, automated checks,
-production builds and generated missing-data media validation pass. The feature
-remains in-progress. App-closed WIN, unavailable-result and consecutive-candidate
-isolation cases pass. Local LOSS encoding, explicit delayed-EOG confirmation and
-full real EOG resource evidence remain.
+Closed at the user's explicit request on 2026-10-13 because League access is
+unavailable for a while. The accepted scope is implemented WIN/unknown outcomes
+and final statistics. Implementation, automated checks, production builds,
+generated missing-data validation, and real app-closed WIN/unavailable-result/
+consecutive-candidate isolation pass. Primary-local LOSS, explicit delayed-EOG
+confirmation and full real EOG resource measurements are deferred, not passed.
+LOSS remains disabled. This is an explicit acceptance-scope change, not completion
+of every original Milestone 4 live gate.
 
 ## Active unit
+
+None. The user closed the implemented scope; no live-validation session is active
+in this checkout.
 
 2026-10-13 source reconciliation: the PC handoff has been integrated with the
 local replay-opening work on `main` at the user's request. The recorder PIDs and
 ignored live evidence below describe the previous PC; this merge does not start
 or validate a live recorder here. Integration verification is recorded in
-`docs/reviews/repository-consolidation-2026-10-13.md`. The live acceptance gates
-and LOSS-disabled decision remain unchanged.
-
-Await the user-deferred ordinary LOSS match next session. The rebuilt recorder is
-idle and ready, with terminal aggregate diagnostics validated. Two user-reported
-quit/surrender sessions were PRACTICETOOL in both APIs: healthy recordings, distinct
-provisional candidates and no result; the current EOG diagnostic returned 404.
-These establish unavailable-result behavior, not local LOSS. No minimum duration applies.
+`docs/reviews/repository-consolidation-2026-10-13.md`. The subsequent user-directed
+closure defers the outstanding live gates and preserves the LOSS-disabled decision.
 
 ## Completed
 
@@ -83,14 +83,17 @@ These establish unavailable-result behavior, not local LOSS. No minimum duration
 
 ## In flight
 
+None. The following is historical 2026-10-08 evidence from the previous PC, not a
+claim about a running recorder or current League availability.
+
 A headless release recorder was started on 2026-10-08 at 09:08 UTC, PID 14560,
 using ignored `build/qb-data-002/live-b9526871-6d9f-4695-8fab-9cff146cb20a`.
 Its isolated library uses high/H.264 and retention/autostart disabled. INFO
 logging is explicit after correcting an inherited RUST_LOG=warn. An initial
 medium-profile setup was rejected by the existing native High/Auto-only contract;
 the test config was corrected to High. The
-viewer is closed. `build/qb-data-002/active-validation.json` records the local
-PID, executable and paths; verify these before relying on the process on resume.
+viewer was closed. `build/qb-data-002/active-validation.json` recorded the local
+PID, executable and paths; these must be revalidated before any future live run.
 This local process/config/evidence is not transferred to another PC by Git.
 The first bundle is `library/games/1791450934`; it finalized and received a confirmed
 WIN result. Two subsequent PRACTICETOOL bundles are `1791452159` (quit) and
@@ -100,9 +103,13 @@ executable, idle state and no active League game. Its joined resource totals wer
 not collected; stopping it is not evidence of graceful coordinator shutdown.
 The rebuilt release started at 09:57:44 UTC, PID 17588, with explicit initialized/
 idle evidence and the same isolated library/config. `active-validation.json`
-records this current PID. The user deferred the ordinary LOSS check to next session.
+recorded that PID. The user initially deferred the ordinary LOSS check to the next
+session, then closed the accepted scope on 2026-10-13.
 
 ## Remaining
+
+None within the explicitly accepted closure scope. Deferred follow-up work, if
+the user reopens live validation or LOSS support:
 
 1. Record an actual app-closed local LOSS session and explicit delayed-EOG
    confirmation as available. WIN, unavailable quit/surrender and consecutive
@@ -112,9 +119,14 @@ records this current PID. The user deferred the ordinary LOSS check to next sess
    distinguish binary 1/0 without emitting identifiers), then enable LOSS and
    rerun the affected outcome checks.
 3. Retain actual request/latency/pending/result-write resource aggregates and
-   coordinated documentation, then apply the complete feature completion gate.
+   coordinated documentation before claiming the original full live validation.
 
 ## Verification
+
+- 2026-10-13 closure changes only canonical documentation. Feature schema,
+  lifecycle/dependency invariants and all ten plan/checkpoint pairs validate
+  across 62 roadmap items; diff hygiene passes. No product code changed and no
+  new League session or live-validation pass is claimed.
 
 - 2026-10-13 combined-source verification and review are recorded in
   `docs/reviews/repository-consolidation-2026-10-13.md`. This is integration
@@ -229,6 +241,14 @@ records this current PID. The user deferred the ordinary LOSS check to next sess
 
 ## Deviations
 
+2026-10-13: the user stated that League access is unavailable for a while and asked
+to consider QB-DATA-002 closed. The canonical acceptance criteria now explicitly
+accept the implemented conservative WIN/unknown outcome and final-statistics
+scope. The three outstanding live checks above are deferred, not represented as
+passed. Existing automated bounded-work evidence is retained without a real-game
+performance claim. The immutable v2 ExecPlan remains the original design; no
+product code or validation behavior was changed to obtain this closure.
+
 Setup also exposed an existing headless lifecycle issue: service initialization
 errors leave the process waiting for Ctrl+C without an idle state. It is recorded
 in QB-DIST-002 for supervision work. The isolated run uses the supported High
@@ -264,8 +284,9 @@ duration remains outside acceptance.
 
 ## Blockers
 
-Real primary-local LOSS remains unobserved; the user deferred an ordinary match to
-next session. Neither PRACTICETOOL quit/surrender returned a confirmed EOG block.
+No active blocker for the user-accepted closure scope. For any future extension,
+League access is currently unavailable and real primary-local LOSS remains
+unobserved. Neither PRACTICETOOL quit/surrender returned a confirmed EOG block.
 Current/older WIN observations and older opposing-roster WIN=0 do not enable LOSS.
 Full real EOG resource totals remain uncollected; terminal diagnostics are now
 available without requiring a recorder shutdown. Delayed confirmed EOG still needs
@@ -274,10 +295,11 @@ does not prove the not-ready/stale response shape.
 
 ## Next action
 
-Next session, verify the revised recorder PID/path/idle state from
-`active-validation.json` and use an ordinary match that ends with Defeat. After
-completion inspect the new bundle non-destructively: exact provisional/result IDs,
-primary-local binary observation, corroborating team outcome, final stats, healthy
-media and terminal resource aggregates. Establish actual local loss encoding
-before enabling LOSS and validate the affected outcome cone. Preserve all prior
-bundles; no recording duration condition applies.
+None for the closed scope. If the user later reopens LOSS support or the deferred
+live checks, first establish the current recorder executable/config and an isolated
+test library; historical PIDs are not current state. Capture an ordinary Defeat,
+inspect exact provisional/result IDs and primary-local outcome encoding, and retain
+terminal resource aggregates. Establish actual local loss encoding before enabling
+LOSS and validate the affected outcome checks. Delayed-EOG acceptance separately
+needs explicit not-ready/stale responses followed by exact confirmation. Preserve
+all prior bundles; no recording duration condition applies.
