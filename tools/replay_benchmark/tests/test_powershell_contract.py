@@ -209,6 +209,32 @@ class ReplayPowerShellContractTests(unittest.TestCase):
         self.assertIn("REPLAY-BENCHMARK-RESULT_EXISTS", rejected.stderr)
         self.assertEqual(marker.read_text(encoding="utf-8"), "preserve me")
 
+    @unittest.skipUnless(os.name == "nt", "Windows path-budget contract")
+    def test_runner_preflight_reserves_atomic_terminal_path(self) -> None:
+        prepared = run_script(PREPARE, "-Spec", str(self.spec), "-Manifest", str(self.manifest))
+        self.assertEqual(prepared.returncode, 0, prepared.stdout + prepared.stderr)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for length in (259, 260):
+            with self.subTest(atomic_path_length=length):
+                parent = self.root / "results"
+                suffix = "terminal.json.runner-" + "0" * 32 + ".partial"
+                remaining = length - len(str(parent / self.run_id / suffix)) - 1
+                self.assertGreater(remaining, 0)
+                parent = parent / ("p" * remaining)
+                parent.mkdir(parents=True)
+                result = parent / self.run_id
+                self.assertEqual(len(str(result / suffix)), length)
+                manifest["result_root"] = str(result)
+                self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+                check = run_script(RUN, "-Manifest", str(self.manifest), "-PreflightOnly")
+                if length == 259:
+                    self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+                    self.assertIn("QB-REPLAY-RUN-PREFLIGHT-OK", check.stdout)
+                else:
+                    self.assertNotEqual(check.returncode, 0)
+                    self.assertIn("REPLAY-BENCHMARK-PATH_BUDGET", check.stderr)
+                self.assertFalse(result.exists())
+
     def test_runner_rejects_changed_benchmark_config(self) -> None:
         prepared = run_script(PREPARE, "-Spec", str(self.spec), "-Manifest", str(self.manifest))
         self.assertEqual(prepared.returncode, 0, prepared.stdout + prepared.stderr)

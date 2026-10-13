@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frozen replay-opening-v1 campaign",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "measurement_contract",
+    "subjects",
+    "cells",
+    "control",
+    "runs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "measurement_contract": {
+      "const": "replay-opening-v1"
+    },
+    "subjects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "candidate"
+      ],
+      "properties": {
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_revision",
+            "binary_sha256",
+            "source_patch",
+            "build_receipt"
+          ],
+          "properties": {
+            "source_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "binary_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "source_patch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "build_receipt": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        "candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_revision",
+            "binary_sha256",
+            "source_patch",
+            "build_receipt"
+          ],
+          "properties": {
+            "source_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "binary_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "source_patch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "build_receipt": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cells": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cell",
+          "kind",
+          "scenario_id",
+          "fixture_id",
+          "config_sha256",
+          "input_fingerprint"
+        ],
+        "properties": {
+          "cell": {
+            "enum": [
+              "S",
+              "R",
+              "L",
+              "N",
+              "E"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "cold_open",
+              "warm_open"
+            ]
+          },
+          "scenario_id": {
+            "type": "string",
+            "pattern": "^qb010-opening-v1-[a-z0-9][a-z0-9-]*$"
+          },
+          "fixture_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "config_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "input_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "fixture_id",
+        "config_sha256",
+        "input_fingerprints"
+      ],
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "pattern": "^qb010-opening-v1-[a-z0-9][a-z0-9-]*$"
+        },
+        "fixture_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "input_fingerprints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimal",
+            "full"
+          ],
+          "properties": {
+            "minimal": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "full": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 116,
+      "maxItems": 116,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sequence",
+          "role",
+          "cell",
+          "kind",
+          "observer_profile",
+          "round",
+          "path",
+          "manifest_sha256"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 116
+          },
+          "role": {
+            "enum": [
+              "reference",
+              "candidate"
+            ]
+          },
+          "cell": {
+            "enum": [
+              "S",
+              "R",
+              "L",
+              "N",
+              "E"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "cold_open",
+              "warm_open",
+              "seek"
+            ]
+          },
+          "observer_profile": {
+            "enum": [
+              "minimal",
+              "full"
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

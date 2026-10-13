@@ -114,6 +114,84 @@ degraded state, media error, or stale-generation evidence invalidates the trial.
 
 The full observer also records media readiness, native play/pause, applied/effective rate, fullscreen state, video quality, one-second diagnostics, export progress, and lifecycle. The minimal observer retains scenario/action boundaries, dispatch/native completion, the first authoritative frame, quality snapshots, and terminal state. Both frontend and Rust writers are bounded and expose capacity, high-water mark, and loss. Any required loss invalidates the trial.
 
+## Replay-opening contract v1
+
+`qb010-opening-v1-*` scenarios declare `replay-opening-v1`. They support H.264
+`cold_open`, six-cycle `warm_open`, and `seek` with `observer_control: true`.
+Unknown opening versions or malformed workloads fail closed. Historical scenarios
+keep their existing readiness and compatibility-duration-drain semantics.
+
+For this contract, `opening_library_usable` follows two animation frames and
+revalidation of the current Games navigation, library origin and selected available
+recording. The candidate gate is its admitted actionable snapshot; the reference
+gate is its actual eager games/clips/usage/settings readiness. Optional clip-duration,
+Data Dragon and diagnostic HEVC results do not delay this H.264 entry. The normal
+HEVC capability check still runs and its eventual result is retained.
+
+Each selected intent starts a numbered cycle with a declared fixture ID. Bounded
+frontend milestones are `opening_requested`, candidate-only
+`opening_descriptor_requested` / `opening_descriptor_ready`,
+`opening_media_open_requested`, `opening_media_open_bound`, and
+`opening_details_ready`. The bound event records the controller's actual generation
+after `open`; mount generations and predictions cannot substitute. Existing
+loadstart, metadata, canplay, authoritative RVFC, play/pause/steady-playback and
+cycle-terminal records carry the same contract/cycle/fixture and load generation.
+Repeated canplay is allowed within its cycle; its first occurrence supplies latency.
+No per-frame stream is added.
+
+The candidate can start real playback before optional full details finish, in
+either legal details/first-frame order. Every positive cycle still requires one
+successful details admission within the readiness deadline. Failure, disposal or
+stale delivery cannot produce a positive terminal. The reference retains its real
+full-probe-before-media dependency. Its minimal three-file observation patch and
+parity tests are under [`tools/replay_benchmark/reference/opening`](../../tools/replay_benchmark/reference/opening/README.md).
+
+`opening_acceptance.py` consumes the existing fully validated raw bundles. It
+requires a frozen `opening-campaign.schema.json` specification with explicit roles,
+source revisions/patch hashes, binary hashes, declared-input fingerprints,
+configuration hashes, exact ordered manifests and all expected matrix slots.
+Each subject includes a hashed successful build receipt binding `source_revision`,
+`source_patch_sha256` and `binary_sha256`; the runner verifies that binary for each
+raw run. Launch manifests carry no synthetic analyzer fingerprint fields. The
+generic runner's `source` metadata identifies the runner checkout; it is not the
+separately built application's source identity. Source/clock/fixture/cycle/generation mismatch, missing or duplicate
+required events and non-authoritative presentation invalidate acceptance.
+All artifact/result paths must remain relative, contained and reparse-free beneath
+the campaign directory. Declared-input fingerprints bind the manifest's scenario,
+fixture, packaged runtime and exact configuration before collection. Full measured
+subject/comparison fingerprints also bind observed WebView/device/collector facts;
+they must agree across corresponding runs after observation. A prelaunch spec does
+not predict a measured accounting quantum or fabricate observed environment data.
+
+All opening latencies subtract frontend timestamps only: library request to Games
+paint, and selected intent to media-open, loadstart, metadata, canplay, first RVFC
+and full details. Candidate descriptor intervals are separate decomposition.
+Native processing and collector/Job counters remain in the generic reports with
+their own clock authority. The existing generic report schema remains version 1;
+the additional `opening-report.schema.json` is version 1 of this separate contract.
+
+QB-REPLAY-010 freezes five S/R/L/N/E cells for both cold and warm opening, five
+independent processes per role/cell/kind: 100 main launches. Each warm process
+retains its initial mount and takes the median of its five remounts before the
+five-process comparison. Both roles first require four minimal/full observer
+control pairs on R: 16 control launches. The runner owns frozen order, adjacent
+pairs, alternating leaders, cooldown, receipts and stop-on-first-invalid behavior;
+the acceptance tool does not select or replace runs.
+
+```powershell
+python tools/replay_benchmark/opening_acceptance.py `
+  --campaign C:\bench\.chronobreak-replay-benchmark\opening-campaign.json `
+  --output-dir C:\bench\.chronobreak-replay-benchmark\opening-report
+```
+
+The output retains per-cycle values, independent process medians, all 70 shared
+comparisons and the generic resource/control reports. Missing primary cells cannot
+disappear silently. N/E Games improvement must exceed both 5% and
+`max(5 ms, 3 * reference MAD)` for cold and warm; other material unfavorable
+latencies require disposition. Five process values do not support p95/p99 claims.
+A valid report or passing latency gate does not close resource or normal-build
+native acceptance; those dispositions remain explicit feature-completion gates.
+
 ## Server and Windows evidence
 
 Normal production playback keeps its existing cheap atomics. Benchmark mode additionally records one bounded lifecycle item per completed/cancelled request, not per chunk: route class, method/status/range, declared/delivered bytes, start/first-byte/complete monotonic time, outcome, and active/peak streams. Game, clip, music, HEVC probe, and Data Dragon routes remain distinct.
@@ -121,6 +199,8 @@ Normal production playback keeps its existing cheap atomics. Benchmark mode addi
 The external collector creates the production app suspended, associates an I/O completion port with a non-breakaway, kill-on-close Windows Job Object, assigns the app, then resumes it. Exact `NEW_PROCESS` and exit notifications cover members—including short-lived WebView helpers—that can exist entirely between samples. One-second Toolhelp/direct-PInvoke snapshots supply live identities and counters without managed `Process.MainModule` enumeration, while cumulative Job counters retain CPU and I/O from exited members. The collector observes root exit before taking its final snapshot, then has a separate finite finalization window. Job total-process accounting must exactly match creation notifications, forced termination and collector timeout are invalid, post-hash identity must match the app terminal evidence, and collector finalization may not exceed 15 seconds. Core samples include per-process and aggregate CPU time, private/working memory, I/O bytes/operations, handles, threads, process appearance/disappearance, whole-system CPU, cadence gaps, and process-tree identity.
 
 GPU engine/memory evidence is optional. Windows' in-process GPU performance-counter CIM provider has no runner-enforced finite deadline and has demonstrated multi-second stalls after a fast prelaunch query, so it is disabled in the core one-second sampler and every sample carries that explicit limitation. Missing GPU data is never emitted as zero. A future GPU collector must be independently bounded before it can join accepted full-observer evidence.
+
+Matched processes must begin with identical application state. Set `isolate_launch_roots: true` in a matrix specification to derive separate app-data and scratch children for every process; prepare each child with the same fingerprinted offline `ddragon` cache before preflight. Start other app-data empty, including the capability marker and WebView profile, and reject unexpected prelaunch contents. The planner only declares these paths; preparation and the launch wrapper enforce their initial contents. All six warm cycles within one process retain that process's state. A shared app-data root lets the first control populate the HEVC capability cache and changes later controls' request classes; this correctly fails semantic equality. The omitted/default option preserves existing matrix expansion.
 
 Before full-instrumentation baseline runs, collect four interleaved 60-second minimal/full observer pairs against the same representative fixture and deterministic actions. Warm normal playback first, then stay paused between repeated control seeks so continuous decoder read-ahead does not dominate observer CPU/byte repeatability. Each seek briefly resumes playback until its authoritative presented frame arrives and pauses again; playing-seek behavior remains covered by the baseline matrix itself. The observer-control analyzer gate requires:
 
@@ -154,7 +234,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay_benchmark/run.p
   -Manifest C:\bench\.chronobreak-replay-benchmark\manifests\run.json
 ```
 
-Preflight validates schema/root/runtime/binary/fixture identities, including the runtime manifest and exact ffmpeg/ffprobe hashes beneath `resources/media-runtime` beside the production app binary, but correctly reports production WebView, process sampling, post-hash, export decode, and terminal checks as deferred. A live run writes `manifest.json`, `events.jsonl`, `server_requests.jsonl`, `process_samples.jsonl`, `terminal.app.json`, finalized `terminal.json`, `collection-result.json`, environment/observer facts, Job completion notifications, post-hashes, and sanitized analyzer output under the immutable result root. `collection-result.json` is required analyzer evidence for finite startup, observation, shutdown, finalization, and source-integrity accounting; a terminal app record alone cannot turn an incomplete collector into a valid run.
+Preflight reserves the atomic terminal temporary filename and rejects a result path requiring 260 or more characters, before any app launch. Use shorter result-root/run names to remain within Windows PowerShell 5.1 path limits. Preflight validates schema/root/runtime/binary/fixture identities, including the runtime manifest and exact ffmpeg/ffprobe hashes beneath `resources/media-runtime` beside the production app binary, but correctly reports production WebView, process sampling, post-hash, export decode, and terminal checks as deferred. A live run writes `manifest.json`, `events.jsonl`, `server_requests.jsonl`, `process_samples.jsonl`, `terminal.app.json`, finalized `terminal.json`, `collection-result.json`, environment/observer facts, Job completion notifications, post-hashes, and sanitized analyzer output under the immutable result root. `collection-result.json` is required analyzer evidence for finite startup, observation, shutdown, finalization, and source-integrity accounting; a terminal app record alone cannot turn an incomplete collector into a valid run.
 
 Analyzer fixtures and direct use:
 

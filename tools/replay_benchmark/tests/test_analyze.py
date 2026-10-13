@@ -1539,6 +1539,21 @@ class ReplayAnalyzerTests(unittest.TestCase):
                     analyze._outcome_digest(changed_events, minimal_requests),
                 )
 
+    def test_observer_control_rejects_a_capability_probe_in_only_one_arm(self) -> None:
+        with tempfile.TemporaryDirectory() as minimal_temp, tempfile.TemporaryDirectory() as full_temp:
+            minimal, full = self.control_reports(Path(minimal_temp), Path(full_temp))
+            builder = BundleBuilder(Path(minimal_temp), run_id="capability-class")
+            probe = copy.deepcopy(builder.requests[0])
+            probe["payload"]["route_class"] = "hevc_probe"
+            minimal["trials"][0]["outcome_sha256"] = analyze._outcome_digest(
+                builder.events, [*builder.requests, probe]
+            )
+            full["trials"][0]["outcome_sha256"] = analyze._outcome_digest(
+                builder.events, builder.requests
+            )
+            with self.assertRaisesRegex(analyze.InvalidData, "semantic action/seek/request"):
+                analyze.validate_observer_control(minimal, full)
+
     def test_observer_control_gate_reports_threshold_failures(self) -> None:
         with tempfile.TemporaryDirectory() as minimal_temp, tempfile.TemporaryDirectory() as full_temp:
             minimal, full = self.control_reports(

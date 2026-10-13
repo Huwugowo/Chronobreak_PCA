@@ -712,13 +712,144 @@ def _validate_collection(
         )
 
 
+OPENING_CONTRACT = "replay-opening-v1"
+OPENING_MEDIA = ("media_loadstart", "metadata_ready", "media_canplay", "first_presented_frame")
+OPENING_ACTIONS = ("play_requested", "play_complete", "steady_playback", "pause_requested", "pause_complete")
+OPENING_TAPS = ("opening_requested", "opening_descriptor_requested", "opening_descriptor_ready",
+                "opening_media_open_requested", "opening_media_open_bound", "opening_details_ready")
+
+
+def opening_measurements(
+    scenario_id: str, spec: Mapping[str, Any], events: Sequence[Mapping[str, Any]], role: str,
+) -> dict[str, Any]:
+    """Strict same-frontend-clock evidence. Role comes from frozen campaign metadata.
+
+    Generic bundle validation also calls this with the explicit library gate's role;
+    acceptance must call it again with the independently declared subject role.
+    Native processing and collector clocks are deliberately absent from these deltas.
+    """
+    kind = spec.get("kind")
+    if (not re.fullmatch(r"qb010-opening-v1-[a-z0-9][a-z0-9-]*", scenario_id)
+            or kind not in {"cold_open", "warm_open", "seek"}
+            or (kind == "warm_open" and spec.get("iterations") != 6)
+            or (kind == "seek" and spec.get("observer_control") is not True)
+            or role not in {"reference", "candidate"}):
+        raise InvalidData("unsupported replay opening measurement workload or subject role")
+    count = 6 if kind == "warm_open" else 1
+    fixtures = spec.get("fixture_ids", [spec.get("fixture_id")])
+    if not isinstance(fixtures, list) or not fixtures or any(not isinstance(f, str) or not f for f in fixtures):
+        raise InvalidData("opening requires declared fixture identities")
+
+    def timestamp(event: Mapping[str, Any]) -> float:
+        if event.get("source") != "frontend":
+            raise InvalidData("opening evidence requires the frontend clock")
+        return _finite_number(event.get("monotonic_ms"), "opening timestamp")
+
+    def one(records: Sequence[Mapping[str, Any]], name: str) -> Mapping[str, Any]:
+        matches = [event for event in records if _kind(event) == name]
+        if len(matches) != 1:
+            raise InvalidData(f"opening requires exactly one {name}")
+        timestamp(matches[0])
+        return matches[0]
+
+    def delta(last: Mapping[str, Any], first: Mapping[str, Any]) -> float:
+        value = timestamp(last) - timestamp(first)
+        if value < 0:
+            raise InvalidData("opening milestone precedes its prerequisite")
+        return value
+
+    library_request = one(events, "library_requested")
+    library = one(events, "opening_library_usable")
+    if (_field(library, "measurement_contract") != OPENING_CONTRACT
+            or _field(library, "gate") != ("snapshot" if role == "candidate" else "legacy-resources")
+            or _field(library, "fixture_id") != fixtures[0]
+            or _field(library, "after_library_paint") is not True):
+        raise InvalidData("opening Games gate does not match contract, fixture or subject role")
+    for name in ("game_count", "clip_count"):
+        _nonnegative_integer(_field(library, name), f"opening {name}")
+    terminal_kind = "viewer_cycle_completed" if kind == "warm_open" else "scenario_completed"
+    relevant = [event for event in events if _kind(event) in (*OPENING_TAPS, *OPENING_MEDIA, *OPENING_ACTIONS, terminal_kind)]
+    if any(_kind(event).startswith("opening_") and _kind(event) not in (*OPENING_TAPS, "opening_library_usable") for event in events):
+        raise InvalidData("unknown opening milestone")
+    for event in relevant:
+        timestamp(event)
+        cycle = _field(event, "cycle")
+        if (type(cycle) is not int or not 0 <= cycle < count
+                or _field(event, "measurement_contract") != OPENING_CONTRACT
+                or _field(event, "fixture_id") != fixtures[cycle % len(fixtures)]):
+            raise InvalidData("opening milestone has a stale/missing cycle, fixture or contract")
+    cycles = []
+    generations = set()
+    previous_terminal = library
+    for ordinal in range(count):
+        section = [event for event in relevant if _field(event, "cycle") == ordinal]
+        names = ["opening_requested", "opening_media_open_requested", "opening_details_ready",
+                 "opening_media_open_bound", "media_loadstart", "metadata_ready", "first_presented_frame", terminal_kind]
+        if role == "candidate":
+            names.extend(["opening_descriptor_requested", "opening_descriptor_ready"])
+        elif any(_kind(event).startswith("opening_descriptor_") for event in section):
+            raise InvalidData("reference must not synthesize descriptor evidence")
+        milestones = {name: one(section, name) for name in names}
+        canplay = [event for event in section if _kind(event) == "media_canplay"]
+        if not canplay:
+            raise InvalidData("opening lacks canplay")
+        milestones["media_canplay"] = min(canplay, key=timestamp)
+        request = milestones["opening_requested"]
+        terminal = milestones[terminal_kind]
+        delta(request, previous_terminal)
+        previous_terminal = terminal
+        for event in section:
+            delta(event, request)
+            # Repeated canplay after actions is allowed up to this cycle's terminal.
+            delta(terminal, event)
+        generation = _field(milestones["media_loadstart"], "generation")
+        if type(generation) is not int or generation < 0 or generation in generations:
+            raise InvalidData("opening has missing or reused media load generation")
+        generations.add(generation)
+        for event in section:
+            if _kind(event) in (*OPENING_MEDIA, *OPENING_ACTIONS, "opening_media_open_bound", terminal_kind) and _field(event, "generation") != generation:
+                raise InvalidData("opening media generation mismatch")
+        if _field(milestones["first_presented_frame"], "authoritative") is not True:
+            raise InvalidData("opening requires authoritative RVFC presentation")
+        for first, last in (("opening_media_open_requested", "media_loadstart"),
+                            ("opening_media_open_requested", "opening_media_open_bound"),
+                            ("media_loadstart", "metadata_ready"),
+                            ("metadata_ready", "media_canplay"),
+                            ("metadata_ready", "first_presented_frame")):
+            delta(milestones[last], milestones[first])
+        if kind in {"cold_open", "warm_open"}:
+            previous = milestones["first_presented_frame"]
+            for name in OPENING_ACTIONS:
+                action = one(section, name)
+                delta(action, previous)
+                delta(terminal, action)
+                previous = action
+        metrics = {f"intent_to_{label}_ms": delta(milestones[name], request) for label, name in (
+            ("media_open", "opening_media_open_requested"), ("loadstart", "media_loadstart"),
+            ("metadata", "metadata_ready"), ("canplay", "media_canplay"),
+            ("first_frame", "first_presented_frame"), ("details", "opening_details_ready"))}
+        if role == "candidate":
+            descriptor = milestones["opening_descriptor_ready"]
+            metrics["descriptor_request_to_ready_ms"] = delta(descriptor, milestones["opening_descriptor_requested"])
+            metrics["descriptor_to_media_open_ms"] = delta(milestones["opening_media_open_requested"], descriptor)
+            metrics["descriptor_to_details_ms"] = delta(milestones["opening_details_ready"], descriptor)
+        else:
+            delta(milestones["opening_media_open_requested"], milestones["opening_details_ready"])
+        cycles.append({"cycle": ordinal, "phase": "initial" if ordinal == 0 else "remount",
+                       "fixture_id": fixtures[ordinal % len(fixtures)], "generation": generation,
+                       "details_before_first_frame": timestamp(milestones["opening_details_ready"]) <= timestamp(milestones["first_presented_frame"]),
+                       "metrics": metrics})
+    return {"library_request_to_games_usable_ms": delta(library, library_request), "cycles": cycles}
+
+
 def _validate_scenario_evidence(
     key: TrialKey,
     spec: Mapping[str, Any],
     trial_events: Sequence[Mapping[str, Any]],
 ) -> None:
     scenario_kind = str(spec.get("kind", "")).lower()
-    if not scenario_kind and not key.scenario_id.startswith("qb010-library-v2-"):
+    opening = key.scenario_id.startswith("qb010-opening")
+    if not scenario_kind and not key.scenario_id.startswith("qb010-library-v2-") and not opening:
         # Legacy analyzer fixtures predate the production launch-manifest shape.
         return
     kinds = [_kind(event) for event in trial_events]
@@ -731,7 +862,12 @@ def _validate_scenario_evidence(
                 f"evidence: {', '.join(missing)}"
             )
 
-    require("library_requested", "library_useful")
+    if opening:
+        gates = [event for event in trial_events if _kind(event) == "opening_library_usable"]
+        role = "candidate" if gates and _field(gates[0], "gate") == "snapshot" else "reference"
+        opening_measurements(key.scenario_id, spec, trial_events, role)
+    else:
+        require("library_requested", "library_useful")
     if key.scenario_id.startswith("qb010-library-v2-"):
         require("library_view_admitted", "games_library_usable")
         origins = [event for event in trial_events if _kind(event) == "library_requested"]
@@ -1837,6 +1973,11 @@ def _event_pair_metrics(
             scrub_started = None
     for stage, count in sorted(export_progress_stages.items()):
         _add_metric(metrics, f"export_progress_{stage}_event_count", count)
+
+    # Versioned opening acceptance is extracted separately in the frontend clock.
+    # Do not manufacture historical mixed-clock first-event opening metrics here.
+    if any(str(event.get("scenario_id", "")).startswith("qb010-opening") for event in events):
+        return
 
     library_request_events = [
         first_by_kind[kind]

@@ -1,0 +1,506 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Replay-opening-v1 process comparison report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "measurement_contract",
+    "status",
+    "campaign_sha256",
+    "subjects",
+    "runs",
+    "comparisons",
+    "latency_gate_passed",
+    "full_feature_acceptance",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "measurement_contract": {
+      "const": "replay-opening-v1"
+    },
+    "status": {
+      "const": "valid"
+    },
+    "campaign_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "subjects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "candidate"
+      ],
+      "properties": {
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_revision",
+            "binary_sha256",
+            "subject_fingerprint",
+            "source_patch_sha256"
+          ],
+          "properties": {
+            "source_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "binary_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "subject_fingerprint": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "source_patch_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_revision",
+            "binary_sha256",
+            "subject_fingerprint",
+            "source_patch_sha256"
+          ],
+          "properties": {
+            "source_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "binary_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "subject_fingerprint": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "source_patch_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 100,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_alias",
+          "role",
+          "cell",
+          "kind",
+          "round",
+          "manifest_sha256",
+          "comparison_fingerprint",
+          "cycles",
+          "process_metrics"
+        ],
+        "properties": {
+          "run_alias": {
+            "type": "string",
+            "pattern": "^run-[0-9]{3}$"
+          },
+          "role": {
+            "enum": [
+              "reference",
+              "candidate"
+            ]
+          },
+          "cell": {
+            "enum": [
+              "S",
+              "R",
+              "L",
+              "N",
+              "E"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "cold_open",
+              "warm_open"
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "comparison_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "cycles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "cycle",
+                "phase",
+                "fixture_id",
+                "generation",
+                "details_before_first_frame",
+                "metrics"
+              ],
+              "properties": {
+                "cycle": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 5
+                },
+                "phase": {
+                  "enum": [
+                    "initial",
+                    "remount"
+                  ]
+                },
+                "fixture_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "details_before_first_frame": {
+                  "type": "boolean"
+                },
+                "metrics": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "intent_to_media_open_ms",
+                    "intent_to_loadstart_ms",
+                    "intent_to_metadata_ms",
+                    "intent_to_canplay_ms",
+                    "intent_to_first_frame_ms",
+                    "intent_to_details_ms"
+                  ],
+                  "properties": {
+                    "intent_to_media_open_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "intent_to_loadstart_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "intent_to_metadata_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "intent_to_canplay_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "intent_to_first_frame_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "intent_to_details_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "descriptor_request_to_ready_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "descriptor_to_media_open_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "descriptor_to_details_ms": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "process_metrics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "library_request_to_games_usable_ms",
+              "intent_to_media_open_ms",
+              "intent_to_loadstart_ms",
+              "intent_to_metadata_ms",
+              "intent_to_canplay_ms",
+              "intent_to_first_frame_ms",
+              "intent_to_details_ms"
+            ],
+            "properties": {
+              "library_request_to_games_usable_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "intent_to_media_open_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "intent_to_loadstart_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "intent_to_metadata_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "intent_to_canplay_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "intent_to_first_frame_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "intent_to_details_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "descriptor_request_to_ready_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "descriptor_to_media_open_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "descriptor_to_details_ms": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "warm_open"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "cycles": {
+                  "minItems": 6,
+                  "maxItems": 6
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "cycles": {
+                  "minItems": 1,
+                  "maxItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "role": {
+                  "const": "candidate"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "process_metrics": {
+                  "required": [
+                    "descriptor_request_to_ready_ms",
+                    "descriptor_to_media_open_ms",
+                    "descriptor_to_details_ms"
+                  ]
+                },
+                "cycles": {
+                  "items": {
+                    "properties": {
+                      "metrics": {
+                        "required": [
+                          "descriptor_request_to_ready_ms",
+                          "descriptor_to_media_open_ms",
+                          "descriptor_to_details_ms"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "process_metrics": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "descriptor_request_to_ready_ms"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "descriptor_to_media_open_ms"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "descriptor_to_details_ms"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "cycles": {
+                  "items": {
+                    "properties": {
+                      "metrics": {
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "descriptor_request_to_ready_ms"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "descriptor_to_media_open_ms"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "descriptor_to_details_ms"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "minItems": 70,
+      "maxItems": 70,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cell",
+          "kind",
+          "metric",
+          "independent_processes_per_arm",
+          "reference_median",
+          "candidate_median",
+          "reference_mad",
+          "absolute_threshold_ms",
+          "gate"
+        ],
+        "properties": {
+          "cell": {
+            "enum": [
+              "S",
+              "R",
+              "L",
+              "N",
+              "E"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "cold_open",
+              "warm_open"
+            ]
+          },
+          "metric": {
+            "enum": [
+              "library_request_to_games_usable_ms",
+              "intent_to_media_open_ms",
+              "intent_to_loadstart_ms",
+              "intent_to_metadata_ms",
+              "intent_to_canplay_ms",
+              "intent_to_first_frame_ms",
+              "intent_to_details_ms"
+            ]
+          },
+          "independent_processes_per_arm": {
+            "const": 5
+          },
+          "reference_median": {
+            "type": "number",
+            "minimum": 0
+          },
+          "candidate_median": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reference_mad": {
+            "type": "number",
+            "minimum": 0
+          },
+          "absolute_threshold_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "gate": {
+            "enum": [
+              "improved",
+              "no_material_regression",
+              "disposition_required",
+              "required_improvement_missing"
+            ]
+          }
+        }
+      }
+    },
+    "latency_gate_passed": {
+      "type": "boolean"
+    },
+    "full_feature_acceptance": {
+      "const": "requires_resource_and_native_disposition"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

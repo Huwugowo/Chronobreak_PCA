@@ -81,6 +81,29 @@ const FLUSH_BATCH_SIZE = 128;
 const SERVER_FLUSH_INTERVAL_MS = 1_000;
 export const REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT = "chronobreak:replay-benchmark-viewer-cycle";
 export const GAMES_LIBRARY_USABLE_CONTRACT = "games-library-usable-v1" as const;
+export const OPENING_CONTRACT = "replay-opening-v1" as const;
+
+export type OpeningCycle = Readonly<{
+  cycle: number;
+  fixture_id: string;
+  gameTimestamp: string;
+}>;
+
+// This is a workload version, not a change to legacy library/useful events.
+export const isOpeningScenario = (scenario: BenchmarkScenario): boolean => {
+  if (!scenario.id?.startsWith("qb010-opening")) return false;
+  if (!/^qb010-opening-v1-[a-z0-9][a-z0-9-]*$/.test(scenario.id) ||
+      !(scenario.kind === "cold_open" || scenario.kind === "warm_open" ||
+        (scenario.kind === "seek" && scenario.observer_control === true)) ||
+      (scenario.kind === "warm_open" && scenario.iterations !== 6)) {
+    throw new Error("unsupported replay opening measurement workload");
+  }
+  return true;
+};
+
+export const openingPayload = (cycle: OpeningCycle): Record<string, unknown> => ({
+  measurement_contract: OPENING_CONTRACT, cycle: cycle.cycle, fixture_id: cycle.fixture_id,
+});
 
 const MINIMAL_EVENT_KINDS = new Set([
   "frontend_initialized",
@@ -88,6 +111,13 @@ const MINIMAL_EVENT_KINDS = new Set([
   "library_useful",
   "library_view_admitted",
   "games_library_usable",
+  "opening_library_usable",
+  "opening_requested",
+  "opening_descriptor_requested",
+  "opening_descriptor_ready",
+  "opening_media_open_requested",
+  "opening_media_open_bound",
+  "opening_details_ready",
   "replay_requested",
   "playback_payload_ready",
   "viewer_mounted",
@@ -210,6 +240,7 @@ export class ReplayBenchmarkObserver {
   private scenarioActive = false;
   private actionSequence = 0;
   private mediaGeneration = -1;
+  private opening: OpeningCycle | undefined;
   private readonly windowStateEvents = new Set<string>();
 
   private readonly handleWindowBlur = (): void => {
@@ -267,6 +298,31 @@ export class ReplayBenchmarkObserver {
   nextMediaGeneration(): number {
     this.mediaGeneration += 1;
     return this.mediaGeneration;
+  }
+
+  beginOpeningCycle(fixture: BenchmarkFixture, cycle: number): void {
+    if (!isOpeningScenario(this.scenario()) || !Number.isSafeInteger(cycle) ||
+        cycle !== (this.opening ? this.opening.cycle + 1 : 0) ||
+        cycle > (this.scenario().kind === "warm_open" ? 5 : 0) ||
+        this.fixtureForScenario(cycle)?.id !== fixture.id ||
+        String(fixture.codec).toLowerCase() !== "h264") {
+      throw new Error("invalid opening cycle or non-H.264 fixture");
+    }
+    this.opening = Object.freeze({ cycle, fixture_id: fixture.id, gameTimestamp: fixture.game_timestamp });
+    this.emit("opening_requested", openingPayload(this.opening), { required: true });
+  }
+
+  openingCycle(gameTimestamp: string): OpeningCycle | undefined {
+    if (!isOpeningScenario(this.scenario())) return undefined;
+    if (!this.opening || this.opening.gameTimestamp !== gameTimestamp) {
+      throw new Error("viewer does not match the current opening intent");
+    }
+    return this.opening;
+  }
+
+  emitOpening(kind: string, cycle: OpeningCycle, meta: BenchmarkEventMeta = {}): void {
+    if (this.opening !== cycle) return; // A superseded viewer cannot label the new cycle.
+    this.emit(kind, openingPayload(cycle), { ...meta, required: true });
   }
 
   private recordWindowStateEvent(kind: string, reason: string, invalidating: boolean): void {
@@ -768,4 +824,5 @@ const validateSession = (session: BenchmarkSessionInfo): void => {
   if (!scenario.id || !scenario.trial_id || !scenario.kind) {
     throw new Error("replay benchmark scenario identity is incomplete");
   }
+  isOpeningScenario(scenario);
 };

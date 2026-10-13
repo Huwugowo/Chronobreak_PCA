@@ -20,6 +20,9 @@ import {
   emitReplayBenchmarkEvent,
   REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
   replayBenchmarkObserver,
+  isOpeningScenario,
+  openingPayload,
+  type OpeningCycle,
   type ScenarioAction,
 } from "../benchmark";
 import { formatDate, formatDuration } from "../format";
@@ -114,8 +117,18 @@ const millisecondsToReplayTick = (milliseconds: number, replayEnd: ReplayTick): 
   ) as ReplayTick;
 
 function ViewerScreen(props: Props) {
+  const observer = replayBenchmarkObserver();
+  const opening = observer && isOpeningScenario(observer.scenario())
+    ? observer.openingCycle(props.gameTimestamp) : undefined;
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [descriptor, { refetch }] = createResource(() => props.gameTimestamp,
-    id => props.readReplay(token => loadReplayDescriptor(id, token)));
+    async id => {
+      if (opening) observer!.emitOpening("opening_descriptor_requested", opening);
+      const value = await props.readReplay(token => loadReplayDescriptor(id, token));
+      if (opening && alive) observer!.emitOpening("opening_descriptor_ready", opening);
+      return value;
+    });
   let failureReported = false;
 
   createEffect(() => {
@@ -151,6 +164,7 @@ function ViewerScreen(props: Props) {
             <PlaybackSurface
               {...props}
               descriptor={loaded()}
+              opening={opening}
             />
           )}
         </Match>
@@ -159,7 +173,7 @@ function ViewerScreen(props: Props) {
   );
 }
 
-function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
+function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?: OpeningCycle }) {
   const mediaTimeline = props.descriptor.media_timeline;
   const replayEnd = mediaTimeline.video.replayEnd;
   const durationMs = replayTickToMilliseconds(replayEnd);
@@ -178,6 +192,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   let benchmarkEndpointSequence = 0;
   const benchmarkAbortController = new AbortController();
   const dispatchObservers = new Map<string, () => void>();
+  let admitDetails!: () => void;
+  const admittedDetails = new Promise<void>(resolve => { admitDetails = resolve; });
 
   const [detailsStarted, setDetailsStarted] = createSignal(false);
   const [detailsResource, { refetch: retryDetails }] = createResource(
@@ -187,6 +203,23 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   );
   const detailsError = () => detailsResource.error;
   const details = () => detailsError() ? undefined : detailsResource();
+  const clearOpeningReadinessTimeout = () => {
+    if (props.opening && benchmarkScenarioStarted && details() && benchmarkMediaReadyTimerId !== undefined) {
+      window.clearTimeout(benchmarkMediaReadyTimerId);
+      benchmarkMediaReadyTimerId = undefined;
+    }
+  };
+  const failOpening = (phase: string, reason: string) => {
+    if (benchmarkScenarioFinished || disposed) return;
+    benchmarkScenarioFinished = true;
+    benchmarkAbortController.abort();
+    controller.dispose();
+    if (benchmarkMediaReadyTimerId !== undefined) window.clearTimeout(benchmarkMediaReadyTimerId);
+    const observer = replayBenchmarkObserver()!;
+    const payload = { ...openingPayload(props.opening!), phase, reason };
+    observer.emit("scenario_failed", payload, { generation: mediaGeneration, required: true });
+    void observer.complete("failed", reason, payload);
+  };
   let detailsPaint: number | undefined;
   let payloadReported = false;
   let detailsFailureReported = false;
@@ -202,14 +235,21 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
       if (observer && !detailsFailureReported) {
         detailsFailureReported = true;
         const reason = libraryError(detailsError());
+        if (props.opening) {
+          failOpening("playback_probe", reason);
+          return;
+        }
         observer.emit("scenario_failed", { phase: "playback_probe", reason }, { required: true });
         void observer.complete("failed", reason, { phase: "playback_probe" });
       }
       return;
     }
     const loaded = details();
-    if (!loaded || payloadReported) return;
+    if (!loaded || payloadReported || (props.opening && benchmarkScenarioFinished)) return;
     payloadReported = true;
+    if (props.opening) replayBenchmarkObserver()!.emitOpening("opening_details_ready", props.opening);
+    admitDetails();
+    clearOpeningReadinessTimeout();
     emitReplayBenchmarkEvent("playback_payload_ready", {
       event_count: loaded.events.length, participant_count: loaded.participants.length,
       duration_ms: loaded.game.duration_ms,
@@ -328,7 +368,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
 
   const onPlaybackEvent = (event: PlaybackEvent) => {
     mediaGeneration = event.generation;
-    emitReplayBenchmarkEvent(event.kind, { ...event.payload }, { generation: event.generation, actionId: event.actionId, required: true });
+    emitReplayBenchmarkEvent(event.kind, { ...event.payload,
+      ...(props.opening ? openingPayload(props.opening) : {}),
+    }, { generation: event.generation, actionId: event.actionId, required: true });
     if (event.actionId && (event.kind === "seek_dispatched" || event.kind === "seek_deduped")) {
       dispatchObservers.get(event.actionId)?.(); dispatchObservers.delete(event.actionId);
     }
@@ -610,7 +652,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     await waitForBenchmark(100);
   };
 
-  const withBenchmarkTimeout = async <T,>(promise: Promise<T>, label: string): Promise<T> => {
+  const withBenchmarkTimeout = async <T,>(promise: Promise<T>, label: string, timeoutMs = SEEK_TIMEOUT_MS * 4): Promise<T> => {
     let timeoutId: number | undefined;
     const signal = benchmarkAbortController.signal;
     let rejectOnAbort: ((reason?: unknown) => void) | undefined;
@@ -621,7 +663,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
         new Promise<never>((_, reject) => {
           timeoutId = window.setTimeout(
             () => reject(new Error(`${label} timed out`)),
-            SEEK_TIMEOUT_MS * 4,
+            timeoutMs,
           );
         }),
         new Promise<never>((_, reject) => {
@@ -663,7 +705,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
         const actionId = observer.nextActionId("play");
         emitReplayBenchmarkEvent(
           "play_requested",
-          { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
+          { ...(props.opening ? openingPayload(props.opening) : {}), media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
           { generation: mediaGeneration, actionId, required: true },
         );
         try {
@@ -672,7 +714,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
           if (controller.snapshot().media.paused || controller.snapshot().media.ended) throw new Error("native playback did not start");
           emitReplayBenchmarkEvent(
             "play_complete",
-            { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
+            { ...(props.opening ? openingPayload(props.opening) : {}), media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
             { generation: mediaGeneration, actionId, required: true },
           );
           
@@ -689,7 +731,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
         const actionId = observer.nextActionId("pause");
         emitReplayBenchmarkEvent(
           "pause_requested",
-          { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
+          { ...(props.opening ? openingPayload(props.opening) : {}), media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
           { generation: mediaGeneration, actionId, required: true },
         );
         try {
@@ -698,7 +740,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
           if (!controller.snapshot().media.paused) throw new Error("native playback did not pause");
           emitReplayBenchmarkEvent(
             "pause_complete",
-            { media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
+            { ...(props.opening ? openingPayload(props.opening) : {}), media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
             { generation: mediaGeneration, actionId, required: true },
           );
           
@@ -728,6 +770,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
         emitReplayBenchmarkEvent(
           "steady_playback",
           {
+            ...(props.opening ? openingPayload(props.opening) : {}),
             duration_ms: performance.now() - startedAt,
             media_advance_ms: mediaDeltaMs,
             total_frame_delta:
@@ -913,8 +956,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
   const runBenchmarkScenario = async () => {
     const observer = replayBenchmarkObserver();
     if (
-      disposed || !observer ||
-      !details() || detailsError() ||
+      disposed || !observer || benchmarkScenarioFinished ||
+      (!props.opening && !details()) || detailsError() ||
       benchmarkScenarioStarted ||
       mediaState() !== "ready" ||
       canPlayGeneration !== mediaGeneration ||
@@ -923,7 +966,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
       return;
     }
     benchmarkScenarioStarted = true;
-    if (benchmarkMediaReadyTimerId !== undefined) {
+    clearOpeningReadinessTimeout();
+    if (!props.opening && benchmarkMediaReadyTimerId !== undefined) {
       window.clearTimeout(benchmarkMediaReadyTimerId);
       benchmarkMediaReadyTimerId = undefined;
     }
@@ -932,7 +976,13 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
       const actions = buildScenarioActions(scenario, durationMs);
       for (const action of actions) await runBenchmarkAction(action);
       controller.pause();
+      if (props.opening) {
+        await withBenchmarkTimeout(admittedDetails, "opening details", BENCHMARK_MEDIA_READY_TIMEOUT_MS);
+        if (disposed || benchmarkScenarioFinished || detailsError() || !details()) return;
+        if (benchmarkMediaReadyTimerId !== undefined) window.clearTimeout(benchmarkMediaReadyTimerId);
+      }
       await updateMetrics();
+      if (props.opening && (disposed || benchmarkScenarioFinished)) return;
       const quality = controller.sampleMetrics().quality;
       const completionKind =
         scenario.kind === "warm_open" ||
@@ -940,6 +990,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
           ? "viewer_cycle_completed"
           : "scenario_completed";
       const completionPayload = {
+        ...(props.opening ? openingPayload(props.opening) : {}),
         kind: scenario.kind,
         media_time_ms: controller.snapshot().media.browserSeconds * 1_000,
         ready_state: controller.snapshot().media.readyState,
@@ -966,6 +1017,10 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     } catch (error) {
       if (benchmarkAbortController.signal.aborted || disposed) return;
       const reason = error instanceof Error ? error.message : String(error);
+      if (props.opening) {
+        failOpening("actions", reason);
+        return;
+      }
       observer.emit(
         "scenario_failed",
         { reason },
@@ -1034,13 +1089,16 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     });
     const openMedia = () => {
       if (disposed || !props.descriptor.video_url) return;
+      if (props.opening) replayBenchmarkObserver()!.emitOpening("opening_media_open_requested", props.opening);
       void controller.open({ url: props.descriptor.video_url, mediaId: mediaTimeline.mediaId, timeline: mediaTimeline });
+      if (props.opening) replayBenchmarkObserver()!.emitOpening("opening_media_open_bound", props.opening,
+        { generation: controller.snapshot().generation });
       const initial = clipRange();
       if (initial) { controller.setLoopRange(initial); void seekTo(clipStartTick(initial)); }
     };
     // Targeted production decoder checks subscribe before opening their media.
     // Ordinary user opening remains independent of diagnostic readiness.
-    if (replayBenchmarkObserver()) void decoderDiagnostics.ready.then(openMedia);
+    if (replayBenchmarkObserver() && !props.opening) void decoderDiagnostics.ready.then(openMedia);
     else openMedia();
     emitReplayBenchmarkEvent("viewer_mounted", { duration_ms: durationMs,
       frame_rate_numerator: mediaTimeline.video.frameRate.numerator.toString(),
@@ -1100,7 +1158,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
     const observer = replayBenchmarkObserver();
     if (observer && props.descriptor.video_url) {
       benchmarkMediaReadyTimerId = window.setTimeout(() => {
-        if (benchmarkScenarioStarted || benchmarkScenarioFinished || disposed) return;
+        if ((!props.opening && benchmarkScenarioStarted) || benchmarkScenarioFinished || disposed) return;
+        if (props.opening) {
+          failOpening("media_readiness", "opening readiness/details timed out");
+          return;
+        }
         benchmarkScenarioFinished = true;
         const reason = "media readiness timed out";
         observer.emit("scenario_failed", { phase: "media_readiness", reason }, { generation: mediaGeneration, required: true });
@@ -1111,7 +1173,12 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor }) {
       disposed = true;
       if (observer && !benchmarkScenarioFinished) {
         benchmarkScenarioFinished = true;
-        void observer.complete("failed", "viewer disposed before benchmark completion");
+        const reason = "viewer disposed before benchmark completion";
+        if (props.opening) {
+          const payload = { ...openingPayload(props.opening), phase: "viewer_disposed", reason };
+          observer.emit("scenario_failed", payload, { generation: mediaGeneration, required: true });
+          void observer.complete("failed", reason, payload);
+        } else void observer.complete("failed", reason);
       }
       benchmarkAbortController.abort();
       dispatchObservers.clear();

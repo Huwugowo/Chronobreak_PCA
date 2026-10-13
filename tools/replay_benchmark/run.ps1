@@ -894,9 +894,25 @@ function Write-JsonFile {
     Write-Utf8Text -Path $Path -Text (($Value | ConvertTo-Json -Depth 100) + "`n")
 }
 
+function Get-AtomicJsonPartialPath {
+    param([string]$Path, [string]$Token = ([Guid]::NewGuid().ToString('N')))
+    return "$Path.runner-$Token.partial"
+}
+
+function Assert-RunnerResultPathBudget {
+    param([string]$ResultRoot)
+    # Windows PowerShell 5.1's File.WriteAllText rejects MAX_PATH-length names.
+    # Reserve the actual terminal finalization suffix before launching the app.
+    $terminal = Join-Path $ResultRoot "terminal.json"
+    $partial = Get-AtomicJsonPartialPath -Path $terminal -Token ("0" * 32)
+    if ($partial.Length -ge 260) {
+        Stop-Benchmark "PATH_BUDGET" "Atomic terminal path requires $($partial.Length) characters; shorten result_root/run_id so it is at most 259."
+    }
+}
+
 function Write-JsonFileAtomic {
     param([string]$Path, [object]$Value)
-    $partial = "$Path.runner-$([Guid]::NewGuid().ToString('N')).partial"
+    $partial = Get-AtomicJsonPartialPath -Path $Path
     Write-JsonFile -Path $partial -Value $Value
     try {
         [QueueBackReplayJob]::AtomicReplaceFile($partial, $Path)
@@ -1491,6 +1507,7 @@ function Read-AndValidateManifest {
     $appDataRoot = Get-FullAbsolutePath -Value ([string]$value.app_data_root) -Label "app_data_root"
     $resultRoot = Get-FullAbsolutePath -Value ([string]$value.result_root) -Label "result_root"
     $scratchRoot = Get-FullAbsolutePath -Value ([string]$value.scratch_root) -Label "scratch_root"
+    Assert-RunnerResultPathBudget -ResultRoot $resultRoot
     Assert-DisjointRoots -Entries @(
         [pscustomobject]@{ label = "library_root"; path = $libraryRoot },
         [pscustomobject]@{ label = "config parent"; path = (Split-Path -Parent $configPath) },

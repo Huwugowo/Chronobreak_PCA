@@ -7,16 +7,17 @@ import type { PlaybackProbe } from "../types";
 import { parseMediaId, type FrameBoundary, type ReplayTick } from "../replayTime";
 import { buildScenarioActions, emitReplayBenchmarkEvent, replayBenchmarkObserver } from "../benchmark";
 
+const diagnosticHarness = vi.hoisted(() => ({ held: false }));
 vi.mock("../api", async original => ({ ...await original<typeof import("../api")>(),
   loadPlaybackProbe: vi.fn(), loadReplayDescriptor: vi.fn(), loadServerMetrics: vi.fn() }));
 vi.mock("../playbackDiagnostics", () => ({ createPlaybackDiagnostics: () => ({
-  ready: Promise.resolve(false), bind: vi.fn(), dispose: vi.fn(),
+  ready: diagnosticHarness.held ? new Promise(() => {}) : Promise.resolve(false), bind: vi.fn(), dispose: vi.fn(),
 }) }));
 vi.mock("../benchmark", async original => ({ ...await original<typeof import("../benchmark")>(),
   emitReplayBenchmarkEvent: vi.fn(), replayBenchmarkObserver: vi.fn(() => null),
   buildScenarioActions: vi.fn() }));
 
-afterEach(() => { vi.restoreAllMocks(); vi.mocked(emitReplayBenchmarkEvent).mockClear(); vi.mocked(replayBenchmarkObserver).mockReset().mockReturnValue(null); vi.mocked(buildScenarioActions).mockReset(); document.body.replaceChildren(); });
+afterEach(() => { diagnosticHarness.held = false; vi.restoreAllMocks(); vi.mocked(emitReplayBenchmarkEvent).mockClear(); vi.mocked(replayBenchmarkObserver).mockReset().mockReturnValue(null); vi.mocked(buildScenarioActions).mockReset(); document.body.replaceChildren(); });
 
 const replayProbe = (): PlaybackProbe => ({
     game: { timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-08T00:00:00Z",
@@ -297,3 +298,99 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
     });
   }
 });
+
+it.each(["media-first", "details-first", "details-fail", "details-timeout", "disposed"] as const)(
+  "versioned opening plays from paused RVFC and admits a positive terminal only with details (%s)", async outcome => {
+    diagnosticHarness.held = true;
+    const probe = replayProbe();
+    let resolveDetails!: (value: PlaybackProbe) => void;
+    let rejectDetails!: (error: Error) => void;
+    vi.mocked(loadPlaybackProbe).mockReturnValue(new Promise((resolve, reject) => { resolveDetails = resolve; rejectDetails = reject; }));
+    vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
+      video_url: probe.video_url, media_timeline: probe.media_timeline });
+    vi.mocked(loadServerMetrics).mockResolvedValue({ requests: 1, range_requests: 1, response_bytes: 1,
+      completed_streams: 1, cancelled_streams: 0, active_connections: 0, peak_connections: 1,
+      rejected_connections: 0, rejected_requests: 0, active_streams: 0, peak_streams: 1 });
+    const opening = Object.freeze({ cycle: 0, fixture_id: "S", gameTimestamp: "1" });
+    const observer = { nextMediaGeneration: () => 1, nextActionId: () => "play-1",
+      scenario: () => ({ id: "qb010-opening-v1-s-cold", kind: "cold_open" }),
+      openingCycle: () => opening, emitOpening: vi.fn(), emit: vi.fn(), complete: vi.fn() };
+    vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
+    vi.mocked(buildScenarioActions).mockReturnValue([{ kind: "play" }]);
+    let paused = true;
+    vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockImplementation(() => paused);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function(this: HTMLMediaElement) { paused = true; this.dispatchEvent(new Event("pause")); });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async function(this: HTMLMediaElement) { paused = false; this.dispatchEvent(new Event("play")); });
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    let readinessTimeout: (() => void) | undefined;
+    const nativeTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number) => {
+      if (ms === 30_000 && !readinessTimeout) readinessTimeout = callback as () => void;
+      return nativeTimeout(callback, ms);
+    }) as typeof window.setTimeout);
+    const prototype = HTMLVideoElement.prototype;
+    const names = ["requestVideoFrameCallback", "cancelVideoFrameCallback"];
+    const originals = names.map(name => Object.getOwnPropertyDescriptor(prototype, name));
+    let frame!: VideoFrameRequestCallback;
+    Object.defineProperty(prototype, names[0], { configurable: true, value: (callback: VideoFrameRequestCallback) => { frame = callback; return 1; } });
+    Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+      readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    try {
+      await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
+      await vi.waitFor(() => expect(resolveDetails).toBeTypeOf("function"));
+      const primary = host.querySelector("video")!;
+      Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
+      if (outcome === "details-first") {
+        resolveDetails(probe);
+        await vi.waitFor(() => expect(observer.emitOpening).toHaveBeenCalledWith("opening_details_ready", opening));
+      }
+      primary.dispatchEvent(new Event("loadstart"));
+      primary.dispatchEvent(new Event("loadedmetadata"));
+      primary.dispatchEvent(new Event("canplay"));
+      expect(paused).toBe(true);
+      expect(play).not.toHaveBeenCalled();
+      frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
+      await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+      expect(observer.emitOpening.mock.calls.map(([kind]) => kind).slice(0, 3)).toEqual([
+        "opening_descriptor_requested", "opening_descriptor_ready", "opening_media_open_requested",
+      ]);
+      const load = vi.mocked(emitReplayBenchmarkEvent).mock.calls.find(([kind]) => kind === "media_loadstart")!;
+      expect(observer.emitOpening).toHaveBeenCalledWith("opening_media_open_bound", opening, { generation: load[2]!.generation });
+      expect(emitReplayBenchmarkEvent).toHaveBeenCalledWith("play_requested", expect.objectContaining({
+        measurement_contract: "replay-opening-v1", cycle: 0, fixture_id: "S",
+      }), expect.objectContaining({ generation: load[2]!.generation }));
+      if (outcome !== "details-first") {
+        expect(observer.complete).not.toHaveBeenCalled();
+        expect(observer.emit).not.toHaveBeenCalledWith("scenario_completed", expect.anything(), expect.anything());
+      }
+      if (outcome === "disposed") dispose();
+      else if (outcome === "details-fail") rejectDetails(new Error("details unavailable"));
+      else if (outcome === "details-timeout") readinessTimeout!();
+      else resolveDetails(probe);
+      await vi.waitFor(() => expect(observer.complete).toHaveBeenCalledTimes(1));
+      expect(observer.complete.mock.calls[0][0]).toBe(outcome === "media-first" || outcome === "details-first" ? "complete" : "failed");
+      if (["disposed", "details-fail", "details-timeout"].includes(outcome)) {
+        expect(observer.emit).toHaveBeenCalledWith("scenario_failed", expect.objectContaining({
+          measurement_contract: "replay-opening-v1", cycle: 0, fixture_id: "S",
+        }), expect.objectContaining({ generation: load[2]!.generation }));
+        resolveDetails(probe);
+        await Promise.resolve(); await Promise.resolve();
+        expect(observer.emit.mock.calls.some(([kind]) => kind === "scenario_completed")).toBe(false);
+        expect(observer.complete).toHaveBeenCalledTimes(1);
+      } else {
+        expect(observer.emit).toHaveBeenCalledWith("scenario_completed", expect.objectContaining({
+          measurement_contract: "replay-opening-v1", cycle: 0, fixture_id: "S",
+        }), expect.objectContaining({ generation: expect.any(Number) }));
+      }
+    } finally {
+      dispose();
+      names.forEach((name, index) => {
+        const original = originals[index];
+        if (original) Object.defineProperty(prototype, name, original);
+        else Reflect.deleteProperty(prototype, name);
+      });
+    }
+  },
+);

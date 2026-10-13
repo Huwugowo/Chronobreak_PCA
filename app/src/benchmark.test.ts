@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   BoundedEventBuffer,
   buildScenarioActions,
@@ -11,6 +11,8 @@ import {
   sanitizePayload,
   shouldRecordBenchmarkEvent,
   GAMES_LIBRARY_USABLE_CONTRACT,
+  isOpeningScenario,
+  OPENING_CONTRACT,
   type BenchmarkScenario,
   type BenchmarkSessionInfo,
 } from "./benchmark";
@@ -21,6 +23,53 @@ const scenario = (overrides: Partial<BenchmarkScenario>): BenchmarkScenario => (
   kind: "seek",
   fixture_ids: ["short-h264"],
   ...overrides,
+});
+
+describe("replay opening workload", () => {
+  it("reserves the version and supported workload shape without changing legacy scenarios", () => {
+    expect(isOpeningScenario(scenario({ id: "historical" }))).toBe(false);
+    expect(isOpeningScenario(scenario({ id: "qb010-opening-v1-s-cold", kind: "cold_open" }))).toBe(true);
+    expect(isOpeningScenario(scenario({ id: "qb010-opening-v1-r-control", observer_control: true }))).toBe(true);
+    for (const overrides of [
+      { id: "qb010-opening-v2-s-cold", kind: "cold_open" },
+      { id: "qb010-opening-v1-", kind: "cold_open" },
+      { id: "qb010-opening-v1-s-idle", kind: "app_idle" },
+      { id: "qb010-opening-v1-s-warm", kind: "warm_open", iterations: 5 },
+      { id: "qb010-opening-v1-r-control", kind: "seek" },
+    ]) expect(() => isOpeningScenario(scenario(overrides))).toThrow("unsupported");
+  });
+
+  it("binds each admitted cycle and suppresses superseded viewer markers", () => {
+    const fixture = { id: "short-h264", alias: "S", game_timestamp: "1", codec: "h264" };
+    const observer = new ReplayBenchmarkObserver({ schema_version: 1, run_id: "opening-test",
+      observer_profile: "minimal", harness_initialization_ms: 0, session_elapsed_ms: 0,
+      fixtures: [fixture], scenarios: [scenario({ id: "qb010-opening-v1-s-warm", kind: "warm_open", iterations: 6 })],
+      ddragon_mode: "offline", ddragon_cache_fingerprint: "fixture",
+      event_queue: { capacity: 256, high_water_mark: 0, accepted_records: 0, dropped_records: 0 },
+    }, 0);
+    const emit = vi.spyOn(observer, "emit");
+    expect(() => observer.openingCycle("1")).toThrow("intent");
+    expect(() => observer.beginOpeningCycle(fixture, 1)).toThrow("cycle");
+    expect(() => observer.beginOpeningCycle({ ...fixture, codec: "hevc" }, 0)).toThrow("H.264");
+    observer.beginOpeningCycle(fixture, 0);
+    const initial = observer.openingCycle("1")!;
+    expect(() => observer.openingCycle("2")).toThrow("intent");
+    observer.emitOpening("opening_descriptor_ready", initial);
+    expect(emit).toHaveBeenLastCalledWith("opening_descriptor_ready", {
+      measurement_contract: OPENING_CONTRACT, cycle: 0, fixture_id: fixture.id,
+    }, { required: true });
+    observer.beginOpeningCycle(fixture, 1);
+    emit.mockClear();
+    observer.emitOpening("opening_details_ready", initial);
+    expect(emit).not.toHaveBeenCalled();
+    expect(() => observer.beginOpeningCycle(fixture, 1)).toThrow("cycle");
+    for (let cycle = 2; cycle <= 5; cycle++) observer.beginOpeningCycle(fixture, cycle);
+    expect(() => observer.beginOpeningCycle(fixture, 6)).toThrow("cycle");
+    for (const name of ["opening_requested", "opening_library_usable", "opening_descriptor_requested",
+      "opening_descriptor_ready", "opening_media_open_requested", "opening_details_ready"]) {
+      expect(shouldRecordBenchmarkEvent("minimal", name)).toBe(true);
+    }
+  });
 });
 
 describe("BoundedEventBuffer", () => {

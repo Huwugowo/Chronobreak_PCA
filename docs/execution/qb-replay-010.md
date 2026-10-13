@@ -1,22 +1,47 @@
 # QB-REPLAY-010 execution checkpoint
 
 Feature: `QB-REPLAY-010`
-ExecPlan: `docs/exec-plans/qb-replay-010-ui-reconciliation.md`
-Updated: 2026-09-23
+ExecPlan: `docs/exec-plans/qb-replay-010-replay-opening-acceptance.md`
+Updated: 2026-10-13
 
 ## Current milestone
 
-UI reconciliation M1-M3 complete, 2026-09-23: combined automated checks, both
-desktop builds, review and user-operated native acceptance passed. The
-noncommitting integration combines
-root `3426cfa0340373b13a9aa4930b75f41271b7c0d2` with the user-confirmed current UI
-line `6c7174fd8edb4f299e0a0ee0b77a1683a96ee629` and its five uncommitted CSS edits.
-The original input patches are preserved under build/qb010-ui-reconciliation.
-The three conflicts have verified working-tree resolutions and are resolved in
-the Git index; the merge is intentionally uncommitted. The diagnostic gate was
-restored, subject/listener closure verified and final source audit passed. Full
-QB-REPLAY-010 remains in progress for separately planned replay/performance scope;
-no new semantic backend pipeline or performance campaign was authorized.
+Integrated replay-opening acceptance M1 completed on 2026-10-12. The versioned
+candidate/reference workload, strict same-clock extraction, frozen-campaign
+acceptance and parity/regression tests pass. M2 source/subject freeze is complete
+and fresh corpus preparation/assembly completed on 2026-10-13.
+Three measurement attempts remain closed and preserved (identity admission,
+Windows output-path finalization, then shared capability-cache state). R4 now
+freezes private state per process with unchanged subjects/media and strict gates;
+all 116 fresh static preflights passed. R4 controls then closed on incomplete
+process telemetry in launch 16; no main measurements have run.
+QB-REPLAY-010 remains in progress with its unchanged
+acceptance criteria and no current performance or native-acceptance claim.
+
+The source baseline is clean `main` at
+`a82d81f005823768a21b8aef4a94bd954ce26903` before this documentation handoff. The
+accepted reconciliation is committed as `a840c64` and included in consolidation
+`13e68091` with the later UI line `bb9041e`; a82d81f changes documentation only.
+The earlier instructions describing an uncommitted merge and a live sibling
+checkout are historical, not current repository state. No commit or push is part
+of this new plan. The September 27 integration record is
+`docs/reviews/repository-consolidation-2026-09-27.md`.
+
+Library V2/M4, minimal descriptor and UI reconciliation units remain closed.
+Their accepted measurements/native observations are historical input, not proof
+that the later consolidated tree passed every full-feature gate. Semantic details
+already load after descriptor-first media; a new semantic backend is not an
+outstanding implementation requirement. The remaining unit establishes integrated
+opening performance, current normal-build acceptance and resource dispositions.
+
+### Closed UI reconciliation unit
+
+UI reconciliation M1-M3 completed on 2026-09-23 under
+`docs/exec-plans/qb-replay-010-ui-reconciliation.md`. It combined root `3426cfa`
+with UI `6c7174f` and five captured CSS edits, with automated/build/review and
+user-operated native acceptance. At that handoff the merge was uncommitted;
+subsequent committed consolidation is described above. Original patches, receipts
+and native source audits remain under `build/qb010-ui-reconciliation/`.
 
 ### Closed descriptor unit
 
@@ -52,25 +77,201 @@ descriptor, timeline and playback scope. The immutable attribution plan remains 
 
 ## Active unit
 
-No active reconciliation implementation or verification unit remains. M1-M3 are
-complete: controller/token/descriptor ownership, participant cards, strict roster
-decoders, display-only optimistic save reconciliation and shared rail cleanup are
-verified together. Final frontend suite has 166 passing tests; Rust has 92 passing
-tests and one pre-existing opt-in ignored; typecheck/build/fmt/Clippy and both
-desktop builds pass. Native controls, delayed/failed/retried details, clip/fullscreen
-continuity, normal exporter return, filters, save/unsave and A/B/A passed on the
-fresh normal subject. Gate removed with zero pending responses; title-bar closure
-verified by absent subject/listener. Final video/game-log hashes are unchanged.
+M2: r4 has frozen 22 matrices and 116 launches with unique pristine app-data and
+scratch roots, matching declared input fingerprints and 224–230-character atomic
+output paths. Review found no actionable issues. All 116 static preflights passed;
+their final summary was completed from the intact successful receipts after the
+original exec session ended. No preflight or measurement was repeated. R4 controls
+1–15 finalized successfully. Launch 16 completed the app scenario (exit 0, no
+timeout, source hashes unchanged, 66 process samples) but telemetry completeness
+failed at 13:28:13 UTC. Session 54191 ended with exit 1; controls/016.json,
+STOPPED.json and phase-failed.json close collection. No aggregate observer gate
+or main launch is accepted. Diagnose the incomplete sample from preserved raw
+evidence; no automatic retry or replacement.
+The first corrected reference pair completed with one HEVC request in each arm
+and identical semantic digest 4d45a75884a6d99f0c305d19a75734f6fd2118e04f0275a86ec81671b0aa5796.
+This proves the cache-state correction for that pair, not aggregate acceptance.
+Manual helper source is staged under build/qb010-opening-manual-20261013 using
+the frozen normal candidate and generated S source. It has not been tested,
+prepared, decoded or launched; defer media work until measurements stop.
 
-The original sibling CSS patch is captured and applied. The sibling remains at
-6c7174f and untouched; on 2026-09-23 it additionally has uncommitted LibraryScreen.tsx
-and SettingsScreen.tsx changes. Those later edits are outside the captured input;
-do not overwrite or silently include them. The original five CSS edits are retained.
+R3 short-path replacement passed all 116 static preflights and focused
+review (no actionable findings). All 16 controls finalized individually, proving
+corrected identity admission and atomic terminal finalization. At 08:43:24 UTC,
+the reference minimal/full aggregate failed semantic outcome equality in
+validate_observer_control. controls/phase-failed.json and STOPPED.json close r3;
+exec session 29899 ended with exit 1. No main measurement was launched and no
+aggregate observer gate passed. The preserved diagnostic proves shared capability-cache state; prepare the
+separately recorded r4 replacement with private state per process.
+All four campaigns remain closed and unpooled. Reuse the normal candidate,
+second-screen benchmark builds and accepted fixture/decode evidence only when
+their dependencies remain valid. The r3 path budget is 224–230 characters for
+all 116 atomic terminal files.
 
-Descriptor implementation and acceptance are complete in commit `3426cfa` under
-`docs/exec-plans/qb-replay-010-minimal-replay-descriptor.md`. Its native artifacts
-remain under `build/qb010-descriptor-manual-20260922/`; no descriptor/M4 rerun follows
-from this handoff. No new semantic backend implementation is active.
+Replacement setup is now built/frozen; all 22 matrices and its 116-launch order
+are fixed. The first 116 replacement static preflights passed. A reviewed
+prelaunch guard correction is now frozen as a separate r2 tooling revision; its
+all 116 static preflights passed (replacement-v2/preflight-r2/complete.json).
+The first replacement control completed the app action window but failed runner
+finalization at 08:11:35 UTC: WriteAllText rejected the long atomic terminal path.
+controls/STOPPED.json closes this replacement after one attempt. No later launch
+occurred; diagnostic investigation is active and no app process remains. Both paired
+config-only builds passed and freeze the title-bar/decorations/maximize settings
+before WebView creation; no new live launch has occurred. Candidate binary SHA
+`ee54301c01439cdbfb8983e02b171350167ede662bbaa5f941ca6dacaeee8ded`,
+reference `ae0cee56832a1922bc285790f9916cbcef1f00c5067ac609c7a5c23a706a5164`.
+Their command/build/source receipts live under `replacement-v2/`; archive paths
+are `build/qb010-opening-{candidate,reference}-secondary`. Source patches reverse-
+apply cleanly. Fresh canonical input hashes authenticate 421 files/provenance
+records; original media decode proof is reused, not rerun. Input/display guard
+tests pass 4/4 (0.041 s), retained runner fail-stop tests pass 8/8 (0.480 s), and
+opening analysis tests pass 17/17 (7.039 s), including action-count aliases and
+planning from raw declarations. Design review found no actionable findings;
+focused runtime-guard review found the display check preceded the cooldown.
+The corrected run_campaign_r2.py checks immediately before subprocess launch,
+inside the persisted failure boundary. Ten guard tests pass (0.368 s), including
+call order and changed-display rejection without launch. Original helper,
+certificate, order and preflight artifacts are preserved; input-reuse-r2.json and
+specs/global-order-r2.json freeze only this tooling correction. Every subject,
+manifest, launch sequence and threshold is unchanged, before live replacement
+launches; preflight-r2 receipts bind the revised tooling/order.
+
+### Replacement disposition and design (2026-10-13)
+
+Launch 1 passed the generic runner, but frozen input admission compared the raw
+scenario with an analyzer-normalized scenario containing an injected null action
+count. Binary, config and original/result manifest hashes match. The user also
+reported interacting with its windows. Exclude the attempt, retain its STOPPED
+receipts, and pool no observations into a replacement. The correction canonicalizes
+only action-count normalization; explicit numeric counts remain identity-bound.
+Focused tests cover raw/normalized declarations and a full synthetic campaign.
+`diagnostics/first-control-identity.json` retains the original mismatch and the
+116-declaration diagnostic (not a performance acceptance).
+
+The user requested movable bordered windows on their second monitor. Rebuild
+only the two benchmark subjects in new source archives with identical Tauri
+window configuration: `center:false`, logical `x:2304,y:64`, `maximized:true`,
+`fullscreen:false`, `decorations:true`, `resizable:true`. Keep ordinary application
+source and the frozen normal candidate unchanged. Native monitor enumeration
+identified non-primary DISPLAY1 at physical (1920,0)-(3840,1080), work area ending
+at y=1042, scale 125%; primary DISPLAY5 is (0,0)-(1920,1080), scale 100%.
+The chosen logical point maps inside DISPLAY1 and outside the primary at both
+monitors' respective scale. Local Tauri/tao applies position and maximize during
+window construction before visibility/WebView timing. No post-launch move/resize
+hook or hidden/minimized measurement is used. Record and verify topology before
+collection; changed topology closes the phase before another launch.
+
+Use a fresh `replacement-v2/` namespace inside the existing sentinel, with its
+own builds, source patches/receipts, campaign/order, unique run IDs, matrices,
+results, appdata and scratch. Share only the accepted read-only S/R/L/N/E corpus,
+canonical no-retention configs and runtime bytes. This is explicit input reuse,
+not another preparation claim: hash-bind the original preparation completion,
+accepted manifests/receipts, current fixture/config/tool hashes, monitor policy
+and analysis/runner versions in a replacement input certificate and frozen order.
+Do not copy or fabricate producer receipts or redo accepted full media decodes.
+Fresh matrix verification and all 116 static launch preflights remain required.
+
+Keep the original protocol: seed 20261006, four adjacent minimal/full 60-second
+R control pairs per subject, then ten cold/warm strata with five independent
+processes per arm, six warm cycles, fixed 116-launch ceiling, alternating pair
+leaders, five-second warmup/cooldown, original timeouts, unchanged thresholds and
+fail-stop rules. The replacement is a separate collection with no pooling,
+selective top-up or automatic retry. The configured display is a measurement
+condition applied equally to both subjects, not a product optimization.
+
+### Isolated-state replacement disposition (2026-10-13)
+
+R3 completed all 16 native controls individually, then closed on semantic outcome
+inequality. Preserved diagnostic `r3/diagnostics/observer-cache-failure.json` binds
+all raw manifests/events/requests. Each subject's eight controls share one
+app-data root: its first minimal process performed one HEVC capability request;
+its subsequent seven performed none. Both subjects have identical action targets,
+generations and ordered action events across each pair, with no error/recovery
+difference. The backend writes `hevc-probe-v1.json` under the declared app-data
+root; WebView also uses that root. This is inconsistent starting state, not a
+playback defect or an analyzer false positive. Keep strict request-class identity
+and all thresholds unchanged. All 22 numeric observer thresholds are individually
+within their existing limits on a diagnostic calculation, but semantic failure
+prevents accepting either observer matrix. No main run occurred.
+
+Correct only matrix expansion/preparation: the optional `isolate_launch_roots`
+contract derives app-data and scratch children by immutable run ID, with each
+child's own offline ddragon cache. This small mechanism already exists in a
+historical frozen planner; reuse its focused behavior, not that campaign or its
+other tooling. Defaults remain backward compatible. All 116 processes in a
+separate `r4/` order receive independently prepared pristine state; every warm
+process still keeps its six cycles together. At preflight and immediately before
+launch, reject app-data containing anything except the declared empty offline
+`ddragon` directory, and reject nonempty scratch. Validate global uniqueness and
+containment, retaining reparse checks. Never erase/reset a used profile or seed a
+capability result to obtain equality.
+
+Reuse the byte-identical second-screen subjects, accepted media/config/runtime,
+full decode evidence, display policy, protocol/seed/ordering/counts/timeouts and
+path budget. No product rebuild or media regeneration is invalidated. Freeze new
+manifest/order/tool/input receipts and complete fresh static preflights before
+measurement. The previous three campaigns remain closed, preserved and unpooled;
+this separately recorded replacement addresses the proven preparation defect.
+Matrix isolation tests pass 18/18 and analyzer tests 39/39, including a regression
+that a HEVC request class in only one arm still rejects controls. Full Python
+verification passed: 116 tests run, 115 passed and one existing opt-in skipped
+(38.501 s; build/qb010-opening-isolated-state-tests.log). R4 launch guards passed
+13/13 and input/display guards 4/4. Focused preparation/launch-guard review found
+no actionable issues. The new input certificate authenticates 426 original input/
+provenance files; all 116 fresh static preflights passed. No media was copied or
+decoded again, and no app code or analyzer threshold changed.
+
+### Short-path replacement disposition (2026-10-13)
+
+Replacement-v2 control 1 completed its app window (exit 0, terminal complete,
+67,337.15 ms) but its runner's atomic terminal rewrite generated a 265-character
+path and failed in Windows PowerShell 5.1 File.WriteAllText. The result directory
+and original terminal exist; this was not a missing parent. The analyzer and
+runner-result receipt were never reached, so no timing observation is accepted.
+Its STOPPED receipts and all other evidence remain immutable. Among its frozen
+manifests, 108/116 atomic paths exceed 259 characters; do not resume that order.
+
+The existing runner now reserves the actual atomic terminal suffix in both
+preflight and normal validation, rejecting paths of 260 or more characters before
+launch. The same partial-path helper serves validation and writing; atomic
+publication and integrity checks remain intact. Dedicated temporary tests verify
+259-character acceptance and 260-character rejection with no app launch. All 15
+PowerShell contract tests passed (29.821 s). Full benchmark Python verification
+then ran 113 tests: 112 passed, one opt-in test skipped (46.624 s). R3 wrapper
+guards passed 10/10 (0.490 s), input/display guards 4/4 (0.032 s); all 116
+normalized input fingerprints match their frozen declarations. The r3 reuse
+certificate authenticates 426 input/provenance files, including the original
+second-screen build receipts.
+
+Create a separate `r3/` campaign namespace inside the same sentinel with shorter
+matrix/run IDs. Reuse the byte-identical second-monitor binaries/source patches,
+their original successful build receipts, and all accepted preparation evidence.
+Fresh appdata, scratch, matrices, result paths, input/tool certificate and frozen
+order remain mandatory. Validate every projected atomic path and run all fresh
+static preflights. No rebuild or media decode is invalidated by this filename
+correction. Protocol, counts, thresholds, display policy and no-pooling/fail-stop
+rules remain exactly those recorded above. This is the separately recorded
+replacement for the output-path defect, not a selective retry of the failed run.
+
+M1 is complete: candidate changes are in `app/src/App.tsx`, `benchmark.ts` and
+`components/ViewerScreen.tsx`; Python validation is in `analyze.py` and
+`opening_acceptance.py` with strict campaign/report schemas. Reference source is
+`build/qb010-opening-reference` at archived `3a750e2`; its reproducible three-file
+patch and test-only parity fixtures are in
+`tools/replay_benchmark/reference/opening/`. The durable benchmark protocol is
+updated. Do not recreate closed product units or rerun accepted M1 groups unless
+subsequent input changes invalidate them.
+
+The new workload opens after actual Games paint/admission, excludes only the
+candidate's benchmark-only all-clip drain, and permits media actions before
+optional details while still requiring admitted details for a positive terminal.
+The new extractor must not reuse payload-before-mount or cross-clock causal
+assumptions. Five independent processes per arm/stratum and separate warm initial/
+remount observations are mandatory. No native measurement launch before M1 tests
+and M2 subject/fixture/preflight gates.
+
+No UI merge, descriptor repair, M4 rerun or restoration of later sibling/stash
+changes is needed. The accepted original units and their evidence remain below.
 
 ### Historical closed M4 execution
 
@@ -173,6 +374,33 @@ Canonical evidence is retained at
 
 ## Completed
 
+- 2026-10-12 opening acceptance M1: implemented the H.264 Games paint/current-origin
+  gate without optional duration/HEVC/Data Dragon waits; preserved legacy gates.
+  Candidate playback/actions can precede full details, but every positive cycle
+  requires successful details admission. Failure/timeout/disposal stay terminal.
+  Actual controller load generation, cycle and fixture bind bounded events and
+  playback actions. Strict extraction rejects missing/duplicate/stale/mixed-clock
+  evidence and keeps warm initial mounts separate from five-remount medians.
+- Frozen-reference parity: eager games/clips/usage/settings and full-probe-before-
+  media behavior remain intact. Seven App and two Viewer parity tests pass within
+  the 96-test reference suite. The production patch SHA-256 is
+  `bdea824fe36b8bffc4e613cc83518cffb2352ca4efe3903c6e8a7a9ea4f2c157`.
+  Applying it to exact archived source reproduces all three tested files byte for
+  byte (`build/qb010-opening-reference-patch-check-r2`).
+- Python contract tests exercise all 116 synthetic raw bundles through the real
+  validator/control/comparison pipeline, all 70 primary comparisons, malformed
+  events, absent primaries and source/patch/binary/config/runtime/role mismatch.
+  This is tooling correctness evidence, not measured performance. Frontend and
+  analyzer reviews found generation/action association gaps; those were fixed
+  and the affected tests pass. No unresolved M1 review finding remains.
+
+- 2026-10-06 source reconciliation and next-unit planning: confirmed clean main
+  a82d81f and committed reconciliation/consolidation ancestry. Reviewed a bounded
+  `replay-opening-v1` workload and actual-before/current comparator, with full
+  feature fixture coverage and fixed collection ceilings. Linked the separately
+  finalized plan and initialized its first implementation cursor. No product
+  implementation, benchmark, native acceptance or commit occurred in this pass.
+
 - UI reconciliation M3 (2026-09-23): final full affected automated checks, normal
   and benchmark desktop builds, focused review and native acceptance passed.
   User-operated tests cover real A/V, seek/zoom/pan, clip edits and fullscreen
@@ -181,7 +409,8 @@ Canonical evidence is retained at
   Garen selection and overlapping-ID A/B/A. Gate restored; no pending requests;
   normal subject and scoped listener closed. Only Ahri save metadata reserialized
   (optional capture absent → null, saved remains its original true); all video/log
-  hashes, all B files and generated source are unchanged. Work remains uncommitted.
+  hashes, all B files and generated source are unchanged. Work was uncommitted
+  at that handoff; the later committed consolidation is recorded above.
 
 - UI reconciliation M1-M2 (2026-09-23): retained captured UI/CSS work with existing
   controller ownership; added required strict roster parity, coherent development
@@ -339,17 +568,90 @@ Canonical evidence is retained at
 
 ## In flight
 
-No implementation, test, native subject, held response or diagnostic listener is
-in flight. Reconciliation is complete and remains uncommitted as requested.
-Original input patches, exact receipts, frozen normal subject, diagnostic history
-and source audits are retained under build/qb010-ui-reconciliation/.
-The independent review finding in App benchmark paint admission was repaired and
-covered by stable/away/away-back regressions. The native exporter loading report
-was caused by the deliberate optional-response hold: release resumed the latest
-viewer, and normal ungated exporter/return passed. Its exact ordering is now
-covered by a passing App regression. No production change was needed for it.
-Closed descriptor/M4 subjects and results remain unchanged. The following dated
-V2 records are retained history, not current work.
+M2 corpus preparation is complete. S/R/L passed the original packaged probe/full
+decode. Both bulk N/E preparation attempts were interrupted without final
+receipts; their partial libraries, started receipts and logs remain preserved.
+The first N attempt copied 36 bundles; the second copied 17 N and 17 E bundles.
+None supplies accepted decode evidence. No benchmark app was launched.
+
+`specs/prepare_incremental.py` now invokes unchanged `prepare.ps1` per fixture in
+isolated, immutable attempt directories under `fixture-preparation/{n,e}/`.
+All 102 fixture groups passed (100 recordings and 100 clips), with finalized
+spec/manifest/receipt hashes and full single-thread decodes. Resume revalidated
+accepted groups without repeating their decode. The initial scale-00 specs failed
+before copying because result-root leaf differed from run ID; corrected that
+adapter and the corresponding planner template path, preserving failed receipts.
+
+N/E assembly completed at 2026-10-13 07:26:13 UTC. Accepted manifests are
+`assembled/{n,e}/attempt-001/manifest.json`; each has 200 verified files and its
+own receipt plus atomic complete marker. Assembly rechecks every contributing
+source/staged/final byte hash, size, recorded timestamp, exact fixture/decode
+coverage, isolated config/cache and runtime identity before publication.
+`preparation-prepare/complete.json` atomically binds those manifests and retained
+S/R/L by hash. Interrupted assembly directories remain unaccepted and resumable
+work never overwrites evidence. Four copied-fixture regressions pass for complete
+reuse, one-sided interruption, post-copy mutation and interrupted atomic commit;
+fresh focused review found no remaining actionable finalization issue.
+No preparation worker remained at the 2026-10-13 resume inspection.
+
+Fresh sentinel: `build/perf/qb-replay-010-opening-v1/.chronobreak-replay-benchmark`.
+`source-freeze.json` records exact archives and three-file patches; candidate
+source is `build/qb010-opening-candidate`, reference `build/qb010-opening-reference`.
+Normal candidate build SHA-256:
+`4105e50b1f8712f75cd021cf22bb8fe87c6bc72931f7e591282753c3e59cdd2f`.
+Benchmark candidate:
+`441c2d5721389bbd1ed154d5a3f3ed3e352441a016cb87a959205339c33befb9`.
+Benchmark reference:
+`a71dba892df504d69b80b046ac19fe44e38bfd208731ab9981a1f46e513d7184`.
+Each is independently rebuilt through Tauri, copied under `subjects/` with the
+locked runtime, and linked by `candidate-normal-build.json`, `candidate-build.json`
+and `reference-build.json`. Normal was frozen before benchmark overwrote target.
+The benchmark receipts hash all tracked app/media-runtime/replay-time source files
+and packaged files. Reused Cargo cache is not claimed as an independent toolchain.
+
+`specs/prepare_sources.py` verified retained generated S/R/L source identities and
+created independent new copies; only new L log was densified through the strict-v2
+helper (3,917 events/3,600 snapshots). N/E have 50 games/50 identical ten-second
+clips, matching media/IDs/metadata; logs retain 7/8 and 259/240 events/snapshots.
+`source-preparation.json` hashes every generated file
+and retains source hashes/clip command. Generated bytes: 1,121,445,584; conservative
+prepared corpus forecast: 2,511,326,624, below 8 GiB. Old roots were read-only.
+
+`specs/plan_campaign.py` and `run_campaign.py` reuse the existing matrix/runner and
+have passed syntax compilation; the campaign/order and 22 matrices are frozen.
+All 116 static runner preflights passed at 07:33:21 UTC on 2026-10-13;
+`preflight/complete.json` binds their count and frozen order hash. The controls
+phase started at launch 1 at 07:36:46 UTC, using native process accounting outside
+the restricted sandbox. The runner exited 0 (clean exit, unchanged fixture hashes
+and generic analyzer acceptance), but campaign admission failed with Frozen input
+or subject mismatch at 07:38:00 UTC. controls/001.json and STOPPED.json preserve
+the failure; no further launch occurred. The user reported interacting with the
+benchmark windows, independently excluding the attempt from unattended timing
+evidence. No league-replay-app process remained after runner completion.
+Main collection remains unrun; no automatic retry, top-up or replacement.
+A runner review found resume-gap, exception-receipt and cross-matrix cooldown
+issues. The wrapper now audits all 116 slots before collection, requires one
+contiguous finalized-success prefix, persists execution/admission/finalization
+failures without overwriting evidence, and checks five-second cooldowns across
+all live receipts including the controls/main boundary. Eight focused mocked
+failure-path tests pass; a fresh read-only review found no remaining actionable
+issue in the changed fail-stop scope.
+Planner creates 22 matrices (20 main, two controls), 16 control and 100 main
+manifests with seed 20261006, adjacent/alternating pairs and five-second cooldown.
+Runner persists exclusive started/completed receipts, validates each bundle and
+frozen/measured identity, rejects incomplete attempts, and gates main on both
+observer-control reports. The planner first rejected an absent matrix-plan parent
+before creating a matrix; corrected setup and strictly reused identical static
+templates while requiring unused result/appdata/scratch roots. Frozen on Oct 13:
+`opening-campaign.json` SHA-256
+`49852df93c125ea3e65fc267f136b2d3ea18447bd22b5e82eb8af2b9d9e781b1`;
+`specs/global-order.json`
+`b588a65c2deb4eb27df299eebb9c46ef66363b9a3530b9de6ae54c722f60af55`.
+All 22 matrix plans passed static verification when created. Final prepared corpus
+is 409 files / 1,135,958,159 bytes, below 8 GiB. No raw measurement exists yet.
+
+All edits remain uncommitted. Current checkout has 60 canonical items, distinct
+from the historical restored-primary 210-test/68-item snapshot.
 
 ### Historical V2 verification context
 
@@ -431,21 +733,28 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
 
 ## Remaining
 
-No reconciliation milestone remains. Full-feature replay scope and criterion 6
-performance acceptance still require a separately bounded design and evidence.
-Retain all uncommitted work; do not fold later sibling changes into this accepted
-input, remerge it, or reopen closed descriptor/M4 campaigns. No new replay
-performance campaign is authorized by this reconciliation unit.
+- M2: freeze reference/current subjects, prepare generated S/R/L/N/E fixtures and
+  exact paired specs, pass all static preflights and both observer-control matrices.
+- M3: collect the fixed cold/warm comparison (100 main launches; 16 prerequisite
+  observer-control launches), validate independent counts/identities/source hashes,
+  and disposition every material resource, I/O, playback or timing signal.
+- M4: complete affected automated/build checks and current normal-build native
+  acceptance, including optional-details continuity and the configured/resolved
+  root-alias watchpoint. Record actual evidence before claiming full completion.
 
-### Closed descriptor boundary and historical remaining scope
+No library, descriptor or original reconciliation milestone remains. Their source
+and acceptance results stay closed. No full-feature latency/I/O or current native
+acceptance pass is implied by those prior results. Any demonstrated product defect
+needs a focused corrective design; no speculative backend/index implementation is
+authorized. Preserve the original unchanged feature criteria and old campaign data.
 
-No descriptor milestone remains. Full-feature replay performance/manual gates
-remain separate and unrun for this unit; the deliberate descriptor/full-probe
-duplicate strict JSON reads are not a latency or I/O non-regression claim.
-The descriptor plan does not authorize semantic timeline/ReplayTimeline work.
-The new UI reconciliation plan separately governs adoption of the existing UI
-timeline only; semantic backend staging stays out of scope. The historical V2 tasks
-below were completed by the recorded M4 closure; do not repeat them.
+### Closed descriptor boundary
+
+The descriptor and full probe deliberately reread strict JSON. Media-first UI
+staging is implemented and optional full details are deferred. Aggregate I/O and
+integrated replay-opening behavior remain to be measured by this plan; a payload
+split or persistent ReplayIndex is not presumed necessary. Earlier historical
+remaining-scope bullets below were superseded by descriptor/UI closure.
 
 ### Historical V2 handoff list (superseded by closure)
 
@@ -468,6 +777,73 @@ below were completed by the recorded M4 closure; do not repeat them.
   initial absolute-root rendering was observed, not alias/root-switch acceptance.
 
 ## Verification
+
+- 2026-10-12 M1 current candidate: focused frontend 36/36 passed
+  (`command-20261012-104439.log`); complete `npm run test --prefix app` 214/214
+  across 24 files passed (`104552`). `npm run check --prefix app` passed.
+  `npm run build --prefix app` passed (`104644`).
+- Archived reference: `npm run test --prefix build/qb010-opening-reference/app`
+  passed 96/96 across 15 files (`104550`), including nine new parity tests.
+  `npm run build --prefix build/qb010-opening-reference/app` passed (`104651`),
+  including TypeScript checking. Dependencies came from the locked offline cache.
+- `python -m unittest discover -s tools/replay_benchmark/tests -v`: 109 run,
+  108 passed and one existing opt-in skipped. After independently binding archive
+  source revision/patch fingerprints, focused `test_opening_acceptance.py` reran
+  14/14 passed (8.140 s). Generic producer/schema behavior was unchanged.
+- `cargo test --manifest-path app/src-tauri/Cargo.toml`: 92 passed, one existing
+  opt-in ignored (`104621`). `cargo fmt --manifest-path app/src-tauri/Cargo.toml --
+  --check` passed. `cargo clippy --manifest-path app/src-tauri/Cargo.toml
+  --all-targets -- -D warnings` passed (`104757`). Logs above reside in `.codex/logs/`.
+- A transient action-payload scope error was caught by the five Viewer cases;
+  corrected to `props.opening` in both subjects, then all affected/full tests and
+  builds passed. Patch verification initially compared CRLF archive-copy bytes
+  against LF patch output; normalization plus fresh apply proved exact equality.
+  Sandboxed test/build logger access failures ran no tests/build; approved tool
+  execution with normal log access produced the passing receipts above.
+- M2 desktop builds passed on 2026-10-12: normal candidate (release 47.54 s),
+  benchmark candidate (53.72 s), benchmark reference (51.57 s), all with isolated
+  source and `CARGO_TARGET_DIR` set to the existing app target and offline Cargo.
+  The first archive build failed for absent relative packaged runtime; staging
+  the locked copy fixed it without source changes. The prior automatic approval
+  attempt did not execute because review hit a usage limit; user's continuation
+  retried the normal approval path successfully. Normal and benchmark hashes and
+  exact commands are in the build receipts above.
+- M2 exposed two synthetic/real producer differences in new acceptance: launch
+  manifests do not have analyzer fixture `fingerprints`; runner `source` describes
+  collector checkout. Corrected via frozen successful build-receipt binding and
+  prelaunch declared-input fingerprint versus measured comparison fingerprint.
+  A fresh focused provenance review found path escape; containment/reparse checks
+  now cover receipts, patches and result roots. A helper/parameter name collision
+  was caught and corrected. Latest focused opening Python: 15/15 passed (10.910 s),
+  including a full 116-bundle campaign without synthetic manifest fingerprints.
+  Product binaries and generic analyzer/runner behavior were unchanged.
+- 2026-10-12 runner recovery guards: eight focused tests passed (0.334 s), covering
+  future started/completed gaps, cross-phase cooldown, subprocess timeout/launch
+  failure, log I/O failure, bundle admission and phase-report failure. These launch
+  no app and do not replace real preflights or controls. Preparation recovery
+  preflights for N-r1/E passed; their full decode is in flight.
+- 2026-10-13 preparation accepted: original S/R/L plus 102 independently finalized
+  N/E fixture groups, 203 media files full-decoded overall; 409 final prepared
+  files. Assembly regression tests passed 4/4 (1.329 s); fresh focused review
+  passed. Partial earlier bulk outputs are preserved and excluded. Atomic aggregate
+  receipt: `preparation-prepare/complete.json` at 07:26:13 UTC.
+- Corpus full validation/assembly and all 116 static launch preflights passed.
+  The first control failed campaign identity admission and was also user-interacted;
+  collection is closed. Remaining controls, 100 main launches and current native
+  acceptance remain not run. No performance or full-feature completion claim follows from
+  the automated/build checks.
+
+- 2026-10-06 planning handoff: canonical schema/lifecycle/link validation passed
+  for 60 roadmap items and eight plan/checkpoint pairs; documentation whitespace
+  and exact plan/checkpoint association checks passed. The source baseline before
+  these documentation edits was clean main a82d81f. No product test/build, native
+  scenario or performance run was attempted during assessment/planning.
+- Current integration provenance: September 27 consolidation records 203 frontend
+  tests plus TypeScript/Vite build for the UI merge. Rust tests, native acceptance
+  and performance were explicitly not rerun. Its later 210-test restored-primary
+  snapshot and 68-item validation are not the present clean source/catalog; retain
+  this distinction when choosing final verification. September 23's 166 frontend/
+  92 Rust, desktop builds and native observations below apply to that earlier unit.
 
 - Reconciliation native acceptance closed 2026-09-23 08:27 UTC. User confirms
   A/B/A with correct Lux then Ahri/Garen labels and A/V; config returned to root-a
@@ -911,6 +1287,39 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Decisions
 
+- 2026-10-12 implementation clarification: the generic analyzer currently emits
+  schema version 1, despite the plan's clerical schema-v2 wording. Preserve that
+  existing schema; opening acceptance has its own strict version-1 report.
+- Real-launch refinement, 2026-10-12: the shared runner's `source` identifies its
+  checkout, and launch manifests have no synthetic `fingerprints` object. Frozen
+  app build receipts bind revision/patch/binary; actual runner binary hashes bind
+  each run. Declared-input fingerprints freeze scenario/fixture/config/packaged
+  runtime before launch. Full measured subject/comparison fingerprints then bind
+  observed device/WebView/accounting identities consistently across matched runs.
+  No future measurement is fabricated in a prelaunch spec; no raw result is edited.
+
+- 2026-10-06: use actual pre-010 source 3a750e2 versus current a82d81f with frozen
+  observation/workload patches. The result measures integrated changes and cannot
+  isolate descriptor benefit from intervening UI changes. Preserve old event
+  meanings; a new namespace observes the real clickable Games-to-media path.
+- Fresh planning review required separating the H.264 Games admission from the
+  legacy benchmark HEVC wait. The finalized design preserves normal capability
+  initialization, tests a held probe, retains paused initial RVFC and uses a
+  separate details/action-completion latch. No remaining blocking design finding.
+- Final handoff source-path check: the ExecPlan calls the frontend observer file
+  `app/src/replayBenchmark.ts`; the actual module is `app/src/benchmark.ts`, which
+  exports `replayBenchmarkObserver` and owns `MINIMAL_EVENT_KINDS`. Use that module.
+  This is a clerical path correction, not a design change; the linked immutable
+  plan remains unchanged and the active target list above uses the real path.
+- Full feature coverage uses S/R/L/N/E cold and warm, five independent processes
+  per arm, plus four minimal/full observer pairs per subject. No pooling, selective
+  top-up or reopening of M4. Invalid/interrupted collection stops and preserves its
+  evidence; insufficient matrices stay insufficient. No product fix is inferred
+  from the absence of measurement.
+- Historical no-commit/uncommitted/sibling statements below describe their dated
+  units. The current source is consolidated; this new plan itself includes no
+  commit/push and never authorizes restoring unrelated recovered work.
+
 - Reconciliation review (2026-09-23): fix the concrete pre-existing App benchmark
   fallback that emitted library_useful after the admitted Games view changed
   before painting. Fail this case with phase library_paint, include navigation
@@ -998,35 +1407,24 @@ below were completed by the recorded M4 closure; do not repeat them.
 
 ## Blockers
 
-The shell sandbox helper still cannot start; reviewed elevated execution works.
-The 2026-09-22 pending patch/test action was not executed because automatic approval
-review hit an account usage limit (not a safety finding). On 2026-09-23 approved
-read/write/test commands work again. On 2026-09-23 computer-use list_apps reports
-"native pipe is unavailable ... os error 2". User-operated combined native
-acceptance subsequently passed with diagnostic/source-audit support. No
-reconciliation blocker remains; the native pass is actual user evidence, not
-an inference from DOM tests.
+No current environment blocker was established during planning: repository reads,
+documentation writes and canonical validation work. Historical native-pipe and
+shell restrictions in the retained history are dated observations, not a fresh
+failure. M2/M4 must attempt the relevant current preflight before reporting environment-blocked;
+human native observations remain valid when recorded explicitly.
 
-No unresolved minimal-descriptor acceptance or engineering blocker remains.
-The missing Windows native pipe persisted after reset/reinitialization; the
-user-operated native sequence supplied the actual UI/audio observations instead.
-The agent's scoped response diagnostic supplied supplementary admission/media
-and source-hash evidence, not a substitute for those native observations. The
-shell sandbox helper was unavailable; approved shell execution and the same
-apply_patch engine worked. Planning scouts did not initialize; root reviewed the
-plan directly. Final native-resume/read-only frontend review completed.
-
-The full feature stays in progress because its separate replay scope and complete
-performance/manual gates are not satisfied here. V2/M4 has no remaining blocker;
-its campaigns, dispositions and acceptance are closed and unchanged. The first
-campaign's coverage gaps remain explicit and are not repaired by pooling.
+The feature remains in progress because matched measurements/resource dispositions
+and current native acceptance have not run. Closed V2/M4, descriptor and original
+reconciliation units have no reopened blocker. Unknown replay I/O/resource effects
+and the configured/resolved-root alias risk remain unproven, not confirmed defects.
 
 ## Next action
 
-Use completed reconciliation M1-M3 as the restart baseline. Keep the merge and
-all changes uncommitted. Before further QB-REPLAY-010 implementation or full replay
-performance work, resolve the next concrete remaining unit against the unchanged
-feature criteria and finalize its separately reviewed design through WORKFLOW.md.
-Do not remerge the accepted UI input, include later sibling edits, rerun this
-completed acceptance without a concrete invalidation, or reopen descriptor/M4
-campaigns. The current immutable reconciliation plan remains unchanged.
+Diagnose r4 launch 16's process-telemetry completeness failure from preserved
+samples, collector accounting and notifications. The application completed, but
+this is not a valid benchmark bundle. R4 and all earlier campaigns are closed;
+no main measurement, top-up or automatic replacement is permitted. The app is
+closed. The accepted fixtures/builds remain valid unless diagnosis invalidates
+their dependencies.
+Preserve every attempted root and keep work uncommitted; no automatic live retry,
+top-up or replacement campaign.

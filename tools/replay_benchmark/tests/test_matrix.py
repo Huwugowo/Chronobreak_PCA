@@ -290,6 +290,8 @@ class MatrixPlannerTests(unittest.TestCase):
             self.assertEqual(generated["run_id"], launch["run_id"])
             self.assertEqual(generated["result_root"], launch["result_root"])
             self.assertEqual(generated["observer_profile"], launch["observer_profile"])
+            self.assertEqual(generated["app_data_root"], self.template["app_data_root"])
+            self.assertEqual(generated["scratch_root"], self.template["scratch_root"])
             self.assertEqual(generated["scenarios"][0]["trial_id"], launch["trial_id"])
             self.assertEqual(generated["scenarios"][0]["seed"], 20260825)
             self.assertFalse(Path(launch["result_root"]).exists())
@@ -298,6 +300,49 @@ class MatrixPlannerTests(unittest.TestCase):
             matrix.verify_matrix(plan_path),
             {"arm_count": 3, "trial_count": 6, "result_count": 0},
         )
+
+    def test_isolated_launch_roots_prevent_cross_process_capability_cache_reuse(self) -> None:
+        self.specification["isolate_launch_roots"] = True
+        self.specification["arms"][0]["scenario"].update(kind="warm_open", iterations=6)
+        self.write_sources()
+        plan_path = matrix.plan_matrix(self.template_path, self.specification_path)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertTrue(plan["isolate_launch_roots"])
+        manifests = [json.loads(Path(row["manifest_path"]).read_text(encoding="utf-8"))
+                     for row in plan["launches"]]
+        for field in ("app_data_root", "scratch_root"):
+            roots = [Path(manifest[field]) for manifest in manifests]
+            self.assertEqual(len(set(roots)), len(manifests))
+            self.assertTrue(all(root.parent == Path(self.template[field]) for root in roots))
+        for manifest in manifests:
+            appdata = Path(manifest["app_data_root"])
+            self.assertEqual(Path(manifest["ddragon"]["cache_root"]), appdata / "ddragon")
+            self.assertEqual(manifest["ddragon"]["cache_fingerprint"], self.template["ddragon"]["cache_fingerprint"])
+            self.assertEqual(manifest["fixtures"], self.template["fixtures"])
+            self.assertEqual(manifest["config_path"], self.template["config_path"])
+            (appdata / "ddragon").mkdir(parents=True)
+            Path(manifest["scratch_root"]).mkdir()
+            if manifest["scenarios"][0]["kind"] == "warm_open":
+                self.assertEqual(manifest["scenarios"][0]["iterations"], 6)
+        # A real capability-cache write in the first member cannot seed its pair.
+        first_control, paired_control = manifests[1:3]
+        (Path(first_control["app_data_root"]) / "hevc-probe-v1.json").write_text(
+            '{"supported":false}', encoding="utf-8"
+        )
+        self.assertFalse((Path(paired_control["app_data_root"]) / "hevc-probe-v1.json").exists())
+        self.assertEqual(matrix.verify_matrix(plan_path)["trial_count"], 6)
+        changed = Path(plan["launches"][2]["manifest_path"])
+        paired_control["app_data_root"] = first_control["app_data_root"]
+        write_json(changed, paired_control)
+        with self.assertRaisesRegex(matrix.MatrixError, "manifest changed"):
+            matrix.verify_matrix(plan_path)
+
+    def test_launch_root_isolation_requires_boolean(self) -> None:
+        for value in (1, "true", None):
+            self.specification["isolate_launch_roots"] = value
+            self.write_sources()
+            with self.assertRaisesRegex(matrix.MatrixError, "isolate_launch_roots must be boolean"):
+                matrix.plan_matrix(self.template_path, self.specification_path)
 
     def test_plan_can_override_the_launch_watchdog_for_one_bounded_arm(self) -> None:
         self.specification["timeout_seconds"] = 180

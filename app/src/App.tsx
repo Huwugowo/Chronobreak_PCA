@@ -34,6 +34,8 @@ import {
   type BenchmarkScenario,
   type ReplayBenchmarkObserver,
   GAMES_LIBRARY_USABLE_CONTRACT,
+  OPENING_CONTRACT,
+  isOpeningScenario,
 } from "./benchmark";
 import AppHeader from "./components/AppHeader";
 import { runDeliveryRouteProbe } from "./deliveryRouteProbe";
@@ -503,6 +505,7 @@ function App() {
         return;
       }
     }
+    if (isOpeningScenario(scenario)) observer.beginOpeningCycle(fixture, 0);
     observer.emit(
       "replay_requested",
       { fixture_alias: fixture.alias },
@@ -538,6 +541,15 @@ function App() {
 
   createEffect(() => {
     const observer = benchmarkObserver();
+    const capability = benchmarkHevcCapability();
+    if (observer && isOpeningScenario(observer.scenario()) && capability && !benchmarkHevcCapabilityEmitted) {
+      benchmarkHevcCapabilityEmitted = true;
+      observer.emit("hevc_capability", { tested: capability.tested, supported: capability.supported }, { required: true });
+    }
+  });
+
+  createEffect(() => {
+    const observer = benchmarkObserver();
     if (!observer) return;
     const error = loadError();
     if (error) {
@@ -550,6 +562,40 @@ function App() {
       return;
     }
     if (loading() || libraryState().refreshing || !libraryState().actionable) return;
+    if (isOpeningScenario(observer.scenario())) {
+      if (benchmarkLibraryReadinessStarted) return;
+      benchmarkLibraryReadinessStarted = true;
+      const origin = controller.origin();
+      benchmarkUsefulFrame = requestAnimationFrame(() => {
+        benchmarkUsefulFrame = undefined;
+        benchmarkUsefulPaintFrame = requestAnimationFrame(() => {
+          benchmarkUsefulPaintFrame = undefined;
+          const current = controller.origin();
+          const view = navigation();
+          const snapshot = libraryState().snapshot;
+          const fixture = observer.fixtureForScenario();
+          const selected = snapshot?.games.find(game => game.timestamp === fixture?.game_timestamp);
+          if (!origin || !current || !snapshot ||
+              current.root !== origin.root || current.rootEpoch !== origin.rootEpoch ||
+              current.request !== origin.request || current.token !== origin.token ||
+              current.navigation !== origin.navigation || view.screen !== "library" ||
+              view.tab !== "games" || !libraryState().actionable || libraryState().refreshing || !selected?.video_available) {
+            benchmarkFailureStarted = true;
+            observer.emit("scenario_failed", { phase: "library_paint", reason: "Opening Games view changed before paint" }, { required: true });
+            void observer.complete("failed", "Opening Games view changed before paint");
+            return;
+          }
+          observer.emit("opening_library_usable", {
+            measurement_contract: OPENING_CONTRACT, gate: "snapshot", after_library_paint: true,
+            fixture_id: fixture!.id,
+            game_count: snapshot.games.length, clip_count: snapshot.clips.length,
+          }, { required: true });
+          // Measure the normal Games path. Legacy scenarios retain the duration drain below.
+          void beginBenchmarkScenario(observer, observer.scenario());
+        });
+      });
+      return;
+    }
     const hevcCapability = benchmarkHevcCapability();
     if (!hevcCapability) return;
     if (!benchmarkHevcCapabilityEmitted) {
@@ -754,6 +800,7 @@ function App() {
         { completed_cycles: benchmarkViewerCycles, expected_cycles: iterations },
         { required: true },
       );
+      if (isOpeningScenario(scenario)) observer.beginOpeningCycle(nextFixture, benchmarkViewerCycles);
       setNavigation({ screen: "library", tab: "games" });
       benchmarkReopenTimer = window.setTimeout(() => {
         benchmarkReopenTimer = undefined;
