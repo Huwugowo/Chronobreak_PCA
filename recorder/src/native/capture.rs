@@ -57,6 +57,13 @@ struct LatestPending<T> {
     high_water_mark: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingOffer {
+    Stored,
+    Replaced,
+    Stale,
+}
+
 impl<T> Default for LatestPending<T> {
     fn default() -> Self {
         Self {
@@ -75,6 +82,21 @@ impl<T> LatestPending<T> {
         }
         self.high_water_mark = 1;
         replaced
+    }
+
+    fn offer_newer_by(&mut self, value: T, timestamp: impl Fn(&T) -> i64) -> PendingOffer {
+        if self
+            .value
+            .as_ref()
+            .is_some_and(|pending| timestamp(&value) <= timestamp(pending))
+        {
+            return PendingOffer::Stale;
+        }
+        if self.replace(value) {
+            PendingOffer::Replaced
+        } else {
+            PendingOffer::Stored
+        }
     }
 
     fn take(&mut self) -> Option<T> {
@@ -550,7 +572,8 @@ impl NativeWgcCapture {
     pub(crate) fn receive_pending_timeout(&mut self, timeout: Duration) -> Result<(bool, u64)> {
         match self.receiver.recv_timeout(timeout) {
             Ok(frame) => {
-                let replacements = u64::from(self.pending.replace(frame))
+                let replacements = self
+                    .offer_pending(frame)
                     .saturating_add(self.drain_handoff_to_pending()?);
                 Ok((true, replacements))
             }
@@ -569,14 +592,26 @@ impl NativeWgcCapture {
         loop {
             match self.receiver.try_recv() {
                 Ok(frame) => {
-                    if self.pending.replace(frame) {
-                        replacements = replacements.saturating_add(1);
-                    }
+                    replacements = replacements.saturating_add(self.offer_pending(frame));
                 }
                 Err(TryRecvError::Empty) => return Ok(replacements),
                 Err(TryRecvError::Disconnected) => {
                     bail!("native WGC callback handoff disconnected")
                 }
+            }
+        }
+    }
+
+    fn offer_pending(&mut self, frame: QueuedWgcFrame) -> u64 {
+        match self
+            .pending
+            .offer_newer_by(frame, |queued| queued.qpc_100ns)
+        {
+            PendingOffer::Stored => 0,
+            PendingOffer::Replaced => 1,
+            PendingOffer::Stale => {
+                self.record_worker_frame_discard();
+                0
             }
         }
     }
@@ -706,17 +741,20 @@ impl NativeWgcCapture {
             self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
         }
 
-        if let Err(error) = self.session.Close()
-            && first_error.is_none()
-        {
-            first_error =
-                Some(anyhow::Error::new(error).context("could not close native WGC session"));
-        }
         if let Err(error) = self.frame_pool.Close()
             && first_error.is_none()
         {
             first_error =
                 Some(anyhow::Error::new(error).context("could not close native WGC frame pool"));
+        }
+        // Close the frame pool before the capture session. The free-threaded
+        // pool owns the FrameArrived worker and its recyclable surfaces; the
+        // session must not outlive that pool teardown.
+        if let Err(error) = self.session.Close()
+            && first_error.is_none()
+        {
+            first_error =
+                Some(anyhow::Error::new(error).context("could not close native WGC session"));
         }
 
         if !self
@@ -724,6 +762,9 @@ impl NativeWgcCapture {
             .wait_until_released(CALLBACK_SHUTDOWN_TIMEOUT)
             && first_error.is_none()
         {
+            // NativeWgcSource::close retains the whole source stack whenever
+            // this bounded proof fails. Do not let the WinRT MTA unwind while
+            // a free-threaded event handler still owns a callback closure.
             first_error = Some(anyhow::anyhow!(
                 "native WGC callbacks did not quiesce within {} ms",
                 CALLBACK_SHUTDOWN_TIMEOUT.as_millis()
@@ -959,6 +1000,27 @@ mod tests {
             );
             assert!(snapshot_copies <= OUTPUT_TICKS + 1);
         }
+    }
+
+    #[test]
+    fn pending_timestamp_order_keeps_newest_and_accounts_for_stale_frames() {
+        let mut pending = LatestPending::default();
+        let mut worker_discards = 0_u64;
+        for (timestamp, expected) in [
+            (100, PendingOffer::Stored),
+            (120, PendingOffer::Replaced),
+            (110, PendingOffer::Stale),
+            (120, PendingOffer::Stale),
+            (130, PendingOffer::Replaced),
+        ] {
+            let outcome = pending.offer_newer_by(timestamp, |value| *value);
+            assert_eq!(outcome, expected);
+            worker_discards += u64::from(outcome == PendingOffer::Stale);
+        }
+        assert_eq!(pending.take(), Some(130));
+        assert_eq!(pending.replacements, 2);
+        assert_eq!(worker_discards, 2);
+        assert_eq!(5, 1 + pending.replacements + worker_discards);
     }
 
     #[test]

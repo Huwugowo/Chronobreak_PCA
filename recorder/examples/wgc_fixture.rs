@@ -60,6 +60,7 @@ mod windows_fixture {
     enum Scenario {
         Steady,
         Resize,
+        TinyResize,
         MinimizeRestore,
         Occlusion,
         CloseWindow,
@@ -158,6 +159,7 @@ mod windows_fixture {
                     {
                         "steady" => Scenario::Steady,
                         "resize" => Scenario::Resize,
+                        "tiny_resize" => Scenario::TinyResize,
                         "minimize_restore" => Scenario::MinimizeRestore,
                         "occlusion" => Scenario::Occlusion,
                         "close_window" => Scenario::CloseWindow,
@@ -637,6 +639,10 @@ mod windows_fixture {
                     let _ = window.request_inner_size(PhysicalSize::new(1600, 900));
                     println!("QUEUEBACK_WGC_ACTION resize_1600x900");
                 }
+                Scenario::TinyResize => {
+                    let _ = window.request_inner_size(PhysicalSize::new(1, 1));
+                    println!("QUEUEBACK_WGC_ACTION resize_1x1");
+                }
                 Scenario::MinimizeRestore => {
                     window.set_minimized(true);
                     println!("QUEUEBACK_WGC_ACTION minimized");
@@ -673,7 +679,7 @@ mod windows_fixture {
             };
             match self.scenario {
                 Scenario::Steady => {}
-                Scenario::Resize => {
+                Scenario::Resize | Scenario::TinyResize => {
                     let _ = window.request_inner_size(PhysicalSize::new(1920, 1080));
                     println!("QUEUEBACK_WGC_ACTION resize_1920x1080");
                 }
@@ -775,6 +781,19 @@ mod windows_fixture {
             event: WindowEvent,
         ) {
             match event {
+                WindowEvent::Resized(size)
+                    if self.scenario == Scenario::TinyResize
+                        && self
+                            .window
+                            .as_ref()
+                            .is_some_and(|window| window.id() == window_id) =>
+                {
+                    println!(
+                        "QUEUEBACK_WGC_SIZE width={} height={}",
+                        size.width, size.height
+                    );
+                    io::stdout().flush().ok();
+                }
                 WindowEvent::CloseRequested => {
                     if self
                         .window

@@ -269,6 +269,7 @@ These commands target only QueueBack's generated window and write under ignored
 ```powershell
 & .\tools\native_backend\run_native_fixture.ps1 -Scenario steady -DurationSeconds 10
 & .\tools\native_backend\run_native_fixture.ps1 -Scenario resize -DurationSeconds 10
+& .\tools\native_backend\run_native_fixture.ps1 -Scenario tiny_resize -DurationSeconds 10
 & .\tools\native_backend\run_native_fixture.ps1 -Scenario minimize_restore -DurationSeconds 10
 & .\tools\native_backend\run_native_fixture.ps1 -Scenario occlusion -DurationSeconds 10
 & .\tools\native_backend\run_native_fixture.ps1 -Scenario close_window -DurationSeconds 10
@@ -282,6 +283,11 @@ Normal cases require exact scheduled/submitted/completed/muxed reconciliation.
 Target closure and injected NVENC failure must return the exact failure while
 leaving a recoverable dedicated partial recording.
 
+The `tiny_resize` scenario shrinks the generated window to 1x1 and restores it to
+1920x1080. It requires actual 1x1 WGC frames in the native unusable-size telemetry,
+reconciled discards, and at least 30 distinct decoded frames in the final second
+to prove capture resumes after restoration. It requires at least 10 seconds and
+cannot be combined with an injected interruption.
 
 The bounded-resource acceptance soak is:
 

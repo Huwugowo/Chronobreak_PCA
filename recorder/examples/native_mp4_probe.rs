@@ -354,8 +354,10 @@ mod windows_probe {
             telemetry.capture.pending_frame_replacements
         );
 
+        let (first_unusable_width, first_unusable_height) =
+            telemetry.first_unusable_size.unwrap_or_default();
         println!(
-            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} video_writer_calls={} video_writer_duration_100ns={} maximum_video_writer_duration_100ns={} slow_video_writer_calls={} explicit_flush_calls={} explicit_flush_duration_100ns={} maximum_explicit_flush_duration_100ns={} injected_mux_writer_stalls={} injected_mux_writer_stall_100ns={} max_in_flight={} no_slot_admission_failures={} unstaged_tick_admission_failures={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} output={}",
+            "CHRONOBREAK_NATIVE_MP4_PASS ticks={} media_time_base={}/{} first_source_qpc_100ns={} latest_source_qpc_100ns={} cfr_discards={} cfr_duplicates={} late_ticks={} catch_up_ticks={} maximum_lateness_100ns={} latest_source_age_100ns={} maximum_source_age_100ns={} maximum_catch_up_batch={} injected_worker_stalls={} injected_worker_stall_100ns={} submitted={} completed={} mux_frames={} mux_progress_bytes={} output_bytes={} output_time_us={} video_writer_calls={} video_writer_duration_100ns={} maximum_video_writer_duration_100ns={} slow_video_writer_calls={} explicit_flush_calls={} explicit_flush_duration_100ns={} maximum_explicit_flush_duration_100ns={} injected_mux_writer_stalls={} injected_mux_writer_stall_100ns={} max_in_flight={} no_slot_admission_failures={} unstaged_tick_admission_failures={} source_arrivals={} source_admitted={} source_handoff_drops={} pending_frame_replacements={} pending_frame_high_water_mark={} worker_frame_discards={} source_recreations={} processor_recreations={} processor_state_configurations={} source_snapshot_allocations={} source_snapshot_copies={} unusable_size_frames={} first_unusable_width={} first_unusable_height={} output={}",
             telemetry.cfr.scheduled_ticks,
             telemetry.cfr.media_time_base_numerator,
             telemetry.cfr.media_time_base_denominator,
@@ -400,6 +402,9 @@ mod windows_probe {
             telemetry.conversion.processor_state_configurations,
             telemetry.conversion.source_snapshot_allocations,
             telemetry.conversion.source_snapshot_copies,
+            telemetry.unusable_size_frames,
+            first_unusable_width,
+            first_unusable_height,
             output.display()
         );
         Ok(())

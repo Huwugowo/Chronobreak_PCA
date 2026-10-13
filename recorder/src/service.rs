@@ -23,6 +23,11 @@ use crate::encoder::{
     VideoCodec,
 };
 use crate::finalizer::{CompletedVideoCandidate, publish_validated_candidate, validate_candidate};
+use crate::league_client::collector::ContextSession;
+use crate::league_client::post_game::{
+    Coordinator as PostGameCoordinator, Handle as PostGameHandle,
+};
+use crate::league_client::sidecar::{ContextWriter, DirectoryGuard};
 #[cfg(target_os = "windows")]
 use crate::native::{
     NATIVE_ENCODER_SLOT_COUNT, NativeRecordingSession, NativeRecordingStartupFailureDisposition,
@@ -65,6 +70,9 @@ struct ActiveRecording {
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
     poller: PollerSession,
+    match_context: Option<ContextSession>,
+    match_directory: Option<DirectoryGuard>,
+    post_game: Option<PostGameHandle>,
     details: RecordingDetails,
 }
 
@@ -478,6 +486,13 @@ pub async fn run(
     let mut control_telemetry = RecorderControlTelemetry::default();
     let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
+    let post_game = match PostGameCoordinator::start() {
+        Ok(coordinator) => Some(coordinator),
+        Err(code) => {
+            warn!(code, "optional post-game enrichment unavailable");
+            None
+        }
+    };
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
@@ -489,6 +504,7 @@ pub async fn run(
                         stop_recording(recording, &events).await;
                     }
                     log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
+                    if let Some(post_game)=post_game { post_game.stop().await; }
                     events(ServiceEvent::ShutdownComplete);
                     return Ok(());
                 }
@@ -526,7 +542,8 @@ pub async fn run(
                     let attempt = starting.take().expect("finished startup attempt exists");
                     let process = attempt.process;
                     match attempt.task.await {
-                        Ok(Ok(recording)) if current_process == Some(process) => {
+                        Ok(Ok(mut recording)) if current_process == Some(process) => {
+                            recording.post_game = post_game.as_ref().map(PostGameCoordinator::handle);
                             control_telemetry.startup_ready =
                                 control_telemetry.startup_ready.saturating_add(1);
                             startup_retry.reset();
@@ -657,13 +674,25 @@ pub async fn run(
                             control_telemetry.target_failures =
                                 control_telemetry.target_failures.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
-                            warn!(error = %target_error, "the active League capture target became invalid");
-                            stop_recording_with_failure(
-                                recording,
-                                &events,
-                                format!("the exact League capture target became invalid: {target_error:#}"),
-                            )
-                            .await;
+                            if is_closed_capture_target_error(&target_error) {
+                                // League destroys the game HWND during a normal return to
+                                // the client. The native worker treats that callback as its
+                                // terminal boundary, so let the ordinary finalizer flush the
+                                // captured media instead of converting a completed match into
+                                // an explicit partial recording.
+                                info!(error = %target_error, "the League capture target closed; finalizing the active recording");
+                                if stop_recording(recording, &events).await {
+                                    events(ServiceEvent::Idle);
+                                }
+                            } else {
+                                warn!(error = %target_error, "the active League capture target became invalid");
+                                stop_recording_with_failure(
+                                    recording,
+                                    &events,
+                                    format!("the exact League capture target became invalid: {target_error:#}"),
+                                )
+                                .await;
+                            }
                             startup_retry.block_active_process(current_process);
                         }
                     }
@@ -942,6 +971,15 @@ async fn start_recording(
     let timestamp = unix_timestamp_now().terminal_startup()?;
     let directory = create_game_directory(&output_path, timestamp).terminal_startup()?;
     let media_id = MediaId::new_v4();
+    let match_directory = tokio::task::block_in_place(|| {
+        match DirectoryGuard::capture(&directory, media_id.clone()) {
+            Ok(directory) => Some(directory),
+            Err(code) => {
+                warn!(code, "optional League context directory unavailable");
+                None
+            }
+        }
+    });
 
     #[cfg(target_os = "windows")]
     let (session, plan) = {
@@ -1194,6 +1232,17 @@ async fn start_recording(
         false,
     );
     let now = Instant::now();
+    let match_context = match ContextSession::start(
+        media_id.clone(),
+        session.video_started_at(),
+        poller.identity_observations(),
+    ) {
+        Ok(context) => Some(context),
+        Err(code) => {
+            warn!(code, "optional League context collector unavailable");
+            None
+        }
+    };
     Ok(ActiveRecording {
         media_id,
         ffprobe_path: ffmpeg.ffprobe_path().to_path_buf(),
@@ -1204,6 +1253,9 @@ async fn start_recording(
         progress_watchdog: CaptureProgressWatchdog::new(&initial_diagnostics, now),
         progress_report_due: now + Duration::from_secs(10),
         poller,
+        match_context,
+        match_directory,
+        post_game: None,
         details: RecordingDetails {
             encoder_used: plan.encoder().label().to_owned(),
             codec: plan.codec().label().to_owned(),
@@ -1251,8 +1303,8 @@ async fn startup_cancelled(cancellation: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn stop_recording(recording: ActiveRecording, events: &EventSink) {
-    stop_recording_inner(recording, events, None).await;
+async fn stop_recording(recording: ActiveRecording, events: &EventSink) -> bool {
+    stop_recording_inner(recording, events, None).await
 }
 
 async fn stop_recording_with_failure(
@@ -1260,14 +1312,20 @@ async fn stop_recording_with_failure(
     events: &EventSink,
     failure_reason: String,
 ) {
-    stop_recording_inner(recording, events, Some(failure_reason)).await;
+    let _ = stop_recording_inner(recording, events, Some(failure_reason)).await;
+}
+
+fn is_closed_capture_target_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == "the selected League HWND was closed")
 }
 
 async fn stop_recording_inner(
     recording: ActiveRecording,
     events: &EventSink,
     failure_reason: Option<String>,
-) {
+) -> bool {
     let ActiveRecording {
         media_id,
         ffprobe_path,
@@ -1278,17 +1336,51 @@ async fn stop_recording_inner(
         progress_watchdog: _,
         progress_report_due: _,
         poller,
+        match_context,
+        match_directory,
+        post_game,
         mut details,
     } = recording;
     let recorded_at = session.recorded_at();
     let duration = session.video_started_at().elapsed();
+    if let Some(context) = &match_context {
+        let candidate = context.close_and_snapshot();
+        if failure_reason.is_none()
+            && let (Some(handle), Some(candidate), Some(directory)) =
+                (&post_game, candidate, &match_directory)
+            && let Ok(directory) = directory.try_clone()
+        {
+            handle.submit(&candidate, directory);
+        }
+    }
+    let context_stop = async {
+        match match_context {
+            Some(context) => Some(context.stop().await),
+            None => None,
+        }
+    };
     let video_stop = async {
         match failure_reason {
             Some(reason) => session.stop_with_failure(reason).await,
             None => session.stop().await,
         }
     };
-    let (summary, video_result) = tokio::join!(poller.stop(), video_stop);
+    let (summary, video_result, context_result) =
+        tokio::join!(poller.stop(), video_stop, context_stop);
+    if let Some(Ok(context)) = &context_result {
+        info!(
+            requests = context.requests,
+            response_bytes = context.response_bytes,
+            provisional_candidate = context.candidate.is_some(),
+            "League context collector joined"
+        );
+    }
+    if let Some(Err(code)) = &context_result {
+        warn!(
+            code,
+            "optional League context collector failed while joining"
+        );
+    }
 
     let final_diagnostics = diagnostics.borrow().clone();
     log_capture_progress(
@@ -1341,6 +1433,15 @@ async fn stop_recording_inner(
                     require_zero_video_start: true,
                 };
                 let validated = validate_candidate(&ffprobe_path, candidate, expectations).await?;
+                if let (Some(directory), Some(Ok(context))) = (match_directory, context_result)
+                    && let Some(candidate) = context.candidate
+                {
+                    let installed =
+                        async { ContextWriter::start(directory, candidate)?.finish().await }.await;
+                    if let Err(code) = installed {
+                        warn!(code, "optional provisional League context unavailable");
+                    }
+                }
                 let metadata = RecordingMetadata::new(
                     recorded_at_label,
                     validated.timeline().clone(),
@@ -1352,25 +1453,37 @@ async fn stop_recording_inner(
             .await;
             match published {
                 Ok(directory) => {
-                    info!(directory = %directory.display(), "validated recording published")
+                    if let Some(handle) = &post_game {
+                        handle.published(media_id.clone());
+                    }
+                    info!(directory = %directory.display(), "validated recording published");
+                    true
                 }
                 Err(error) => {
-                    error!(error = %error, "recording finalization/publication failed");
+                    if let Some(handle) = &post_game {
+                        handle.cancel(media_id.clone());
+                    }
+                    error!(error = %format!("{error:#}"), "recording finalization/publication failed");
                     events(ServiceEvent::Error {
                         message: format!(
                             "Recording media could not prove the canonical replay-time contract; no canonical video or metadata was published. Any recoverable output remains under an explicit .partial.mp4 name: {error:#}"
                         ),
                     });
+                    false
                 }
             }
         }
         Err(stop_error) => {
+            if let Some(handle) = &post_game {
+                handle.cancel(media_id.clone());
+            }
             error!(error = %stop_error, "recording stopped with an error");
             events(ServiceEvent::Error {
                 message: format!(
                     "Recording stopped unexpectedly; no canonical video was published. Any recoverable output remains under an explicit .partial.mp4 name: {stop_error:#}"
                 ),
             });
+            false
         }
     }
 }
@@ -1566,6 +1679,17 @@ mod tests {
         assert!(!retry.permits(process, now + Duration::from_secs(300)));
         retry.reset();
         assert!(retry.permits(process, now));
+    }
+
+    #[test]
+    fn only_an_exact_closed_league_hwnd_is_a_graceful_capture_boundary() {
+        let closed = anyhow::anyhow!("the selected League HWND was closed")
+            .context("capture target query failed");
+        assert!(is_closed_capture_target_error(&closed));
+
+        let replaced =
+            anyhow::anyhow!("the selected League HWND now belongs to a different process");
+        assert!(!is_closed_capture_target_error(&replaced));
     }
 
     #[test]

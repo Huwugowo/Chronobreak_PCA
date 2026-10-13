@@ -26,6 +26,7 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
     timestamp: "1", champion: harness.root, game_mode: "CLASSIC", recorded_at: "2026-09-21T00:00:00Z",
     kills: 0, deaths: 0, assists: 0, duration_ms: 10000, summoner_spells: [], keystone_id: null,
     items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true,
+    league_result: null,
   }], clips: [{ filename: "1_2.mp4" }],
     usage: { games_bytes: 1, clips_bytes: 1, game_count: 1, clip_count: 1 } }),
   resolveClipDurations: vi.fn(() => new Promise(() => {})),

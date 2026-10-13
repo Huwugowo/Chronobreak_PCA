@@ -525,8 +525,22 @@ mod tests {
             maximum_catch_up_batch: 0,
             injected_worker_stalls: 0,
             injected_worker_stall_100ns: 0,
+            unusable_size_frames: 0,
+            first_unusable_size: None,
             target_closed: false,
         }
+    }
+
+    #[test]
+    fn recording_clock_evidence_uses_copied_frames_not_callback_arrivals() {
+        let mut snapshot = telemetry();
+        snapshot.capture.first_accepted_qpc_100ns = Some(90);
+        snapshot.capture.latest_accepted_qpc_100ns = Some(300);
+        snapshot.cfr.first_source_qpc_100ns = 100;
+        snapshot.cfr.latest_source_qpc_100ns = 200;
+        let evidence = snapshot.recording_evidence();
+        assert_eq!(evidence.first_qpc, Some(100));
+        assert_eq!(evidence.latest_qpc, Some(200));
     }
 
     fn fake_session(

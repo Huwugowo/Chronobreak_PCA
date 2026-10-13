@@ -1,5 +1,6 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { decodeLeagueResult, decodeLeagueResultSummary } from "./leagueResult";
 import type {
   AppSettings,
   AutoDeleteResult,
@@ -14,6 +15,7 @@ import type {
   GameSummary,
   HevcProbeStatus,
   KdaTimelinePoint,
+  LeagueMatch,
   PlaybackProbe,
   ReplayDescriptor,
   PlayerTimelinePoint,
@@ -253,6 +255,7 @@ let mockGames: GameSummary[] = [
     incomplete: false,
     video_size_bytes: 4_446_112_713,
     video_available: true,
+    league_result: null,
   },
   {
     timestamp: "1786004189",
@@ -279,6 +282,7 @@ let mockGames: GameSummary[] = [
     incomplete: false,
     video_size_bytes: 2_866_000_000,
     video_available: true,
+    league_result: null,
   },
   {
     timestamp: "1785999000",
@@ -305,6 +309,7 @@ let mockGames: GameSummary[] = [
     incomplete: false,
     video_size_bytes: 1_790_000_000,
     video_available: true,
+    league_result: null,
   },
   {
     timestamp: "1785900000",
@@ -331,6 +336,7 @@ let mockGames: GameSummary[] = [
     incomplete: false,
     video_size_bytes: 2_440_000_000,
     video_available: true,
+    league_result: null,
   },
   {
     timestamp: "1785800000",
@@ -357,6 +363,7 @@ let mockGames: GameSummary[] = [
     incomplete: false,
     video_size_bytes: 3_120_000_000,
     video_available: true,
+    league_result: null,
   },
   {
     timestamp: "1785700000",
@@ -375,6 +382,7 @@ let mockGames: GameSummary[] = [
     incomplete: true,
     video_size_bytes: 612_000_000,
     video_available: true,
+    league_result: null,
   },
 ];
 
@@ -552,7 +560,7 @@ const decodeMappedRows = <T>(
   });
 };
 
-const gameKeys = ["timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available"];
+const gameKeys = ["timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available", "league_result"];
 
 const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] => {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
@@ -569,7 +577,28 @@ const decodeGameSummary = (value: unknown, label: string): GameSummary => {
   const game = exactRecord(value, gameKeys, label);
   const items = recordArray(game.items, label + ".items");
   for (const [index, item] of items.entries()) exactRecord(item, ["item_id", "slot"], label + ".items[" + index + "]");
-  return { ...game, participants: decodeParticipants(game.participants, label + ".participants") } as GameSummary;
+  return { ...game, league_result: decodeLeagueResultSummary(game.league_result), participants: decodeParticipants(game.participants, label + ".participants") } as GameSummary;
+};
+
+const decodeLeagueMatch = (value: unknown, mediaId: LeagueMatch["media_id"]): LeagueMatch | null => {
+  if (value === null) return null;
+  try {
+    const wire = exactRecord(value, ["media_id", "status", "game_id", "queue_id", "local_riot_id", "map_id", "game_mode"], "league_match");
+    const identity = parseMediaId(wire.media_id);
+    const bounded = (value: unknown): value is string => typeof value === "string" && value.length > 0
+      && new TextEncoder().encode(value).length <= 256 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+    if (identity !== mediaId || (wire.status !== "provisional" && wire.status !== "confirmed")
+      || typeof wire.game_id !== "string" || !/^[1-9][0-9]{0,19}$/.test(wire.game_id)
+      || BigInt(wire.game_id) > 18_446_744_073_709_551_615n
+      || typeof wire.queue_id !== "number" || !Number.isInteger(wire.queue_id) || wire.queue_id < 0 || wire.queue_id > 0xffff_ffff
+      || typeof wire.map_id !== "number" || !Number.isInteger(wire.map_id) || wire.map_id <= 0 || wire.map_id > 0xffff_ffff
+      || !bounded(wire.local_riot_id) || !/^[^#]+#[^#]+$/.test(wire.local_riot_id)
+      || !bounded(wire.game_mode)) return null;
+    return { media_id: identity, status: wire.status, game_id: wire.game_id, queue_id: wire.queue_id,
+      local_riot_id: wire.local_riot_id, map_id: wire.map_id, game_mode: wire.game_mode };
+  } catch {
+    return null;
+  }
 };
 
 export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
@@ -580,6 +609,8 @@ export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
       "video_url",
       "media_timeline",
       "local_player_name",
+      "league_match",
+      "league_result",
       "participants",
       "player_timeline",
       "kda_timeline",
@@ -589,6 +620,8 @@ export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
   );
   const game = decodeGameSummary(wire.game, "playback_probe.game");
   const participants = decodeParticipants(wire.participants, "playback_probe.participants");
+  const mediaTimeline = validateMediaTimeline(wire.media_timeline);
+  const leagueMatch = decodeLeagueMatch(wire.league_match, mediaTimeline.mediaId);
   if (typeof wire.video_url !== "string") throw new Error("playback_probe.video_url is invalid");
   if (wire.local_player_name !== null && typeof wire.local_player_name !== "string") {
     throw new Error("playback_probe.local_player_name is invalid");
@@ -596,8 +629,10 @@ export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
   return {
     game,
     video_url: wire.video_url,
-    media_timeline: validateMediaTimeline(wire.media_timeline),
+    media_timeline: mediaTimeline,
     local_player_name: wire.local_player_name,
+    league_match: leagueMatch,
+    league_result: decodeLeagueResult(wire.league_result, mediaTimeline.mediaId, leagueMatch),
     participants,
     player_timeline: decodeMappedRows<PlayerTimelinePoint>(
       wire.player_timeline,
@@ -686,6 +721,8 @@ export const loadPlaybackProbe = async (gameTimestamp: string, snapshotToken: st
       video_url: mockReplayUrl(),
       media_timeline: MOCK_MEDIA_TIMELINE,
       local_player_name: "SUPERSTAR#VOID",
+      league_match: null,
+  league_result: null,
       participants: structuredClone(game.participants),
       player_timeline: mockPlayerTimeline(),
       kda_timeline: mockKdaTimeline(),

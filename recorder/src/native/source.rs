@@ -115,7 +115,23 @@ impl NativeWgcSource {
     }
 
     pub fn close(mut self) -> Result<NativeWgcTelemetrySnapshot> {
-        self.capture.shutdown()?;
-        Ok(self.capture.telemetry())
+        match self.capture.shutdown() {
+            Ok(()) => Ok(self.capture.telemetry()),
+            Err(error) => {
+                // A free-threaded WGC callback can still be unwinding when a
+                // bounded shutdown reports failure. Dropping the source here
+                // would release the WinRT objects/device and uninitialize the
+                // worker MTA underneath that callback, which can crash inside
+                // GraphicsCapture.dll. This is a terminal recording failure;
+                // deliberately retain the complete source stack until process
+                // exit rather than turning it into a use-after-unload.
+                tracing::error!(
+                    error = %error,
+                    "retaining native WGC source after incomplete shutdown to protect late callbacks"
+                );
+                std::mem::forget(self);
+                Err(error)
+            }
+        }
     }
 }

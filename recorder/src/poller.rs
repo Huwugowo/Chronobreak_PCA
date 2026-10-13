@@ -16,6 +16,7 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::league_client::{LiveIdentity, LiveObservation, bounded, full_identity};
 use crate::storage::{
     GAME_LOG_JSON, JsonWriteStats, write_json_atomic, write_json_atomic_with_stats,
 };
@@ -288,6 +289,7 @@ pub struct PollerSession {
     state: Arc<Mutex<PollerState>>,
     writer: GameLogWriter,
     output: PathBuf,
+    identity: watch::Receiver<Option<LiveObservation>>,
 }
 
 struct GameLogWriter {
@@ -392,7 +394,7 @@ impl PollerSession {
     ) -> Result<Self> {
         let output = directory.join(GAME_LOG_JSON);
         let state = Arc::new(Mutex::new(PollerState {
-            game_log: GameLog::new(media_id),
+            game_log: GameLog::new(media_id.clone()),
             ..PollerState::default()
         }));
         let initial_game_log = state.lock().await.game_log.clone();
@@ -403,7 +405,13 @@ impl PollerSession {
         .await
         .context("initial game log write timed out")??;
 
-        let client = LiveClient::new(LIVE_CLIENT_BASE_URL)?;
+        let mut client = LiveClient::new(LIVE_CLIENT_BASE_URL)?;
+        let (latest, identity) = watch::channel(None);
+        client.identity_tap = Some(Arc::new(IdentityTap {
+            media_id,
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            latest,
+        }));
         let writer = GameLogWriter::start(Arc::clone(&state), output.clone());
         let writer_notifier = writer.notifier();
         let (cancellation, receiver) = watch::channel(false);
@@ -425,7 +433,12 @@ impl PollerSession {
             state,
             writer,
             output,
+            identity,
         })
+    }
+
+    pub(crate) fn identity_observations(&self) -> watch::Receiver<Option<LiveObservation>> {
+        self.identity.clone()
     }
 
     pub async fn stop(mut self) -> PollerSummary {
@@ -639,12 +652,51 @@ async fn record_request(state: &Arc<Mutex<PollerState>>, request_kind: RequestKi
 struct LiveClient {
     http: Client,
     base_url: String,
+    identity_tap: Option<Arc<IdentityTap>>,
+    diagnostic_body_limit: bool,
+}
+
+struct IdentityTap {
+    media_id: MediaId,
+    sequence: std::sync::atomic::AtomicU64,
+    latest: watch::Sender<Option<LiveObservation>>,
+}
+
+/// A standalone read-only source using the same snapshot acquisition as recording.
+/// No game-log writer, calibration, capture or additional Live endpoint requests.
+pub(crate) struct IdentityProbeSource {
+    client: LiveClient,
+    latest: watch::Receiver<Option<LiveObservation>>,
+}
+
+impl IdentityProbeSource {
+    pub(crate) fn new(media_id: MediaId) -> Result<Self> {
+        let mut client = LiveClient::new(LIVE_CLIENT_BASE_URL)?;
+        let (latest, receiver) = watch::channel(None);
+        client.identity_tap = Some(Arc::new(IdentityTap {
+            media_id,
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            latest,
+        }));
+        client.diagnostic_body_limit = true;
+        Ok(Self {
+            client,
+            latest: receiver,
+        })
+    }
+
+    pub(crate) async fn observe(&mut self) -> Option<LiveObservation> {
+        // The tap records identity independently of optional game-time validity.
+        let _ = self.client.snapshot_data().await;
+        self.latest.borrow_and_update().clone()
+    }
 }
 
 impl LiveClient {
     fn new(base_url: &str) -> Result<Self> {
         let http = Client::builder()
             .danger_accept_invalid_certs(true)
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(API_TIMEOUT)
             .timeout(API_TIMEOUT)
             .no_proxy()
@@ -653,6 +705,8 @@ impl LiveClient {
         Ok(Self {
             http,
             base_url: base_url.trim_end_matches('/').to_owned(),
+            identity_tap: None,
+            diagnostic_body_limit: false,
         })
     }
 
@@ -679,6 +733,7 @@ impl LiveClient {
             self.player_list(),
             self.event_data(),
         );
+        self.tap_identity(&active_player, &game_data);
         let game_data = game_data.context("snapshot game stats unavailable")?;
         let active_player = active_player.context("snapshot active player unavailable")?;
         let all_players = all_players.context("snapshot player list unavailable")?;
@@ -708,6 +763,7 @@ impl LiveClient {
     async fn snapshot_data(&self) -> Result<Received<RawSnapshotData>> {
         let (game_data, active_player, all_players) =
             tokio::join!(self.game_stats(), self.active_player(), self.player_list(),);
+        self.tap_identity(&active_player, &game_data);
         let game_data = game_data.context("snapshot game stats unavailable")?;
         let active_player = active_player.context("snapshot active player unavailable")?;
         let all_players = all_players.context("snapshot player list unavailable")?;
@@ -729,13 +785,59 @@ impl LiveClient {
         })
     }
 
+    fn tap_identity(
+        &self,
+        active: &Result<Received<RawActivePlayer>>,
+        game: &Result<Received<RawGameData>>,
+    ) {
+        let Some(tap) = &self.identity_tap else {
+            return;
+        };
+        let sequence = tap
+            .sequence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        let now = Instant::now();
+        let mut observation = LiveObservation {
+            media_id: tap.media_id.clone(),
+            sequence,
+            started: now,
+            finished: now,
+            identity: None,
+        };
+        // The roster request remains part of normal snapshot acquisition, but its
+        // success or shape cannot gate the provisional identity observation.
+        if let (Ok(active), Ok(game)) = (active, game) {
+            observation.started = active.request_started_at.min(game.request_started_at);
+            observation.finished = active.received_at.max(game.received_at);
+            if let Some(id) = active
+                .value
+                .riot_id
+                .as_deref()
+                .filter(|id| full_identity(id))
+            {
+                observation.identity = Some(LiveIdentity {
+                    active: id.to_owned(),
+                    map_id: game.value.map_number,
+                    game_mode: game
+                        .value
+                        .game_mode
+                        .as_ref()
+                        .filter(|mode| bounded(mode))
+                        .cloned(),
+                });
+            }
+        }
+        tap.latest.send_replace(Some(observation));
+    }
+
     async fn get<T>(&self, endpoint: &str) -> Result<Received<T>>
     where
         T: DeserializeOwned,
     {
         let url = format!("{}/{endpoint}", self.base_url);
         let request_started_at = Instant::now();
-        let response = self
+        let mut response = self
             .http
             .get(&url)
             .send()
@@ -743,13 +845,37 @@ impl LiveClient {
             .with_context(|| format!("request to {url} failed"))?
             .error_for_status()
             .with_context(|| format!("request to {url} returned an error status"))?;
-        let body = response
-            .bytes()
-            .await
-            .with_context(|| format!("failed to receive response body from {url}"))?;
+        let mut diagnostic_body = Vec::new();
+        let standard_body;
+        let body: &[u8] = if self.diagnostic_body_limit {
+            // Diagnostic source only. Keep its transient response memory bounded.
+            const LIMIT: usize = 256 * 1024;
+            ensure!(
+                response.content_length().is_none_or(|n| n <= LIMIT as u64),
+                "Live diagnostic body limit"
+            );
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .context("Live diagnostic body unavailable")?
+            {
+                ensure!(
+                    chunk.len() <= LIMIT - diagnostic_body.len(),
+                    "Live diagnostic body limit"
+                );
+                diagnostic_body.extend_from_slice(&chunk);
+            }
+            &diagnostic_body
+        } else {
+            standard_body = response
+                .bytes()
+                .await
+                .with_context(|| format!("failed to receive response body from {url}"))?;
+            &standard_body
+        };
         let received_at = Instant::now();
         let latency = received_at.saturating_duration_since(request_started_at);
-        let value = serde_json::from_slice(&body)
+        let value = serde_json::from_slice(body)
             .with_context(|| format!("invalid JSON response from {url}"))?;
         Ok(Received {
             value,
@@ -1762,6 +1888,16 @@ struct RawGameData {
     game_time: Option<f64>,
     #[serde(rename = "gameMode")]
     game_mode: Option<String>,
+    #[serde(rename = "mapNumber", default, deserialize_with = "optional_probe_u32")]
+    map_number: Option<u32>,
+}
+
+fn optional_probe_u32<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<u32>, D::Error> {
+    Ok(Value::deserialize(deserializer)?
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok()))
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1892,7 +2028,14 @@ mod tests {
     }
     "#;
 
-    async fn fetch_snapshot_from_recording_server(initial: bool) -> (RawSnapshotData, Vec<String>) {
+    async fn fetch_snapshot_from_recording_server(
+        initial: bool,
+        malformed_roster: bool,
+    ) -> (
+        Result<RawSnapshotData>,
+        Option<LiveObservation>,
+        Vec<String>,
+    ) {
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -1923,8 +2066,12 @@ mod tests {
                             .to_owned();
                         server_paths.lock().unwrap().push(path.clone());
                         let body = match path.as_str() {
-                            "/gamestats" => r#"{"gameTime": 42.0, "gameMode": "CLASSIC"}"#,
+                            "/gamestats" => {
+                                r#"{"gameTime": 42.0, "gameMode": "CLASSIC", "mapNumber":11}"#
+                            }
+                            "/activeplayer" if malformed_roster => r#"{"riotId":"Synthetic#TAG"}"#,
                             "/activeplayer" => "{}",
+                            "/playerlist" if malformed_roster => r#"{"error":"synthetic"}"#,
                             "/playerlist" => "[]",
                             "/eventdata" => {
                                 r#"{"Events":[{"EventID":1,"EventName":"GameStart","EventTime":0.0}]}"#
@@ -1948,7 +2095,13 @@ mod tests {
             }
         });
 
-        let client = LiveClient::new(&format!("http://{address}")).unwrap();
+        let mut client = LiveClient::new(&format!("http://{address}")).unwrap();
+        let (latest, receiver) = watch::channel(None);
+        client.identity_tap = Some(Arc::new(IdentityTap {
+            media_id: MediaId::new_v4(),
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            latest,
+        }));
         let received = if initial {
             client.initial_snapshot_data().await
         } else {
@@ -1956,20 +2109,104 @@ mod tests {
         };
         done.store(true, Ordering::Release);
         server.join().unwrap();
+        assert_eq!(receiver.borrow().as_ref().unwrap().sequence, 1);
+        let observation = receiver.borrow().clone();
         let paths = Arc::try_unwrap(paths).unwrap().into_inner().unwrap();
-        (received.unwrap().value, paths)
+        (received.map(|r| r.value), observation, paths)
     }
 
     #[tokio::test]
     async fn initial_snapshot_seeds_events_but_steady_snapshot_does_not_request_them() {
-        let (initial, initial_paths) = fetch_snapshot_from_recording_server(true).await;
+        let (initial, observation, initial_paths) =
+            fetch_snapshot_from_recording_server(true, false).await;
+        assert!(observation.unwrap().identity.is_none());
+        let initial = initial.unwrap();
         assert_eq!(initial.events.events.len(), 1);
         assert!(initial_paths.iter().any(|path| path == "/eventdata"));
 
-        let (steady, mut steady_paths) = fetch_snapshot_from_recording_server(false).await;
+        let (steady, _, mut steady_paths) =
+            fetch_snapshot_from_recording_server(false, false).await;
+        let steady = steady.unwrap();
         assert!(steady.events.events.is_empty());
         steady_paths.sort();
         assert_eq!(steady_paths, ["/activeplayer", "/gamestats", "/playerlist"]);
+    }
+
+    #[tokio::test]
+    async fn malformed_roster_does_not_suppress_identity_or_add_live_requests() {
+        for initial in [false, true] {
+            let (snapshot, observation, mut paths) =
+                fetch_snapshot_from_recording_server(initial, true).await;
+            assert!(snapshot.is_err());
+            let identity = observation.unwrap().identity.unwrap();
+            assert_eq!(identity.active, "Synthetic#TAG");
+            assert_eq!(identity.map_id, Some(11));
+            assert_eq!(identity.game_mode.as_deref(), Some("CLASSIC"));
+            paths.sort();
+            let expected = if initial {
+                vec!["/activeplayer", "/eventdata", "/gamestats", "/playerlist"]
+            } else {
+                vec!["/activeplayer", "/gamestats", "/playerlist"]
+            };
+            assert_eq!(paths, expected);
+        }
+    }
+
+    #[test]
+    fn identity_tap_uses_active_game_interval_and_replaces_failed_round() {
+        let mut client = LiveClient::new(LIVE_CLIENT_BASE_URL).unwrap();
+        let (latest, receiver) = watch::channel(None);
+        let media_id = MediaId::new_v4();
+        client.identity_tap = Some(Arc::new(IdentityTap {
+            media_id: media_id.clone(),
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            latest,
+        }));
+        let start = Instant::now();
+        let active = Ok(Received {
+            value: serde_json::from_str::<RawActivePlayer>(r#"{"riotId":"Synthetic#TAG"}"#)
+                .unwrap(),
+            request_started_at: start + Duration::from_millis(5),
+            received_at: start + Duration::from_millis(10),
+            latency: Duration::from_millis(5),
+        });
+        let game = Ok(Received {
+            value: serde_json::from_str::<RawGameData>(
+                r#"{"mapNumber":11,"gameMode":"SWIFTPLAY","gameTime":42}"#,
+            )
+            .unwrap(),
+            request_started_at: start,
+            received_at: start + Duration::from_millis(30),
+            latency: Duration::from_millis(30),
+        });
+        client.tap_identity(&active, &game);
+        {
+            let latest = receiver.borrow();
+            let observation = latest.as_ref().unwrap();
+            assert_eq!(observation.media_id, media_id);
+            assert_eq!(observation.started, start);
+            assert_eq!(observation.finished, start + Duration::from_millis(30));
+            let identity = observation.identity.as_ref().unwrap();
+            assert_eq!(identity.active, "Synthetic#TAG");
+            assert_eq!(identity.map_id, Some(11));
+            assert_eq!(identity.game_mode.as_deref(), Some("SWIFTPLAY"));
+        }
+        client.tap_identity(&Err(anyhow::anyhow!("synthetic active failure")), &game);
+        assert_eq!(receiver.borrow().as_ref().unwrap().sequence, 2);
+        assert!(receiver.borrow().as_ref().unwrap().identity.is_none());
+        client.tap_identity(&active, &Err(anyhow::anyhow!("synthetic game failure")));
+        assert_eq!(receiver.borrow().as_ref().unwrap().sequence, 3);
+        assert!(receiver.borrow().as_ref().unwrap().identity.is_none());
+    }
+
+    #[test]
+    fn malformed_optional_map_cannot_break_legacy_game_stats() {
+        let game: RawGameData = serde_json::from_str(
+            r#"{"gameTime":42,"gameMode":"CLASSIC","mapNumber":{"error":"synthetic"}}"#,
+        )
+        .unwrap();
+        assert_eq!(game.game_time, Some(42.0));
+        assert!(game.map_number.is_none());
     }
 
     #[tokio::test]
@@ -2318,6 +2555,7 @@ mod tests {
             writer: GameLogWriter::start(Arc::clone(&state), output.clone()),
             state,
             output: output.clone(),
+            identity: watch::channel(None).1,
         };
 
         let maximum_duration = POLLER_TASK_STOP_TIMEOUT
@@ -2360,6 +2598,7 @@ mod tests {
             writer: GameLogWriter::start(Arc::clone(&state), output.clone()),
             state,
             output,
+            identity: watch::channel(None).1,
         };
 
         drop(session);

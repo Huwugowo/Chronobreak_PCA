@@ -64,7 +64,7 @@ The fragmented MP4 muxer flushes completed packets. Successful recording publish
 
 Native ownership is explicit and bounded. A lifecycle owner supervises the GPU worker; cooperative startup cancellation and stop execute blocking joins through Tokio's blocking pool. A fail-safe Drop join remains for invariant-breaking unwinds. An in-process worker cannot forcibly terminate a GPU-driver call that never returns, so hard driver-hang containment remains an open supervised-process boundary rather than a solved claim.
 
-Startup is ready only after a real WGC frame with a positive `SystemRelativeTime`/QPC value, encoded output, mux progress, and a positive output timestamp. The first WGC QPC timestamp maps to Rust monotonic and wall clocks and becomes both the recording epoch and Live Client poller anchor. Process-spawn time is not the video epoch.
+Startup is ready only after a real WGC frame with a positive `SystemRelativeTime`/QPC value, encoded output, mux progress, and a positive output timestamp. The first copied WGC source QPC timestamp maps to Rust monotonic and wall clocks and becomes both the recording epoch and Live Client poller anchor. Process-spawn time is not the video epoch. The one-frame worker pending slot retains the greatest source QPC timestamp, not merely the last callback arrival. Duplicate or older timestamps are closed and counted as worker discards; the CFR clock keeps the last good GPU snapshot rather than failing the recording or moving its source clock backwards. The watchdog and published recording QPC evidence use the CFR clock's first/latest successfully copied source timestamps, so incoming unusable frames cannot mask a frozen image. Sustained lack of copied source-QPC advancement still triggers the capture-progress watchdog when the target is visible.
 
 Capture diagnostics separately expose surfaced and superseded source frames, CFR discards and duplications, encoded/completed/muxed frames, pool recreations, bounded depths, first/latest QPC, output progress, writer/flush timing, and terminal errors. Counters are monotonic and compositor frames never surfaced by Windows remain outside the claim.
 
@@ -72,13 +72,15 @@ Capture diagnostics separately expose surfaced and superseded source frames, CFR
 
 - Focus loss and ordinary occlusion continue exact-window capture.
 - Minimize can pause WGC. The progress watchdog pauses its stall deadline while the target is hidden and resets deadlines after restore.
-- Same-HWND size changes recreate the bounded WGC pool while retaining the configured output canvas.
+- Same-HWND size changes recreate the bounded WGC pool while retaining the configured output canvas. Transient content sizes that cannot form a nonempty chroma-aligned NV12 crop (including 1x1 frames) are discarded before pool recreation, retaining the last valid GPU snapshot. The first unusable size is logged once per session; native session/probe telemetry records its dimensions and the discard count. Resize preparation errors also close and account for their owned frame before propagating the underlying error.
+- Teardown revokes callbacks, closes the free-threaded frame pool before the capture session, and drains NVENC/mux output before releasing the WGC source/device. If bounded callback quiescence fails, the complete native source stack is deliberately retained instead of unloading the WinRT capture runtime underneath a late callback; the recording fails explicitly but the process remains alive.
 - Target discovery and visibility/bounds queries temporarily use per-monitor-v2
   thread DPI awareness, then restore the caller's prior context. Window sizes
   therefore remain physical pixels even when the app or fixture process was
   initialized under a DPI-virtualized context.
-- A closed or replaced HWND is detected and finalized as failed/partial rather than frozen success.
-- Normal League process disappearance remains the automatic match-end signal and requests graceful finalization.
+- A closed HWND is a terminal capture boundary and requests graceful finalization; League may destroy the game window before its process disappears at match end.
+- A replaced HWND or changed process/adapter identity is detected and finalized as failed/partial rather than frozen success.
+- Normal League process disappearance remains an automatic match-end signal and requests graceful finalization.
 - Startup retry uses the bounded 2, 5, 10, and 30-second schedule only after the previous attempt has cleaned up. Terminal incompatibility blocks retries for that process generation.
 - There is no automatic primary-display, Desktop Duplication, GDI, software, cross-adapter, or cross-backend fallback.
 

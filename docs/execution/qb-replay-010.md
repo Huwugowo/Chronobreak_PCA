@@ -778,6 +778,14 @@ remaining-scope bullets below were superseded by descriptor/UI closure.
 
 ## Verification
 
+- 2026-10-13 user-requested reconciliation incorporates the newer PC handoff while
+  preserving the opening work and closed campaign evidence. Combined-source
+  checks and review are recorded in
+  `docs/reviews/repository-consolidation-2026-10-13.md`. Existing frozen subjects
+  retain their original source identities and do not certify the combined app;
+  no benchmark/native run or feature-completion claim was added. The next action
+  remains diagnosis of r4 telemetry. The user explicitly authorized commit/push.
+
 - 2026-10-12 M1 current candidate: focused frontend 36/36 passed
   (`command-20261012-104439.log`); complete `npm run test --prefix app` 214/214
   across 24 files passed (`104552`). `npm run check --prefix app` passed.
