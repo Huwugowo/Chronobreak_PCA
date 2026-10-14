@@ -51,7 +51,7 @@ level observations are also removed; final EOG statistics and PL basic runes rem
 Endpoint abbreviations, expanded in matrix 2:
 
 - **GS:** `/liveclientdata/gamestats`.
-- **AN:** `/liveclientdata/activeplayername`, the chosen active-player identity source.
+- **AP:** `/liveclientdata/activeplayer`, retained for bounded identity checks only.
 - **PL:** `/liveclientdata/playerlist`.
 - **EV:** `/liveclientdata/eventdata`.
 - **GF:** `/lol-gameflow/v1/session`.
@@ -108,7 +108,7 @@ presentation assumptions, not universal storage cardinalities.
 Public evidence:
 
 - [Riot Game Client documentation](https://developer.riotgames.com/docs/lol?from=20423&from_column=20423)
-  documents focused endpoints, a full Riot ID string from `/activeplayername`,
+  documents focused endpoints, the active-player `riotId` field,
   per-player `riotId` queries and local Swagger/OpenAPI retrieval. It recommends
   selecting response subsets when the aggregate is unnecessary. LCU is explicitly
   unsupported for third-party use and has no equivalent stability guarantee.
@@ -123,7 +123,7 @@ Public evidence:
 
 Normal candidate intervals are **GS 1 s, EV 1 s and PL 2 s**. All useful retained
 fields in a response follow that endpoint's cadence. Rates are unmeasured candidates,
-not performance guarantees. AN is identity-only bootstrap/association work, not a
+not performance guarantees. AP is identity-only bootstrap/association work, not a
 continuous telemetry stream. Fast GS calibration is a separate phase, as specified
 in matrix 2.
 
@@ -133,7 +133,7 @@ in matrix 2.
 | **P02 · Queue recognition and search** | `gameData.queue.id`; EOG `queueId`, `queueType` | GF, EOG | Context/final fact; respective 10 s windows | Yes | LM, LR | Project queue fields into history/search; preserve conflicting labels with provenance | Do not derive ranked/draft identity from `gameMode` alone |
 | **P03 · Game-mode recognition** | GS `gameMode`; GF `gameData.queue.gameMode`, `map.gameMode`; EOG `gameMode`, `gameType` | GS, GF, EOG | GS observed every 1 s normally; bounded LCU context/final observations | Yes | Mode/context in M, LM, LR | Preserve source distinctions and unknown values | Source labels need not be identical |
 | **P04 · Map identity** | GS `mapNumber`; GF `map.id`, `gameData.queue.mapId`; EOG `mapId` | GS, GF, EOG | GS 1 s normally; context/final facts | Yes | LM, LR when available | Make map queryable without assuming map 11 | Map identity alone does not establish objective applicability |
-| **P05 · Local-player identity** | AN full Riot ID string; SUM `puuid`, `gameName`, `tagLine`; exact PL `riotId` match and local participant reference | AN, SUM, PL | Identity bootstrap, then fresh AN observations for 10 s association rounds until bound/closed; PL 2 s | Existing `/activeplayer.riotId` and SUM path work; AN not implemented | Full local identity in LM; legacy local name in M/GL | Replace the broad identity request with AN; keep two fresh coherent rounds; use identified PL entry for name/champion/team | AN full-ID response is officially documented but not installed-client verified. Reject missing/tagless values; never weaken matching |
+| **P05 · Local-player identity** | AP `riotId`; SUM `puuid`, `gameName`, `tagLine`; exact PL `riotId` match and local participant reference | AP, SUM, PL | Identity bootstrap, then fresh AP observations for 10 s association rounds until bound/closed; PL 2 s | Yes: existing AP `riotId` and SUM path work | Full local identity in LM; legacy local name in M/GL | Retain the working endpoint for bounded identity checks; keep two fresh coherent rounds; use identified PL entry for name/champion/team | Reject missing/tagless values; never weaken matching. Endpoint replacement requires verified compatibility and measured benefit |
 | **P06 · Participant identity and opponent search** | PL `riotId`, `riotIdGameName`, `riotIdTagLine`, `summonerName`; EOG `puuid`, `riotIdGameName`, `riotIdTagLine` where supplied | PL, EOG | PL 2 s; EOG final | Partial: Live full ID primarily used for local matching | GL legacy names; LR combined Riot IDs; participant PUUIDs not retained | Persist per-match participant references and available source identifiers; replace tag-stripping joins | Some participants/dummies have incomplete identities; never guess joins |
 | **P07 · Champion display and champion/opponent filters** | PL `championName`; EOG `championId`, `championName`; participant reference | PL, EOG | PL 2 s; EOG final | Yes | GL, LR | Index local and roster champions separately; resolve display identity consistently | Live names and final numeric IDs have different provenance |
 | **P08 · Team rosters and ally/enemy relationships** | PL `team`; EOG `teamId`; participant/team membership; local team reference | PL, EOG | PL 2 s; EOG final | Yes | GL, LR | Preserve arbitrary team collections; derive relations only with known local membership | Current history layout assumes two five-player rosters; storage must not |
@@ -194,8 +194,8 @@ in matrix 2.
 | **P70 · Match-history semantic search** | Match/media identity; local/roster champion and participant references; team relation; queue/mode/map; authoritative outcome; event type/actor role/multikill count/steal flag; recording date | Facts above | Mixed facts retaining their source semantics | Inputs partial; basic champion/mode search/filter exists | Partial source files; no complete semantic index | Support opponent/participant, queue, outcome and event predicates with unknown coverage | No matching event in an incomplete recording does not prove none occurred |
 | **T01 · Recording-to-match ownership** | `media_id`; provisional/confirmed game ID; association evidence/source scope | Recorder + LM/LR | Technical identity | Yes | M/LM/LR | Keep recording identity distinct from match identity; do not globally key by an unqualified numeric game ID | Platform/region namespace is not established by current allowlisted sources |
 | **T02 · Durable event identity** | Source session/epoch; `EventID`, `EventName`, source `EventTime`; normalized `GameTick`; ingestion status | EV | Source time plus receipt timing | Event ID exists in memory | GL loses EventID | Retain source ID/time before advancing durable retrieval progress | Reset, consecutiveness, corrections and cursor edge semantics unverified |
-| **T03 · Observation timing** | Observation ID; endpoint; request-start/end monotonic times; clock-domain/run ID; receipt wall time; GS observation/calibration reference | Each acquisition, including identity-only AN | Request interval; mapped game-time estimate with uncertainty | Timing partly measured transiently | Not durably attached to observations | Retain per-response timing; do not assign PL the GS receipt as if simultaneous | PL has no verified independent source game timestamp; AN is not a historical-state stream |
-| **T04 · Coverage and gaps** | Endpoint activation/stop; successful observation times; errors/missing status; skipped polls; last durable observation; gap bounds/reason | Acquisition + recorder | Observed coverage | Failures logged | No complete durable coverage | Retain interruption/recovery boundaries and stale/unknown state; AN only records identity coverage | Current loops stop after three failures; missed roster states cannot be backfilled |
+| **T03 · Observation timing** | Observation ID; endpoint; request-start/end monotonic times; clock-domain/run ID; receipt wall time; GS observation/calibration reference | Each acquisition, including identity-only AP | Request interval; mapped game-time estimate with uncertainty | Timing partly measured transiently | Not durably attached to observations | Retain per-response timing; do not assign PL the GS receipt as if simultaneous | PL has no verified independent source game timestamp; AP is not a historical-state stream |
+| **T04 · Coverage and gaps** | Endpoint activation/stop; successful observation times; errors/missing status; skipped polls; last durable observation; gap bounds/reason | Acquisition + recorder | Observed coverage | Failures logged | No complete durable coverage | Retain interruption/recovery boundaries and stale/unknown state; AP only records identity coverage | Current loops stop after three failures; missed roster states cannot be backfilled |
 | **T05 · Field provenance and missingness** | Source/endpoint; source schema/client version when known; field presence/value; unavailable/error/invalid/conflicting/not-applicable reason | All sources | Inherits fact precision | Partial | Coarse LR family coverage only | Preserve distinct field states, including zero and empty | Not-applicable requires mode evidence |
 | **T06 · Game/video calibration** | Existing sample count; first/last game tick; intercept; RTT; residual; uncertainty; validity | GS + recorder | Existing fast 250 ms calibration phase; separate normal 1 s polling | Yes | GL calibration | Preserve five-sample validation, tolerances, retries and invalidation; no startup slowdown | Probe spacing is a target, not guaranteed calibration latency |
 | **T07 · Media/frame authority** | `media_id`; video time base; first/last PTS; exact rate/count; replay coverage; capture anchor; presented-frame time | Recorder + player | Exact validated media coordinates | Yes | M; presented-frame observations transient | Reuse existing time types and half-open frame ranges | Wall clock and seek requests are not presented-video authority |
@@ -214,23 +214,25 @@ by its shortest retained-field freshness requirement. All retained response fiel
 follow that cadence. The explicit exception is the existing fast GS calibration
 phase, which is separate from normal polling and must not regress.
 
-`/activeplayername` is the sole chosen active-identity endpoint. Its full Riot ID is
-sufficient: PL supplies local name/champion/team, GS supplies map/mode, and LCU
-supplies PUUID/game/queue and comparison identity. The current association requires
-two fresh coherent rounds; the same cached AN response cannot count twice. Its first
+Keep the existing working `/activeplayer` endpoint for bounded identity checks. Its
+`riotId` is sufficient: PL supplies local name/champion/team, GS supplies map/mode,
+and LCU supplies PUUID/game/queue and comparison identity. `/activeplayername` remains
+an unused alternative; replacing the working path requires verified installed-client
+compatibility and measured benefit. The current association requires two fresh
+coherent rounds; the same cached AP response cannot count twice. Its first
 successful exact local roster mapping remains useful if LCU association fails. A
 failed/unavailable identity must not block ordinary roster acquisition or video.
 
 | Endpoint | Useful response fields | Cadence / active phase | Acquisition method / current position | API optimization and verification status | Persistence contract | Interruption / recovery behavior |
 | --- | --- | --- | --- | --- | --- | --- |
 | **GS** `/liveclientdata/gamestats` | `gameTime`, `gameMode`, `mapNumber`, `mapName`, `mapTerrain` | **250 ms fast calibration**; **1 s normal polling** candidate | Existing GET. Preserve current five strictly advancing samples, minimum 750 ms window, 250 ms tolerances, midpoint/RTT evidence and 1 s failure retry. Current normal sampling is 10 s | Focused endpoint documented; no verified field filter/cursor/conditional retrieval. One request owner switches phases without overlapping calibration/normal pollers | Retain clock/request timing and calibration evidence; share unchanged context values while preserving observations | Preserve existing fast recalibration behavior after invalidation; mark discontinuities. Never silently join data across a reset |
-| **AN** `/liveclientdata/activeplayername` | Full Riot ID JSON string | **Identity bootstrap; fresh checks at the existing 10 s association cadence while needed; stop on binding or admission closure** | Chosen replacement for current broad `/activeplayer` identity request; not implemented | Focused route and full-ID response documented by Riot; installed-client verification still required. No cursor/filter needed | Retain valid full identity with request timing/provenance; exact PL mapping supplies local summary. No detailed AP telemetry archive | Missing/tagless response leaves identity unavailable; preserve fresh-round rules and bounded identity lifecycle. Cached identity may support roster display, not fresh association proof |
+| **AP** `/liveclientdata/activeplayer` | `riotId` for identity; detailed telemetry is outside current requirements | **Identity bootstrap; fresh checks at the existing 10 s association cadence while needed; stop on binding or admission closure** | Reuse the existing working endpoint/identity extraction; remove its dependency from normal state rounds | No cursor/filter needed. Keep the established path; an alternative must demonstrate compatible behavior and measured benefit before replacement | Retain valid full identity with request timing/provenance; exact PL mapping supplies local summary. No detailed AP telemetry archive | Missing/tagless response leaves identity unavailable; preserve fresh-round rules and bounded identity lifecycle. Cached identity may support roster display, not fresh association proof |
 | **EV** `/liveclientdata/eventdata` | E plus supported event-specific fields P42-P54 | **1 s** | Existing cumulative GET and RAM EventID dedup | Historical schema advertises `eventID` as the next expected event ID. Enable only after installed-client schema and behavioral verification: inclusivity, empty/stale/future cursor responses, reset and corrections. Current code sends no cursor | Persist source-scoped ID, original time and supported payload once; retain poll timing/coverage. Advance durable cursor only after corresponding data/status is durably accounted for | Resume from durable boundary with verified safe overlap/dedup; reconcile without cursor on uncertain session/reset behavior. If history is unavailable, retain a gap |
 | **PL** `/liveclientdata/playerlist` | Full roster identity/context; levels; KDA/CS/ward score; inventory/metadata; dead/respawn state; spells/basic runes | **2 s** | Existing GET currently required in joined 10 s rounds; proposed roster acquisition independent of AP success | Historical `teamID` filter uses strings such as `ORDER`/`CHAOS`; current behavior unverified. Omit filter for all teams. Splitting teams increases request count/skew; no measured benefit | Initial complete retained state then changed payloads; retain every observation's timing/payload reference, including equality and nested errors | Resume with complete roster state; retain gaps. Never backfill intermediate states or compare across uncertain identity/session continuity |
 | **GF** `/lol-gameflow/v1/session` | `phase`, `gameData.gameId`, `gameData.queue.{id,mapId,gameMode}`, `map.{id,gameMode}` | **10 s**, only while association admission is open | Existing LCU collector and coherent paired SUM/Live rounds | No verified incremental/filter capability needed. Reuse collector; no duplicate context poller | Preserve accepted context and evidence timing/status; share repeated values with observation evidence | Reuse valid sealed LM; incomplete association requires fresh coherent rounds. Phase is not recorder lifecycle authority |
 | **SUM** `/lol-summoner/v1/current-summoner` | `puuid`, `gameName`, `tagLine` | **10 s**, same association window as GF | Existing authenticated GET paired with GF | No verified cursor/filter. Local payload dedup is a client optimization, not fresh evidence | Retain exact local identity/accepted observations; identifiers remain local and out of logs | Rediscover credentials without persisting secrets. Account changes invalidate pending assumptions; sealed identity remains immutable |
 | **EOG** `/lol-end-of-game/v1/eog-stats-block` | Exact game ID; final context/outcome/early flags; local/roster/team loadouts and supported statistics | **10 s**, existing maximum 180 s / 18 attempts | Existing bounded coordinator, at most four jobs; pending work currently memory-only | No verified cursor/field filter. Sharing an acquired response among pending exact-ID checks is a client proposal, not an API feature; one endpoint request owner | Reuse LR atomic deletion-aware attachment; retain facts/missingness. Persist pending association/expiry for restart recovery. Do not replace confirmed facts with worse partial data | Resume only unexpired durable pending work and revalidate exact game ID. Expired/unavailable remains unknown; never attach a newer unrelated match |
-| `/liveclientdata/activeplayer` | No retained fields required from this endpoint after AN replacement | **0 in the proposed contract** | Currently fetched every 10 s for identity plus limited telemetry | AN is the smaller documented identity alternative; no broad-response fallback is required by this contract | Existing recordings remain compatible; no new gold/health/combat/ability/full-rune requirements | AN incompatibility must remain explicit rather than silently restoring detailed polling |
+| `/liveclientdata/activeplayername` | Full Riot ID JSON string, available as a documented alternative | **0 in the proposed contract** | Not used; retain the existing AP identity path | Smaller response is documented, but installed-client compatibility and practical benefit are not verified/measured. Replacement is not required | No acquisition or persistence requirement for this endpoint | Not a recovery dependency or automatic fallback |
 | `/liveclientdata/allgamedata` | Aggregate GS/PL/identity/events, plus out-of-scope AP telemetry | **0 in proposed production acquisition** | Used by diagnostic captures; production uses focused routes | Aggregate documented; historical schema also has `eventID`, which affects only the event portion. A benchmark alternative must replace overlapping requests, not add them | Explicit diagnostic use only; no requirement to retain out-of-scope AP data | No automatic overlapping aggregate fallback; changing acquisition requires revising the measured endpoint choice |
 | `/liveclientdata/activeplayerabilities` | Out-of-scope local ability telemetry | **0** | Documented focused route, not needed | Not a replacement telemetry route under this contract | No new acquisition requirement | No historical backfill |
 | `/liveclientdata/activeplayerrunes` | Out-of-scope local full Live rune page | **0** | Documented focused route, not needed | PL basic runes and EOG final rune facts remain sufficient for current scope | No new acquisition requirement | Final facts cannot reconstruct historical loadout changes |
@@ -273,10 +275,10 @@ change-aware storage are client-side proposals, not API capabilities.
   still served. Intermediate roster states generally are not. Restart from the last
   durable checkpoint, retain a crash/unobserved tail gap, and never fabricate backfill.
 - **Preserve identity semantics:** match association still needs exact full Live/LCU
-  Riot ID agreement, compatible map/mode and two distinct fresh coherent rounds. AN
-  only replaces the source of the Live identity string. It does not strengthen the
-  provisional candidate into authoritative identity. EOG confirmation remains separate.
-- **Retain local presentation independently:** one valid AN-to-PL identity match may
+  Riot ID agreement, compatible map/mode and two distinct fresh coherent rounds.
+  Retain the working AP identity source for bounded checks; do not turn its cached
+  identity into fresh evidence or authoritative match identity. EOG confirmation remains separate.
+- **Retain local presentation independently:** one valid AP-to-PL identity match may
   supply local name/champion/team even if LCU association never succeeds. Missing local
   identity leaves that summary unavailable; it does not stop roster/events/video.
 - **Bound post-game recovery:** preserve existing expiry, attempt and job limits when
@@ -312,9 +314,11 @@ selected here.
 
 These are the remaining limits of the accepted contract, not a new roadmap:
 
-1. **AN compatibility:** verify the installed client's JSON string contains the exact
-   full Riot ID and agrees with PL/LCU during the required identity lifecycle. A
-   tagless, malformed or missing value is unavailable; no name-only inference.
+1. **Identity scope:** preserve the working AP `riotId` comparison, PL mapping and
+   fresh-round behavior when limiting requests to bounded identity work. A tagless,
+   malformed or missing value is unavailable; no name-only inference. Endpoint replacement
+   is not required; reconsider `/activeplayername` only with verified compatibility
+   and measured benefit.
 2. **EV cursor:** verify installed schema plus real cursor behavior, including overlap,
    empty/stale/future requests, ID reset and corrections. Keep full retrieval/dedup
    until that evidence supports enabling `eventID`. Do not assume `max_id + 1` semantics
