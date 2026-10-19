@@ -1,0 +1,120 @@
+{
+  "schema_version": 2,
+  "media_id": "3e8cf178-6c1d-4b11-a9e1-a0fb25a88713",
+  "media_timeline": {
+    "schema_version": 2,
+    "replay_ticks_per_second": "48000000",
+    "media_id": "3e8cf178-6c1d-4b11-a9e1-a0fb25a88713",
+    "video": {
+      "codec": "h264",
+      "profile": "High",
+      "time_base": {
+        "numerator": "1",
+        "denominator": "15360"
+      },
+      "first_pts": "0",
+      "frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "frame_count": "7915",
+      "one_past_last_pts": "2026240",
+      "replay_end": "6332000000",
+      "exact_cfr": true
+    },
+    "audio": {
+      "present": true,
+      "codec": "aac",
+      "sample_rate": 48000,
+      "time_base": {
+        "numerator": "1",
+        "denominator": "48000"
+      },
+      "first_pts": "0",
+      "replay_start": "0",
+      "replay_end": "6332416000"
+    },
+    "container": {
+      "start_seconds": {
+        "numerator": "0",
+        "denominator": "1"
+      },
+      "duration_seconds": {
+        "numerator": "131925333",
+        "denominator": "1000000"
+      }
+    },
+    "producer": {
+      "backend": "native_windows_graphics_capture_d3d11",
+      "expected_frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "expected_frame_count": "7915",
+      "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+    },
+    "capture": {
+      "first_qpc_100ns": "1102099635369",
+      "recorded_at": "2026-10-19T17:57:11.1173432Z"
+    }
+  },
+  "recorded_at": "2026-10-19T17:57:11.1173432Z",
+  "game_mode": "PRACTICETOOL",
+  "local_player_summoner_name": "SUPERSTAR#VOID",
+  "local_player_champion": "Akali",
+  "local_player_team": "ORDER",
+  "encoder_used": "nvenc",
+  "recording_codec": "h264",
+  "recording_profile": "high",
+  "recording_resolution": "1920x1080",
+  "capture_backend": "native_windows_graphics_capture_d3d11",
+  "capture_adapter_luid": "000000000000b622",
+  "capture_adapter_name": "NVIDIA GeForce RTX 4060",
+  "capture_output": "\\\\.\\DISPLAY1",
+  "encoder_interop": "d3d11-nvenc-direct",
+  "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+  "capture_support_label": "optimized-unvalidated",
+  "source_frames_surfaced": 7648,
+  "source_frames_superseded": 251,
+  "cfr_duplicates": 940,
+  "cfr_discards": 243,
+  "pool_recreations": 0,
+  "capture": {
+    "schema_version": 1,
+    "backend": "native_windows_graphics_capture_d3d11",
+    "diagnostics_abi": 1,
+    "support_label": "optimized-unvalidated",
+    "capture_adapter_luid": "000000000000b622",
+    "encoder_adapter_luid": "000000000000b622",
+    "capture_adapter_name": "NVIDIA GeForce RTX 4060",
+    "capture_output": "\\\\.\\DISPLAY1",
+    "encoder_backend": "nvenc",
+    "encoder_interop": "d3d11-nvenc-direct",
+    "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+    "source_format": "d3d11_bgra",
+    "converted_format": "d3d11_nv12",
+    "host_readback": false,
+    "gpu_stages": [
+      "windows_graphics_capture_bgra_d3d11",
+      "scale_d3d11_video_processor_nv12",
+      "d3d11-nvenc-direct"
+    ],
+    "frame_pool_capacity": 2,
+    "capture_output_pool_capacity": 1,
+    "filter_buffered_frame_limit": 0,
+    "encoder_depth": 4,
+    "progress_stall_timeout_seconds": 15,
+    "maximum_texture_bytes": 37324800,
+    "source_frames_surfaced": 7648,
+    "source_frames_superseded": 251,
+    "encoded_frames": 7915,
+    "muxed_bytes": 199088769,
+    "cfr_duplicates": 940,
+    "cfr_discards": 243,
+    "pool_recreations": 0,
+    "first_qpc_100ns": 1102099635369,
+    "latest_qpc_100ns": 1103416923011,
+    "terminal_progress": true
+  },
+  "saved": false
+}

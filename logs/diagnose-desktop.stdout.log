@@ -1,0 +1,9 @@
+League Replay Recorder diagnostics
+  config:  C:\Users\hugo\Documents\Chronobreak_PCA\build\live-recording-20261019-193605\config.toml
+  output:  C:/Users/hugo/Documents/Chronobreak_PCA/build/live-recording-20261019-193605/library
+  ffmpeg:  \\?\C:\Users\hugo\Documents\Chronobreak_PCA\build\media-runtime\windows-x86_64\bin\ffmpeg.exe
+  runtime: queueback-ffmpeg-8.1.2-windows-x86_64-r6
+  encoder: nvenc (h264_nvenc)
+  codec:   h264
+  profile: high
+  audio:   silent stereo fallback

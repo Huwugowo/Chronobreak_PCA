@@ -1,0 +1,122 @@
+{
+  "format_version": 1,
+  "exported_at_utc": "2026-10-19T18:05:46.612962+00:00",
+  "source_commit": "42a14671da790156d486de8c26c65908edecc593",
+  "media_runtime": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+  "recording_settings": {
+    "profile": "high",
+    "codec": "h264",
+    "width": 1920,
+    "height": 1080,
+    "fps": 60,
+    "audio": "silent stereo fallback"
+  },
+  "recordings": [
+    {
+      "directory": "1792431584",
+      "media_id": "a8bf1b1f-5fd3-4f9d-bcdb-8f3534af9b00",
+      "recorded_at": "2026-10-19T17:39:44.5530567Z",
+      "video_duration_seconds": 1006.634667,
+      "post_game_result_included": true
+    },
+    {
+      "directory": "1792432630",
+      "media_id": "3e8cf178-6c1d-4b11-a9e1-a0fb25a88713",
+      "recorded_at": "2026-10-19T17:57:11.1173432Z",
+      "video_duration_seconds": 131.925333,
+      "post_game_result_included": true
+    }
+  ],
+  "files": [
+    {
+      "path": "games/1792431584/game_log.json",
+      "bytes": 592,
+      "sha256": "0b5b2839bd3c83a702601f6d4864e5602143ccc4b7452c1d01dac794c3006f0a"
+    },
+    {
+      "path": "games/1792431584/league_checkpoint.json",
+      "bytes": 30899,
+      "sha256": "0241564c5ce88b206fc85632fb30c8756c17d9dad7dedb1a14e5f1123b085951"
+    },
+    {
+      "path": "games/1792431584/league_match.json",
+      "bytes": 863,
+      "sha256": "41a692918ce21ee8134c100b8f6672368da75a4cccf87e02b5689dd44a3b9a0c"
+    },
+    {
+      "path": "games/1792431584/league_observations.jsonl",
+      "bytes": 4736710,
+      "sha256": "5482b0e60c666e69f1bd461975be26eefbf18f5d10bc20f3e0460b09759ebb05",
+      "records": 3439
+    },
+    {
+      "path": "games/1792431584/league_result.json",
+      "bytes": 97772,
+      "sha256": "ad61fe89e06dd2cb10d11a526906f4d430879f3e0862a326e4d2deb9b8e7ffec"
+    },
+    {
+      "path": "games/1792431584/metadata.json",
+      "bytes": 3648,
+      "sha256": "cf26016648ae54fc49f0dc61dc6a7f822631190db08eac8902ecda3958a3b558"
+    },
+    {
+      "path": "games/1792432630/game_log.json",
+      "bytes": 586,
+      "sha256": "6ce014f3347e66c2629bde1b596f6266bc5d959784887b5dc4c3db2530d6dbe7"
+    },
+    {
+      "path": "games/1792432630/league_checkpoint.json",
+      "bytes": 6683,
+      "sha256": "e314f498d855041d95e1216772391144f1352309bd3e9de256a05d8e4bbfba67"
+    },
+    {
+      "path": "games/1792432630/league_match.json",
+      "bytes": 871,
+      "sha256": "cf1815351f8d1f552e0e737990c3391f8bfc5aa2755c51b87ac3b938d6ad7fb9"
+    },
+    {
+      "path": "games/1792432630/league_observations.jsonl",
+      "bytes": 196997,
+      "sha256": "da95533fe029524e88bd1db471b7436109d6a6aba3ddf928ab85d0585dce67b5",
+      "records": 406
+    },
+    {
+      "path": "games/1792432630/league_result.json",
+      "bytes": 22586,
+      "sha256": "28767d31f6ca50fc7cc6ab587687f1ab14ac8b40b9f25cfcb7518b4f6f4d48be"
+    },
+    {
+      "path": "games/1792432630/metadata.json",
+      "bytes": 3631,
+      "sha256": "1ee6423ce0706c716980170020015aa570a6ae424a4c644aebb3e2368c646a19"
+    },
+    {
+      "path": "logs/recorder-desktop.stderr.log",
+      "bytes": 53339,
+      "sha256": "c7a7b0d75e4128eb99def85d0d68a90b200f13ac04669ab1373f049f53a41086"
+    },
+    {
+      "path": "logs/diagnose-desktop.stdout.log",
+      "bytes": 484,
+      "sha256": "2c5f735a5bd60f02ab4c957b4b2ded8d145586078ebba9c0b46c3530ecd2c215"
+    },
+    {
+      "path": "logs/diagnose-desktop.stderr.log",
+      "bytes": 267,
+      "sha256": "59c33552bcb39c3d2dcd66c0295244ea55be2ba8933cbe217d4f08b0813a0bae"
+    }
+  ],
+  "excluded_files": [
+    {
+      "path": "games/1792431584/video.mp4",
+      "bytes": 1530167681,
+      "reason": "video omitted from GitHub upload"
+    },
+    {
+      "path": "games/1792432630/video.mp4",
+      "bytes": 199088769,
+      "reason": "video omitted from GitHub upload"
+    }
+  ],
+  "included_bytes": 5155928
+}
