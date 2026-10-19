@@ -186,10 +186,8 @@ impl Index {
 
 fn evidence(db: &Connection, e: &Evidence, tick: Option<GameTick>) -> Result<()> {
     let s = &e.source;
-    ensure!(
-        e.id.0 > 0 && e.timing.start_us <= e.timing.end_us,
-        "observation identity/interval"
-    );
+    // Observation IDs are run-local u64 values; acquisition starts at zero.
+    ensure!(e.timing.start_us <= e.timing.end_us, "observation interval");
     let json = serde_json::to_string(e)?;
     db.execute(
         "INSERT OR IGNORE INTO scopes(media_id,run_id,epoch) VALUES (?1,?2,?3)",

@@ -12,7 +12,7 @@ replace development readers/writers and fixtures together, without migration or
 dual formats. Preserve media, saved state, exact replay time and deletion protection.
 Unsupported old telemetry can be unavailable without destroying its recording.
 
-## What exists, and what actually remains
+## Initial assessment (2026-10-14)
 
 | Area | Reuse | Remaining work found in code |
 | --- | --- | --- |
@@ -388,24 +388,69 @@ Both checks are ignored local artifacts (`sampler-check.log`, `hash-compare.log`
 not added benchmark infrastructure. The historical CPU result is not a controlled
 A/B comparison; no overall CPU or game-interference improvement is established.
 
-Forward cursor (2026-10-19, user-directed closeout): the foundation implementation
-and focused optimization are complete and their routine builds, tests and targeted
-release measurements pass. Preserve that work in a local commit, then assess the
-existing automated response-to-acquisition-to-journal-to-SQL-to-application path.
-Fill only meaningful integration gaps using current fixtures and test suites, run
-focused checks, record their exact boundary and commit the closeout. No additional
-optimization, benchmark framework or architectural redesign is authorized here.
+Closeout assessment (2026-10-19, user directed): the foundation implementation
+and focused optimization are committed as `5740eea`. Inspection found a missing
+continuous test: recorder fixtures began with raw Live responses, but SQL fixtures
+began with constructed journal records. One Windows test now closes that gap:
+`app/src-tauri/src/league_index/production_path_tests.rs::simulated_live_responses_reach_durable_sql_and_application_queries`.
+It reuses `league-data/tests/fixtures/live-endpoints.json`, the real acquisition
+scheduler, QueueSink and WriterSession, a temporary media bundle from the existing
+library fixture, and production Index APIs. A narrow writer-start adapter is gated
+by the existing `replay-time-fixture` feature. Normal writer ownership, exclusive
+creation, pinned-directory validation, commit policy and drain remain unchanged.
 
-M1-M3 have implemented producers, durable recovery, projection and consumers with
-the fixture evidence above; the closeout assessment must establish where those
-layers are tested together. M4 installed-client validation has not run. Outstanding
-validation includes sustained growing-history/larger-roster resource cases,
-two-hour measurements and the controlled League comparison. Earlier generated-
-capture, accelerated persistence and query/rebuild fixtures remain supporting
-evidence; capture/NVENC/mux code was not changed by the optimization. IPC/UI costs
-and physical write amplification remain unmeasured. Report engineering closeout
-as fixture-verified with named live checks outstanding; do not turn those checks
-into passes or claim M4 completion.
+The first integrated run found a real producer/consumer incompatibility: acquisition
+starts observation IDs at zero, which the shared u64 contract and journal accept,
+but SQL import required a positive ID. Every new production journal's first boundary
+could therefore fail import. The importer now accepts zero while retaining interval,
+integer-range, exact-evidence reuse, scope and journal validation. The bridge asserts
+that the actual first durable boundary has ID zero; it failed before the import fix.
+No producer numbering change or journal migration is needed.
+
+| Automated boundary | Existing evidence and closeout coverage | Limit |
+| --- | --- | --- |
+| Raw Live bodies through durable files and app queries | New bridge runs independent GS/AP/PL/EV acquisition into the actual disk worker, recovers every committed record with no tail, imports through SQLite, and queries scopes, roster, corrected events, history and replay. It asserts exact local actors, acquired calibration/replay mapping, fractional ward score, zero versus absent stats, nested source errors, an injected EV HTTP gap, cached/raw coverage agreement, unchanged-source no-op and forced rebuild equivalence. | Simulated `Source::fetch` supplies bodies/errors; it bypasses reqwest/HTTP/TLS and uses fixture video/timeline. Virtual acquisition time does not establish real-time latency or resource use. |
+| Parser, queue and recovery failures | Existing shared model/journal tests and recorder acquisition/persistence suites cover duplicate/invalid fields, corrections/reversions, bounded rejection, failed-sync acknowledgement, stale anchors, torn suffixes, process interruption, epoch isolation and deletion. | These failure cases use focused fixtures rather than all being injected through the new SQL bridge. |
+| LCU identity and final facts | Existing association, post-game coordinator/ledger and sidecar tests cover exact identity, fresh rounds, reservation-before-request, bounded retries, restart/expiry/rollback, publication ordering and deletion. `result::tests::shared_facts_and_receipt_survive_production_confirmation_and_disk_round_trip` crosses confirmation and disk; app `final_nullable_facts_replace_recorded_projection_independently` covers final-versus-recorded SQL behavior. | EOG production and SQL consumers remain compositionally tested, not one continuous LCU-to-query test. Installed-client discovery, transport and actual delayed responses are not proven by these fixtures. |
+| SQL and application state | Existing index tests cover atomic paged import, cancellation/resume, corruption isolation, negative-query coverage, reset/replacement, stale snapshots, semantic predicates and per-ingestion calibration; frontend/coordinator suites cover consumer and root-invalidation behavior. | Rust application APIs and mocked frontend commands do not prove actual Tauri IPC/native WebView delivery. |
+| Capture interaction | Earlier generated production-service capture verifies publication, bounded writer diagnostics and playable H.264/AAC media; native capture fixtures are separate evidence. | The new bridge does not acquire/encode video. Real League interference and frame-time acceptance remain unverified. |
+
+Closeout verification passed on 2026-10-19; logs are retained under
+`build/league-foundation-closeout-20261019/`:
+
+- `cargo test --offline --manifest-path app/src-tauri/Cargo.toml`: 122 passed,
+  three ignored, including the continuous bridge and zero-ID regression. The
+  existing temporary PowerShell child tests use process-scoped
+  `PSExecutionPolicyPreference=Bypass`; machine policy is unchanged.
+- Recorder `cargo check` and `cargo test --offline --manifest-path
+  recorder/Cargo.toml --all-targets --all-features`: check passed; 193 library,
+  three binary and three WGC fixture tests passed, nine ignored.
+- App and recorder format checks and strict Clippy passed (`--all-targets`, plus
+  `--all-features` for recorder, `-D warnings` for both).
+- Canonical validation passed: 62 roadmap items and ten plan/checkpoint pairs.
+  Whitespace validation passed. No existing app dependency version was removed
+  or upgraded; the lockfile additions support the recorder dev-dependency.
+
+Earlier shared/frontend checks, production builds and targeted measurements above
+remain the implementation baseline and were not repeated for this importer/test
+delta; no decoder, capture/NVENC/mux, frontend or packaged media behavior changed.
+No additional optimization, benchmark framework or architectural redesign was
+introduced. Forward cursor: implementation and fixture-integration closeout are
+complete. The next validation work is the explicitly outstanding fixture or
+installed-client procedure below; do not reopen implementation or optimization
+merely to close this record.
+
+M1-M3 producers, durable recovery, projection and consumers are implemented and
+fixture-verified together for the Live path. M4 installed-client validation has not
+run. Genuine League checks remain installed field/schema/mode behavior, EV cursor
+semantics, fresh AP/LCU lifecycle and consecutive matches, real delayed EOG,
+primary-local LOSS encoding (LOSS remains disabled), and controlled game FPS/frame
+time impact. Longer growing-history/larger-roster runs, two-hour resource checks,
+physical write amplification and actual IPC/UI checks can use fixtures; they are
+also not run and should not be described as League-only blockers. Earlier short
+rehearsals do not satisfy these acceptance checks. No other confirmed functional
+defect was found in this bounded assessment; unobserved installed schemas and
+outcomes remain correctness risks, not passing evidence.
 
 Design decisions: LR installation validates bounded media/context/manifest identity;
 it does not certify journal durability or consume historical telemetry. Library
@@ -415,8 +460,9 @@ The ledger preserves original expiry even for confirmed unpublished work. It sav
 reservations before HTTP, restores only original directory generations, reconciles
 installed LR idempotently and fails closed on a saturated control channel. Fixtures
 cover repeated restart, clock rollback, budgets, publication ordering and deletion.
-Resource measurements and live checks remain.
-No live/performance acceptance or completion of the agreed foundation is claimed.
+The longer resource measurements and installed-client checks listed above remain.
+The engineering closeout is fixture-verified with named live checks outstanding;
+it does not claim live/performance acceptance or M4 completion.
 
 Existing working-tree state at implementation start: this approved plan was the
 only untracked file; tracked sources were clean on `main`. The lightweight contract

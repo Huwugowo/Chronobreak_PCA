@@ -3,6 +3,9 @@ use obs::{Endpoint, Evidence, ObservationId, Record};
 use std::io::{Cursor, Write};
 use tempfile::{TempDir, tempdir};
 
+#[cfg(windows)]
+#[path = "production_path_tests.rs"]
+mod production_path_tests;
 #[path = "query_measurements.rs"]
 mod query_measurements;
 

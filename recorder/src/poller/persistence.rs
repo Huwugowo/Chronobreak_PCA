@@ -275,6 +275,18 @@ pub struct WriterSession {
     supervisor: Arc<WriterSupervisor>,
 }
 impl WriterSession {
+    /// Exercise the production writer against an existing temporary fixture bundle.
+    /// The normal exclusive-create and pinned-directory checks still apply.
+    #[cfg(all(windows, feature = "replay-time-fixture"))]
+    pub async fn start_fixture(
+        directory: &std::path::Path,
+        scope: SourceEpoch,
+    ) -> Result<(Self, QueueSink), journal::Error> {
+        let directory = DirectoryGuard::capture(directory, scope.media_id.clone())
+            .map_err(journal::Error::Invalid)?;
+        Self::start(directory, scope).await
+    }
+
     /// Directory creation and media authorization belong to the recording owner.
     /// Opening a journal is exclusive and never truncates an existing bundle.
     pub(crate) async fn start(
