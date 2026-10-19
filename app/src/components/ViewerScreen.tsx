@@ -10,9 +10,7 @@ import {
   onMount,
 } from "solid-js";
 import {
-  loadPlaybackProbe,
   loadReplayDescriptor,
-  assertReplayProbeMatches,
   loadServerMetrics,
 } from "../api";
 import {
@@ -29,10 +27,8 @@ import { formatDate, formatDuration } from "../format";
 import type {
   ClipDraft,
   ClipRange,
-  KdaTimelinePoint,
   GameSummary,
   ReplayDescriptor,
-  PlayerTimelinePoint,
   ServerMetrics,
   ViewerEvent,
 } from "../types";
@@ -50,7 +46,6 @@ import {
   moveClipEndpoint,
   nearestIndexAt,
   replayTickAtFrameBoundary,
-  timelineValue,
 } from "../viewerUtils";
 
 import {
@@ -63,6 +58,10 @@ import { createPlaybackDiagnostics } from "../playbackDiagnostics";
 import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
+import { indexRecording, loadRecordingFacts, queryReplayWindow, sourceScopes } from "../leagueIndex";
+import { ReplayDataController } from "../replayDataController";
+import { sameSource, sourceKey } from "../leagueSource";
+import { replayEvent, replayParticipants } from "../replayProjection";
 
 type Props = {
   ddragonAssetBaseUrl?: string | null;
@@ -101,8 +100,6 @@ const SEEK_TIMEOUT_MS = 1_500;
 const BENCHMARK_MEDIA_READY_TIMEOUT_MS = 30_000;
 
 type MappedViewerEvent = ViewerEvent & { replay_tick: ReplayTick };
-type MappedPlayerTimelinePoint = PlayerTimelinePoint & { replay_tick: ReplayTick };
-type MappedKdaTimelinePoint = KdaTimelinePoint & { replay_tick: ReplayTick };
 
 const hasReplayTick = <T extends { replay_tick?: ReplayTick }>(
   value: T,
@@ -195,16 +192,26 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   let admitDetails!: () => void;
   const admittedDetails = new Promise<void>(resolve => { admitDetails = resolve; });
 
-  const [detailsStarted, setDetailsStarted] = createSignal(false);
-  const [detailsResource, { refetch: retryDetails }] = createResource(
-    () => detailsStarted() && props.gameTimestamp,
-    async id => assertReplayProbeMatches(props.descriptor,
-      await props.readReplay(token => loadPlaybackProbe(id, token))),
-  );
-  const detailsError = () => detailsResource.error;
-  const details = () => detailsError() ? undefined : detailsResource();
+  const replayData = new ReplayDataController({ gameTimestamp: props.gameTimestamp,
+    mediaId: mediaTimeline.mediaId, readReplay: props.readReplay,
+    loadRecordingFacts, indexRecording, sourceScopes, queryReplayWindow });
+  const [data, setData] = createSignal(replayData.value);
+  const unsubscribeData = replayData.subscribe(setData);
+  const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
+  const activeScope = createMemo(() => data().scopes.find(scope => sourceKey(scope.source) === selectedSource())
+    ?? data().scopes[data().scopes.length - 1]);
+  const activeWindow = createMemo(() => {
+    const window = data().activeWindow, scope = activeScope();
+    return window && scope && sameSource(window.source, scope.source) ? window : null;
+  });
+  const roster = () => activeWindow()?.roster ?? null;
+  const detailsError = () => data().factsError ?? data().windowError ?? data().error;
+  const details = () => data().facts;
+  const detailsReady = () => Boolean(details() && (activeWindow() || data().indexing === "unavailable"
+    || (data().indexing === "ready" && !data().loading.scopes && data().scopes.length === 0)));
+  const retryDetails = () => replayData.retry();
   const clearOpeningReadinessTimeout = () => {
-    if (props.opening && benchmarkScenarioStarted && details() && benchmarkMediaReadyTimerId !== undefined) {
+    if (props.opening && benchmarkScenarioStarted && detailsReady() && benchmarkMediaReadyTimerId !== undefined) {
       window.clearTimeout(benchmarkMediaReadyTimerId);
       benchmarkMediaReadyTimerId = undefined;
     }
@@ -225,10 +232,13 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   let detailsFailureReported = false;
   onMount(() => {
     detailsPaint = requestAnimationFrame(() => {
-      detailsPaint = requestAnimationFrame(() => { if (!disposed) setDetailsStarted(true); });
+      detailsPaint = requestAnimationFrame(() => { if (!disposed) void replayData.initialize(); });
     });
   });
-  onCleanup(() => { if (detailsPaint !== undefined) cancelAnimationFrame(detailsPaint); });
+  onCleanup(() => {
+    if (detailsPaint !== undefined) cancelAnimationFrame(detailsPaint);
+    unsubscribeData(); replayData.dispose();
+  });
   createEffect(() => {
     if (detailsError()) {
       const observer = replayBenchmarkObserver();
@@ -236,36 +246,33 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         detailsFailureReported = true;
         const reason = libraryError(detailsError());
         if (props.opening) {
-          failOpening("playback_probe", reason);
+          failOpening("league_replay_window", reason);
           return;
         }
-        observer.emit("scenario_failed", { phase: "playback_probe", reason }, { required: true });
-        void observer.complete("failed", reason, { phase: "playback_probe" });
+        observer.emit("scenario_failed", { phase: "league_replay_window", reason }, { required: true });
+        void observer.complete("failed", reason, { phase: "league_replay_window" });
       }
       return;
     }
     const loaded = details();
-    if (!loaded || payloadReported || (props.opening && benchmarkScenarioFinished)) return;
+    if (!loaded || !detailsReady() || payloadReported || (props.opening && benchmarkScenarioFinished)) return;
     payloadReported = true;
     if (props.opening) replayBenchmarkObserver()!.emitOpening("opening_details_ready", props.opening);
     admitDetails();
     clearOpeningReadinessTimeout();
     emitReplayBenchmarkEvent("playback_payload_ready", {
-      event_count: loaded.events.length, participant_count: loaded.participants.length,
-      duration_ms: loaded.game.duration_ms,
+      event_count: activeWindow()?.events.length ?? 0, participant_count: roster()?.players.length ?? 0,
+      duration_ms: durationMs, payload_scope: "selected_source_window",
     }, { required: true });
     queueMicrotask(() => { if (!disposed) void runBenchmarkScenario(); });
   });
 
-  const events = createMemo<MappedViewerEvent[]>(() => (details()?.events ?? [])
-    .filter(hasReplayTick)
-    .sort((left, right) => left.replay_tick - right.replay_tick));
-  const playerTimeline = createMemo<MappedPlayerTimelinePoint[]>(() => (details()?.player_timeline ?? [])
-    .filter(hasReplayTick)
-    .sort((left, right) => left.replay_tick - right.replay_tick));
-  const kdaTimeline = createMemo<MappedKdaTimelinePoint[]>(() => (details()?.kda_timeline ?? [])
-    .filter(hasReplayTick)
-    .sort((left, right) => left.replay_tick - right.replay_tick));
+  const events = createMemo<MappedViewerEvent[]>(() => {
+    const window = activeWindow();
+    return (window?.events ?? []).map(row => replayEvent(row, window!, window!.roster))
+      .filter(hasReplayTick).sort((left, right) => left.replay_tick - right.replay_tick);
+  });
+  const participants = createMemo(() => replayParticipants(roster()));
 
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
@@ -275,6 +282,14 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const [timelineViewport, setTimelineViewport] = createSignal<TimelineViewport>(
     wholeTimelineViewport(replayEnd as ReplayTick),
   );
+  const rosterQueryBucket = createMemo(() => Math.floor(replayPosition() / (2 * REPLAY_TICKS_PER_SECOND)));
+  const requestCurrentWindow = () => {
+    const scope = activeScope();
+    if (!scope) return;
+    replayData.requestWindow({ scope: scope.source, ...timelineViewport(),
+      at: Math.min(replayEnd, rosterQueryBucket() * 2 * REPLAY_TICKS_PER_SECOND) as ReplayTick });
+  };
+  createEffect(requestCurrentWindow);
   const [isPlaying, setIsPlaying] = createSignal(false);
   const [mediaState, setMediaState] = createSignal<MediaPreviewState>("loading");
   const [mediaError, setMediaError] = createSignal<string | null>(null);
@@ -323,18 +338,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     replayTickAtFrameBoundary(frame, mediaTimeline);
   const clipStartTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.startFrame);
   const clipEndTick = (range: ClipRange): ReplayTick => clipBoundaryTick(range.endFrameExclusive);
-  const replayTickAtGameZero = createMemo(() => {
-    const point = events()[0] ?? playerTimeline()[0];
-    return point ? BigInt(point.replay_tick) - BigInt(point.game_tick) * 48n : null;
-  });
-  const currentGameTick = createMemo(() =>
-    replayTickAtGameZero() === null
-      ? "0"
-      : ((BigInt(presentedPosition() ?? 0) - replayTickAtGameZero()!) / 48n).toString(),
-  );
-  const beforeGameStart = createMemo(
-    () => presentedPosition() === null || replayTickAtGameZero() === null || BigInt(currentGameTick()) < 0n,
-  );
   const visibleEvents = createMemo(() => {
     const selected = selectedPlayers();
     if (selected.length === 0) return events();
@@ -342,9 +345,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       selected.some((player) => eventInvolvesPlayer(event, player)),
     );
   });
-  const currentKda = createMemo<KdaTimelinePoint | undefined>(() =>
-    presentedPosition() === null ? undefined : timelineValue(kdaTimeline(), presentedPosition()!),
-  );
+  const recordedScores = createMemo(() => roster()?.players.find(player => player.participant === roster()?.local_participant)?.scores);
+  createEffect(() => { activeScope(); setSelectedPlayers([]); });
   const togglePlayerFilter = (summonerName: string) => {
     setSelectedPlayers((selected) =>
       selected.includes(summonerName)
@@ -957,7 +959,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     const observer = replayBenchmarkObserver();
     if (
       disposed || !observer || benchmarkScenarioFinished ||
-      (!props.opening && !details()) || detailsError() ||
+      (!props.opening && !detailsReady()) || detailsError() ||
       benchmarkScenarioStarted ||
       mediaState() !== "ready" ||
       canPlayGeneration !== mediaGeneration ||
@@ -978,7 +980,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       controller.pause();
       if (props.opening) {
         await withBenchmarkTimeout(admittedDetails, "opening details", BENCHMARK_MEDIA_READY_TIMEOUT_MS);
-        if (disposed || benchmarkScenarioFinished || detailsError() || !details()) return;
+        if (disposed || benchmarkScenarioFinished || detailsError() || !detailsReady()) return;
         if (benchmarkMediaReadyTimerId !== undefined) window.clearTimeout(benchmarkMediaReadyTimerId);
       }
       await updateMetrics();
@@ -1223,7 +1225,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
           <div>
             <dt>RECORDED K / D / A</dt>
             <dd>
-              {props.game.kills} / {props.game.deaths} / {props.game.assists}
+              {recordedScores()?.kills ?? "—"} / {recordedScores()?.deaths ?? "—"} / {recordedScores()?.assists ?? "—"}
             </dd>
           </div>
           <div>
@@ -1237,15 +1239,41 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         </dl>
       </header>
 
-      <Show when={!details()}>
+      <Show when={!detailsReady() || detailsError() || data().indexing === "unavailable"}>
         <section role="status" data-testid="replay-details-state">
-          {detailsError() ? "Replay details unavailable. Playback remains available." : "Loading replay details..."}
-          <Show when={detailsError()}>
+          {detailsError() || data().indexing === "unavailable" ? "Replay details unavailable. Playback remains available." : "Loading replay details..."}
+          <Show when={detailsError() || data().indexing === "unavailable"}>
             <span>{libraryError(detailsError())}</span>
             <button type="button" onClick={() => void retryDetails()}>Retry replay details</button>
           </Show>
         </section>
       </Show>
+
+      <Show when={data().scopes.length > 1}>
+        <label>Recorded source
+          <select aria-label="Recorded source" value={activeScope() ? sourceKey(activeScope()!.source) : ""}
+            onChange={event => setSelectedSource(event.currentTarget.value)}>
+            {data().scopes.map((scope, index) => <option value={sourceKey(scope.source)}>
+              Source {index + 1} · epoch {scope.source.epoch} · {scope.source.run_id.slice(0, 8)}
+            </option>)}
+          </select>
+        </label>
+      </Show>
+      <Show when={activeWindow()}>{window =>
+        <section role="status" data-testid="replay-coverage">
+          {window().events.length} events in this page · {window().coverage.gap_attempts} recorded gaps
+          {window().coverage.successful_observations === 0 ? " · Event coverage unavailable" : ""}
+          {window().coverage.unmapped_observations ? ` · ${window().coverage.unmapped_observations} observations without video mapping` : ""}
+          {window().coverage.unresolved_actors ? ` · ${window().coverage.unresolved_actors} unresolved actors` : ""}
+          {window().coverage.uncommitted_tail_bytes ? " · Uncommitted recording tail" : ""}
+          {roster() ? ` · Roster sampled ${(roster()!.age_replay_ticks / REPLAY_TICKS_PER_SECOND).toFixed(1)}s before the queried position` : " · No mapped roster at this position"}
+          <Show when={window().next}>
+            <span> · More events available</span>
+            <button type="button" disabled={data().loading.window} onClick={() => replayData.loadMore()}>Next events</button>
+          </Show>
+          <button type="button" disabled={data().loading.window} onClick={requestCurrentWindow}>First events</button>
+        </section>
+      }</Show>
 
       <div class={styles.replayView} aria-label="Replay" data-testid="replay-panel">
         <div class={styles.windowedGrid}>
@@ -1316,16 +1344,13 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
                 timelineViewport={timelineViewport()}
                 onTimelineViewportChange={setTimelineViewport}
                 presentedTick={presentedPosition()}
-                gameTick={currentGameTick()}
-                beforeGameStart={beforeGameStart()}
-                currentKda={currentKda()}
                 isPlaying={isPlaying()}
                 playback={playback()}
                 onRate={(rate) => controller?.setRate(rate)}
                 onMuted={(muted) => controller?.setMuted(muted)}
                 onVolume={(volume) => controller?.setVolume(volume)}
                 mediaAvailable={Boolean(props.descriptor.video_url) && mediaState() === "ready"}
-                participants={(details()?.participants ?? [])}
+                participants={participants()}
                 selectedPlayers={selectedPlayers()}
                 clipRange={clipRange()}
                 onPlayerToggle={togglePlayerFilter}

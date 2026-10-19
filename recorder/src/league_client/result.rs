@@ -1,15 +1,14 @@
 //! Purpose-built EOG ingestion. Unknown keys are skipped, never archived.
+use chronobreak_league_data::observation::{FieldIssue, FinalFacts, FinalPlayer, decode};
 use chronobreak_league_data::{
-    Coverage, Families, MAX_COUNTER, MAX_PLAYERS, MAX_TEAMS, Outcome, Perk, Player, ResultFile,
-    Stats, Team, bounded,
+    Coverage, Families, MAX_PLAYERS, MAX_TEAMS, Outcome, Perk, Player, ResultFile, Team, bounded,
 };
 use chronobreak_replay_time::MediaId;
-use serde::de::{IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
-use std::collections::BTreeMap;
-use std::fmt;
+use std::ops::Deref;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Binding {
     pub media_id: MediaId,
     pub game_id: String,
@@ -25,270 +24,61 @@ pub(super) enum Rejection {
     Association,
 }
 
-// Reading only an explicitly allowlisted field permits malformed scalars to be
-// discarded without making otherwise useful facts fail as a unit.
-fn lenient<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned>(
-    d: D,
-) -> Result<Option<T>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Field<T> {
-        Valid(T),
-        Invalid(IgnoredAny),
+/// Production and fixtures use the same allowlisted field/status decoder.
+#[derive(Default)]
+pub(super) struct Eog {
+    facts: FinalFacts,
+    pub evidence: Option<chronobreak_league_data::ResultEvidence>,
+}
+impl<'de> Deserialize<'de> for Eog {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(Self {
+            facts: decode::end_of_game(d)?,
+            evidence: None,
+        })
     }
-    Ok(match Field::<T>::deserialize(d)? {
-        Field::Valid(value) => Some(value),
-        Field::Invalid(_) => None,
-    })
-}
-fn number<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
-    Ok(lenient::<D, u64>(d)?.filter(|v| *v <= MAX_COUNTER))
-}
-fn text<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    Ok(lenient::<D, String>(d)?.filter(|v| bounded(v)))
-}
-fn game_id<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
-    Ok(lenient::<D, u64>(d)?.filter(|v| *v > 0))
-}
-fn items<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<Option<u64>>>, D::Error> {
-    let value = serde_json::Value::deserialize(d)?;
-    Ok(value.as_array().filter(|v| v.len() <= 8).map(|v| {
-        v.iter()
-            .map(|v| v.as_u64().filter(|v| *v <= MAX_COUNTER))
-            .collect()
-    }))
-}
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum Row<T> {
-    Valid(T),
-    Invalid(IgnoredAny),
-}
-fn players<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RawPlayer>>, D::Error> {
-    Ok(lenient::<D, Vec<Row<RawPlayer>>>(d)?.map(|rows| {
-        rows.into_iter()
-            .filter_map(|r| match r {
-                Row::Valid(p) => Some(p),
-                Row::Invalid(_) => None,
-            })
-            .collect()
-    }))
 }
 
-#[derive(Default)]
-struct RawStats {
-    stats: Stats,
-    win: Option<u64>,
-    perks: [Option<u64>; 6],
-    vars: [[Option<u64>; 3]; 6],
-    primary: Option<u64>,
-    secondary: Option<u64>,
-    augments: [Option<u64>; 4],
-    subteam: Option<u64>,
-    placement: Option<u64>,
+fn riot(player: &FinalPlayer) -> Option<String> {
+    Some(format!(
+        "{}#{}",
+        player.riot_id_game_name.as_ref()?,
+        player.riot_id_tag_line.as_ref()?
+    ))
+    .filter(|v| super::full_identity(v))
 }
-impl<'de> Deserialize<'de> for RawStats {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct Read;
-        impl<'de> Visitor<'de> for Read {
-            type Value = RawStats;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("allowlisted numeric stats")
-            }
-            fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
-                let mut out = RawStats::default();
-                let mut seen = BTreeMap::<String, Option<u64>>::new();
-                while let Some(key) = map.next_key::<String>()? {
-                    let canonical = Stats::alias(&key).map(str::to_owned).or_else(|| {
-                        if key == "WIN"
-                            || key == "PERK_PRIMARY_STYLE"
-                            || key == "PERK_SUB_STYLE"
-                            || key == "PLAYER_SUBTEAM"
-                            || key == "SUBTEAM_PLACEMENT"
-                            || (0..6).any(|i| {
-                                key == format!("PERK{i}")
-                                    || (1..=3).any(|j| key == format!("PERK{i}_VAR{j}"))
-                            })
-                            || (1..=4).any(|i| key == format!("PLAYER_AUGMENT{i}"))
-                        {
-                            Some(key.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(canonical) = canonical {
-                        let v = map
-                            .next_value::<serde_json::Value>()?
-                            .as_u64()
-                            .filter(|v| *v <= MAX_COUNTER);
-                        seen.entry(canonical)
-                            .and_modify(|old| {
-                                if *old != v {
-                                    *old = None;
-                                }
-                            })
-                            .or_insert(v);
-                    } else {
-                        map.next_value::<IgnoredAny>()?;
-                    }
-                }
-                for (key, v) in seen {
-                    out.stats.set(&key, v);
-                    match key.as_str() {
-                        "WIN" => out.win = v.filter(|v| *v <= 1),
-                        "PERK_PRIMARY_STYLE" => out.primary = v,
-                        "PERK_SUB_STYLE" => out.secondary = v,
-                        "PLAYER_SUBTEAM" => out.subteam = v,
-                        "SUBTEAM_PLACEMENT" => out.placement = v,
-                        _ => {}
-                    }
-                    for i in 0..6 {
-                        if key == format!("PERK{i}") {
-                            out.perks[i] = v;
-                        }
-                        for j in 0..3 {
-                            if key == format!("PERK{i}_VAR{}", j + 1) {
-                                out.vars[i][j] = v;
-                            }
-                        }
-                    }
-                    for i in 0..4 {
-                        if key == format!("PLAYER_AUGMENT{}", i + 1) {
-                            out.augments[i] = v;
-                        }
-                    }
-                }
-                Ok(out)
-            }
-        }
-        d.deserialize_map(Read)
+fn win(player: &FinalPlayer) -> Option<u64> {
+    player.stats.as_ref()?.extras.get("WIN").copied()
+}
+fn player_facts(player: &FinalPlayer, local: bool) -> Player {
+    let empty = chronobreak_league_data::observation::FinalStats::default();
+    let s = player.stats.as_ref().unwrap_or(&empty);
+    let extra = |key: &str| s.extras.get(key).copied();
+    let label = |v: &Option<String>| v.as_ref().filter(|s| bounded(s)).cloned();
+    Player {
+        team_id: player.team_id,
+        champion_id: player.champion_id,
+        champion_name: label(&player.champion_name),
+        riot_id: riot(player),
+        is_local: local,
+        spell1_id: player.spell1_id,
+        spell2_id: player.spell2_id,
+        position: label(&player.selected_position),
+        detected_position: label(&player.detected_team_position),
+        items: player.items.clone().unwrap_or_default(),
+        perks: (0..6)
+            .map(|i| Perk {
+                id: extra(&format!("PERK{i}")),
+                counters: std::array::from_fn(|j| extra(&format!("PERK{i}_VAR{}", j + 1))),
+            })
+            .collect(),
+        primary_style: extra("PERK_PRIMARY_STYLE"),
+        secondary_style: extra("PERK_SUB_STYLE"),
+        augments: std::array::from_fn(|i| extra(&format!("PLAYER_AUGMENT{}", i + 1))),
+        subteam_id: extra("PLAYER_SUBTEAM"),
+        subteam_placement: extra("SUBTEAM_PLACEMENT"),
+        stats: s.stats.clone(),
     }
-}
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct RawPlayer {
-    #[serde(deserialize_with = "game_id")]
-    game_id: Option<u64>,
-    #[serde(deserialize_with = "text")]
-    puuid: Option<String>,
-    #[serde(deserialize_with = "text")]
-    riot_id_game_name: Option<String>,
-    #[serde(deserialize_with = "text")]
-    riot_id_tag_line: Option<String>,
-    #[serde(deserialize_with = "number")]
-    team_id: Option<u64>,
-    #[serde(deserialize_with = "number")]
-    champion_id: Option<u64>,
-    #[serde(deserialize_with = "text")]
-    champion_name: Option<String>,
-    #[serde(deserialize_with = "lenient")]
-    is_local_player: Option<bool>,
-    #[serde(deserialize_with = "number")]
-    spell1_id: Option<u64>,
-    #[serde(deserialize_with = "number")]
-    spell2_id: Option<u64>,
-    #[serde(deserialize_with = "text")]
-    selected_position: Option<String>,
-    #[serde(deserialize_with = "text")]
-    detected_team_position: Option<String>,
-    #[serde(deserialize_with = "items")]
-    items: Option<Vec<Option<u64>>>,
-    #[serde(deserialize_with = "lenient")]
-    stats: Option<RawStats>,
-}
-impl RawPlayer {
-    fn riot(&self) -> Option<String> {
-        Some(format!(
-            "{}#{}",
-            self.riot_id_game_name.as_ref()?,
-            self.riot_id_tag_line.as_ref()?
-        ))
-        .filter(|v| super::full_identity(v))
-    }
-    fn win(&self) -> Option<u64> {
-        self.stats.as_ref()?.win
-    }
-    fn facts(&self, local: bool) -> Player {
-        let empty = RawStats::default();
-        let s = self.stats.as_ref().unwrap_or(&empty);
-        Player {
-            team_id: self.team_id,
-            champion_id: self.champion_id,
-            champion_name: self.champion_name.clone(),
-            riot_id: self.riot(),
-            is_local: local,
-            spell1_id: self.spell1_id,
-            spell2_id: self.spell2_id,
-            position: self.selected_position.clone(),
-            detected_position: self.detected_team_position.clone(),
-            items: self
-                .items
-                .as_ref()
-                .filter(|v| v.len() <= 8)
-                .map(|v| v.iter().map(|v| v.filter(|v| *v <= MAX_COUNTER)).collect())
-                .unwrap_or_default(),
-            perks: (0..6)
-                .map(|i| Perk {
-                    id: s.perks[i],
-                    counters: s.vars[i],
-                })
-                .collect(),
-            primary_style: s.primary,
-            secondary_style: s.secondary,
-            augments: s.augments,
-            subteam_id: s.subteam,
-            subteam_placement: s.placement,
-            stats: s.stats.clone(),
-        }
-    }
-}
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct RawTeam {
-    #[serde(deserialize_with = "number")]
-    team_id: Option<u64>,
-    #[serde(deserialize_with = "lenient")]
-    is_winning_team: Option<bool>,
-    #[serde(deserialize_with = "players")]
-    players: Option<Vec<RawPlayer>>,
-    #[serde(deserialize_with = "lenient")]
-    stats: Option<RawStats>,
-}
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub(super) struct Eog {
-    #[serde(deserialize_with = "game_id")]
-    game_id: Option<u64>,
-    #[serde(deserialize_with = "lenient")]
-    local_player: Option<RawPlayer>,
-    #[serde(deserialize_with = "lenient")]
-    teams: Option<Vec<RawTeam>>,
-    #[serde(deserialize_with = "number")]
-    game_length: Option<u64>,
-    #[serde(deserialize_with = "number")]
-    end_of_game_timestamp: Option<u64>,
-    #[serde(deserialize_with = "text")]
-    game_mode: Option<String>,
-    #[serde(deserialize_with = "text")]
-    game_version: Option<String>,
-    #[serde(deserialize_with = "text")]
-    game_type: Option<String>,
-    #[serde(deserialize_with = "text")]
-    queue_type: Option<String>,
-    #[serde(deserialize_with = "number")]
-    queue_id: Option<u64>,
-    #[serde(deserialize_with = "number")]
-    map_id: Option<u64>,
-    #[serde(deserialize_with = "lenient")]
-    invalid: Option<bool>,
-    #[serde(deserialize_with = "lenient")]
-    game_ended_in_early_surrender: Option<bool>,
-    #[serde(deserialize_with = "lenient")]
-    team_early_surrendered: Option<bool>,
-    #[serde(deserialize_with = "lenient")]
-    caused_early_surrender: Option<bool>,
-    #[serde(deserialize_with = "lenient")]
-    early_surrender_accomplice: Option<bool>,
 }
 fn coverage(values: &[Option<u64>]) -> Coverage {
     if values.iter().all(Option::is_some) {
@@ -299,17 +89,27 @@ fn coverage(values: &[Option<u64>]) -> Coverage {
         Coverage::Partial
     }
 }
+impl Deref for Eog {
+    type Target = FinalFacts;
+    fn deref(&self) -> &Self::Target {
+        &self.facts
+    }
+}
 impl Eog {
     pub(super) fn primary_win(&self) -> Option<u64> {
-        self.local_player.as_ref().and_then(RawPlayer::win)
+        self.local_player.as_ref().and_then(win)
     }
     pub(super) fn confirm(&self, b: &Binding) -> Result<ResultFile, Rejection> {
-        let id = self.game_id.ok_or(Rejection::NotReady)?;
-        if id.to_string() != b.game_id {
+        let id = self.game_id.as_deref().ok_or(Rejection::NotReady)?;
+        if id != b.game_id {
             return Err(Rejection::NotReady);
         }
         let teams = self.teams.as_deref().unwrap_or_default();
-        if teams.len() > MAX_TEAMS
+        if self.issues.get("teams") == Some(&FieldIssue::Invalid)
+            || teams
+                .iter()
+                .any(|t| t.issues.get("players") == Some(&FieldIssue::Invalid))
+            || teams.len() > MAX_TEAMS
             || teams
                 .iter()
                 .map(|t| t.players.as_ref().map_or(0, Vec::len))
@@ -319,10 +119,10 @@ impl Eog {
             return Err(Rejection::Association);
         }
         let local = self.local_player.as_ref();
-        let identity_agrees = |p: &RawPlayer| {
-            p.game_id.is_none_or(|v| v == id)
+        let identity_agrees = |p: &FinalPlayer| {
+            p.game_id.as_deref().is_none_or(|v| v == id)
                 && p.puuid.as_ref().is_none_or(|v| v == &b.puuid)
-                && p.riot().is_none_or(|v| v == b.riot_id)
+                && riot(p).is_none_or(|v| v == b.riot_id)
         };
         if local.is_some_and(|p| !identity_agrees(p)) {
             return Err(Rejection::Association);
@@ -330,12 +130,12 @@ impl Eog {
         let mut flagged = None;
         for (i, t) in teams.iter().enumerate() {
             for p in t.players.as_deref().unwrap_or_default() {
-                if p.game_id.is_some_and(|v| v != id) {
+                if p.game_id.as_deref().is_some_and(|v| v != id) {
                     return Err(Rejection::Association);
                 }
                 if p.is_local_player == Some(false)
                     && (p.puuid.as_ref().is_some_and(|v| v == &b.puuid)
-                        || p.riot().is_some_and(|v| v == b.riot_id))
+                        || riot(p).is_some_and(|v| v == b.riot_id))
                 {
                     return Err(Rejection::Association);
                 }
@@ -356,8 +156,8 @@ impl Eog {
                 }
             }
         }
-        let primary = local.and_then(RawPlayer::win);
-        let roster = flagged.and_then(|(_, p)| p.win());
+        let primary = local.and_then(win);
+        let roster = flagged.and_then(|(_, p)| win(p));
         let local_team = local
             .and_then(|l| l.team_id)
             .or_else(|| flagged.and_then(|(i, _)| teams[i].team_id));
@@ -378,7 +178,7 @@ impl Eog {
         } else {
             Outcome::Unknown
         };
-        let facts = local.map(|p| p.facts(true));
+        let facts = local.map(|p| player_facts(p, true));
         let empty = Player::default();
         let p = facts.as_ref().unwrap_or(&empty);
         let s = &p.stats;
@@ -477,7 +277,9 @@ impl Eog {
             runes: coverage(&runes),
         };
         Ok(ResultFile {
-            schema_version: 1,
+            schema_version: chronobreak_league_data::RESULT_SCHEMA_VERSION,
+            source_facts: self.facts.clone(),
+            evidence: self.evidence.clone(),
             source: "lcu_eog".into(),
             confirmed: true,
             media_id: b.media_id.clone(),
@@ -496,10 +298,10 @@ impl Eog {
             end_timestamp_ms: self.end_of_game_timestamp,
             queue_id: self.queue_id,
             map_id: self.map_id,
-            game_version: self.game_version.clone(),
-            game_mode: self.game_mode.clone(),
-            game_type: self.game_type.clone(),
-            queue_type: self.queue_type.clone(),
+            game_version: self.game_version.as_ref().filter(|v| bounded(v)).cloned(),
+            game_mode: self.game_mode.as_ref().filter(|v| bounded(v)).cloned(),
+            game_type: self.game_type.as_ref().filter(|v| bounded(v)).cloned(),
+            queue_type: self.queue_type.as_ref().filter(|v| bounded(v)).cloned(),
             label_mismatch: self.queue_id.is_some_and(|v| v != u64::from(b.queue_id))
                 || self.map_id.is_some_and(|v| v != u64::from(b.map_id))
                 || self.game_mode.as_ref().is_some_and(|v| v != &b.mode),
@@ -519,7 +321,7 @@ impl Eog {
                         .as_deref()
                         .unwrap_or_default()
                         .iter()
-                        .map(|p| p.facts(p.is_local_player == Some(true)))
+                        .map(|p| player_facts(p, p.is_local_player == Some(true)))
                         .collect(),
                 })
                 .collect(),
@@ -530,6 +332,176 @@ impl Eog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chronobreak_league_data::observation::{Endpoint, Payload};
+
+    #[test]
+    fn shared_facts_and_receipt_survive_production_confirmation_and_disk_round_trip() {
+        let b = binding();
+        let body = serde_json::to_vec(&serde_json::json!({
+            "gameId": b.game_id.parse::<u64>().unwrap(),
+            "localPlayer": {
+                "gameId": b.game_id.parse::<u64>().unwrap(), "puuid": b.puuid,
+                "riotIdGameName": "Synthetic", "riotIdTagLine": "TEST", "isLocalPlayer": true,
+                "items": [0, null, {"error": "unavailable"}, "invalid"],
+                "stats": {"WIN": 0, "CHAMPIONS_KILLED": 3, "kills": 4,
+                    "GOLD_EARNED": 0, "goldEarned": 0, "deaths": null,
+                    "assists": {"error": "unavailable"}, "PERK0": 8005, "PLAYER_SUBTEAM": 7,
+                    "unlistedSecret": "discard"}
+            },
+            "teams": [{"teamId": 300, "players": [null, {"championId": 103}]}],
+            "invalid": false, "teamEarlySurrendered": true, "causedEarlySurrender": null
+        }))
+        .unwrap();
+        let Payload::EndOfGame(expected) = decode::live(Endpoint::EndOfGame, &body).unwrap() else {
+            panic!("EOG");
+        };
+        let mut response: Eog = serde_json::from_slice(&body).unwrap();
+        response.evidence = Some(chronobreak_league_data::ResultEvidence {
+            run_id: MediaId::new_v4(),
+            timing: chronobreak_league_data::observation::RequestTiming {
+                start_us: 10,
+                end_us: 20,
+                received_at: "2026-10-16T00:00:00Z".into(),
+            },
+        });
+        let result = response.confirm(&b).unwrap();
+        assert_eq!(&result.source_facts, expected.as_ref());
+        assert!(result.valid_for(&b.media_id, &b.game_id));
+        assert_eq!(result.outcome, Outcome::Unknown);
+        let p = result.source_facts.local_player.as_ref().unwrap();
+        let s = p.stats.as_ref().unwrap();
+        assert_eq!(s.issues["kills"], FieldIssue::Conflict);
+        assert_eq!(s.issues["deaths"], FieldIssue::Unavailable);
+        assert_eq!(s.issues["assists"], FieldIssue::SourceError);
+        assert_eq!(s.extras["WIN"], 0);
+        assert_eq!(s.stats.gold_earned, Some(0));
+        assert_eq!(s.aliases["gold_earned"], ["GOLD_EARNED", "goldEarned"]);
+        assert_eq!(p.issues["items/1"], FieldIssue::Unavailable);
+        assert_eq!(p.issues["items/2"], FieldIssue::SourceError);
+        assert_eq!(p.issues["items/3"], FieldIssue::Invalid);
+        assert_eq!(
+            result.source_facts.teams.as_ref().unwrap()[0]
+                .players
+                .as_ref()
+                .unwrap()[0]
+                .issues["$"],
+            FieldIssue::Unavailable
+        );
+        let encoded = serde_json::to_vec(&result).unwrap();
+        assert!(!String::from_utf8_lossy(&encoded).contains("unlistedSecret"));
+        let decoded: ResultFile = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, result);
+        assert!(decoded.valid_for(&b.media_id, &b.game_id));
+        let mut serialized = serde_json::to_value(&decoded).unwrap();
+        for (pointer, value) in [
+            ("/source_facts/local_player/game_id", serde_json::json!("7")),
+            (
+                "/source_facts/teams/0/players/1/game_id",
+                serde_json::json!("7"),
+            ),
+            (
+                "/source_facts/local_player/issues/puuid",
+                serde_json::json!({"state":"invalid"}),
+            ),
+            (
+                "/source_facts/issues/fabricated",
+                serde_json::json!({"state":"invalid"}),
+            ),
+            (
+                "/source_facts/local_player/issues/items~10",
+                serde_json::json!({"state":"invalid"}),
+            ),
+            (
+                "/source_facts/local_player/issues/items~18",
+                serde_json::json!({"state":"invalid"}),
+            ),
+            (
+                "/source_facts/teams/0/issues",
+                serde_json::json!({"team_id":{"state":"invalid"}}),
+            ),
+            (
+                "/source_facts/teams/0/players/0/champion_id",
+                serde_json::json!(103),
+            ),
+            (
+                "/evidence/timing/received_at",
+                serde_json::json!("2026-02-30T12:00:00Z"),
+            ),
+            ("/evidence/timing/received_at", serde_json::json!("fixture")),
+        ] {
+            // Insertions and replacements both cross the persisted LR boundary.
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            let key = key.replace("~1", "/");
+            let prior = serialized
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(key.clone(), value);
+            let corrupted: ResultFile = serde_json::from_value(serialized.clone()).unwrap();
+            assert!(!corrupted.valid_for(&b.media_id, &b.game_id), "{pointer}");
+            let fields = serialized
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap();
+            if let Some(prior) = prior {
+                fields.insert(key, prior);
+            } else {
+                fields.remove(&key);
+            }
+        }
+        let mut corrupted = decoded;
+        corrupted
+            .source_facts
+            .local_player
+            .as_mut()
+            .unwrap()
+            .stats
+            .as_mut()
+            .unwrap()
+            .extras
+            .insert("unlistedSecret".into(), 0);
+        assert!(!corrupted.valid_for(&b.media_id, &b.game_id));
+    }
+
+    #[test]
+    fn every_early_flag_keeps_its_own_presence_and_value() {
+        let b = binding();
+        for (source, target) in [
+            ("invalid", "invalid"),
+            ("gameEndedInEarlySurrender", "game_ended_in_early_surrender"),
+            ("teamEarlySurrendered", "team_early_surrendered"),
+            ("causedEarlySurrender", "caused_early_surrender"),
+            ("earlySurrenderAccomplice", "early_surrender_accomplice"),
+        ] {
+            for value in [
+                serde_json::json!(false),
+                serde_json::json!(true),
+                serde_json::Value::Null,
+                serde_json::json!("invalid"),
+            ] {
+                let mut body = serde_json::json!({"gameId": b.game_id.parse::<u64>().unwrap()});
+                body[source] = value.clone();
+                let r = parse(body).confirm(&b).unwrap();
+                assert_eq!(r.ended_early, value == true);
+                let fields = serde_json::to_value(&r.source_facts).unwrap();
+                if value.is_boolean() {
+                    assert_eq!(fields[target], value);
+                } else {
+                    assert!(fields.get(target).is_none());
+                    assert_eq!(
+                        r.source_facts.issues[target],
+                        if value.is_null() {
+                            FieldIssue::Unavailable
+                        } else {
+                            FieldIssue::Invalid
+                        }
+                    );
+                }
+            }
+        }
+    }
     fn binding() -> Binding {
         Binding {
             media_id: MediaId::new_v4(),
@@ -547,17 +519,9 @@ mod tests {
     #[test]
     fn duplicate_stat_keys_conflict_and_bad_roster_rows_do_not_hide_good_contradictions() {
         let b = binding();
-        let eog:Eog=serde_json::from_str(r#"{"gameId":18446744073709551614,"localPlayer":{"stats":{"WIN":1,"kills":3,"kills":4}},"teams":[{"players":[null,{"gameId":7}]}]}"#).unwrap();
-        assert_eq!(
-            eog.local_player
-                .as_ref()
-                .unwrap()
-                .stats
-                .as_ref()
-                .unwrap()
-                .stats
-                .kills,
-            None
+        assert!(serde_json::from_str::<Eog>(r#"{"gameId":18446744073709551614,"localPlayer":{"stats":{"WIN":1,"kills":3,"kills":4}}}"#).is_err());
+        let eog = parse(
+            serde_json::json!({"gameId":18446744073709551614_u64,"teams":[{"players":[null,{"gameId":7}]}]}),
         );
         assert_eq!(eog.confirm(&b).unwrap_err(), Rejection::Association);
     }

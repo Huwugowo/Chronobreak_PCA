@@ -280,10 +280,30 @@ impl Transport {
         metrics: &mut Metrics,
         directory: &super::sidecar::DirectoryGuard,
     ) -> Result<super::result::Eog, &'static str> {
-        self.get_if(&discovered.credentials, Endpoint::Eog, metrics, || {
-            directory.available()
-        })
-        .await
+        // Deferred attempts can outlive a recording and cross service restarts.
+        // Each HTTP acquisition therefore starts a new monotonic clock domain.
+        let run_id = chronobreak_replay_time::MediaId::new_v4();
+        let clock_origin = std::time::Instant::now();
+        let mut result: super::result::Eog = self
+            .get_if(&discovered.credentials, Endpoint::Eog, metrics, || {
+                directory.available()
+            })
+            .await?;
+        result.evidence = Some(chronobreak_league_data::ResultEvidence {
+            run_id,
+            timing: chronobreak_league_data::observation::RequestTiming {
+                start_us: 0,
+                end_us: clock_origin
+                    .elapsed()
+                    .as_micros()
+                    .try_into()
+                    .map_err(|_| "lcu_clock")?,
+                received_at: time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .map_err(|_| "lcu_clock")?,
+            },
+        });
+        Ok(result)
     }
     pub(super) fn new() -> Result<Self, &'static str> {
         Ok(Self {

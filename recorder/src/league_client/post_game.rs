@@ -1,13 +1,22 @@
-//! Service-owned finite, in-memory post-game enrichment. No persisted jobs.
+//! Service-owned finite post-game enrichment with a restart-safe atomic ledger.
 use super::{
     association::ProvisionalCandidate,
+    post_game_ledger::{self as ledger, Ledger, SavedJob, Store, Terminal},
     result::{Binding, Eog, Rejection},
     sidecar::DirectoryGuard,
     transport::{self, Metrics, Transport},
 };
-use chronobreak_league_data::ResultFile;
 use chronobreak_replay_time::MediaId;
-use std::{collections::VecDeque, future::Future, time::Duration};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -15,10 +24,9 @@ use tokio::{
 };
 const CADENCE: Duration = Duration::from_secs(10);
 const EXPIRY: Duration = Duration::from_secs(180);
-const MAX_ATTEMPTS: u32 = 18;
-const MAX_PENDING: usize = 4;
+use ledger::{MAX_ATTEMPTS, MAX_PENDING};
 enum Command {
-    Submit(Box<Binding>, DirectoryGuard, Instant),
+    Submit(Box<Binding>, DirectoryGuard, Instant, i64),
     Published(MediaId),
     Cancel(MediaId),
 }
@@ -30,6 +38,170 @@ mod tests {
     struct Fake {
         calls: Arc<Mutex<Vec<Instant>>>,
         response: serde_json::Value,
+    }
+    #[tokio::test]
+    async fn saturated_lifecycle_channel_durably_cancels_pending_work_without_http() {
+        let root = tempfile::tempdir().unwrap();
+        let games = root.path().join("games");
+        std::fs::create_dir(&games).unwrap();
+        let (send, receive) = mpsc::channel(1);
+        let media = submit(&send, &games.join("100"));
+        let (stop, cancel) = watch::channel(false);
+        let control_failed = Arc::new(AtomicBool::new(false));
+        let handle = Handle {
+            send,
+            stop,
+            control_failed: Arc::clone(&control_failed),
+        };
+        handle.published(media);
+        assert!(control_failed.load(Ordering::Acquire));
+        let (store, saved) = Store::open(root.path(), ledger::wall_ms().unwrap()).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let totals = work_state(
+            receive,
+            cancel,
+            Fake {
+                calls: Arc::clone(&calls),
+                response: serde_json::json!({}),
+            },
+            VecDeque::new(),
+            Durability {
+                store: Some(store),
+                saved,
+                clock: Clock::real(),
+                failed: false,
+                control_failed,
+            },
+        )
+        .await;
+        assert_eq!(totals.cancelled, 1);
+        assert!(calls.lock().unwrap().is_empty());
+        let (_, saved) = Store::open(root.path(), ledger::wall_ms().unwrap()).unwrap();
+        assert!(matches!(saved.jobs[0].terminal, Some(Terminal::Cancelled)));
+    }
+    struct CheckReservation {
+        ledger: std::path::PathBuf,
+        stop: watch::Sender<bool>,
+        game_id: u64,
+    }
+    impl Source for CheckReservation {
+        async fn acquire(
+            &mut self,
+            _: &mut watch::Receiver<bool>,
+            _: Instant,
+            _: &DirectoryGuard,
+        ) -> Option<Eog> {
+            let state: Ledger =
+                serde_json::from_slice(&std::fs::read(&self.ledger).unwrap()).unwrap();
+            assert_eq!(state.jobs.len(), 1);
+            assert_eq!(state.jobs[0].attempts, 1);
+            assert!(state.jobs[0].next_ms > state.jobs[0].closed_ms);
+            self.stop.send_replace(true);
+            serde_json::from_value(serde_json::json!({"gameId": self.game_id})).ok()
+        }
+        fn totals(&self) -> (u64, u64) {
+            (1, 0)
+        }
+    }
+
+    #[tokio::test]
+    async fn coordinator_saves_reservation_before_http_and_confirmation_before_shutdown() {
+        let root = tempfile::tempdir().unwrap();
+        let games = root.path().join("games");
+        std::fs::create_dir(&games).unwrap();
+        let (send, receive) = mpsc::channel(16);
+        let media = submit(&send, &games.join("100"));
+        let binding = super::super::association::fixture_candidate(media).result_binding();
+        let (stop, cancel) = watch::channel(false);
+        let now = ledger::wall_ms().unwrap();
+        let (store, saved) = Store::open(root.path(), now).unwrap();
+        let totals = work_state(
+            receive,
+            cancel,
+            CheckReservation {
+                ledger: root.path().join(ledger::FILE),
+                stop,
+                game_id: binding.game_id.parse().unwrap(),
+            },
+            VecDeque::new(),
+            Durability {
+                store: Some(store),
+                saved,
+                clock: Clock::real(),
+                failed: false,
+                control_failed: Arc::new(AtomicBool::new(false)),
+            },
+        )
+        .await;
+        assert_eq!(totals.attempts, 1);
+        assert_eq!(totals.confirmed, 1);
+        let (_, saved) = Store::open(root.path(), ledger::wall_ms().unwrap()).unwrap();
+        assert_eq!(saved.jobs[0].attempts, 1);
+        assert!(saved.jobs[0].result.is_some());
+        assert!(!saved.jobs[0].published);
+    }
+
+    #[tokio::test]
+    async fn recovery_reconciles_publication_and_already_installed_result_without_http() {
+        let root = tempfile::tempdir().unwrap();
+        let game = root.path().join("games").join("100");
+        std::fs::create_dir_all(&game).unwrap();
+        let media = MediaId::new_v4();
+        let result = super::super::sidecar::tests::result_fixture(&game, &media);
+        let binding = super::super::association::fixture_candidate(media.clone()).result_binding();
+        let directory = DirectoryGuard::capture(&game, media).unwrap();
+        let now = ledger::wall_ms().unwrap();
+        let (store, mut saved) = Store::open(root.path(), now).unwrap();
+        let mut job = SavedJob::new(binding, directory.locator().unwrap(), now).unwrap();
+        job.result = Some(result);
+        saved.jobs.push(job);
+        store.save(&saved).unwrap();
+        drop(store);
+        drop(directory);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut installed = None;
+        for run in 0..2 {
+            let now = ledger::wall_ms().unwrap();
+            let (store, mut saved) = Store::open(root.path(), now).unwrap();
+            if run == 1 {
+                // Model crash after LR rename but before completion was saved.
+                saved.jobs[0].terminal = None;
+                store.save(&saved).unwrap();
+            }
+            let jobs = restore_jobs(&saved, now);
+            assert!(jobs[0].saved.published);
+            let (send, receive) = mpsc::channel(16);
+            let (_stop, cancel) = watch::channel(false);
+            drop(send);
+            let totals = work_state(
+                receive,
+                cancel,
+                Fake {
+                    calls: Arc::clone(&calls),
+                    response: serde_json::json!({}),
+                },
+                jobs,
+                Durability {
+                    store: Some(store),
+                    saved,
+                    clock: Clock::real(),
+                    failed: false,
+                    control_failed: Arc::new(AtomicBool::new(false)),
+                },
+            )
+            .await;
+            assert_eq!(totals.writes, 1);
+            assert_eq!(totals.attempts, 0);
+            let bytes = std::fs::read(game.join(chronobreak_league_data::RESULT_FILE)).unwrap();
+            if let Some(previous) = &installed {
+                assert_eq!(previous, &bytes);
+            }
+            installed = Some(bytes);
+            let (store, saved) = Store::open(root.path(), ledger::wall_ms().unwrap()).unwrap();
+            assert!(matches!(saved.jobs[0].terminal, Some(Terminal::Completed)));
+            drop(store);
+        }
+        assert!(calls.lock().unwrap().is_empty());
     }
     impl Source for Fake {
         async fn acquire(
@@ -58,6 +230,7 @@ mod tests {
             Box::new(c.result_binding()),
             DirectoryGuard::capture(path, media.clone()).unwrap(),
             Instant::now(),
+            ledger::wall_ms().unwrap(),
         ))
         .unwrap();
         media
@@ -150,9 +323,9 @@ mod tests {
         );
         assert_eq!(totals.not_ready_responses, totals.attempts);
         let times = calls.lock().unwrap();
-        assert_eq!(times.len(), 4 * 18);
-        for batch in times.chunks_exact(4).collect::<Vec<_>>().windows(2) {
-            assert!(batch[1][0].duration_since(batch[0][0]) >= CADENCE);
+        assert_eq!(times.len(), 18);
+        for batch in times.windows(2) {
+            assert!(batch[1].duration_since(batch[0]) >= CADENCE);
         }
     }
     #[tokio::test(start_paused = true)]
@@ -218,20 +391,40 @@ mod tests {
     }
 }
 #[derive(Clone)]
-pub(crate) struct Handle(mpsc::Sender<Command>);
+pub(crate) struct Handle {
+    send: mpsc::Sender<Command>,
+    control_failed: Arc<AtomicBool>,
+    stop: watch::Sender<bool>,
+}
 impl Handle {
+    fn send(&self, command: Command) {
+        if self.send.try_send(command).is_err() {
+            // Never silently lose publication/cancellation and never queue an
+            // unbounded sender behind disk I/O. Saturation closes all jobs.
+            self.control_failed.store(true, Ordering::Release);
+            self.stop.send_replace(true);
+            tracing::warn!(
+                code = "eog_control_unavailable",
+                "post-game control closed; pending jobs cancelled"
+            );
+        }
+    }
     pub(crate) fn submit(&self, candidate: &ProvisionalCandidate, directory: DirectoryGuard) {
-        let _ = self.0.try_send(Command::Submit(
+        let Ok(closed_ms) = ledger::wall_ms() else {
+            return;
+        };
+        self.send(Command::Submit(
             Box::new(candidate.result_binding()),
             directory,
             Instant::now(),
+            closed_ms,
         ));
     }
     pub(crate) fn published(&self, media: MediaId) {
-        let _ = self.0.try_send(Command::Published(media));
+        self.send(Command::Published(media));
     }
     pub(crate) fn cancel(&self, media: MediaId) {
-        let _ = self.0.try_send(Command::Cancel(media));
+        self.send(Command::Cancel(media));
     }
 }
 pub(crate) struct Coordinator {
@@ -241,23 +434,60 @@ pub(crate) struct Coordinator {
     runtime: tokio::runtime::Handle,
 }
 impl Coordinator {
-    pub(crate) fn start() -> Result<Self, &'static str> {
+    pub(crate) fn start(root: &Path) -> Result<Self, &'static str> {
         let runtime = tokio::runtime::Handle::current();
         if runtime.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
             return Err("result_runtime");
         }
         let (send, receive) = mpsc::channel(16);
         let (stop, cancel) = watch::channel(false);
-        let task = tokio::spawn(work(
-            receive,
-            cancel,
-            LocalSource {
-                transport: Transport::new()?,
-                metrics: Metrics::default(),
-            },
-        ));
+        let control_failed = Arc::new(AtomicBool::new(false));
+        let task_failed = Arc::clone(&control_failed);
+        let source = LocalSource {
+            transport: Transport::new()?,
+            metrics: Metrics::default(),
+        };
+        let root = root.to_owned();
+        let task = tokio::spawn(async move {
+            let loaded = tokio::task::spawn_blocking(move || {
+                let now = ledger::wall_ms()?;
+                let (store, saved) = Store::open(&root, now)?;
+                let jobs = restore_jobs(&saved, now);
+                Ok::<_, &'static str>((store, saved, jobs))
+            })
+            .await;
+            match loaded {
+                Ok(Ok((store, saved, jobs))) => {
+                    work_state(
+                        receive,
+                        cancel,
+                        source,
+                        jobs,
+                        Durability {
+                            store: Some(store),
+                            saved,
+                            clock: Clock::real(),
+                            failed: false,
+                            control_failed: task_failed,
+                        },
+                    )
+                    .await
+                }
+                _ => {
+                    tracing::warn!(
+                        code = "eog_ledger_start",
+                        "optional post-game recovery unavailable"
+                    );
+                    Totals::default()
+                }
+            }
+        });
         Ok(Self {
-            handle: Handle(send),
+            handle: Handle {
+                send,
+                control_failed,
+                stop: stop.clone(),
+            },
             stop,
             task: Some(task),
             runtime,
@@ -322,13 +552,107 @@ impl Source for LocalSource {
     }
 }
 struct Job {
-    binding: Binding,
+    saved: SavedJob,
     directory: Option<DirectoryGuard>,
     expires: Instant,
     next: Instant,
-    attempts: u32,
-    result: Option<ResultFile>,
-    published: bool,
+}
+impl Job {
+    fn active(&self) -> bool {
+        self.saved.terminal.is_none()
+    }
+}
+
+struct Clock {
+    #[cfg(test)]
+    virtual_origin: Option<(i64, Instant)>,
+}
+impl Clock {
+    fn real() -> Self {
+        Self {
+            #[cfg(test)]
+            virtual_origin: None,
+        }
+    }
+    fn now(&self) -> Result<i64, &'static str> {
+        #[cfg(test)]
+        if let Some((wall, instant)) = self.virtual_origin {
+            return Ok(
+                wall + i64::try_from(instant.elapsed().as_millis()).map_err(|_| "ledger_clock")?
+            );
+        }
+        ledger::wall_ms()
+    }
+}
+struct Durability {
+    store: Option<Arc<Store>>,
+    saved: Ledger,
+    clock: Clock,
+    failed: bool,
+    control_failed: Arc<AtomicBool>,
+}
+impl Durability {
+    async fn persist(&mut self, jobs: &mut VecDeque<Job>) -> Result<(), &'static str> {
+        if self.failed {
+            return Err("ledger_failed");
+        }
+        let result = self.persist_inner(jobs).await;
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+    async fn persist_inner(&mut self, jobs: &mut VecDeque<Job>) -> Result<(), &'static str> {
+        let now = self.clock.now()?;
+        self.saved.jobs = jobs.iter().map(|j| j.saved.clone()).collect();
+        let rollback = now < self.saved.last_wall_ms;
+        self.saved.reconcile_time(now)?;
+        for (job, saved) in jobs.iter_mut().zip(&self.saved.jobs) {
+            job.saved.terminal = saved.terminal;
+            if !job.active() {
+                job.directory.take();
+            }
+        }
+        if let Some(store) = &self.store {
+            store.persist(self.saved.clone()).await?;
+        }
+        if rollback {
+            return Err("ledger_clock_rollback");
+        }
+        Ok(())
+    }
+}
+fn restore_jobs(saved: &Ledger, now_ms: i64) -> VecDeque<Job> {
+    let now = Instant::now();
+    saved
+        .jobs
+        .iter()
+        .map(|saved| {
+            let mut saved = saved.clone();
+            let directory = if saved.terminal.is_none() {
+                match DirectoryGuard::recover(&saved.directory) {
+                    Ok(directory) => {
+                        saved.published |= directory.result_published(&saved.binding.game_id);
+                        Some(directory)
+                    }
+                    Err(_) => {
+                        saved.terminal = Some(Terminal::Deleted);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            Job {
+                expires: now
+                    + Duration::from_millis(saved.expires_ms.saturating_sub(now_ms).max(0) as u64),
+                next: now
+                    + Duration::from_millis(saved.next_ms.saturating_sub(now_ms).max(0) as u64),
+                saved,
+                directory,
+            }
+        })
+        .collect()
 }
 #[derive(Default)]
 struct Totals {
@@ -361,21 +685,28 @@ impl Totals {
     }
 }
 fn retain_available(jobs: &mut VecDeque<Job>, now: Instant, totals: &mut Totals) {
-    jobs.retain(|job| {
-        if now >= job.expires {
+    for job in jobs.iter_mut().filter(|job| job.active()) {
+        let terminal = if now >= job.expires {
             totals.expired += 1;
-            false
+            Some(Terminal::Expired)
         } else if !job
             .directory
             .as_ref()
             .is_some_and(DirectoryGuard::available)
         {
             totals.deleted += 1;
-            false
+            Some(Terminal::Deleted)
         } else {
-            true
+            None
+        };
+        if let Some(terminal) = terminal {
+            job.saved.terminal = Some(terminal);
+            job.directory.take();
         }
-    });
+    }
+}
+fn pending(jobs: &VecDeque<Job>) -> usize {
+    jobs.iter().filter(|j| j.active()).count()
 }
 fn log_totals(source: &impl Source, totals: &Totals, pending: usize, joined: bool) {
     let (requests, response_bytes) = source.totals();
@@ -410,127 +741,240 @@ fn log_terminal_change(source: &impl Source, totals: &Totals, pending: usize, la
 }
 fn command(jobs: &mut VecDeque<Job>, cmd: Command, totals: &mut Totals) {
     match cmd {
-        Command::Submit(binding, directory, closed) => {
-            if jobs.len() == MAX_PENDING {
-                jobs.pop_front();
-                totals.dropped += 1;
+        Command::Submit(binding, directory, closed, closed_ms) => {
+            if jobs
+                .iter()
+                .any(|j| j.saved.binding.media_id == binding.media_id)
+            {
+                return;
             }
-            let now = Instant::now();
+            let Ok(locator) = directory.locator() else {
+                totals.abandoned += 1;
+                return;
+            };
+            let Ok(saved) = SavedJob::new(*binding, locator, closed_ms) else {
+                totals.abandoned += 1;
+                return;
+            };
+            if jobs.len() == MAX_PENDING {
+                let remove = jobs.iter().position(|j| !j.active()).unwrap_or(0);
+                if jobs.remove(remove).is_some_and(|j| j.active()) {
+                    totals.dropped += 1;
+                }
+            }
             jobs.push_back(Job {
-                binding: *binding,
+                saved,
                 directory: Some(directory),
                 expires: closed + EXPIRY,
-                next: now,
-                attempts: 0,
-                result: None,
-                published: false,
+                next: Instant::now(),
             });
-            totals.peak = totals.peak.max(jobs.len());
+            totals.peak = totals.peak.max(pending(jobs));
         }
         Command::Published(media) => {
-            for job in jobs {
-                if job.binding.media_id == media {
-                    job.published = true;
-                }
+            for job in jobs
+                .iter_mut()
+                .filter(|j| j.active() && j.saved.binding.media_id == media)
+            {
+                job.saved.published = true;
             }
         }
         Command::Cancel(media) => {
-            let before = jobs.len();
-            jobs.retain(|job| job.binding.media_id != media);
-            totals.cancelled += (before - jobs.len()) as u64;
+            for job in jobs
+                .iter_mut()
+                .filter(|j| j.active() && j.saved.binding.media_id == media)
+            {
+                job.saved.terminal = Some(Terminal::Cancelled);
+                job.directory.take();
+                totals.cancelled += 1;
+            }
         }
     }
 }
+#[cfg(test)]
 async fn work(
+    receive: mpsc::Receiver<Command>,
+    cancel: watch::Receiver<bool>,
+    source: impl Source,
+) -> Totals {
+    let wall = ledger::wall_ms().unwrap();
+    work_state(
+        receive,
+        cancel,
+        source,
+        VecDeque::new(),
+        Durability {
+            store: None,
+            saved: Ledger::empty(wall),
+            clock: Clock {
+                virtual_origin: Some((wall, Instant::now())),
+            },
+            failed: false,
+            control_failed: Arc::new(AtomicBool::new(false)),
+        },
+    )
+    .await
+}
+async fn work_state(
     mut receive: mpsc::Receiver<Command>,
     mut cancel: watch::Receiver<bool>,
     mut source: impl Source,
+    mut jobs: VecDeque<Job>,
+    mut durability: Durability,
 ) -> Totals {
-    let mut jobs = VecDeque::<Job>::new();
     let mut totals = Totals::default();
     let mut logged_terminal = 0;
     loop {
-        if *cancel.borrow() {
-            break;
-        }
         while let Ok(cmd) = receive.try_recv() {
             command(&mut jobs, cmd, &mut totals);
         }
+        if durability.control_failed.load(Ordering::Acquire) {
+            for job in jobs.iter_mut().filter(|j| j.active()) {
+                job.saved.terminal = Some(Terminal::Cancelled);
+                job.directory.take();
+                totals.cancelled += 1;
+            }
+        }
         let now = Instant::now();
         retain_available(&mut jobs, now, &mut totals);
-        log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
-        if let Some(index) = jobs.iter().position(|j| j.published && j.result.is_some()) {
-            let mut job = jobs.remove(index).expect("job exists");
-            let result = job.result.take().expect("confirmed facts");
-            let directory = job.directory.take().expect("owned directory");
-            // Joined filesystem ownership survives cancellation of the coordinator.
-            match tokio::task::spawn_blocking(move || directory.install_result(&result)).await {
-                Ok(Ok(bytes)) => {
-                    totals.writes += 1;
-                    totals.result_bytes += bytes as u64;
-                }
-                _ => totals.abandoned += 1,
-            }
-            log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
-            continue;
+        // Every transition is saved before another request or result install.
+        // Shutdown preserves accepted pending work at its original deadline.
+        if let Err(code) = durability.persist(&mut jobs).await {
+            tracing::warn!(
+                code,
+                "post-game durability unavailable; acquisition stopped"
+            );
+            break;
         }
+        if *cancel.borrow() {
+            break;
+        }
+        log_terminal_change(&source, &totals, pending(&jobs), &mut logged_terminal);
         if let Some(index) = jobs
             .iter()
-            .position(|j| j.result.is_none() && j.next <= now && j.attempts < MAX_ATTEMPTS)
+            .position(|j| j.active() && j.saved.published && j.saved.result.is_some())
         {
+            let job = &mut jobs[index];
+            let result = job.saved.result.clone().expect("confirmed facts");
+            let directory = job.directory.take().expect("owned directory");
+            // The confirmed result remains in the ledger until completion is
+            // durable. A crash after installation rechecks it idempotently.
+            job.saved.terminal = Some(
+                match tokio::task::spawn_blocking(move || directory.install_result(&result)).await {
+                    Ok(Ok(bytes)) => {
+                        totals.writes += 1;
+                        totals.result_bytes += bytes as u64;
+                        Terminal::Completed
+                    }
+                    _ => {
+                        totals.abandoned += 1;
+                        Terminal::PublicationFailed
+                    }
+                },
+            );
+            continue;
+        }
+        let Ok(now_ms) = durability.clock.now() else {
+            break;
+        };
+        let mut eligible = Vec::new();
+        for job in jobs.iter_mut().filter(|j| {
+            j.active()
+                && j.saved.result.is_none()
+                && j.next <= now
+                && j.saved.attempts < MAX_ATTEMPTS
+        }) {
+            if job.saved.reserve(now_ms) {
+                job.next = now + CADENCE;
+                eligible.push(job.saved.binding.media_id.clone());
+            } else {
+                job.next = now
+                    + Duration::from_millis(job.saved.next_ms.saturating_sub(now_ms).max(1) as u64);
+            }
+        }
+        if !eligible.is_empty() {
+            // A reservation consumes the attempt even if the process dies before
+            // dispatch or before a response; all eligible jobs share one response.
+            if let Err(code) = durability.persist(&mut jobs).await {
+                tracing::warn!(code, "post-game reservation failed; request suppressed");
+                break;
+            }
+            if *cancel.borrow() {
+                continue;
+            }
+            let dispatch_now = Instant::now();
+            let Ok(dispatch_wall) = durability.clock.now() else {
+                break;
+            };
+            eligible.retain(|media| {
+                jobs.iter().any(|j| {
+                    j.active()
+                        && &j.saved.binding.media_id == media
+                        && dispatch_now < j.expires
+                        && dispatch_wall < j.saved.expires_ms
+                })
+            });
+            let Some(media) = eligible.first().cloned() else {
+                continue;
+            };
+            totals.attempts += eligible.len() as u64;
             let began = Instant::now();
-            jobs[index].next = began + CADENCE;
-            jobs[index].attempts += 1;
-            let media = jobs[index].binding.media_id.clone();
-            let expires = jobs[index].expires;
-            totals.attempts += 1;
+            let expires = jobs
+                .iter()
+                .filter(|j| eligible.contains(&j.saved.binding.media_id))
+                .map(|j| j.expires)
+                .min()
+                .expect("eligible job");
             let response = acquire_owned(
                 &mut source,
                 &mut receive,
                 &mut cancel,
                 &mut jobs,
-                &media,
-                expires,
+                Attempt {
+                    media: &media,
+                    expires,
+                },
                 &mut totals,
+                &mut durability,
             )
             .await;
             totals.latency_ms += began.elapsed().as_millis();
-            let Some(index) = jobs.iter().position(|j| j.binding.media_id == media) else {
-                log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
-                continue;
+            let Ok(ended_ms) = durability.clock.now() else {
+                break;
             };
-            let job = &mut jobs[index];
-            job.next = Instant::now() + CADENCE;
-            if let Some(eog) = response {
-                match eog.confirm(&job.binding) {
-                    Ok(result) => {
-                        totals.primary_win_one += u64::from(eog.primary_win() == Some(1));
-                        totals.primary_win_zero += u64::from(eog.primary_win() == Some(0));
-                        job.result = Some(result);
-                        totals.confirmed += 1;
-                        tracing::info!(
-                            confirmed = totals.confirmed,
-                            primary_win_one = totals.primary_win_one,
-                            primary_win_zero = totals.primary_win_zero,
-                            "post-game confirmation totals"
-                        );
+            for job in jobs
+                .iter_mut()
+                .filter(|j| j.active() && eligible.contains(&j.saved.binding.media_id))
+            {
+                job.next = Instant::now() + CADENCE;
+                job.saved.next_ms = ended_ms
+                    .saturating_add(ledger::CADENCE_MS)
+                    .min(job.saved.expires_ms + ledger::CADENCE_MS);
+                if let Some(eog) = &response {
+                    match eog.confirm(&job.saved.binding) {
+                        Ok(result) => {
+                            totals.primary_win_one += u64::from(eog.primary_win() == Some(1));
+                            totals.primary_win_zero += u64::from(eog.primary_win() == Some(0));
+                            job.saved.result = Some(result);
+                            totals.confirmed += 1;
+                        }
+                        Err(Rejection::Association) => {
+                            job.saved.terminal = Some(Terminal::Rejected);
+                            job.directory.take();
+                            totals.rejected += 1;
+                        }
+                        Err(Rejection::NotReady) => totals.not_ready_responses += 1,
                     }
-                    Err(Rejection::Association) => {
-                        jobs.remove(index);
-                        totals.rejected += 1;
-                    }
-                    Err(Rejection::NotReady) => totals.not_ready_responses += 1,
+                } else {
+                    totals.unavailable_attempts += 1;
                 }
-            } else {
-                totals.unavailable_attempts += 1;
             }
-            log_terminal_change(&source, &totals, jobs.len(), &mut logged_terminal);
             continue;
         }
         let deadline = jobs
             .iter()
+            .filter(|j| j.active())
             .map(|j| {
-                if j.result.is_some() || j.attempts == MAX_ATTEMPTS {
+                if j.saved.result.is_some() || j.saved.attempts == MAX_ATTEMPTS {
                     j.expires
                 } else {
                     j.next.min(j.expires)
@@ -538,30 +982,36 @@ async fn work(
             })
             .min();
         tokio::select! {biased;
-            _=cancel.changed()=>break,
+            _=cancel.changed()=>{},
             cmd=receive.recv()=>match cmd {Some(cmd)=>command(&mut jobs,cmd,&mut totals),None=>break},
             _=async {match deadline {Some(deadline)=>tokio::time::sleep_until(deadline).await,None=>std::future::pending().await}}=>{}
         }
     }
-    log_totals(&source, &totals, jobs.len(), true);
+    log_totals(&source, &totals, pending(&jobs), true);
     totals
 }
 
 // Commands, expiry and deletion remain observable while discovery is in flight.
 // Cancelling a job signals acquisition, then joins it; no OS worker is detached.
+struct Attempt<'a> {
+    media: &'a MediaId,
+    expires: Instant,
+}
+
 async fn acquire_owned(
     source: &mut impl Source,
     receive: &mut mpsc::Receiver<Command>,
     cancel: &mut watch::Receiver<bool>,
     jobs: &mut VecDeque<Job>,
-    media: &MediaId,
-    expires: Instant,
+    attempt: Attempt<'_>,
     totals: &mut Totals,
+    durability: &mut Durability,
 ) -> Option<Eog> {
+    let Attempt { media, expires } = attempt;
     let (stop, mut own_cancel) = watch::channel(false);
     let directory = jobs
         .iter()
-        .find(|j| &j.binding.media_id == media)?
+        .find(|j| j.active() && &j.saved.binding.media_id == media)?
         .directory
         .as_ref()?
         .try_clone()
@@ -573,11 +1023,13 @@ async fn acquire_owned(
             _=cancel.changed()=>{stop.send_replace(true);let _=acquisition.await;return None;}
             cmd=receive.recv()=>{
                 match cmd {Some(cmd)=>command(jobs,cmd,totals),None=>{stop.send_replace(true);let _=acquisition.await;return None;}}
-                if !jobs.iter().any(|j|&j.binding.media_id==media){stop.send_replace(true);let _=acquisition.await;return None;}
+                if durability.persist(jobs).await.is_err() { stop.send_replace(true); let _=acquisition.await; return None; }
+                if !jobs.iter().any(|j| j.active() && &j.saved.binding.media_id==media){stop.send_replace(true);let _=acquisition.await;return None;}
             }
             _=tokio::time::sleep_until((Instant::now()+Duration::from_secs(1)).min(expires))=>{
                 retain_available(jobs, Instant::now(), totals);
-                if !jobs.iter().any(|j|&j.binding.media_id==media) {
+                if durability.persist(jobs).await.is_err() { stop.send_replace(true); let _=acquisition.await; return None; }
+                if Instant::now() >= expires || !jobs.iter().any(|j| j.active() && &j.saved.binding.media_id==media) {
                     stop.send_replace(true);let _=acquisition.await;return None;
                 }
             }

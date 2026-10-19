@@ -4,6 +4,9 @@ mod clip_duration;
 mod clip_export;
 mod config;
 mod ddragon;
+mod league_authored;
+mod league_index;
+mod league_index_commands;
 mod league_match;
 mod league_result;
 mod library;
@@ -32,7 +35,7 @@ use clip_export::ClipMusicSource;
 use clip_export::{ClipExportProgress, ClipExportRequest, ClipExportResult};
 use config::{Config, Settings, SettingsUpdate};
 use ddragon::DdragonStatus;
-use library::{AutoDeleteResult, ClipSummary, GameSummary, PlaybackProbe, StorageUsage};
+use library::{AutoDeleteResult, ClipSummary, GameSummary, StorageUsage};
 use library_coordinator::{LibraryCoordinator, LibraryRefreshError, Selection, command_error};
 use music::BuiltInMusicTrack;
 #[cfg(feature = "replay-benchmark")]
@@ -54,6 +57,7 @@ struct AppState {
     playback_metrics: Arc<PlaybackMetrics>,
     hevc_probe_path: PathBuf,
     ddragon_cache: PathBuf,
+    league_index_cache: PathBuf,
     ddragon_status: Arc<RwLock<DdragonStatus>>,
     music_directory: PathBuf,
     media_runtime: MediaRuntimeState,
@@ -191,53 +195,6 @@ async fn get_replay_descriptor(
         )
         .await
         .map_err(command_error)
-}
-
-#[tauri::command]
-async fn get_playback_probe(
-    state: State<'_, AppState>,
-    snapshot_token: String,
-    game_timestamp: String,
-) -> Result<PlaybackProbe, String> {
-    #[cfg(feature = "replay-benchmark")]
-    let started = Instant::now();
-    #[cfg(feature = "replay-benchmark")]
-    if let Some(benchmark) = &state.benchmark {
-        benchmark
-            .record_app_event(
-                "playback_payload_requested",
-                serde_json::json!({ "game_timestamp": game_timestamp }),
-            )
-            .map_err(error_string)?;
-    }
-    let origin = state.playback_origin.clone();
-    let id = game_timestamp.clone();
-    let result = state
-        .library
-        .read_replay(
-            &state.roots,
-            &snapshot_token,
-            &game_timestamp,
-            move |path| library::playback_probe(path, &origin, &id),
-        )
-        .await;
-    #[cfg(feature = "replay-benchmark")]
-    if let Some(benchmark) = &state.benchmark {
-        benchmark
-            .record_app_event(
-                if result.is_ok() {
-                    "playback_payload_backend_ready"
-                } else {
-                    "playback_payload_backend_failed"
-                },
-                serde_json::json!({
-                    "game_timestamp": game_timestamp,
-                    "elapsed_ms": started.elapsed().as_secs_f64() * 1_000.0,
-                }),
-            )
-            .map_err(error_string)?;
-    }
-    result.map_err(command_error)
 }
 
 #[tauri::command]
@@ -1134,6 +1091,7 @@ pub fn run() {
                 config: Arc::new(RwLock::new(config)),
                 roots,
                 library: LibraryCoordinator::new(),
+                league_index_cache: app_data.join("league-index"),
                 playback_origin,
                 playback_metrics,
                 hevc_probe_path,
@@ -1204,10 +1162,20 @@ pub fn run() {
     #[cfg(feature = "replay-benchmark")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         refresh_library,
+        league_index_commands::index_league_recording,
+        league_index_commands::index_league_catalog,
+        league_index_commands::reset_league_index,
+        league_index_commands::query_league_history,
+        league_index_commands::league_source_scopes,
+        league_index_commands::query_league_events,
+        league_index_commands::query_league_roster,
+        league_index_commands::query_league_replay_window,
+        league_index_commands::league_recording_facts,
+        league_index_commands::query_league_authored,
+        league_index_commands::save_league_authored_record,
         resolve_clip_durations,
         list_games,
         list_clips,
-        get_playback_probe,
         get_replay_descriptor,
         save_game,
         delete_game,
@@ -1241,10 +1209,20 @@ pub fn run() {
     #[cfg(not(feature = "replay-benchmark"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         refresh_library,
+        league_index_commands::index_league_recording,
+        league_index_commands::index_league_catalog,
+        league_index_commands::reset_league_index,
+        league_index_commands::query_league_history,
+        league_index_commands::league_source_scopes,
+        league_index_commands::query_league_events,
+        league_index_commands::query_league_roster,
+        league_index_commands::query_league_replay_window,
+        league_index_commands::league_recording_facts,
+        league_index_commands::query_league_authored,
+        league_index_commands::save_league_authored_record,
         resolve_clip_durations,
         list_games,
         list_clips,
-        get_playback_probe,
         get_replay_descriptor,
         save_game,
         delete_game,

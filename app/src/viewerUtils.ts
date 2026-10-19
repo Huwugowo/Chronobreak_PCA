@@ -11,6 +11,7 @@ import {
   type RoundingMode,
 } from "./replayTime";
 import type { ViewerEvent } from "./types";
+import { actorKeys } from "./leagueSource";
 
 export const MINIMUM_CLIP_DURATION_TICKS = (5 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
 
@@ -166,16 +167,8 @@ export const timelineValue = <T extends ReplayTimed>(
   return index < 0 ? undefined : entries[index];
 };
 
-export const normalizedPlayerName = (player: string): string =>
-  player.split("#", 1)[0].trim().toLowerCase();
-
-export const samePlayer = (left: string, right: string): boolean =>
-  normalizedPlayerName(left) === normalizedPlayerName(right);
-
 export const eventInvolvesPlayer = (event: ViewerEvent, player: string): boolean =>
-  [event.killer, event.victim, event.acer]
-    .some((candidate) => candidate !== null && samePlayer(candidate, player)) ||
-  event.assisters.some((assister) => samePlayer(assister, player));
+  actorKeys(event).includes(player);
 
 export const eventTitle = (event: ViewerEvent): string => {
   switch (event.event_type) {

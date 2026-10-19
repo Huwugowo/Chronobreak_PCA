@@ -1,6 +1,6 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { decodeLeagueResult, decodeLeagueResultSummary } from "./leagueResult";
+import { decodeLeagueResultSummary } from "./leagueResult";
 import type {
   AppSettings,
   AutoDeleteResult,
@@ -14,16 +14,12 @@ import type {
   DdragonStatus,
   GameSummary,
   HevcProbeStatus,
-  KdaTimelinePoint,
   LeagueMatch,
-  PlaybackProbe,
   ReplayDescriptor,
-  PlayerTimelinePoint,
   ReplayParticipant,
   ServerMetrics,
   SettingsUpdate,
   StorageUsage,
-  ViewerEvent,
 } from "./types";
 import {
   createClipRange,
@@ -38,10 +34,6 @@ import {
 
 const mockReplayUrl = () => new URL("/mock-replay.mp4", window.location.href).href;
 
-const MOCK_TICKS_PER_MILLISECOND = 48_000;
-const mockTick = (milliseconds: number): ReplayTick =>
-  parseReplayTick(String(milliseconds * MOCK_TICKS_PER_MILLISECOND));
-const MOCK_GAME_START_REPLAY_TICK = mockTick(42_369);
 const MOCK_MEDIA_TIMELINE = validateMediaTimeline({
   schema_version: 2,
   replay_ticks_per_second: "48000000",
@@ -78,144 +70,6 @@ const MOCK_MEDIA_TIMELINE = validateMediaTimeline({
   },
 });
 
-const mockEvent = (
-  eventType: string,
-  replayTick: ReplayTick,
-  details: Partial<ViewerEvent> = {},
-): ViewerEvent => ({
-  event_type: eventType,
-  game_tick: String(Math.max(0, replayTick - MOCK_GAME_START_REPLAY_TICK)),
-  replay_tick: replayTick,
-  killer: null,
-  victim: null,
-  assisters: [],
-  dragon_type: null,
-  kill_streak: null,
-  acer: null,
-  acing_team: null,
-  turret: null,
-  inhibitor: null,
-  result: null,
-  relation: "neutral",
-  ...details,
-});
-
-const mockEvents = (): ViewerEvent[] => {
-  const denseFight = [
-    mockEvent("ChampionKill", mockTick(888_000), {
-      killer: "SUPERSTAR",
-      victim: "Enemy Mid",
-      assisters: ["Ally Jungler", "Ally Support"],
-      relation: "ally",
-    }),
-    mockEvent("ChampionKill", mockTick(889_500), {
-      killer: "Enemy Carry",
-      victim: "Ally Carry",
-      assisters: ["Enemy Support"],
-      relation: "enemy",
-    }),
-    mockEvent("ChampionKill", mockTick(891_000), {
-      killer: "Ally Jungler",
-      victim: "Enemy Jungler",
-      assisters: ["SUPERSTAR"],
-      relation: "ally",
-    }),
-    mockEvent("Multikill", mockTick(892_200), {
-      killer: "SUPERSTAR",
-      kill_streak: 2,
-      relation: "ally",
-    }),
-    mockEvent("ChampionKill", mockTick(895_000), {
-      killer: "SUPERSTAR",
-      victim: "Enemy Carry",
-      assisters: ["Ally Support"],
-      relation: "ally",
-    }),
-    mockEvent("Ace", mockTick(897_500), {
-      acer: "SUPERSTAR",
-      relation: "ally",
-    }),
-  ];
-  const generated = Array.from({ length: 48 }, (_, index) => {
-    const replayTick = mockTick(248_000 + index * 29_500);
-    if (index % 11 === 4) {
-      return mockEvent("DragonKill", replayTick, {
-        killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Jungler",
-        assisters: ["Ally Jungler", "SUPERSTAR"],
-        dragon_type: ["Air", "Fire", "Water", "Earth"][index % 4],
-        relation: index % 2 === 0 ? "ally" : "enemy",
-      });
-    }
-    if (index % 13 === 7) {
-      return mockEvent("TurretKilled", replayTick, {
-        killer: index % 2 === 0 ? "SUPERSTAR" : "Enemy Carry",
-        turret: "Turret_T2_C_03_A",
-        relation: index % 2 === 0 ? "ally" : "enemy",
-      });
-    }
-    if (index % 17 === 9) {
-      return mockEvent("Multikill", replayTick, {
-        killer: "SUPERSTAR",
-        kill_streak: 2,
-        relation: "ally",
-      });
-    }
-    const enemyKill = index % 3 === 0 && index % 5 !== 0;
-    return mockEvent("ChampionKill", replayTick, {
-      killer: index % 5 === 0 ? "SUPERSTAR" : enemyKill ? "Enemy Carry" : "Ally Jungler",
-      victim: index % 5 === 0 ? "Enemy Carry" : enemyKill ? "SUPERSTAR" : "Enemy Jungler",
-      assisters: index % 4 === 0 ? ["SUPERSTAR"] : ["Ally Support"],
-      relation: enemyKill ? "enemy" : "ally",
-    });
-  });
-
-  return [
-    mockEvent("GameStart", MOCK_GAME_START_REPLAY_TICK),
-    mockEvent("MinionsSpawning", mockTick(107_000)),
-    mockEvent("FirstBlood", mockTick(199_402), {
-      killer: "SUPERSTAR",
-      victim: "Enemy Carry",
-      relation: "ally",
-    }),
-    mockEvent("ChampionKill", mockTick(199_402), {
-      killer: "SUPERSTAR",
-      victim: "Enemy Carry",
-      assisters: ["Ally Jungler"],
-      relation: "ally",
-    }),
-    ...generated,
-    ...denseFight,
-    mockEvent("BaronKill", mockTick(1_501_000), {
-      killer: "Ally Jungler",
-      assisters: ["SUPERSTAR", "Ally Support"],
-      relation: "ally",
-    }),
-    mockEvent("GameEnd", mockTick(1_770_000), { result: "Win" }),
-  ].sort((left, right) => (left.replay_tick ?? 0) - (right.replay_tick ?? 0));
-};
-
-const mockPlayerTimeline = (): PlayerTimelinePoint[] =>
-  Array.from({ length: 174 }, (_, index) => {
-    const gameTick = mockTick(1_282 + index * 10_000);
-    return {
-      game_tick: String(gameTick),
-      replay_tick: parseReplayTick(String(MOCK_GAME_START_REPLAY_TICK + gameTick)),
-      cs: Math.min(200, Math.floor(Number(gameTick) / (8_450 * MOCK_TICKS_PER_MILLISECOND))),
-      level: Math.min(15, 1 + Math.floor(Number(gameTick) / (118_000 * MOCK_TICKS_PER_MILLISECOND))),
-    };
-  });
-
-const mockKdaTimeline = (): KdaTimelinePoint[] => [
-  { replay_tick: mockTick(199_402), kills: 1, deaths: 0, assists: 0 },
-  { replay_tick: mockTick(396_000), kills: 2, deaths: 0, assists: 1 },
-  { replay_tick: mockTick(534_000), kills: 2, deaths: 1, assists: 2 },
-  { replay_tick: mockTick(711_000), kills: 3, deaths: 1, assists: 4 },
-  { replay_tick: mockTick(890_000), kills: 5, deaths: 2, assists: 5 },
-  { replay_tick: mockTick(1_114_000), kills: 6, deaths: 3, assists: 8 },
-  { replay_tick: mockTick(1_409_000), kills: 7, deaths: 4, assists: 10 },
-  { replay_tick: mockTick(1_698_000), kills: 8, deaths: 4, assists: 11 },
-];
-
 const mockParticipants = (): ReplayParticipant[] => [
   { summoner_name: "SUPERSTAR#VOID", champion: "Syndra", relation: "ally" },
   { summoner_name: "Ally Top#EUW", champion: "Ornn", relation: "ally" },
@@ -232,6 +86,7 @@ const mockParticipants = (): ReplayParticipant[] => [
 let mockGames: GameSummary[] = [
   {
     timestamp: "1786005616",
+    media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001786005616"),
     champion: "Syndra",
     game_mode: "CLASSIC",
     duration_ms: 1_788_316,
@@ -259,6 +114,7 @@ let mockGames: GameSummary[] = [
   },
   {
     timestamp: "1786004189",
+    media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001786004189"),
     champion: "Viktor",
     game_mode: "CLASSIC",
     duration_ms: 2_142_000,
@@ -286,6 +142,7 @@ let mockGames: GameSummary[] = [
   },
   {
     timestamp: "1785999000",
+    media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001785999000"),
     champion: "Jinx",
     game_mode: "ARAM",
     duration_ms: 1_327_000,
@@ -313,6 +170,7 @@ let mockGames: GameSummary[] = [
   },
   {
     timestamp: "1785900000",
+    media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001785900000"),
     champion: "Orianna",
     game_mode: "CLASSIC",
     duration_ms: 1_954_000,
@@ -340,6 +198,7 @@ let mockGames: GameSummary[] = [
   },
   {
     timestamp: "1785800000",
+    media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001785800000"),
     champion: "Ahri",
     game_mode: "CLASSIC",
     duration_ms: 2_342_000,
@@ -367,6 +226,7 @@ let mockGames: GameSummary[] = [
   },
   {
     timestamp: "1785700000",
+    media_id: null,
     champion: "Unknown",
     game_mode: "Unknown",
     duration_ms: 0,
@@ -421,7 +281,7 @@ let mockSettings: AppSettings = {
 
 const pausePreview = () => new Promise((resolve) => window.setTimeout(resolve, 60));
 
-const useMockApi = (): boolean =>
+export const useMockApi = (): boolean =>
   import.meta.env.DEV && (!isTauri() || import.meta.env.VITE_UI_MOCKS === "1");
 export const loadGames = async (): Promise<GameSummary[]> => {
   if (useMockApi()) return structuredClone(mockGames);
@@ -515,7 +375,7 @@ const recordArray = (value: unknown, label: string): Record<string, unknown>[] =
   return value.map((entry, index) => exactRecord(entry, Object.keys(entry ?? {}), `${label}[${index}]`));
 };
 
-const decodeMappedReplayTick = (value: unknown, label: string): ReplayTick | undefined => {
+export const decodeMappedReplayTick = (value: unknown, label: string): ReplayTick | undefined => {
   const mapping = value as Record<string, unknown> | null;
   const status = mapping?.status;
   switch (status) {
@@ -544,23 +404,7 @@ const decodeMappedReplayTick = (value: unknown, label: string): ReplayTick | und
   }
 };
 
-const decodeMappedRows = <T>(
-  value: unknown,
-  expectedKeys: readonly string[],
-  label: string,
-): T[] => {
-  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
-  return value.map((entry, index) => {
-    const row = exactRecord(entry, expectedKeys, `${label}[${index}]`);
-    const { mapped_replay_time: mapping, ...fields } = row;
-    return {
-      ...fields,
-      replay_tick: decodeMappedReplayTick(mapping, `${label}[${index}].mapped_replay_time`),
-    } as T;
-  });
-};
-
-const gameKeys = ["timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available", "league_result"];
+const gameKeys = ["media_id", "timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available", "league_result"];
 
 const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] => {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
@@ -573,14 +417,15 @@ const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] 
   });
 };
 
-const decodeGameSummary = (value: unknown, label: string): GameSummary => {
+export const decodeGameSummary = (value: unknown, label: string): GameSummary => {
   const game = exactRecord(value, gameKeys, label);
+  const mediaId = game.media_id === null && game.incomplete === true ? null : parseMediaId(game.media_id);
   const items = recordArray(game.items, label + ".items");
   for (const [index, item] of items.entries()) exactRecord(item, ["item_id", "slot"], label + ".items[" + index + "]");
-  return { ...game, league_result: decodeLeagueResultSummary(game.league_result), participants: decodeParticipants(game.participants, label + ".participants") } as GameSummary;
+  return { ...game, media_id: mediaId, league_result: decodeLeagueResultSummary(game.league_result), participants: decodeParticipants(game.participants, label + ".participants") } as GameSummary;
 };
 
-const decodeLeagueMatch = (value: unknown, mediaId: LeagueMatch["media_id"]): LeagueMatch | null => {
+export const decodeLeagueMatch = (value: unknown, mediaId: LeagueMatch["media_id"]): LeagueMatch | null => {
   if (value === null) return null;
   try {
     const wire = exactRecord(value, ["media_id", "status", "game_id", "queue_id", "local_riot_id", "map_id", "game_mode"], "league_match");
@@ -601,73 +446,6 @@ const decodeLeagueMatch = (value: unknown, mediaId: LeagueMatch["media_id"]): Le
   }
 };
 
-export const decodePlaybackProbe = (value: unknown): PlaybackProbe => {
-  const wire = exactRecord(
-    value,
-    [
-      "game",
-      "video_url",
-      "media_timeline",
-      "local_player_name",
-      "league_match",
-      "league_result",
-      "participants",
-      "player_timeline",
-      "kda_timeline",
-      "events",
-    ],
-    "playback_probe",
-  );
-  const game = decodeGameSummary(wire.game, "playback_probe.game");
-  const participants = decodeParticipants(wire.participants, "playback_probe.participants");
-  const mediaTimeline = validateMediaTimeline(wire.media_timeline);
-  const leagueMatch = decodeLeagueMatch(wire.league_match, mediaTimeline.mediaId);
-  if (typeof wire.video_url !== "string") throw new Error("playback_probe.video_url is invalid");
-  if (wire.local_player_name !== null && typeof wire.local_player_name !== "string") {
-    throw new Error("playback_probe.local_player_name is invalid");
-  }
-  return {
-    game,
-    video_url: wire.video_url,
-    media_timeline: mediaTimeline,
-    local_player_name: wire.local_player_name,
-    league_match: leagueMatch,
-    league_result: decodeLeagueResult(wire.league_result, mediaTimeline.mediaId, leagueMatch),
-    participants,
-    player_timeline: decodeMappedRows<PlayerTimelinePoint>(
-      wire.player_timeline,
-      ["game_tick", "mapped_replay_time", "cs", "level"],
-      "playback_probe.player_timeline",
-    ),
-    kda_timeline: decodeMappedRows<KdaTimelinePoint>(
-      wire.kda_timeline,
-      ["mapped_replay_time", "kills", "deaths", "assists"],
-      "playback_probe.kda_timeline",
-    ),
-    events: decodeMappedRows<ViewerEvent>(
-      wire.events,
-      [
-        "event_type",
-        "game_tick",
-        "mapped_replay_time",
-        "killer",
-        "victim",
-        "assisters",
-        "dragon_type",
-        "kill_streak",
-        "acer",
-        "acing_team",
-        "turret",
-        "inhibitor",
-        "result",
-        "relation",
-      ],
-      "playback_probe.events",
-    ),
-  };
-};
-
-
 export const decodeReplayDescriptor = (value: unknown): ReplayDescriptor => {
   const wire = exactRecord(value,
     ["snapshot_token", "game_timestamp", "video_url", "media_timeline"], "replay_descriptor");
@@ -687,49 +465,14 @@ export const decodeReplayDescriptor = (value: unknown): ReplayDescriptor => {
 
 export const loadReplayDescriptor = async (gameTimestamp: string, snapshotToken: string): Promise<ReplayDescriptor> => {
   if (useMockApi()) {
-    if (!mockGames.some(game => game.timestamp === gameTimestamp)) throw new Error("Recording not found");
-    return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: mockReplayUrl(), media_timeline: MOCK_MEDIA_TIMELINE };
+    const game=mockGames.find(game => game.timestamp === gameTimestamp);
+    if (!game?.media_id) throw new Error("Recording not found");
+    return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: mockReplayUrl(), media_timeline: { ...MOCK_MEDIA_TIMELINE, mediaId: game.media_id } };
   }
   const descriptor = decodeReplayDescriptor(await invoke<unknown>("get_replay_descriptor", { gameTimestamp, snapshotToken }));
   if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp)
     throw new Error("Replay descriptor selection mismatch");
   return descriptor;
-};
-
-export const assertReplayProbeMatches = (descriptor: ReplayDescriptor, probe: PlaybackProbe): PlaybackProbe => {
-  const identity = (timeline: ReplayDescriptor["media_timeline"]) => [
-    timeline.mediaId, timeline.audio.present, timeline.video.codec, timeline.video.profile,
-    timeline.video.timeBase.numerator.toString(), timeline.video.timeBase.denominator.toString(),
-    timeline.video.firstPts.toString(), timeline.video.frameRate.numerator.toString(),
-    timeline.video.frameRate.denominator.toString(), timeline.video.frameCount,
-    timeline.video.onePastLastPts.toString(), timeline.video.replayEnd,
-  ];
-  const expected = identity(descriptor.media_timeline);
-  const actual = identity(probe.media_timeline);
-  if (descriptor.game_timestamp !== probe.game.timestamp || descriptor.video_url !== probe.video_url ||
-    expected.some((value, index) => value !== actual[index]))
-    throw new Error("Recording changed while replay details were loading. Return to games.");
-  return probe;
-};
-
-export const loadPlaybackProbe = async (gameTimestamp: string, snapshotToken: string): Promise<PlaybackProbe> => {
-  if (useMockApi()) {
-    const game = mockGames.find((candidate) => candidate.timestamp === gameTimestamp);
-    if (!game) throw new Error("Recording not found");
-    return {
-      game: structuredClone(game),
-      video_url: mockReplayUrl(),
-      media_timeline: MOCK_MEDIA_TIMELINE,
-      local_player_name: "SUPERSTAR#VOID",
-      league_match: null,
-  league_result: null,
-      participants: structuredClone(game.participants),
-      player_timeline: mockPlayerTimeline(),
-      kda_timeline: mockKdaTimeline(),
-      events: mockEvents(),
-    };
-  }
-  return decodePlaybackProbe(await invoke<unknown>("get_playback_probe", { gameTimestamp, snapshotToken }));
 };
 
 export const setGameSaved = async (gameTimestamp: string, saved: boolean, snapshotToken: string): Promise<void> => {

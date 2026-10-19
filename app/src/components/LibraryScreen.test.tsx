@@ -4,11 +4,13 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import LibraryScreen from "./LibraryScreen";
 import type { DdragonStatus, GameSummary } from "../types";
+import type { HistoryState } from "../historyController";
 
 afterEach(() => document.body.replaceChildren());
 
 it("renders Games from the core snapshot when Data Dragon enrichment fails", () => {
   const game: GameSummary = {
+    media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
     timestamp: "100",
     champion: "Ahri",
     game_mode: "CLASSIC",
@@ -41,10 +43,12 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   document.body.append(host);
   const origin = { root: "A", rootEpoch: 1, request: 1, token: "token-a", navigation: 1 };
   const [actionable, setActionable] = createSignal(true);
+  const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,error:null,indexError:null,laterPage:false});
   const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn();
   const dispose = render(() => <LibraryScreen
     tab="games"
     games={[game]}
+    history={history()}
     clips={[]}
     ddragon={ddragon}
     actionable={actionable()}
@@ -59,9 +63,15 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   />, host);
   expect(host.textContent).toContain("Ahri");
   expect(host.textContent).toContain("Unknown");
-  expect(host.textContent).not.toContain("Defeat");
+  expect(host.querySelector('[aria-label="Recorded matches"]')?.textContent).not.toContain("Defeat");
   expect(host.textContent).not.toContain("Remake");
   expect(host.querySelector('[aria-label="Match History"]')).not.toBeNull();
+  expect(host.textContent).not.toContain("PERFECT KDA");
+  const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],evidence:null,final_evidence:null,game_tick:null};
+  setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
+  expect(host.textContent).toContain("Final EOG"); expect(host.textContent).not.toContain("PERFECT KDA");
+  setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game,stats:{...stats,deaths:0},index_status:"ready"}]}});
+  expect(host.textContent).toContain("PERFECT KDA");
   const roster = host.querySelector('[aria-label="Team rosters"]')!;
   expect(roster.querySelector('[data-team="ally"]')?.textContent).toContain("Ally");
   expect(roster.querySelector('[data-team="enemy"]')?.textContent).toContain("Enemy");

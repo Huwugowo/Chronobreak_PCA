@@ -26,7 +26,17 @@ All rational multiplication/division is checked for overflow. A conversion must 
 
 ## Persisted recording contract
 
-`metadata.json` carries `schema_version: 2`, `media_id`, and a `media_timeline`. The timeline records the validated video stream time base, first and one-past-last PTS, exact rate, frame count, replay end, audio coverage, container facts, and recorder cadence/runtime evidence. `game_log.json` carries the same schema version and media ID plus game-tick observations and the optional persisted calibration.
+`metadata.json` carries `schema_version: 2`, `media_id`, and a `media_timeline`. The timeline records the validated video stream time base, first and one-past-last PTS, exact rate, frame count, replay end, audio coverage, container facts, and recorder cadence/runtime evidence. `game_log.json` carries the same media identity and timing schema version, plus an independent telemetry format version, committed journal anchor and current calibration. Game-tick observations and their captured calibration references live in `league_observations.jsonl`. Observations without a usable referenced calibration remain unmapped. Equal game-clock samples invalidate current calibration; a backward clock starts a new source epoch and boundary. Older observations retain their own mapping evidence.
+
+Media descriptors and export read strict bounded metadata independently of optional
+telemetry. Missing/unsupported telemetry cannot invalidate an otherwise valid video
+timeline or its exact frame ranges.
+
+The optional League SQL projection stores each event/roster replay tick using that
+observation's referenced calibration. Window queries compare these projected
+coordinates directly; they do not invert the current calibration for older source
+epochs. A changed media timeline invalidates the projection. Returned roster samples
+include their source time, mapped replay time and age, without interpolation.
 
 The recorder writes only a private `video.partial.mp4` while recording. On stop, it performs a bounded packaged-ffprobe stream-summary probe (five seconds and one MiB combined output maximum), reconciles the candidate against recorder evidence, constructs v2 metadata, and atomically publishes canonical video and metadata. Uncertain, malformed, timeout, or identity-mismatched candidates remain partial and are never promoted.
 

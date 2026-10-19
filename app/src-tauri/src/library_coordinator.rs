@@ -96,6 +96,8 @@ pub(crate) struct LibraryCoordinator {
     duration_slot: Arc<Semaphore>,
     mutation_slot: Arc<Semaphore>,
     replay_slot: Arc<Semaphore>,
+    index_writer_slot: Arc<Semaphore>,
+    index_reader_slots: Arc<Semaphore>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -117,6 +119,7 @@ pub(crate) enum Selection<'a> {
     Library,
 }
 
+#[derive(Clone)]
 pub(crate) struct RootCapture {
     pub path: PathBuf,
     root: ApprovedRoot,
@@ -162,6 +165,8 @@ impl LibraryCoordinator {
             duration_slot: Arc::new(Semaphore::new(1)),
             mutation_slot: Arc::new(Semaphore::new(1)),
             replay_slot: Arc::new(Semaphore::new(1)),
+            index_writer_slot: Arc::new(Semaphore::new(1)),
+            index_reader_slots: Arc::new(Semaphore::new(2)),
         }
     }
 
@@ -298,6 +303,8 @@ impl LibraryCoordinator {
         self.duration_slot.close();
         self.mutation_slot.close();
         self.replay_slot.close();
+        self.index_writer_slot.close();
+        self.index_reader_slots.close();
     }
 
     fn capture_selection(
@@ -379,6 +386,170 @@ impl LibraryCoordinator {
             return Err(LibraryRefreshError::Superseded);
         }
         result.map_err(|error| LibraryRefreshError::Failed {
+            message: error.to_string(),
+            retained_snapshot_token: None,
+        })
+    }
+
+    /// Index writes and short SQL reads have independent finite ownership. They
+    /// cannot occupy the media descriptor slot or queue unbounded blocking work.
+    pub(crate) async fn index_job<T: Send + 'static>(
+        &self,
+        roots: Arc<MediaRoots>,
+        token: &str,
+        game: Option<&str>,
+        write: bool,
+        build: impl FnOnce(
+            &std::path::Path,
+            &LibrarySnapshot,
+            &dyn Fn() -> anyhow::Result<()>,
+        ) -> anyhow::Result<T>
+        + Send
+        + 'static,
+    ) -> Result<T, LibraryRefreshError> {
+        let slot = if write {
+            &self.index_writer_slot
+        } else {
+            &self.index_reader_slots
+        };
+        let permit = Arc::clone(slot)
+            .try_acquire_owned()
+            .map_err(|error| match error {
+                tokio::sync::TryAcquireError::Closed => LibraryRefreshError::Superseded,
+                tokio::sync::TryAcquireError::NoPermits => LibraryRefreshError::Busy,
+            })?;
+        let selection = game.map_or(Selection::Library, Selection::Game);
+        let capture = self.capture_selection(&roots, token, selection)?;
+        let snapshot = {
+            let publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+            let current = publication
+                .current
+                .as_ref()
+                .ok_or(LibraryRefreshError::Superseded)?;
+            if current.snapshot.token != token {
+                return Err(LibraryRefreshError::Superseded);
+            }
+            Arc::clone(&current.snapshot)
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _cancel_on_drop = CancelOnDrop(Arc::clone(&cancelled));
+        let worker_coordinator = self.clone();
+        let worker_roots = Arc::clone(&roots);
+        let worker_token = token.to_owned();
+        let worker_game = game.map(str::to_owned);
+        let worker_capture = capture.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let check = || -> anyhow::Result<()> {
+                anyhow::ensure!(!cancelled.load(Ordering::Acquire), "index caller cancelled");
+                let current = worker_coordinator
+                    .capture_selection(
+                        &worker_roots,
+                        &worker_token,
+                        worker_game
+                            .as_deref()
+                            .map_or(Selection::Library, Selection::Game),
+                    )
+                    .map_err(|_| anyhow::anyhow!("index query superseded"))?;
+                anyhow::ensure!(
+                    current.root_epoch == worker_capture.root_epoch
+                        && current.path == worker_capture.path
+                        && current.root.path() == worker_capture.root.path(),
+                    "index query superseded"
+                );
+                Ok(())
+            };
+            check()?;
+            let result = build(worker_capture.root.path(), &snapshot, &check)?;
+            check()?;
+            Ok(result)
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("index worker failed")));
+        let current = self.capture_selection(&roots, token, selection)?;
+        if current.root_epoch != capture.root_epoch
+            || current.path != capture.path
+            || current.root.path() != capture.root.path()
+        {
+            return Err(LibraryRefreshError::Superseded);
+        }
+        result.map_err(|error: anyhow::Error| LibraryRefreshError::Failed {
+            message: error.to_string(),
+            retained_snapshot_token: None,
+        })
+    }
+
+    /// A cache replacement needs a true quiescent point: the sole writer and
+    /// both short-lived readers remain owned by the blocking worker until it
+    /// has either installed the replacement or restored the prior cache.
+    pub(crate) async fn index_admin_job<T: Send + 'static>(
+        &self,
+        roots: Arc<MediaRoots>,
+        token: &str,
+        build: impl FnOnce(
+            &std::path::Path,
+            &LibrarySnapshot,
+            &dyn Fn() -> anyhow::Result<()>,
+        ) -> anyhow::Result<T>
+        + Send
+        + 'static,
+    ) -> Result<T, LibraryRefreshError> {
+        let writer = Arc::clone(&self.index_writer_slot)
+            .try_acquire_owned()
+            .map_err(index_permit_error)?;
+        // This is deliberately a non-waiting all-or-nothing acquisition. If a
+        // reader owns either permit, dropping `writer` makes reset report Busy.
+        let readers = Arc::clone(&self.index_reader_slots)
+            .try_acquire_many_owned(2)
+            .map_err(index_permit_error)?;
+        let capture = self.capture_selection(&roots, token, Selection::Library)?;
+        let snapshot = {
+            let publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+            let current = publication
+                .current
+                .as_ref()
+                .ok_or(LibraryRefreshError::Superseded)?;
+            if current.snapshot.token != token {
+                return Err(LibraryRefreshError::Superseded);
+            }
+            Arc::clone(&current.snapshot)
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _cancel_on_drop = CancelOnDrop(Arc::clone(&cancelled));
+        let worker_coordinator = self.clone();
+        let worker_roots = Arc::clone(&roots);
+        let worker_token = token.to_owned();
+        let worker_capture = capture.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let (_writer, _readers) = (writer, readers);
+            let check = || -> anyhow::Result<()> {
+                anyhow::ensure!(!cancelled.load(Ordering::Acquire), "index caller cancelled");
+                let current = worker_coordinator
+                    .capture_selection(&worker_roots, &worker_token, Selection::Library)
+                    .map_err(|_| anyhow::anyhow!("index query superseded"))?;
+                anyhow::ensure!(
+                    current.root_epoch == worker_capture.root_epoch
+                        && current.path == worker_capture.path
+                        && current.root.path() == worker_capture.root.path(),
+                    "index query superseded"
+                );
+                Ok(())
+            };
+            check()?;
+            let result = build(worker_capture.root.path(), &snapshot, &check)?;
+            check()?;
+            Ok(result)
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("index admin worker failed")));
+        let current = self.capture_selection(&roots, token, Selection::Library)?;
+        if current.root_epoch != capture.root_epoch
+            || current.path != capture.path
+            || current.root.path() != capture.root.path()
+        {
+            return Err(LibraryRefreshError::Superseded);
+        }
+        result.map_err(|error: anyhow::Error| LibraryRefreshError::Failed {
             message: error.to_string(),
             retained_snapshot_token: None,
         })
@@ -622,6 +793,13 @@ impl LibraryCoordinator {
             snapshot_token: token.into(),
             clips,
         })
+    }
+}
+
+fn index_permit_error(error: tokio::sync::TryAcquireError) -> LibraryRefreshError {
+    match error {
+        tokio::sync::TryAcquireError::Closed => LibraryRefreshError::Superseded,
+        tokio::sync::TryAcquireError::NoPermits => LibraryRefreshError::Busy,
     }
 }
 
@@ -936,4 +1114,5 @@ mod tests {
     }
     include!("library_coordinator_m2_tests.rs");
     include!("library_coordinator_replay_tests.rs");
+    include!("league_index_lifecycle_tests.rs");
 }

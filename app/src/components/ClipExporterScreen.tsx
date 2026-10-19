@@ -13,7 +13,7 @@ import {
   chooseMusicFile,
   exportClip,
   loadBuiltInMusic,
-  loadPlaybackProbe,
+  loadReplayDescriptor,
   prepareImportedMusicPreview,
   releaseImportedMusicPreview,
 } from "../api";
@@ -25,6 +25,7 @@ import type {
   ClipExportPreset,
   ClipExportProgress,
   ClipExportResult,
+  GameSummary,
 } from "../types";
 import type { LibraryOrigin, ReplayRead } from "../libraryController";
 import {
@@ -39,6 +40,7 @@ import controlStyles from "../ui/controls.module.css";
 import styles from "./ClipExporterScreen.module.css";
 
 type Props = {
+  game?: GameSummary;
   draft: ClipDraft;
   outputPath: string;
   snapshotToken: string;
@@ -96,7 +98,7 @@ function ClipExporterScreen(props: Props) {
   let lastPreviewSeekAt = Number.NEGATIVE_INFINITY;
 
   const [probe] = createResource(() => props.draft.gameTimestamp,
-    id => props.readReplay(token => loadPlaybackProbe(id, token)));
+    id => props.readReplay(token => loadReplayDescriptor(id, token)));
   const [tracks] = createResource(loadBuiltInMusic);
   const [selectedPresets, setSelectedPresets] = createSignal<readonly ClipExportPreset[]>([
     "horizontal",
@@ -533,7 +535,7 @@ function ClipExporterScreen(props: Props) {
             <section class={styles.previewPanel}>
               <div class={styles.sectionHeading}>
                 <span>01 / FORMAT</span>
-                <strong>{probe()!.game.champion} · {selectedPresets().length} SELECTED</strong>
+                <strong>{props.game?.champion ?? "Recording"} · {selectedPresets().length} SELECTED</strong>
               </div>
               <div class={styles.presetGrid} role="group" aria-label="Export formats">
                 <For each={PRESETS}>

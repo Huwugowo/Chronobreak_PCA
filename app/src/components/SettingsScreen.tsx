@@ -15,6 +15,8 @@ type Props = {
   onOpenFolder: () => void;
   onRetention: (days: number) => void;
   onCleanUp: () => void;
+  onRebuildLeagueData?: () => void;
+  canRebuildLeagueData?: boolean;
 };
 
 const retentionOptions = [
@@ -100,6 +102,19 @@ function SettingsScreen(props: Props) {
               Clean up now
             </button>
             <span>{props.saving ? "SAVING…" : "CHANGES SAVE IMMEDIATELY"}</span>
+          </div>
+        </section>
+
+        <section class={styles.settingsPanel}>
+          <header><div><p>LEAGUE DATA</p><h2>Rebuild searchable data</h2></div></header>
+          <p class={styles.settingDetail}>
+            Recreate searchable League data from the recordings in this folder. Event details load as you browse.
+          </p>
+          <div class={styles.settingActions}>
+            <button class={controlStyles.control} type="button" onClick={props.onRebuildLeagueData}
+              disabled={props.saving || props.canRebuildLeagueData === false || !props.onRebuildLeagueData}>
+              Rebuild League data
+            </button>
           </div>
         </section>
 

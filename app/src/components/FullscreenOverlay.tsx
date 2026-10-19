@@ -2,7 +2,6 @@ import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { formatDuration } from "../format";
 import type {
   ClipRange,
-  KdaTimelinePoint,
   ReplayParticipant,
   ViewerEvent,
 } from "../types";
@@ -36,9 +35,6 @@ type Props = {
   timelineViewport: TimelineViewport;
   onTimelineViewportChange: (viewport: TimelineViewport) => void;
   presentedTick: ReplayTick | null;
-  gameTick: string;
-  beforeGameStart: boolean;
-  currentKda: KdaTimelinePoint | undefined;
   isPlaying: boolean;
   playback: PlaybackControlsProps["state"];
   onRate: PlaybackControlsProps["onRate"];

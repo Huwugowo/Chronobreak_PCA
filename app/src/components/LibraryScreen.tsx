@@ -1,7 +1,10 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
 import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHistoryPreview";
-import type { ClipSummary, DdragonStatus, GameItemSummary, GameSummary, LibraryTab } from "../types";
+import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
+import type { HistoryQuery, HistoryStats } from "../leagueIndex";
+import type { HistoryState } from "../historyController";
+import type { ActorRole } from "../leagueSource";
 import type { DurationDisplay } from "../libraryController";
 import type { LibraryOrigin } from "../libraryController";
 import { MoreIcon, StarIcon } from "../ui/icons";
@@ -26,6 +29,10 @@ type Props = {
   durationStates?: Readonly<Record<string, DurationDisplay>>;
   onRetryDuration?: (filename: string) => void;
   snapshotOrigin: LibraryOrigin | null;
+  history?: HistoryState;
+  onHistoryQuery?: (query: HistoryQuery) => void;
+  onHistoryNext?: () => void;
+  onHistoryFirst?: () => void;
 };
 
 const clipAccentColors = ["#2457ff", "#8b5cff", "#00a889", "#d24b68", "#d68c2f"];
@@ -40,17 +47,16 @@ const ddragonAsset = (
   return `${status.asset_base_url}/${kind}/${encodeURIComponent(String(asset))}`;
 };
 
-const finalBuild = (items: GameItemSummary[]): Array<GameItemSummary | null> =>
-  itemSlots.map((slot) => items.find((item) => item.slot === slot) ?? null);
+const unavailableStats: HistoryStats = { source: "unavailable", kills: null, deaths: null, assists: null, items: null, evidence: null, final_evidence: null, game_tick: null };
 
 const hideFailedImage = (event: Event) => {
   if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true;
 };
 
-const formatKdaRatio = (game: GameSummary): string => {
-  if (game.incomplete) return "—";
-  if (game.deaths === 0) return "PERFECT KDA";
-  return `${((game.kills + game.assists) / game.deaths).toFixed(2)}:1 KDA`;
+const formatKdaRatio = (stats: HistoryStats): string => {
+  if (stats.kills === null || stats.deaths === null || stats.assists === null) return "—";
+  if (stats.deaths === 0) return "PERFECT KDA";
+  return `${((stats.kills + stats.assists) / stats.deaths).toFixed(2)}:1 KDA`;
 };
 
 const displayedOutcome = (game: GameSummary): PreviewMatchOutcome | "unknown" | null => {
@@ -139,6 +145,15 @@ function GamesLibrary(props: Props) {
   const [championFilter, setChampionFilter] = createSignal("");
   const [modeFilter, setModeFilter] = createSignal("");
   const [savedOnly, setSavedOnly] = createSignal(false);
+  const [riotId, setRiotId] = createSignal("");
+  const [eventKind, setEventKind] = createSignal("");
+  const [actorRole, setActorRole] = createSignal("");
+  const [outcomeFilter, setOutcomeFilter] = createSignal("");
+  const [stolenOnly, setStolenOnly] = createSignal(false);
+  createEffect(() => props.onHistoryQuery?.({ limit: 50, search: searchQuery().trim() || null,
+    champion: championFilter() || null, mode: modeFilter() || null, saved_only: savedOnly(),
+    participant_riot_id: riotId().trim() || null, event_kind: eventKind() || null,
+    role: actorRole() as ActorRole || null, outcome: outcomeFilter() as HistoryQuery["outcome"] || null, stolen: stolenOnly() ? true : null }));
 
   const savedCount = () => props.games.filter((game) => game.saved).length;
 
@@ -152,8 +167,16 @@ function GamesLibrary(props: Props) {
 
   const filteredGames = () => {
     const query = searchQuery().trim().toLocaleLowerCase();
-
-    return props.games.filter((game) => {
+    const semantic = !!(riotId() || eventKind() || actorRole() || outcomeFilter() || stolenOnly());
+    const rows = props.history?.page?.rows;
+    if (rows) {
+      const matches = rows.map(row => props.games.find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
+      if (!props.history?.laterPage && !semantic) matches.push(...props.games.filter(game => game.incomplete && basicMatch(game)));
+      return matches.slice(0, 50);
+    }
+    if (semantic) return [];
+    return props.games.filter(basicMatch).slice(0, 50);
+    function basicMatch(game: GameSummary) {
       const matchesSearch =
         !query
         || game.champion.toLocaleLowerCase().includes(query)
@@ -164,8 +187,9 @@ function GamesLibrary(props: Props) {
       const matchesSaved = !savedOnly() || game.saved;
 
       return matchesSearch && matchesChampion && matchesMode && matchesSaved;
-    });
+    }
   };
+  const statsFor = (game: GameSummary) => props.history?.page?.rows.find(row => row.media_id === game.media_id && row.game.timestamp === game.timestamp)?.stats ?? unavailableStats;
 
   return (
     <section class={matchStyles.matchHistory} aria-label="Match History">
@@ -220,6 +244,29 @@ function GamesLibrary(props: Props) {
         </div>
       </div>
 
+      <details class={matchStyles.dataFilters}>
+        <summary>League data filters</summary>
+        <div class={matchStyles.toolbar}>
+          <input class={matchStyles.searchField} type="text" placeholder="Player#TAG" aria-label="Exact Riot ID" value={riotId()} onChange={event => setRiotId(event.currentTarget.value)} />
+          <select class={matchStyles.filterSelect} aria-label="Filter by event" value={eventKind()} onChange={event => setEventKind(event.currentTarget.value)}>
+            <option value="">All events</option>
+            <For each={["ChampionKill", "DragonKill", "BaronKill", "HeraldKill", "HordeKill", "TurretKilled", "InhibKilled", "Ace", "Multikill"]}>{kind => <option value={kind}>{kind}</option>}</For>
+          </select>
+          <select class={matchStyles.filterSelect} aria-label="Filter by actor role" value={actorRole()} onChange={event => setActorRole(event.currentTarget.value)}>
+            <option value="">All roles</option><For each={["killer", "victim", "assister", "acer", "recipient"]}>{role => <option value={role}>{role}</option>}</For>
+          </select>
+          <select class={matchStyles.filterSelect} aria-label="Filter by outcome" value={outcomeFilter()} onChange={event => setOutcomeFilter(event.currentTarget.value)}>
+            <option value="">All outcomes</option><option value="win">Victory</option><option value="loss">Defeat</option><option value="unknown">Unknown</option>
+          </select>
+          <label><input type="checkbox" checked={stolenOnly()} onChange={event => setStolenOnly(event.currentTarget.checked)} /> Stolen objective</label>
+        </div>
+      </details>
+      <p class={matchStyles.coverage} role="status">
+        <Show when={props.history?.indexing}>Updating League data. </Show>
+        <Show when={props.history?.page?.unknown_recordings}>{props.history?.page?.unknown_recordings} recordings have incomplete query coverage. </Show>
+        <Show when={props.history?.error || props.history?.indexError}>League data unavailable. Recordings remain playable.</Show>
+      </p>
+
       <Show
         when={props.games.length > 0}
         fallback={<MatchHistoryEmptyState />}
@@ -230,6 +277,7 @@ function GamesLibrary(props: Props) {
               {(game: GameSummary) => {
                 const outcome = displayedOutcome(game);
                 const health = replayHealth(game);
+                const stats = () => statsFor(game);
                 const championAsset = () => ddragonAsset(
                   props.ddragon,
                   "champion",
@@ -337,20 +385,21 @@ function GamesLibrary(props: Props) {
                         <span class={matchStyles.performance}>
                           <span class={matchStyles.kda}>
                             <strong>
-                              {game.incomplete ? "—" : game.kills} <i>/</i>{" "}
-                              {game.incomplete ? "—" : game.deaths} <i>/</i>{" "}
-                              {game.incomplete ? "—" : game.assists}
+                              {stats().kills ?? "—"} <i>/</i>{" "}
+                              {stats().deaths ?? "—"} <i>/</i>{" "}
+                              {stats().assists ?? "—"}
                             </strong>
-                            <em>{formatKdaRatio(game)}</em>
+                            <em>{formatKdaRatio(stats())}</em>
+                            <small>{stats().source === "final_eog" ? "Final EOG" : stats().source === "recorded_snapshot" ? "Recorded snapshot" : "League data unavailable"}</small>
                           </span>
 
                           <span class={matchStyles.items} aria-hidden="true">
-                            <For each={finalBuild(game.items)}>
-                              {(item: GameItemSummary | null) => (
+                            <For each={itemSlots}>
+                              {(slot) => (
                                 <span class={matchStyles.itemSlot}>
-                                  <Show when={ddragonAsset(props.ddragon, "item", item?.item_id)}>
+                                  <Show when={ddragonAsset(props.ddragon, "item", stats().items?.[slot])}>
                                     <img
-                                      src={ddragonAsset(props.ddragon, "item", item?.item_id)!}
+                                      src={ddragonAsset(props.ddragon, "item", stats().items?.[slot])!}
                                       alt=""
                                       loading="lazy"
                                       decoding="async"
@@ -472,6 +521,11 @@ function GamesLibrary(props: Props) {
           </section>
         </div>
       </Show>
+      <div class={matchStyles.toolbar}>
+        <Show when={props.history?.laterPage}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryFirst} disabled={props.history?.loading}>First page</button></Show>
+        <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={props.history?.loading}>Next 50 recordings</button></Show>
+        <Show when={props.games.length > 0 && filteredGames().length === 0 && !props.history?.loading}><span>No observed matches. Coverage may be incomplete.</span></Show>
+      </div>
     </section>
   );
 }

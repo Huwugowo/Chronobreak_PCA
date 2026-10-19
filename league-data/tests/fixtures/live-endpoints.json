@@ -1,0 +1,20 @@
+{
+  "gs": {"gameTime":123.125,"gameMode":"PRACTICETOOL","mapNumber":11,"mapName":"Map11","mapTerrain":"Default"},
+  "ap": {"riotId":"Fixture#TEST","currentGold":1234,"championStats":{"currentHealth":999}},
+  "pl": [
+    {"riotId":"Fixture#TEST","riotIdGameName":"Fixture","riotIdTagLine":"TEST","summonerName":"Fixture","championName":"Ahri","rawChampionName":"game_character_displayname_Ahri","skinID":0,"skinName":"","rawSkinName":"","team":"ORDER","position":"MIDDLE","isBot":false,"level":1,"isDead":false,"respawnTimer":0.0,
+     "scores":{"kills":0,"deaths":0,"assists":0,"creepScore":0,"wardScore":0.5},
+     "items":[{"itemID":2003,"slot":0,"count":2,"canUse":true,"consumable":true,"price":50,"displayName":"Potion","rawDisplayName":"item_2003","rawDescription":"description_2003"}],
+     "summonerSpells":{"summonerSpellOne":{"displayName":"Flash","rawDisplayName":"SummonerFlash","rawDescription":"flash_desc"},"summonerSpellTwo":{"displayName":"Teleport","rawDisplayName":"SummonerTeleport","rawDescription":"teleport_desc"}},
+     "runes":{"keystone":{"id":8112,"displayName":"Electrocute","rawDisplayName":"Electrocute","rawDescription":"keystone_desc"},"primaryRuneTree":{"id":8100,"displayName":"Domination","rawDisplayName":"Domination","rawDescription":"primary_desc"},"secondaryRuneTree":{"id":8200,"displayName":"Sorcery","rawDisplayName":"Sorcery","rawDescription":"secondary_desc"}}},
+    {"summonerName":"PracticeDummy","team":"CHAOS","isBot":true,"items":{"error":"synthetic nested error"},"scores":{"kills":null,"deaths":"bad","wardScore":2.25},"runes":{"error":"synthetic nested error"},"level":null,"respawnTimer":12.5},
+    {"riotId":"Fixture#OTHER","team":"TEAM_THREE","items":[],"scores":{},"isDead":true}
+  ],
+  "ev": {"Events":[
+    {"EventID":0,"EventName":"GameStart","EventTime":0},
+    {"EventID":1,"EventName":"ChampionKill","EventTime":120.25,"KillerName":"Fixture#TEST","VictimName":"Fixture#OTHER","Assisters":[]},
+    {"EventID":2,"EventName":"FirstBlood","EventTime":120.25,"Recipient":"Fixture#TEST"},
+    {"EventID":3,"EventName":"DragonKill","EventTime":121.0,"KillerName":"Fixture#TEST","Assisters":["Ally#TEST"],"DragonType":"Fire","Stolen":false},
+    {"EventID":4,"EventName":"UnverifiedFutureKind","EventTime":122.0,"KillerName":"Fixture#OTHER","Secret":"must not persist"}
+  ]}
+}

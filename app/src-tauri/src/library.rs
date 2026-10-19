@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -16,11 +16,11 @@ use time::format_description::well_known::Rfc3339;
 use crate::config;
 
 const METADATA_JSON: &str = "metadata.json";
-const GAME_LOG_JSON: &str = "game_log.json";
 const VIDEO_MP4: &str = "video.mp4";
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameSummary {
+    pub media_id: Option<MediaId>,
     pub timestamp: String,
     pub champion: String,
     pub game_mode: String,
@@ -40,7 +40,7 @@ pub struct GameSummary {
     pub league_result: Option<chronobreak_league_data::Summary>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameItemSummary {
     pub item_id: u32,
     pub slot: u32,
@@ -97,25 +97,7 @@ pub struct AutoDeleteResult {
     pub deleted_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ViewerEvent {
-    pub event_type: String,
-    pub game_tick: GameTick,
-    pub mapped_replay_time: MappedReplayTime,
-    pub killer: Option<String>,
-    pub victim: Option<String>,
-    pub assisters: Vec<String>,
-    pub dragon_type: Option<String>,
-    pub kill_streak: Option<u32>,
-    pub acer: Option<String>,
-    pub acing_team: Option<String>,
-    pub turret: Option<String>,
-    pub inhibitor: Option<String>,
-    pub result: Option<String>,
-    pub relation: EventRelation,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EventRelation {
     Ally,
@@ -123,41 +105,11 @@ pub enum EventRelation {
     Neutral,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReplayParticipant {
     pub summoner_name: String,
     pub champion: String,
     pub relation: EventRelation,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct PlayerTimelinePoint {
-    pub game_tick: GameTick,
-    pub mapped_replay_time: MappedReplayTime,
-    pub cs: u32,
-    pub level: u32,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct KdaTimelinePoint {
-    pub mapped_replay_time: MappedReplayTime,
-    pub kills: u32,
-    pub deaths: u32,
-    pub assists: u32,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct PlaybackProbe {
-    pub game: GameSummary,
-    pub video_url: String,
-    pub media_timeline: MediaTimelineV2,
-    pub local_player_name: Option<String>,
-    pub league_match: Option<crate::league_match::LeagueMatch>,
-    pub league_result: Option<chronobreak_league_data::ResultFile>,
-    pub participants: Vec<ReplayParticipant>,
-    pub player_timeline: Vec<PlayerTimelinePoint>,
-    pub kda_timeline: Vec<KdaTimelinePoint>,
-    pub events: Vec<ViewerEvent>,
 }
 
 /// Selected recording media authority, independent of semantic projections.
@@ -215,6 +167,30 @@ struct MetadataDocument {
     _capture: Option<CaptureMetadataDocument>,
     saved: bool,
 }
+#[derive(Debug, Serialize)]
+pub(crate) struct LeagueFacts {
+    pub media_id: MediaId,
+    pub local_player_name: Option<String>,
+    pub league_match: Option<crate::league_match::LeagueMatch>,
+    pub league_result: Option<chronobreak_league_data::ResultFile>,
+}
+pub(crate) fn league_facts(root: &Path, bundle: &str, media: &MediaId) -> Result<LeagueFacts> {
+    let directory = root.join("games").join(bundle);
+    let metadata = read_metadata(&directory.join(METADATA_JSON))?;
+    anyhow::ensure!(
+        &metadata.media_id == media,
+        "recording facts identity changed"
+    );
+    let candidate = crate::league_match::read(&directory, media);
+    let result = crate::league_result::read(&directory, media, candidate.as_ref());
+    Ok(LeagueFacts {
+        media_id: media.clone(),
+        local_player_name: metadata.local_player_summoner_name,
+        league_match: candidate,
+        league_result: result,
+    })
+}
+
 pub(crate) struct ExportRecordingAuthority {
     pub media_timeline: MediaTimelineV2,
     pub encoder_used: String,
@@ -285,97 +261,6 @@ struct CaptureMetadataDocument {
     _latest_qpc_100ns: i64,
     #[serde(rename = "terminal_progress")]
     _terminal_progress: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GameLogDocument {
-    schema_version: u32,
-    media_id: MediaId,
-    calibration: Option<GameCalibrationV2>,
-    snapshots: Vec<GameSnapshot>,
-    events: Vec<GameEvent>,
-    #[serde(rename = "snapshot_derived_changes")]
-    _snapshot_derived_changes: Vec<SnapshotChangeDocument>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GameSnapshot {
-    game_tick: GameTick,
-    players: Vec<SnapshotPlayer>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SnapshotPlayer {
-    summoner_name: String,
-    team: String,
-    champion: String,
-    #[serde(rename = "gold")]
-    _gold: Option<i64>,
-    #[serde(rename = "hp")]
-    _hp: Option<i64>,
-    #[serde(rename = "hp_max")]
-    _hp_max: Option<i64>,
-    cs: u32,
-    level: u32,
-    items: Vec<SnapshotItem>,
-    summoner_spells: Option<Vec<String>>,
-    keystone_id: Option<u32>,
-    #[serde(rename = "rune_ids")]
-    _rune_ids: Option<Vec<u32>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SnapshotItem {
-    item_id: u32,
-    slot: u32,
-    #[serde(rename = "count")]
-    _count: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SnapshotChangeDocument {
-    #[serde(rename = "game_tick")]
-    _game_tick: GameTick,
-    #[serde(rename = "player")]
-    _player: String,
-    #[serde(rename = "change_type")]
-    _change_type: SnapshotChangeTypeDocument,
-    #[serde(rename = "item_id")]
-    _item_id: Option<u32>,
-    #[serde(rename = "new_level")]
-    _new_level: Option<u32>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-enum SnapshotChangeTypeDocument {
-    ItemPurchased,
-    ItemSold,
-    LevelUp,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GameEvent {
-    #[serde(rename = "type")]
-    event_type: String,
-    game_tick: GameTick,
-    killer: Option<String>,
-    victim: Option<String>,
-    assisters: Option<Vec<String>>,
-    dragon_type: Option<String>,
-    #[serde(rename = "stolen")]
-    _stolen: Option<bool>,
-    kill_streak: Option<u32>,
-    acer: Option<String>,
-    acing_team: Option<String>,
-    turret: Option<String>,
-    inhibitor: Option<String>,
-    result: Option<String>,
 }
 
 /// The caller owns blocking admission and supplies a cheap cancellation check.
@@ -514,7 +399,7 @@ pub(crate) fn replay_descriptor(
         bail!("invalid game identifier");
     }
     let directory = output_directory.join("games").join(timestamp);
-    let (metadata, _) = read_recording_bundle(&directory)?;
+    let metadata = read_metadata(&directory.join(METADATA_JSON))?;
     let video =
         fs::metadata(directory.join(VIDEO_MP4)).context("recording video is unavailable")?;
     if !video.is_file() || video.len() == 0 {
@@ -525,87 +410,6 @@ pub(crate) fn replay_descriptor(
         game_timestamp: timestamp.to_owned(),
         video_url: format!("{origin}/games/{timestamp}/video.mp4"),
         media_timeline: metadata.media_timeline,
-    })
-}
-
-pub fn playback_probe(
-    output_directory: &Path,
-    origin: &str,
-    timestamp: &str,
-) -> Result<PlaybackProbe> {
-    if !valid_game_id(timestamp) {
-        bail!("invalid game identifier");
-    }
-    let game_directory = output_directory.join("games").join(timestamp);
-    let (metadata, log) = read_recording_bundle(&game_directory)?;
-    let video_size_bytes = fs::metadata(game_directory.join(VIDEO_MP4))
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
-    let mut game =
-        game_summary_from_bundle(video_size_bytes, timestamp.to_owned(), &metadata, &log);
-    let league_match = crate::league_match::read(&game_directory, &metadata.media_id);
-    let league_result =
-        crate::league_result::read(&game_directory, &metadata.media_id, league_match.as_ref());
-    game.league_result = league_result
-        .as_ref()
-        .map(chronobreak_league_data::ResultFile::summary);
-    if !game.video_available {
-        bail!("recording video is unavailable");
-    }
-
-    let local_player_name = metadata.local_player_summoner_name.clone();
-    let (participants, team_by_player, local_player_team) = derive_roster_context(&metadata, &log);
-    let mut player_timeline = Vec::new();
-    if let Some(local_player) = local_player_name.as_deref() {
-        for snapshot in &log.snapshots {
-            let Some(player) = snapshot
-                .players
-                .iter()
-                .find(|player| same_player(&player.summoner_name, local_player))
-            else {
-                continue;
-            };
-            player_timeline.push(PlayerTimelinePoint {
-                game_tick: snapshot.game_tick,
-                mapped_replay_time: map_game_tick(
-                    &log,
-                    snapshot.game_tick,
-                    &metadata.media_timeline,
-                )?,
-                cs: player.cs,
-                level: player.level,
-            });
-        }
-    }
-    player_timeline.sort_by_key(|point| point.game_tick);
-    player_timeline
-        .dedup_by(|current, previous| current.cs == previous.cs && current.level == previous.level);
-
-    let mut events = Vec::with_capacity(log.events.len());
-    for event in &log.events {
-        let relation = event_relation(event, local_player_team.as_deref(), &team_by_player);
-        events.push(viewer_event(
-            event.clone(),
-            relation,
-            map_game_tick(&log, event.game_tick, &metadata.media_timeline)?,
-        ));
-    }
-    events.sort_by_key(|event| event.game_tick);
-    let kda_timeline = local_player_name
-        .as_deref()
-        .map(|player| build_kda_timeline(player, &events))
-        .unwrap_or_default();
-    Ok(PlaybackProbe {
-        video_url: format!("{origin}/games/{timestamp}/video.mp4"),
-        game,
-        media_timeline: metadata.media_timeline,
-        local_player_name,
-        league_match,
-        league_result,
-        participants,
-        player_timeline,
-        kda_timeline,
-        events,
     })
 }
 
@@ -721,8 +525,9 @@ pub fn delete_game(output_directory: &Path, timestamp: &str) -> Result<()> {
     if !game_directory.is_dir() {
         bail!("recording does not exist");
     }
-    let summary = read_game_summary(&game_directory, timestamp.to_owned());
-    if summary.saved {
+    // Saved intent is media metadata, independent of optional telemetry. An
+    // unreadable metadata file cannot safely authorize destructive deletion.
+    if read_metadata(&game_directory.join(METADATA_JSON))?.saved {
         bail!("saved recordings must be unsaved before deletion");
     }
     fs::remove_dir_all(&game_directory)
@@ -788,10 +593,10 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let video_size_bytes = fs::metadata(directory.join(VIDEO_MP4))
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let Ok((metadata, game_log)) = read_recording_bundle(directory) else {
+    let Ok(metadata) = read_metadata(&directory.join(METADATA_JSON)) else {
         return incomplete_summary(timestamp, video_size_bytes);
     };
-    let mut game = game_summary_from_bundle(video_size_bytes, timestamp, &metadata, &game_log);
+    let mut game = game_summary_from_bundle(video_size_bytes, timestamp, &metadata);
     if game.video_available {
         let candidate = crate::league_match::read(directory, &metadata.media_id);
         game.league_result =
@@ -805,18 +610,9 @@ fn game_summary_from_bundle(
     video_size_bytes: u64,
     timestamp: String,
     metadata: &MetadataDocument,
-    game_log: &GameLogDocument,
 ) -> GameSummary {
-    let local_player_name = metadata.local_player_summoner_name.as_deref();
-    let (kills, deaths, assists) = local_player_name
-        .map(|player| derive_kda(player, &game_log.events))
-        .unwrap_or_default();
-    let (summoner_spells, keystone_id, items) = local_player_name
-        .map(|player| derive_loadout(player, &game_log.snapshots))
-        .unwrap_or_default();
-
-    let (participants, _, _) = derive_roster_context(metadata, game_log);
     GameSummary {
+        media_id: Some(metadata.media_id.clone()),
         timestamp,
         champion: metadata
             .local_player_champion
@@ -828,13 +624,15 @@ fn game_summary_from_bundle(
             .unwrap_or_else(|| "Unknown".to_owned()),
         duration_ms: display_duration_ms(&metadata.media_timeline),
         recorded_at: metadata.recorded_at.clone(),
-        kills,
-        deaths,
-        assists,
-        summoner_spells,
-        keystone_id,
-        items,
-        participants,
+        // History and replay semantics live in the indexed source data. These
+        // compatibility fields deliberately carry no inferred event history.
+        kills: 0,
+        deaths: 0,
+        assists: 0,
+        summoner_spells: Vec::new(),
+        keystone_id: None,
+        items: Vec::new(),
+        participants: Vec::new(),
         saved: metadata.saved,
         incomplete: false,
         video_size_bytes,
@@ -845,6 +643,7 @@ fn game_summary_from_bundle(
 
 fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
     GameSummary {
+        media_id: None,
         recorded_at: String::new(),
         timestamp,
         champion: "Unknown".to_owned(),
@@ -865,256 +664,8 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
     }
 }
 
-fn derive_loadout(
-    player: &str,
-    snapshots: &[GameSnapshot],
-) -> (Vec<String>, Option<u32>, Vec<GameItemSummary>) {
-    let stable = snapshots
-        .iter()
-        .filter_map(|snapshot| {
-            snapshot
-                .players
-                .iter()
-                .find(|candidate| same_player(&candidate.summoner_name, player))
-        })
-        .find(|candidate| candidate.summoner_spells.is_some() || candidate.keystone_id.is_some());
-    let summoner_spells = stable
-        .and_then(|candidate| candidate.summoner_spells.clone())
-        .unwrap_or_default();
-    let keystone_id = stable.and_then(|candidate| candidate.keystone_id);
-
-    let mut items = snapshots
-        .iter()
-        .rev()
-        .find_map(|snapshot| {
-            snapshot
-                .players
-                .iter()
-                .find(|candidate| same_player(&candidate.summoner_name, player))
-                .map(|candidate| {
-                    candidate
-                        .items
-                        .iter()
-                        .filter(|item| item.item_id > 0)
-                        .map(|item| GameItemSummary {
-                            item_id: item.item_id,
-                            slot: item.slot,
-                        })
-                        .collect::<Vec<_>>()
-                })
-        })
-        .unwrap_or_default();
-    items.sort_by_key(|item| item.slot);
-    items.dedup_by_key(|item| item.slot);
-
-    (summoner_spells, keystone_id, items)
-}
-
-fn derive_kda(player: &str, events: &[GameEvent]) -> (u32, u32, u32) {
-    let mut kills = 0;
-    let mut deaths = 0;
-    let mut assists = 0;
-    for event in events
-        .iter()
-        .filter(|event| event.event_type == "ChampionKill")
-    {
-        kills += u32::from(
-            event
-                .killer
-                .as_deref()
-                .is_some_and(|name| same_player(name, player)),
-        );
-        deaths += u32::from(
-            event
-                .victim
-                .as_deref()
-                .is_some_and(|name| same_player(name, player)),
-        );
-        assists += u32::from(
-            event
-                .assisters
-                .iter()
-                .flatten()
-                .any(|assister| same_player(assister, player)),
-        );
-    }
-    (kills, deaths, assists)
-}
-
-fn same_player(left: &str, right: &str) -> bool {
-    let left = left.split_once('#').map_or(left, |(name, _)| name);
-    let right = right.split_once('#').map_or(right, |(name, _)| name);
-    left.eq_ignore_ascii_case(right)
-}
-
-fn derive_roster_context(
-    metadata: &MetadataDocument,
-    log: &GameLogDocument,
-) -> (
-    Vec<ReplayParticipant>,
-    HashMap<String, String>,
-    Option<String>,
-) {
-    let local_player_name = metadata.local_player_summoner_name.as_deref();
-    let mut team_by_player = HashMap::new();
-    let mut roster = Vec::new();
-    let mut roster_seen = HashSet::new();
-
-    for player in log
-        .snapshots
-        .iter()
-        .flat_map(|snapshot| snapshot.players.iter())
-    {
-        if player.summoner_name.is_empty() {
-            continue;
-        }
-
-        let normalized_name = normalized_player_name(&player.summoner_name);
-        if roster_seen.insert(normalized_name.clone()) {
-            roster.push((
-                player.summoner_name.clone(),
-                player.champion.clone(),
-                player.team.clone(),
-            ));
-        }
-
-        if !player.team.is_empty() {
-            team_by_player
-                .entry(normalized_name)
-                .or_insert_with(|| player.team.clone());
-        }
-    }
-
-    let local_player_team = metadata.local_player_team.clone().or_else(|| {
-        local_player_name
-            .and_then(|player| team_by_player.get(&normalized_player_name(player)).cloned())
-    });
-
-    let mut participants = roster
-        .into_iter()
-        .map(|(summoner_name, champion, team)| ReplayParticipant {
-            summoner_name,
-            champion: if champion.is_empty() {
-                "Unknown".to_owned()
-            } else {
-                champion
-            },
-            relation: match local_player_team.as_deref() {
-                Some(local_team) if team.eq_ignore_ascii_case(local_team) => EventRelation::Ally,
-                Some(_) if !team.is_empty() => EventRelation::Enemy,
-                _ => EventRelation::Neutral,
-            },
-        })
-        .collect::<Vec<_>>();
-
-    participants.sort_by_key(|participant| match participant.relation {
-        EventRelation::Ally => 0,
-        EventRelation::Enemy => 1,
-        EventRelation::Neutral => 2,
-    });
-
-    (participants, team_by_player, local_player_team)
-}
-
-fn normalized_player_name(player: &str) -> String {
-    player
-        .split_once('#')
-        .map_or(player, |(name, _)| name)
-        .to_lowercase()
-}
-
-fn event_relation(
-    event: &GameEvent,
-    local_team: Option<&str>,
-    team_by_player: &HashMap<String, String>,
-) -> EventRelation {
-    let Some(local_team) = local_team else {
-        return EventRelation::Neutral;
-    };
-    let actor_team = event.acing_team.as_deref().or_else(|| {
-        event
-            .killer
-            .as_deref()
-            .or(event.acer.as_deref())
-            .and_then(|player| team_by_player.get(&normalized_player_name(player)))
-            .map(String::as_str)
-    });
-    match actor_team {
-        Some(team) if team.eq_ignore_ascii_case(local_team) => EventRelation::Ally,
-        Some(_) => EventRelation::Enemy,
-        None => EventRelation::Neutral,
-    }
-}
-
-fn viewer_event(
-    event: GameEvent,
-    relation: EventRelation,
-    mapped_replay_time: MappedReplayTime,
-) -> ViewerEvent {
-    ViewerEvent {
-        event_type: event.event_type,
-        game_tick: event.game_tick,
-        mapped_replay_time,
-        killer: event.killer,
-        victim: event.victim,
-        assisters: event.assisters.unwrap_or_default(),
-        dragon_type: event.dragon_type,
-        kill_streak: event.kill_streak,
-        acer: event.acer,
-        acing_team: event.acing_team,
-        turret: event.turret,
-        inhibitor: event.inhibitor,
-        result: event.result,
-        relation,
-    }
-}
-
-fn build_kda_timeline(player: &str, events: &[ViewerEvent]) -> Vec<KdaTimelinePoint> {
-    let mut points = Vec::new();
-    let mut kills = 0;
-    let mut deaths = 0;
-    let mut assists = 0;
-    for event in events
-        .iter()
-        .filter(|event| event.event_type == "ChampionKill")
-    {
-        let is_kill = event
-            .killer
-            .as_deref()
-            .is_some_and(|name| same_player(name, player));
-        let is_death = event
-            .victim
-            .as_deref()
-            .is_some_and(|name| same_player(name, player));
-        let is_assist = event.assisters.iter().any(|name| same_player(name, player));
-        if !(is_kill || is_death || is_assist) {
-            continue;
-        }
-        kills += u32::from(is_kill);
-        deaths += u32::from(is_death);
-        assists += u32::from(is_assist);
-        points.push(KdaTimelinePoint {
-            mapped_replay_time: event.mapped_replay_time.clone(),
-            kills,
-            deaths,
-            assists,
-        });
-    }
-    points
-}
-
-fn read_recording_bundle(directory: &Path) -> Result<(MetadataDocument, GameLogDocument)> {
-    let metadata = read_metadata(&directory.join(METADATA_JSON))?;
-    let game_log = read_game_log(&directory.join(GAME_LOG_JSON))?;
-    if metadata.media_id != game_log.media_id
-        || metadata.media_id != metadata.media_timeline.media_id
-    {
-        bail!("rebuild development library: schema-v2 media_id values do not match")
-    }
-    Ok((metadata, game_log))
-}
 pub(crate) fn recording_export_authority(directory: &Path) -> Result<ExportRecordingAuthority> {
-    let (metadata, _) = read_recording_bundle(directory)?;
+    let metadata = read_metadata(&directory.join(METADATA_JSON))?;
     Ok(ExportRecordingAuthority {
         media_timeline: metadata.media_timeline,
         encoder_used: metadata.encoder_used,
@@ -1122,7 +673,24 @@ pub(crate) fn recording_export_authority(directory: &Path) -> Result<ExportRecor
 }
 
 fn read_metadata(path: &Path) -> Result<MetadataDocument> {
-    let metadata: MetadataDocument = read_json(path)?;
+    use std::io::Read;
+    const MAX_METADATA_BYTES: u64 = 64 * 1024;
+    let file = fs::File::open(path).context("recording metadata is unavailable")?;
+    let info = file
+        .metadata()
+        .context("could not inspect recording metadata")?;
+    if !info.is_file() || info.len() > MAX_METADATA_BYTES {
+        bail!("recording metadata exceeds its bounded format")
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_METADATA_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .context("could not read recording metadata")?;
+    if bytes.len() as u64 > MAX_METADATA_BYTES {
+        bail!("recording metadata exceeds its bounded format")
+    }
+    let metadata: MetadataDocument =
+        serde_json::from_slice(&bytes).context("recording metadata is malformed")?;
     if metadata.schema_version != REPLAY_TIME_SCHEMA_VERSION {
         bail!("rebuild development library: metadata.json is not schema version 2")
     }
@@ -1153,25 +721,12 @@ fn read_metadata(path: &Path) -> Result<MetadataDocument> {
     Ok(metadata)
 }
 
-fn read_game_log(path: &Path) -> Result<GameLogDocument> {
-    let game_log: GameLogDocument = read_json(path)?;
-    if game_log.schema_version != REPLAY_TIME_SCHEMA_VERSION {
-        bail!("rebuild development library: game_log.json is not schema version 2")
-    }
-    if let Some(calibration) = &game_log.calibration {
-        calibration
-            .validate()
-            .context("rebuild development library: game_log.json calibration is invalid")?;
-    }
-    Ok(game_log)
-}
-
-fn map_game_tick(
-    game_log: &GameLogDocument,
+pub(crate) fn map_game_tick(
+    calibration: Option<&GameCalibrationV2>,
     game_tick: GameTick,
     media_timeline: &MediaTimelineV2,
 ) -> Result<MappedReplayTime> {
-    match &game_log.calibration {
+    match calibration {
         Some(calibration) => calibration
             .map_game_tick(game_tick, media_timeline.video.replay_end)
             .context("rebuild development library: game-log affine mapping is invalid"),
@@ -1185,6 +740,7 @@ fn display_duration_ms(media_timeline: &MediaTimelineV2) -> u64 {
     media_timeline.video.replay_end.get() / (REPLAY_TICKS_PER_SECOND / 1_000)
 }
 
+#[cfg(test)]
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     let bytes = fs::read(path).with_context(|| {
         format!(
@@ -1342,6 +898,177 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    // The disposable index tests need committed source observations.  This is
+    // deliberately a source fixture: no library-facing snapshot or replay
+    // projection is written alongside the recording media.
+    fn write_index_source_fixture(directory: &Path) {
+        use chronobreak_league_data::observation as obs;
+        let source = obs::SourceEpoch {
+            media_id: MediaId::parse(MEDIA_ID).unwrap(),
+            run_id: MediaId::parse("123e4567-e89b-42d3-a456-426614174001").unwrap(),
+            epoch: 0,
+        };
+        let header = obs::journal::Header::new(&source);
+        let file = fs::File::create(directory.join("league_observations.jsonl")).unwrap();
+        let mut writer = obs::journal::Writer::new(file, header.clone()).unwrap();
+        let mut state = obs::checkpoint::State::new(header, writer.position().clone());
+        let evidence = |id, endpoint, game_stats| obs::Evidence {
+            id: obs::ObservationId(id),
+            source: source.clone(),
+            endpoint,
+            timing: obs::RequestTiming {
+                start_us: id * 1_000,
+                end_us: id * 1_000 + 10,
+                received_at: "2026-08-05T10:00:00Z".into(),
+            },
+            game_stats,
+            calibration: Some(obs::ObservationId(1)),
+        };
+        let calibration: GameCalibrationV2 =
+            serde_json::from_value(available_calibration()).unwrap();
+        let player = obs::RosterPlayer {
+            participant: Some(obs::ParticipantId(1)),
+            riot_id: Some("Player#EUW".into()),
+            team: Some("ORDER".into()),
+            champion_name: Some("Syndra".into()),
+            level: Some(2),
+            scores: Some(obs::Scores {
+                creep_score: Some(8),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let roster = |id, game_stats| obs::Record::RosterObservation {
+            evidence: evidence(
+                id,
+                obs::Endpoint::PlayerList,
+                Some(obs::ObservationId(game_stats)),
+            ),
+            roster: obs::roster::RosterObservation {
+                full: true,
+                references: vec![obs::roster::PayloadId(1)],
+                payloads: vec![obs::roster::SharedPlayer {
+                    id: obs::roster::PayloadId(1),
+                    player: player.clone(),
+                }],
+            },
+        };
+        let tracker = obs::events::EventTracker::new(source.clone());
+        let resolved_local = || {
+            vec![obs::events::ActorReference {
+                participant: Some(obs::ParticipantId(1)),
+                status: obs::events::ActorStatus::Resolved,
+            }]
+        };
+        let unresolved = || {
+            vec![obs::events::ActorReference {
+                participant: None,
+                status: obs::events::ActorStatus::Unresolved,
+            }]
+        };
+        let events = tracker
+            .prepare(
+                &source,
+                vec![
+                    obs::Event {
+                        source_id: Some(0),
+                        source_time: Some(0.into()),
+                        game_tick: Some(GameTick::new(0).unwrap()),
+                        name: Some("ChampionKill".into()),
+                        killer: Some("Player#EUW".into()),
+                        victim: Some("Enemy#EUW".into()),
+                        actors: Some(
+                            [
+                                (obs::events::ActorRole::Killer, resolved_local()),
+                                (obs::events::ActorRole::Victim, unresolved()),
+                            ]
+                            .into(),
+                        ),
+                        ..Default::default()
+                    },
+                    obs::Event {
+                        source_id: Some(1),
+                        source_time: Some(1.into()),
+                        game_tick: Some(GameTick::new(1_000_000).unwrap()),
+                        name: Some("ChampionKill".into()),
+                        killer: Some("Enemy#EUW".into()),
+                        victim: Some("Player#EUW".into()),
+                        actors: Some(
+                            [
+                                (obs::events::ActorRole::Killer, unresolved()),
+                                (obs::events::ActorRole::Victim, resolved_local()),
+                            ]
+                            .into(),
+                        ),
+                        ..Default::default()
+                    },
+                    obs::Event {
+                        source_id: Some(2),
+                        source_time: Some(2.into()),
+                        game_tick: Some(GameTick::new(2_000_000).unwrap()),
+                        name: Some("DragonKill".into()),
+                        stolen: Some(true),
+                        recipient: Some("Player#EUW".into()),
+                        actors: Some(
+                            [(obs::events::ActorRole::Recipient, resolved_local())].into(),
+                        ),
+                        ..Default::default()
+                    },
+                ],
+            )
+            .unwrap();
+        let rows = vec![
+            obs::Record::Calibration {
+                evidence: evidence(1, obs::Endpoint::GameStats, None),
+                calibration,
+            },
+            obs::Record::Observation {
+                observation: Box::new(obs::Observation::Success {
+                    evidence: evidence(2, obs::Endpoint::GameStats, None),
+                    payload: obs::Payload::GameStats(obs::GameStats {
+                        game_tick: Some(GameTick::new(0).unwrap()),
+                        game_mode: Some("CLASSIC".into()),
+                        ..Default::default()
+                    }),
+                }),
+            },
+            obs::Record::LocalParticipant {
+                evidence: evidence(3, obs::Endpoint::PlayerList, Some(obs::ObservationId(2))),
+                participant: obs::ParticipantId(1),
+            },
+            roster(3, 2),
+            obs::Record::Observation {
+                observation: Box::new(obs::Observation::Success {
+                    evidence: evidence(4, obs::Endpoint::GameStats, None),
+                    payload: obs::Payload::GameStats(obs::GameStats {
+                        game_tick: Some(GameTick::new(3_000_000).unwrap()),
+                        game_mode: Some("CLASSIC".into()),
+                        ..Default::default()
+                    }),
+                }),
+            },
+            roster(5, 4),
+            obs::Record::EventObservation {
+                evidence: evidence(6, obs::Endpoint::Events, Some(obs::ObservationId(4))),
+                revisions: events.revisions().to_vec(),
+            },
+        ];
+        let position = writer.commit(&rows).unwrap();
+        state.apply(&rows, &position).unwrap();
+        fs::write(
+            directory.join("league_checkpoint.json"),
+            state.snapshot().encode().unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            directory.join("game_log.json"),
+            obs::manifest::Manifest::from_checkpoint(state.snapshot())
+                .encode()
+                .unwrap(),
+        )
+        .unwrap();
+    }
+
     pub(crate) fn write_game(
         root: &Path,
         timestamp: &str,
@@ -1385,26 +1112,7 @@ pub(crate) mod tests {
             .unwrap(),
         )
         .unwrap();
-        fs::write(
-            game.join(GAME_LOG_JSON),
-            serde_json::to_vec(&json!({
-                "schema_version": 2,
-                "media_id": MEDIA_ID,
-                "calibration": available_calibration(),
-                "snapshots": [
-                    {"game_tick":"0","players":[{"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","gold":null,"hp":null,"hp_max":null,"cs":1,"level":1,"items":[{"item_id":1056,"slot":0,"count":1}],"summoner_spells":["SummonerFlash","SummonerTeleport"],"keystone_id":8214}]},
-                    {"game_tick":"3000000","players":[{"summoner_name":"Player#EUW","team":"ORDER","champion":"Syndra","gold":null,"hp":null,"hp_max":null,"cs":8,"level":2,"items":[{"item_id":3020,"slot":1,"count":1},{"item_id":6657,"slot":0,"count":1},{"item_id":3340,"slot":6,"count":1}]}]}
-                ],
-                "events":[
-                    {"type":"ChampionKill","game_tick":"0","killer":"Player","victim":"Enemy","assisters":[]},
-                    {"type":"ChampionKill","game_tick":"1000000","killer":"Enemy","victim":"Player","assisters":[]},
-                    {"type":"ChampionKill","game_tick":"2000000","killer":"Ally","victim":"Enemy","assisters":["Player"]}
-                ],
-                "snapshot_derived_changes": []
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        write_index_source_fixture(&game);
         game
     }
 
@@ -1505,11 +1213,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn snapshot_preserves_strict_v2_and_incomplete_bundle_semantics() {
+    fn snapshot_requires_strict_media_without_reading_optional_source_data() {
         let root = tempdir().unwrap();
         write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
-        let missing = write_game(root.path(), "101", "2026-08-05T10:00:00Z", false);
-        fs::remove_file(missing.join(GAME_LOG_JSON)).unwrap();
+        write_game(root.path(), "101", "2026-08-05T10:00:00Z", false);
         let invalid = write_game(root.path(), "102", "2026-08-05T10:00:00Z", false);
         fs::write(invalid.join(METADATA_JSON), b"invalid").unwrap();
         let v1 = write_game(root.path(), "103", "2026-08-05T10:00:00Z", false);
@@ -1527,7 +1234,14 @@ pub(crate) mod tests {
         let snapshot = core_snapshot(root.path()).unwrap();
         assert_eq!(snapshot.usage.game_count, 6);
         assert_eq!(snapshot.usage.games_bytes, 20);
-        assert_eq!(snapshot.games.iter().filter(|g| g.incomplete).count(), 4);
+        assert_eq!(snapshot.games.iter().filter(|g| g.incomplete).count(), 3);
+        assert!(
+            snapshot
+                .games
+                .iter()
+                .find(|g| g.timestamp == "101")
+                .is_some_and(|g| !g.incomplete && g.video_available && g.participants.is_empty())
+        );
         assert!(
             snapshot
                 .games
@@ -1549,8 +1263,10 @@ pub(crate) mod tests {
                 .find(|g| g.timestamp == "104")
                 .is_some_and(|g| !g.video_available)
         );
-        for timestamp in ["101", "102", "103", "104", "105"] {
-            assert!(playback_probe(root.path(), "test-origin", timestamp).is_err());
+        for timestamp in ["102", "103", "104", "105"] {
+            assert!(
+                replay_descriptor(root.path(), "test-origin", timestamp, "token".into()).is_err()
+            );
         }
     }
 
@@ -1598,188 +1314,6 @@ pub(crate) mod tests {
         );
         assert!(result.is_err());
         assert_eq!(reads.get(), 1);
-    }
-
-    #[test]
-    fn summary_and_probe_share_normalized_roster_relations() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
-        let path = game.join(GAME_LOG_JSON);
-        let mut log: serde_json::Value = read_json(&path).unwrap();
-        let mut enemy = log["snapshots"][0]["players"][0].clone();
-        enemy["summoner_name"] = json!("Enemy#EUW");
-        enemy["team"] = json!("CHAOS");
-        enemy["champion"] = json!("Ahri");
-        let mut neutral = enemy.clone();
-        neutral["summoner_name"] = json!("Observer");
-        neutral["team"] = json!("");
-        neutral["champion"] = json!("");
-        log["snapshots"][0]["players"]
-            .as_array_mut()
-            .unwrap()
-            .extend([enemy, neutral]);
-        log["snapshots"][1]["players"][0]["summoner_name"] = json!("PLAYER#NA");
-        fs::write(&path, serde_json::to_vec(&log).unwrap()).unwrap();
-
-        let snapshot = core_snapshot(root.path()).unwrap();
-        let probe = playback_probe(root.path(), "test-origin", "100").unwrap();
-        assert_eq!(snapshot.games[0].participants, probe.participants);
-        assert_eq!(probe.game.participants, probe.participants);
-        assert_eq!(
-            probe
-                .participants
-                .iter()
-                .map(|player| (
-                    player.summoner_name.as_str(),
-                    player.champion.as_str(),
-                    &player.relation
-                ))
-                .collect::<Vec<_>>(),
-            [
-                ("Player#EUW", "Syndra", &EventRelation::Ally),
-                ("Enemy#EUW", "Ahri", &EventRelation::Enemy),
-                ("Observer", "Unknown", &EventRelation::Neutral)
-            ]
-        );
-    }
-
-    #[test]
-    fn missing_team_and_empty_roster_remain_truthful_in_summary_and_probe() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
-        let metadata_path = game.join(METADATA_JSON);
-        let mut metadata: serde_json::Value = read_json(&metadata_path).unwrap();
-        metadata["local_player_team"] = serde_json::Value::Null;
-        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-        let path = game.join(GAME_LOG_JSON);
-        let mut log: serde_json::Value = read_json(&path).unwrap();
-        for snapshot in log["snapshots"].as_array_mut().unwrap() {
-            snapshot["players"][0]["team"] = json!("");
-            snapshot["players"][0]["champion"] = json!("");
-        }
-        fs::write(&path, serde_json::to_vec(&log).unwrap()).unwrap();
-        let snapshot = core_snapshot(root.path()).unwrap();
-        let probe = playback_probe(root.path(), "test-origin", "100").unwrap();
-        assert_eq!(snapshot.games[0].participants, probe.participants);
-        assert_eq!(probe.game.participants, probe.participants);
-        assert_eq!(probe.participants.len(), 1);
-        assert_eq!(probe.participants[0].relation, EventRelation::Neutral);
-        assert_eq!(probe.participants[0].champion, "Unknown");
-
-        log["snapshots"] = json!([]);
-        fs::write(&path, serde_json::to_vec(&log).unwrap()).unwrap();
-        assert!(
-            core_snapshot(root.path()).unwrap().games[0]
-                .participants
-                .is_empty()
-        );
-        let probe = playback_probe(root.path(), "test-origin", "100").unwrap();
-        assert!(probe.participants.is_empty());
-        assert!(probe.game.participants.is_empty());
-    }
-
-    #[test]
-    fn builds_schema_v2_payload_with_exact_mapping_results() {
-        let root = tempdir().unwrap();
-        write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
-
-        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
-
-        assert_eq!(probe.media_timeline.media_id.as_str(), MEDIA_ID);
-        assert_eq!(probe.game.duration_ms, 10_000);
-        assert_eq!(probe.local_player_name.as_deref(), Some("Player#EUW"));
-        assert!(matches!(
-            probe.events[0].mapped_replay_time,
-            MappedReplayTime::BeforeMedia { .. }
-        ));
-        assert!(matches!(
-            probe.events[1].mapped_replay_time,
-            MappedReplayTime::InsideMedia { .. }
-        ));
-        assert!(matches!(
-            probe.events[2].mapped_replay_time,
-            MappedReplayTime::InsideMedia { .. }
-        ));
-        assert_eq!(probe.kda_timeline.len(), 3);
-        assert_eq!(
-            (probe.game.kills, probe.game.deaths, probe.game.assists),
-            (1, 1, 1)
-        );
-    }
-
-    #[test]
-    fn rejects_schema_v1_unknown_missing_and_mismatched_bundles() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
-        let metadata_path = game.join(METADATA_JSON);
-        let mut metadata: serde_json::Value = read_json(&metadata_path).unwrap();
-        metadata["schema_version"] = json!(1);
-        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-        assert!(
-            playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000")
-                .unwrap_err()
-                .to_string()
-                .contains("rebuild development library")
-        );
-
-        metadata["schema_version"] = json!(2);
-        metadata["unexpected"] = json!(true);
-        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-        assert!(playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").is_err());
-
-        metadata.as_object_mut().unwrap().remove("unexpected");
-        metadata.as_object_mut().unwrap().remove("media_timeline");
-        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-        assert!(playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").is_err());
-
-        write_game(root.path(), "1786000001", "2026-08-05T10:00:00Z", false);
-        let log_path = root
-            .path()
-            .join("games")
-            .join("1786000001")
-            .join(GAME_LOG_JSON);
-        let mut log: serde_json::Value = read_json(&log_path).unwrap();
-        log["schema_version"] = json!(1);
-        fs::write(&log_path, serde_json::to_vec(&log).unwrap()).unwrap();
-        assert!(
-            playback_probe(root.path(), "http://127.0.0.1:9000", "1786000001")
-                .unwrap_err()
-                .to_string()
-                .contains("game_log.json is not schema version 2")
-        );
-
-        log["schema_version"] = json!(2);
-        log["media_id"] = json!("123e4567-e89b-42d3-a456-426614174001");
-        fs::write(log_path, serde_json::to_vec(&log).unwrap()).unwrap();
-        assert!(
-            playback_probe(root.path(), "http://127.0.0.1:9000", "1786000001")
-                .unwrap_err()
-                .to_string()
-                .contains("media_id")
-        );
-    }
-
-    #[test]
-    fn reports_after_media_and_unavailable_without_saturation() {
-        let root = tempdir().unwrap();
-        let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
-        let log_path = game.join(GAME_LOG_JSON);
-        let mut log: serde_json::Value = read_json(&log_path).unwrap();
-        log["events"].as_array_mut().unwrap()[2]["game_tick"] = json!("30000000");
-        fs::write(&log_path, serde_json::to_vec(&log).unwrap()).unwrap();
-        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
-        assert!(matches!(
-            probe.events[2].mapped_replay_time,
-            MappedReplayTime::AfterMedia { .. }
-        ));
-
-        log["calibration"] = serde_json::Value::Null;
-        fs::write(log_path, serde_json::to_vec(&log).unwrap()).unwrap();
-        let probe = playback_probe(root.path(), "http://127.0.0.1:9000", "1786000000").unwrap();
-        assert!(matches!(
-            probe.events[0].mapped_replay_time,
-            MappedReplayTime::Unavailable { .. }
-        ));
     }
 
     #[test]

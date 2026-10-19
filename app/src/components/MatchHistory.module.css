@@ -4,11 +4,16 @@
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
+
+.dataFilters { color: var(--text-secondary); margin-bottom: var(--space-2); }
+.dataFilters summary { cursor: pointer; margin-bottom: var(--space-2); }
+.coverage { color: var(--text-muted); font-size: var(--type-meta-size); }
 
 .searchField {
   width: 240px;

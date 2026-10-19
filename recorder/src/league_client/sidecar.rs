@@ -36,7 +36,101 @@ pub(crate) struct DirectoryGuard {
     inner: platform::Directory,
 }
 
+/// Durable allocation identity; never a credential or an open handle.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DirectoryLocator {
+    pub path: std::path::PathBuf,
+    pub media_id: MediaId,
+    pub volume: u64,
+    pub file_id: [u8; 16],
+}
+
 impl DirectoryGuard {
+    pub(super) fn locator(&self) -> Result<DirectoryLocator, &'static str> {
+        #[cfg(windows)]
+        {
+            Ok(self.inner.locator())
+        }
+        #[cfg(not(windows))]
+        {
+            Err("context_non_windows")
+        }
+    }
+    pub(super) fn recover(locator: &DirectoryLocator) -> Result<Self, &'static str> {
+        let guard = Self::capture(&locator.path, locator.media_id.clone())?;
+        let current = guard.locator()?;
+        if current.volume != locator.volume || current.file_id != locator.file_id {
+            return Err("context_directory_replaced");
+        }
+        Ok(guard)
+    }
+    pub(super) fn replace_ledger(&self, bytes: &[u8]) -> Result<(), &'static str> {
+        if bytes.len() > super::post_game_ledger::MAX_BYTES {
+            return Err("ledger_size");
+        }
+        #[cfg(windows)]
+        {
+            self.inner
+                .replace_telemetry(super::post_game_ledger::FILE, bytes)
+        }
+        #[cfg(not(windows))]
+        {
+            Err("context_non_windows")
+        }
+    }
+    pub(super) fn result_published(&self, game_id: &str) -> bool {
+        #[cfg(windows)]
+        {
+            self.inner.validate_result_core(game_id).is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = game_id;
+            false
+        }
+    }
+    /// Telemetry owns only these fixed leaves inside this allocation generation.
+    /// Handles remain delete-shared; no operation recreates a missing directory.
+    pub(crate) fn create_journal(&self, media_id: &MediaId) -> Result<std::fs::File, &'static str> {
+        #[cfg(windows)]
+        {
+            self.inner.create_journal(media_id)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = media_id;
+            Err("context_non_windows")
+        }
+    }
+
+    pub(crate) fn replace_telemetry(
+        &self,
+        manifest: bool,
+        bytes: &[u8],
+    ) -> Result<(), &'static str> {
+        let (leaf, cap) = if manifest {
+            ("game_log.json", 64 * 1024)
+        } else {
+            (
+                "league_checkpoint.json",
+                chronobreak_league_data::observation::checkpoint::MAX_CHECKPOINT_BYTES,
+            )
+        };
+        if bytes.len() > cap {
+            return Err("telemetry_size");
+        }
+        #[cfg(windows)]
+        {
+            self.inner.replace_telemetry(leaf, bytes)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = leaf;
+            Err("context_non_windows")
+        }
+    }
+
     pub(crate) fn try_clone(&self) -> Result<Self, &'static str> {
         #[cfg(windows)]
         {
@@ -235,6 +329,58 @@ mod platform {
     }
 
     impl Directory {
+        pub fn locator(&self) -> DirectoryLocator {
+            DirectoryLocator {
+                path: self.path.clone(),
+                media_id: self.media_id.clone(),
+                volume: self.expected.volume,
+                file_id: self.expected.file,
+            }
+        }
+        fn pin_current(&self) -> Result<File, &'static str> {
+            plain_directory(&self.original)?;
+            let pinned = open_directory(&self.path, true)?;
+            if identity(&pinned)? != self.expected {
+                return Err("telemetry_directory_replaced");
+            }
+            Ok(pinned)
+        }
+
+        pub fn create_journal(&self, media_id: &MediaId) -> Result<File, &'static str> {
+            if media_id != &self.media_id {
+                return Err("telemetry_media_id");
+            }
+            let pinned = self.pin_current()?;
+            let mut temporary = OwnedTemporary::create_shared(&pinned, true)?;
+            self.pin_current()?;
+            temporary.install_leaf(&pinned, "league_observations.jsonl")?;
+            temporary
+                .file
+                .try_clone()
+                .map_err(|_| "telemetry_journal_clone")
+        }
+
+        pub fn replace_telemetry(&self, leaf: &str, bytes: &[u8]) -> Result<(), &'static str> {
+            self.replace_telemetry_with(leaf, bytes, || {})
+        }
+        pub(super) fn replace_telemetry_with(
+            &self,
+            leaf: &str,
+            bytes: &[u8],
+            before_install: impl FnOnce(),
+        ) -> Result<(), &'static str> {
+            let pinned = self.pin_current()?;
+            let mut temporary = OwnedTemporary::create_shared(&pinned, true)?;
+            temporary
+                .file
+                .write_all(bytes)
+                .map_err(|_| "telemetry_write")?;
+            temporary.file.sync_all().map_err(|_| "telemetry_flush")?;
+            before_install();
+            self.pin_current()?;
+            temporary.install_leaf_with(&pinned, leaf, true)
+        }
+
         pub fn try_clone(&self) -> Result<Self, &'static str> {
             Ok(Self {
                 path: self.path.clone(),
@@ -281,41 +427,66 @@ mod platform {
                 .map_err(|_| "result_write")?;
             temporary.file.sync_all().map_err(|_| "result_flush")?;
             before_validate();
+            self.validate_result_core(&result.game_id)?;
+            let existing = self.path.join(chronobreak_league_data::RESULT_FILE);
+            match std::fs::symlink_metadata(&existing) {
+                Ok(_) => {
+                    let installed: chronobreak_league_data::ResultFile =
+                        serde_json::from_slice(&self.read_result_file(
+                            chronobreak_league_data::RESULT_FILE,
+                            chronobreak_league_data::MAX_RESULT_BYTES as u64,
+                        )?)
+                        .map_err(|_| "result_existing_invalid")?;
+                    if !installed.valid_for(&self.media_id, &result.game_id) {
+                        return Err("result_existing_identity");
+                    }
+                    self.pin_current()?;
+                    return Ok(());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("result_existing_unreadable"),
+            }
+            let current = open_directory(&self.path, true)?;
+            if identity(&current)? != self.expected || identity(&pinned)? != self.expected {
+                return Err("result_directory_replaced");
+            }
+            temporary.install_leaf(&pinned, chronobreak_league_data::RESULT_FILE)?;
+            Ok(())
+        }
+
+        fn read_result_file(&self, leaf: &str, cap: u64) -> Result<Vec<u8>, &'static str> {
             // Reads are bounded and delete-shared; a race only abandons optional facts.
-            let read = |leaf: &str, cap: u64| -> Result<Vec<u8>, &'static str> {
-                use std::io::Read;
-                let file = std::fs::OpenOptions::new()
-                    .read(true)
-                    .share_mode((FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0)
-                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
-                    .open(self.path.join(leaf))
-                    .map_err(|_| "result_core_absent")?;
-                let meta = file.metadata().map_err(|_| "result_core_metadata")?;
-                if !meta.is_file()
-                    || meta.len() > cap
-                    || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
-                {
-                    return Err("result_core_invalid");
-                }
-                let mut bytes = Vec::new();
-                file.take(cap + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|_| "result_core_read")?;
-                if bytes.len() as u64 > cap {
-                    return Err("result_core_size");
-                }
-                Ok(bytes)
-            };
+            use std::io::Read;
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode((FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+                .open(self.path.join(leaf))
+                .map_err(|_| "result_core_absent")?;
+            let meta = file.metadata().map_err(|_| "result_core_metadata")?;
+            if !meta.is_file()
+                || meta.len() > cap
+                || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+            {
+                return Err("result_core_invalid");
+            }
+            let mut bytes = Vec::new();
+            file.take(cap + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "result_core_read")?;
+            if bytes.len() as u64 > cap {
+                return Err("result_core_size");
+            }
+            Ok(bytes)
+        }
+
+        pub fn validate_result_core(&self, game_id: &str) -> Result<(), &'static str> {
+            self.pin_current()?;
             #[derive(serde::Deserialize)]
             struct Core {
                 schema_version: u32,
                 media_id: MediaId,
                 media_timeline: chronobreak_replay_time::MediaTimelineV2,
-            }
-            #[derive(serde::Deserialize)]
-            struct Log {
-                schema_version: u32,
-                media_id: MediaId,
             }
             #[derive(serde::Deserialize)]
             struct Match {
@@ -324,22 +495,26 @@ mod platform {
                 media_id: MediaId,
                 game_id: String,
             }
-            let core: Core = serde_json::from_slice(&read("metadata.json", 256 * 1024)?)
-                .map_err(|_| "result_core_json")?;
-            let log: Log = serde_json::from_slice(&read("game_log.json", 16 * 1024 * 1024)?)
-                .map_err(|_| "result_core_json")?;
-            let provisional: Match = serde_json::from_slice(&read(MATCH_FILE, MAX_BYTES as u64)?)
-                .map_err(|_| "result_match_json")?;
+            let core: Core =
+                serde_json::from_slice(&self.read_result_file("metadata.json", 64 * 1024)?)
+                    .map_err(|_| "result_core_json")?;
+            use chronobreak_league_data::observation::manifest;
+            manifest::Manifest::decode(
+                &self.read_result_file(manifest::FILE, manifest::MAX_BYTES as u64)?,
+                &self.media_id,
+            )
+            .map_err(|_| "result_telemetry_manifest")?;
+            let provisional: Match =
+                serde_json::from_slice(&self.read_result_file(MATCH_FILE, MAX_BYTES as u64)?)
+                    .map_err(|_| "result_match_json")?;
             if core.schema_version != 2
                 || core.media_id != self.media_id
                 || core.media_timeline.media_id != self.media_id
                 || core.media_timeline.validate().is_err()
-                || log.schema_version != 2
-                || log.media_id != self.media_id
                 || provisional.schema_version != 1
                 || provisional.status != "provisional"
                 || provisional.media_id != self.media_id
-                || provisional.game_id != result.game_id
+                || provisional.game_id != game_id
             {
                 return Err("result_core_identity");
             }
@@ -351,11 +526,7 @@ mod platform {
             {
                 return Err("result_video_invalid");
             }
-            let current = open_directory(&self.path, true)?;
-            if identity(&current)? != self.expected || identity(&pinned)? != self.expected {
-                return Err("result_directory_replaced");
-            }
-            temporary.install_leaf(&pinned, chronobreak_league_data::RESULT_FILE)?;
+            self.pin_current()?;
             Ok(())
         }
         pub fn capture(path: &Path, media_id: MediaId) -> Result<Self, &'static str> {
@@ -474,6 +645,14 @@ mod platform {
             self.install_leaf(directory, MATCH_FILE)
         }
         fn install_leaf(&mut self, directory: &File, leaf: &str) -> Result<(), &'static str> {
+            self.install_leaf_with(directory, leaf, false)
+        }
+        fn install_leaf_with(
+            &mut self,
+            directory: &File,
+            leaf: &str,
+            replace: bool,
+        ) -> Result<(), &'static str> {
             let wide: Vec<u16> = leaf.encode_utf16().collect();
             let bytes = size_of::<FILE_RENAME_INFORMATION>() + wide.len() * 2;
             const {
@@ -486,12 +665,12 @@ mod platform {
             let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
             let mut status = IO_STATUS_BLOCK::default();
             // SAFETY: buffer is aligned and sized for the header and UTF-16 tail.
-            // Root handle remains owned; false ReplaceIfExists makes installation
-            // atomic/no-clobber. The name is one fixed leaf, never a pathname.
+            // Root handle remains owned; immutable sidecars use no-clobber and
+            // telemetry checkpoints use replacement. The name is a fixed leaf.
             unsafe {
                 info.write(FILE_RENAME_INFORMATION {
                     Anonymous: FILE_RENAME_INFORMATION_0 {
-                        ReplaceIfExists: false,
+                        ReplaceIfExists: replace,
                     },
                     RootDirectory: HANDLE(directory.as_raw_handle()),
                     FileNameLength: (wide.len() * 2) as u32,
@@ -542,11 +721,14 @@ mod platform {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[cfg(windows)]
-    fn result_fixture(directory: &Path, media: &MediaId) -> chronobreak_league_data::ResultFile {
+    pub(in crate::league_client) fn result_fixture(
+        directory: &Path,
+        media: &MediaId,
+    ) -> chronobreak_league_data::ResultFile {
         use serde_json::json;
         let candidate = super::super::association::fixture_candidate(media.clone());
         std::fs::write(directory.join(MATCH_FILE), encode(&candidate).unwrap()).unwrap();
@@ -563,11 +745,21 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        std::fs::write(
-            directory.join("game_log.json"),
-            serde_json::to_vec(&json!({"schema_version":2,"media_id":media})).unwrap(),
-        )
-        .unwrap();
+        use chronobreak_league_data::observation::{journal, manifest};
+        let log = manifest::Manifest {
+            schema_version: 2,
+            telemetry_version: 1,
+            media_id: media.clone(),
+            run_id: MediaId::new_v4(),
+            source_epoch: 0,
+            committed: journal::Position {
+                end_offset: 0,
+                last_sequence: 0,
+                checksum: [0; 32],
+            },
+            calibration: None,
+        };
+        std::fs::write(directory.join(manifest::FILE), log.encode().unwrap()).unwrap();
         std::fs::write(directory.join("video.mp4"), b"healthy publication fixture").unwrap();
         let b = candidate.result_binding();
         let eog:super::super::result::Eog=serde_json::from_value(json!({"gameId":b.game_id.parse::<u64>().unwrap(),"localPlayer":{"stats":{"WIN":1,"kills":4}}})).unwrap();
@@ -599,7 +791,7 @@ mod tests {
                     DirectoryGuard::capture(&path, media)
                         .unwrap()
                         .install_result(&result)
-                        .is_err()
+                        .is_ok()
                 );
                 assert_eq!(
                     before,
@@ -637,6 +829,92 @@ mod tests {
                 guard.install_result(&result).map(|_| ())
             };
             assert!(write.is_err());
+            assert!(!path.exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn telemetry_files_are_exclusive_bounded_and_pinned_to_the_original_allocation() {
+        let (_root, path, media) = fixture();
+        let guard = DirectoryGuard::capture(&path, media.clone()).unwrap();
+        assert!(guard.create_journal(&MediaId::new_v4()).is_err());
+        let mut journal = guard.create_journal(&media).unwrap();
+        journal.write_all(b"committed fixture").unwrap();
+        journal.sync_all().unwrap();
+        assert!(guard.create_journal(&media).is_err());
+        assert_eq!(
+            std::fs::read(path.join("league_observations.jsonl")).unwrap(),
+            b"committed fixture"
+        );
+        for manifest in [false, true] {
+            guard.replace_telemetry(manifest, b"first").unwrap();
+            guard.replace_telemetry(manifest, b"second").unwrap();
+        }
+        assert_eq!(
+            std::fs::read(path.join("league_checkpoint.json")).unwrap(),
+            b"second"
+        );
+        assert_eq!(
+            std::fs::read(path.join("game_log.json")).unwrap(),
+            b"second"
+        );
+        assert!(
+            guard
+                .replace_telemetry(true, &vec![0; 64 * 1024 + 1])
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(path.join("game_log.json")).unwrap(),
+            b"second"
+        );
+        assert!(
+            !std::fs::read_dir(&path).unwrap().any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp"))
+        );
+        // Windows permits deleting the delete-shared child (covered below),
+        // but a directory rename requires its open child handles to close.
+        drop(journal);
+        std::fs::rename(&path, path.with_extension("old")).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("sentinel"), b"replacement").unwrap();
+        assert!(guard.create_journal(&media).is_err());
+        for manifest in [false, true] {
+            assert!(guard.replace_telemetry(manifest, b"stale").is_err());
+        }
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read(path.join("sentinel")).unwrap(),
+            b"replacement"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn telemetry_writes_allow_deletion_and_never_recreate_a_deleted_directory() {
+        for leaf in ["game_log.json", "league_checkpoint.json"] {
+            let (_root, path, media) = fixture();
+            let guard = DirectoryGuard::capture(&path, media.clone()).unwrap();
+            let mut journal = guard.create_journal(&media).unwrap();
+            let deleted = path.clone();
+            assert!(
+                guard
+                    .inner
+                    .replace_telemetry_with(leaf, b"fixture", move || std::fs::remove_dir_all(
+                        deleted
+                    )
+                    .unwrap())
+                    .is_err()
+            );
+            assert!(!path.exists());
+            // A still-owned journal may finish on its unlinked file; it cannot
+            // traverse the path or restore a deleted recording.
+            let _ = journal.write_all(b"late worker bytes");
+            assert!(guard.create_journal(&media).is_err());
+            assert!(guard.replace_telemetry(true, b"late").is_err());
             assert!(!path.exists());
         }
     }

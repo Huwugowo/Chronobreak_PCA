@@ -43,6 +43,13 @@ pub(crate) struct FileFacts {
     modified: std::time::SystemTime,
 }
 
+impl FileFacts {
+    /// Stable only for this opened file generation; appending does not change it.
+    pub(crate) fn generation_key(&self) -> String {
+        format!("{:08x}-{:016x}", self.volume, self.index)
+    }
+}
+
 #[cfg(windows)]
 pub(crate) fn file_facts(file: &std::fs::File) -> Result<FileFacts> {
     use std::os::windows::io::AsRawHandle;

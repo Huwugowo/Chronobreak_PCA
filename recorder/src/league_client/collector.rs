@@ -80,6 +80,14 @@ pub(crate) struct ContextSession {
     cancellation: watch::Sender<bool>,
     task: Option<JoinHandle<(u64, u64)>>,
     runtime: tokio::runtime::Handle,
+    admission: watch::Sender<bool>,
+}
+
+struct Admission(watch::Sender<bool>);
+impl Drop for Admission {
+    fn drop(&mut self) {
+        self.0.send_replace(false);
+    }
 }
 
 pub(crate) struct ContextResult {
@@ -93,6 +101,7 @@ impl ContextSession {
         media_id: MediaId,
         recording_started: Instant,
         latest: watch::Receiver<Option<LiveObservation>>,
+        admission: watch::Sender<bool>,
     ) -> Result<Self, &'static str> {
         // Production service uses its two-worker runtime. Synchronous abandoned-owner
         // cleanup can join here without stalling the executor that must reap workers.
@@ -106,34 +115,60 @@ impl ContextSession {
             metrics: Metrics::default(),
             next_http_round: None,
         };
-        Ok(Self::start_with_source(
+        Ok(Self::start_with_source_and_admission(
             media_id,
             recording_started,
             latest,
             source,
+            admission,
         ))
     }
 
+    #[cfg(test)]
     fn start_with_source(
         media_id: MediaId,
         recording_started: Instant,
         latest: watch::Receiver<Option<LiveObservation>>,
         source: impl RoundSource + 'static,
     ) -> Self {
+        Self::start_with_source_and_admission(
+            media_id,
+            recording_started,
+            latest,
+            source,
+            watch::channel(true).0,
+        )
+    }
+
+    fn start_with_source_and_admission(
+        media_id: MediaId,
+        recording_started: Instant,
+        latest: watch::Receiver<Option<LiveObservation>>,
+        source: impl RoundSource + 'static,
+        admission: watch::Sender<bool>,
+    ) -> Self {
         let state = Arc::new(Mutex::new(Association::new(media_id, recording_started)));
         let (cancellation, receiver) = watch::channel(false);
         let task_state = Arc::clone(&state);
-        let task = tokio::spawn(collect(source, latest, receiver, task_state));
+        let task = tokio::spawn(collect(
+            source,
+            latest,
+            receiver,
+            task_state,
+            Admission(admission.clone()),
+        ));
         Self {
             state,
             cancellation,
             task: Some(task),
             runtime: tokio::runtime::Handle::current(),
+            admission,
         }
     }
 
     /// Synchronous admission boundary; the worker never admits after this returns.
     pub fn close_admission(&self) {
+        self.admission.send_replace(false);
         if let Ok(mut state) = self.state.lock() {
             state.close();
         }
@@ -141,6 +176,7 @@ impl ContextSession {
     }
 
     pub(crate) fn close_and_snapshot(&self) -> Option<ProvisionalCandidate> {
+        self.admission.send_replace(false);
         let candidate = self.state.lock().ok().and_then(|mut state| {
             state.close();
             state.snapshot()
@@ -218,6 +254,7 @@ async fn collect(
     mut latest: watch::Receiver<Option<LiveObservation>>,
     mut cancellation: watch::Receiver<bool>,
     state: Arc<Mutex<Association>>,
+    _admission: Admission,
 ) -> (u64, u64) {
     let mut last_sequence = 0;
     loop {
@@ -289,6 +326,7 @@ mod tests {
         state: Arc<Mutex<Association>>,
         cancellation: watch::Sender<bool>,
         task: JoinHandle<(u64, u64)>,
+        admission: watch::Receiver<bool>,
     }
     impl ClockCollector {
         fn start(
@@ -301,11 +339,19 @@ mod tests {
                 tokio::time::Instant::now().into_std(),
             )));
             let (cancellation, stop) = watch::channel(false);
-            let task = tokio::spawn(collect(source, receiver, stop, Arc::clone(&state)));
+            let (admission_tx, admission) = watch::channel(true);
+            let task = tokio::spawn(collect(
+                source,
+                receiver,
+                stop,
+                Arc::clone(&state),
+                Admission(admission_tx),
+            ));
             Self {
                 state,
                 cancellation,
                 task,
+                admission,
             }
         }
         fn close_admission(&self) {
@@ -395,6 +441,7 @@ mod tests {
         latest.send_replace(Some(live(&media, 4)));
         settle().await;
         let now_bound = !session.state.lock().unwrap().accepting();
+        assert!(!*session.admission.borrow(), "binding closes AP admission");
         for sequence in 5..365 {
             tokio::time::advance(CADENCE).await;
             latest.send_replace(Some(live(&media, sequence)));

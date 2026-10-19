@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { LibraryController } from "./libraryController";
 import type { LibrarySnapshot } from "./types";
+import { parseMediaId } from "./replayTime";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 
 const deferred = <T,>() => {
@@ -10,7 +11,7 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 const snapshot = (token: string, saved = false): LibrarySnapshot => ({ token,
-  games: [{ timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", duration_ms: 10_000,
+  games: [{ media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", duration_ms: 10_000,
     recorded_at: "", kills: 0, deaths: 0, assists: 0, summoner_spells: [], keystone_id: null,
     items: [], participants: [], saved, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null }],
   clips: [], usage: { games_bytes: 1, clips_bytes: 0, game_count: 1, clip_count: 0 },

@@ -30,20 +30,64 @@ Normal stop ends native capture, drains bounded GPU/encoder/mux work, flushes th
 
 `PollerSession` starts only after video readiness. Its monotonic epoch is the first Windows Graphics Capture `SystemRelativeTime`/QPC frame, mapped into the Rust clock, rather than FFmpeg spawn time. Calibration probes `/gamestats` until it observes five strictly advancing, clock-consistent samples and records a midpoint-derived affine schema-v2 game-to-replay calibration.
 
-After calibration, independent loops:
+One acquisition owner schedules independent endpoints:
 
-- poll cumulative `/eventdata` every second, deduplicate by event ID, normalize fields, and sort integer-microsecond game-clock observations chronologically;
-- poll game, active-player, and player-list data every ten seconds, storing snapshots and deriving item/level changes. Only the one initial aggregate snapshot may also seed cumulative event data; the one-second event loop is the sole steady-state event authority.
+- `/gamestats` every 250 ms during calibration, then every second;
+- cumulative `/eventdata` every second, with cursor optimization disabled;
+- `/playerlist` every two seconds, independent of AP and calibration availability;
+- identity-only `/activeplayer` bootstrap and fresh ten-second association work,
+  ending as soon as collector admission closes or binding completes.
 
-Requests are concurrent within a snapshot. Three consecutive failures stop only the affected polling task; successful requests reset the failure count. API loss never stops video. Poller cancellation and recorder-backend shutdown begin together, and diagnostic/benchmark evidence attributes their CPU and errors separately. This isolation is why the accepted pre-change data identified GDI acquisition/conversion—not polling—as the primary performance issue.
+At most one request per endpoint and four total may run. Bodies and parsing are
+bounded; requests retain a two-second deadline. Missed cadence skips are accounted
+without catch-up bursts. Repeated failures retain gaps and continue retrying; no
+three-failure retirement remains. Fresh AP/GS evidence feeds the existing two-round
+LCU association without extra Live requests. Equal game clocks invalidate current
+calibration; backward clocks require an admitted source-epoch boundary before new
+polls. Local participants and event actors use exact identity references. Unknown
+events and corrections are retained, with dedup progress acknowledged only after
+the journal commits. Unmapped observations remain available as unmapped evidence.
+API loss never stops video. Poller cancellation and recorder-backend shutdown begin
+together; aggregate diagnostics attribute acquisition and writer activity separately.
 
 ## Persistence
 
-`game_log.json` is rewritten atomically during capture through a temporary sibling and rename. Schema-v2 `metadata.json` is the canonical library metadata. It carries the validated media timeline and immutable `media_id`, which must match the game log before the app exposes a playable recording.
+Schema-v2 `metadata.json` is canonical media authority, including validated timeline
+and immutable `media_id`. Optional telemetry has an independently versioned compact
+append-only `league_observations.jsonl`, a small `game_log.json` commit manifest and
+an occasional `league_checkpoint.json` current-state hint. Shared `league-data`
+owns typed records, sparse field status, event revisions, roster payload sharing,
+commit framing and recovery. No runtime accumulated-history writer remains.
+
+The queue transfers owned typed records without a JSON handoff. Conservative
+credits bound admitted and in-flight record capacities, normalization scratch and
+journal bytes to 4 MiB/128 packets, reserving 64 KiB/eight packets for gap/control
+evidence. Credits include spare collection capacity and string escaping; they are
+not actual heap or encoded-byte measurements. A blocking worker groups at two
+seconds/256 KiB of credits/256 records and syncs before acknowledging commits.
+Event fingerprints stream into their digest; unchanged cumulative events need no
+payload copies. Checkpoint updates validate fallible roster changes before
+updating current context, without cloning the entire checkpoint on each commit.
+The initial manifest anchors the journal header. Thereafter the worker replaces
+the manifest with the checkpoint every 60 seconds and on normal stop; recovery
+validates the stale anchor and may consume later committed batches. These are
+triggers, not hard filesystem deadlines. Directory generation checks,
+delete-shared handles and relative creation/rename prevent late writes recreating
+a deleted or replaced bundle. Failed persistence leaves an unknown tail.
+
+Normal stop closes admission and drains accepted packets. A five-second shutdown
+deadline or dropped waiter marks the writer abandoned and transfers its handle to
+a process-lifetime supervisor. The worker checks abandonment between operations;
+an already running OS operation may finish against its pinned destination. It
+does not continue queued batches or publish a new hint after observing cancellation.
+Four permits bound all active or abandoned blocking writers; exhausted capacity
+disables optional telemetry for a new recording while capture continues. Finished
+retired handles are collected on subsequent starts/transfers. Telemetry setup or
+shutdown failure never changes video publication validity.
 
 New recordings use only the strict schema-v2 contract; old timing fields, schema-v1 parsing, approximate fallback, and migration are intentionally absent. The optional capture object records backend/ABI, adapter identities, direct interop, GPU stages, finite bounds, runtime ID, first/latest QPC values, final counters, and terminal evidence. Recording bundle IDs are Unix seconds with an optional canonical `-1` through `-999` collision suffix; application browsing, playback, save/delete, clip association, and asset routing all accept that same safe contract.
 
-Live Client poller degradation does not invalidate otherwise healthy video. Encoder/capture failure remains an explicit recorder error while the fragmented partial output and latest atomically written game log stay recoverable. The app does not infer clean completion from the new diagnostics object.
+Live Client poller degradation does not invalidate otherwise healthy video. Encoder/capture failure remains an explicit recorder error while fragmented partial output and the validated committed telemetry prefix remain recoverable. The app does not infer clean completion from diagnostics.
 
 ## Match-context ownership
 
@@ -78,12 +122,20 @@ but cannot replace exact game-ID confirmation. A provisional candidate remains
 explicitly non-authoritative until that handoff succeeds.
 
 The service snapshots that candidate at capture closure and starts a separate
-in-memory EOG job alongside poller/video shutdown. One coordinator owns at most
-four pending jobs, dropping the oldest on overflow: 18 attempts maximum, at least
-ten seconds between attempts, and expiry 180 seconds after closure. Transport
+EOG job alongside poller/video shutdown. One coordinator owns at most four pending
+jobs, dropping the oldest on overflow: 18 attempts maximum, at least ten seconds
+between attempts, and expiry 180 seconds after the original closure. The bounded
+atomic `league_eog_jobs.json` ledger at the library root retains accepted jobs,
+pre-dispatch attempt reservations, publication, confirmed facts and terminal state.
+Its exclusive process lock prevents two coordinators from spending one budget.
+Restart reopens only matching media/directory generations and preserves expiry,
+attempts and cadence. Clock rollback or uncertain expiry closes pending work.
+No credentials or live handles are persisted. A shared EOG response can satisfy
+several exact-ID checks while each job consumes its own reserved attempt. Transport
 permits serialize LCU HTTP and joined discovery workers across both collectors.
-Cancellation, expiry and deletion remain observable during acquisition. No journal
-or restart recovery exists, and optional setup failure leaves recording available.
+Cancellation, expiry and deletion remain observable during acquisition. Lifecycle
+queue saturation cancels pending work explicitly. Ledger failure suppresses further
+requests; optional setup failure leaves recording available.
 Aggregate request/byte/latency, pending, result-write and terminal counters emit
 when jobs terminate and at joined shutdown. Expiry, deletion and cancellation are
 counted separately, including during an owned acquisition. Diagnostics include
@@ -94,17 +146,27 @@ retains the allocation directory identity and installs one immutable, at-most-
 256-KiB `league_result.json` through exclusive creation, flush and handle-relative
 no-replace rename. Directory, temporary and read handles permit deletion. Before
 rename it rechecks the directory generation, core media UUID/timeline, provisional
-game ID and canonical video presence. Failure removes only its own temporary and
+game ID and canonical video presence. A valid already-installed result is accepted
+idempotently after restart. Failure removes only its own temporary and
 cannot change media readiness, saved state or provisional context.
 
-`chronobreak-league-data` owns the shared typed result contract. The recorder skips
-unlisted fields, retains nullable numeric counters and coarse family coverage,
+`chronobreak-league-data` owns the shared EOG decoder and schema-v2 result contract.
+The recorder skips unlisted fields, retains source identifiers, sparse field issues,
+stat aliases, individual early flags, nullable counters and coarse family coverage,
 rejects association contradictions, and keeps stats with an unknown outcome when
 binary WIN corroboration disagrees. WIN:0 remains unknown until a real local LOSS
 payload establishes that encoding; aggregate team.stats.WIN is never outcome proof.
+Each deferred EOG HTTP attempt has a fresh acquisition run and monotonic origin;
+its RFC3339 wall receipt is retained independently of replay coordinates. Recovered
+sidecars revalidate nested game IDs and issue/value consistency. Older development
+result schemas are optional unavailable data, without affecting healthy media.
 
 ## Performance constraints
 
-Watcher cadence is two seconds; event polling is one second; snapshots are ten seconds. Tokio missed ticks use delay semantics to avoid burst catch-up. Capture diagnostics are aggregate first/progress/terminal messages, not per-frame logs. Video remains in a bounded GPU-resident graph, and no full-video pass occurs at match end.
+Watcher cadence is two seconds. Live acquisition uses the bounded schedules above;
+their resource/frame-impact targets remain provisional pending measurements and
+live validation. Capture diagnostics are aggregate first/progress/terminal messages,
+not per-frame logs. Video remains in a bounded GPU-resident graph, and no full-video
+pass occurs at match end.
 
 `QB-PERF-002` applies the common benchmark budget: capped average-FPS loss <=2%, 1%-low loss <=5%, p95 increase <=5%, p99 increase <=8%, additional non-displayed rate <=0.1 percentage point, plus CPU/GPU saturation and memory/output/lifecycle safety gates. Physical validation is per adapter/encoder even though the implementation contract is vendor-neutral.

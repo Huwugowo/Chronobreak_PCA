@@ -16,7 +16,7 @@ import {
   exportClip,
   loadDdragonStatus,
   refreshLibrary,
-  loadPlaybackProbe,
+  loadReplayDescriptor,
   loadSettings,
   openClipsFolder,
   openOutputFolder,
@@ -58,6 +58,8 @@ import type {
   ClipExportPreset,
 } from "./types";
 import { LibraryController, type LibraryOrigin } from "./libraryController";
+import { HistoryController } from "./historyController";
+import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 import styles from "./App.module.css";
 
@@ -93,6 +95,10 @@ function App() {
     durations: (token, ids, retry) => import("./api").then(api => api.resolveClipDurations(token, ids, retry)),
   });
   const [libraryState, setLibraryState] = createSignal(controller.value);
+  const history = new HistoryController({ current: origin => controller.mayPublish(origin), catalog: indexCatalog, recording: indexRecording, history: queryHistory });
+  const [historyState, setHistoryState] = createSignal(history.value);
+  const unsubscribeHistory = history.subscribe(setHistoryState);
+  onCleanup(() => { unsubscribeHistory(); history.close(); });
   const [viewerSelection, setViewerSelection] = createSignal<{ game: GameSummary; origin: LibraryOrigin }>();
   const currentViewer = createMemo(() => {
     libraryState();
@@ -304,6 +310,24 @@ function App() {
     }
   };
 
+  const rebuildLeagueData = async () => {
+    const origin = controller.origin();
+    if (!origin) { showError("Rebuilding requires a current library snapshot."); return; }
+    setBusyId("settings");
+    try {
+      const operation = await controller.mutate(origin, "league-index", resetLeagueIndex);
+      if (!operation.admitted) {
+        if (operation.error) showError(operation.error);
+        return;
+      }
+      showNotice("Searchable League data reset. Recordings will be indexed as you browse.");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const loading = createMemo(
     () => (libraryState().snapshot === null && libraryState().refreshing) ||
       (settings() === undefined && settings.loading),
@@ -324,7 +348,7 @@ function App() {
       const game = games()?.find((candidate) => candidate.timestamp === fixture.game_timestamp);
       if (!game) throw new Error("export fixture is absent from the benchmark library");
       const probe = await controller.readReplay(exportOrigin, fixture.game_timestamp,
-        token => loadPlaybackProbe(fixture.game_timestamp, token));
+        token => loadReplayDescriptor(fixture.game_timestamp, token));
       const timeline = probe.media_timeline;
       const rawStart = typeof scenario.clip_start_ms === "number" ? scenario.clip_start_ms : 10_000;
       const rawEnd =
@@ -527,6 +551,12 @@ function App() {
   createEffect(() => {
     const configured = settings();
     if (configured && controller.value.root !== configured.output_path) controller.setRoot(configured.output_path);
+  });
+
+  createEffect(() => {
+    const current = navigation();
+    const state = libraryState();
+    history.setContext(current.screen === "library" && current.tab === "games" && state.actionable && !state.busy ? controller.origin() : null, state.snapshot?.games);
   });
 
   createEffect(() => {
@@ -865,6 +895,10 @@ function App() {
             <LibraryScreen
               tab={(navigation() as Extract<NavigationState, { screen: "library" }>).tab}
               games={games() ?? []}
+              history={historyState()}
+              onHistoryQuery={query => history.setQuery(query)}
+              onHistoryNext={() => history.nextPage()}
+              onHistoryFirst={() => history.firstPage()}
               clips={clips() ?? []}
               actionable={libraryState().actionable}
               durationStates={libraryState().durations}
@@ -911,6 +945,7 @@ function App() {
           </Match>
           <Match when={navigation().screen === "clip-export"}>
             <ClipExporterScreen
+              game={games()?.find(game => game.timestamp === (navigation() as Extract<NavigationState, { screen: "clip-export" }>).draft.gameTimestamp)}
               draft={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "clip-export" }>).draft
               }
@@ -942,6 +977,8 @@ function App() {
               onOpenFolder={() => void openOutputFolder().catch(showError)}
               onRetention={(days) => void saveSettings(settings()!.output_path, days)}
               onCleanUp={() => void cleanStorage()}
+              onRebuildLeagueData={() => void rebuildLeagueData()}
+              canRebuildLeagueData={libraryState().actionable && !libraryState().busy}
             />
           </Match>
         </Switch>

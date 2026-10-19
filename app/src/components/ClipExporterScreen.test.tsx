@@ -5,18 +5,17 @@ import ClipExporterScreen from "./ClipExporterScreen";
 import {
   chooseMusicFile,
   loadBuiltInMusic,
-  loadPlaybackProbe,
+  loadReplayDescriptor,
   prepareImportedMusicPreview,
   releaseImportedMusicPreview,
 } from "../api";
-import type { PlaybackProbe } from "../types";
 import { parseMediaId, type FrameBoundary, type ReplayTick } from "../replayTime";
 
 vi.mock("../api", () => ({
   chooseMusicFile: vi.fn(),
   exportClip: vi.fn(),
   loadBuiltInMusic: vi.fn(),
-  loadPlaybackProbe: vi.fn(),
+  loadReplayDescriptor: vi.fn(),
   prepareImportedMusicPreview: vi.fn(),
   releaseImportedMusicPreview: vi.fn(),
 }));
@@ -24,8 +23,8 @@ vi.mock("../api", () => ({
 afterEach(() => { vi.restoreAllMocks(); document.body.replaceChildren(); });
 
 it("retries the same imported file after preparation fails and releases the successful preview", async () => {
-  const probe: PlaybackProbe = {
-    game: { timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-14T00:00:00Z",
+  const descriptor = {
+    game: { media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-14T00:00:00Z",
       kills: 1, deaths: 2, assists: 3, duration_ms: 240_000, summoner_spells: [], keystone_id: null,
       items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null },
     video_url: "http://127.0.0.1:123/games/1/video.mp4",
@@ -33,11 +32,10 @@ it("retries the same imported file after preparation fails and releases the succ
       video: { codec: "h264", profile: "High", timeBase: { numerator: 1n, denominator: 60n }, firstPts: 0n,
         frameRate: { numerator: 60n, denominator: 1n }, frameCount: 14_400 as FrameBoundary,
         onePastLastPts: 14_400n, replayEnd: 11_520_000_000 as ReplayTick }, audio: { present: true } },
-    local_player_name: null, league_match: null, league_result: null, participants: [], player_timeline: [], kda_timeline: [], events: [],
   };
   const path = "C:\\Music\\same.wav";
   const preview = { url: "http://127.0.0.1:123/music-preview/retry", token: "retry" };
-  vi.mocked(loadPlaybackProbe).mockResolvedValue(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({snapshot_token:"test-snapshot",game_timestamp:"1",media_timeline:descriptor.media_timeline,video_url:descriptor.video_url});
   vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
   vi.mocked(chooseMusicFile).mockResolvedValue(path);
   vi.mocked(prepareImportedMusicPreview)
@@ -49,7 +47,7 @@ it("retries the same imported file after preparation fails and releases the succ
   const host = document.createElement("div");
   document.body.append(host);
   const dispose = render(() => <ClipExporterScreen
-    draft={{ gameTimestamp: "1", mediaId: probe.media_timeline!.mediaId,
+    draft={{ gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId,
       startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
     outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "C:\\output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }} onBack={() => {}} onExported={() => {}}
     onOpenClips={() => {}} onOpenFolder={() => {}}

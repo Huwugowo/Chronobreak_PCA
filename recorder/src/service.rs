@@ -69,7 +69,7 @@ struct ActiveRecording {
     diagnostics: watch::Receiver<RecordingEvidence>,
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
-    poller: PollerSession,
+    poller: Option<PollerSession>,
     match_context: Option<ContextSession>,
     match_directory: Option<DirectoryGuard>,
     post_game: Option<PostGameHandle>,
@@ -486,7 +486,7 @@ pub async fn run(
     let mut control_telemetry = RecorderControlTelemetry::default();
     let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
-    let post_game = match PostGameCoordinator::start() {
+    let post_game = match PostGameCoordinator::start(&output_path) {
         Ok(coordinator) => Some(coordinator),
         Err(code) => {
             warn!(code, "optional post-game enrichment unavailable");
@@ -1168,32 +1168,36 @@ async fn start_recording(
         None,
     );
 
-    let poller = match PollerSession::start(
-        &directory,
-        media_id.clone(),
-        session.video_started_at(),
-    )
-    .await
-    {
-        Ok(poller) => poller,
-        Err(error) => {
-            let cleanup = session
-                .stop_with_failure(format!("Live Client poller startup failed: {error:#}"))
-                .await
-                .err();
-            let error = error.context("failed to start the Live Client poller");
-            let error = match cleanup {
-                Some(cleanup_error) => {
-                    error.context(format!("video cleanup also failed: {cleanup_error:#}"))
-                }
-                None => error,
-            };
-            return Err(RecordingStartupFailure::retryable(error));
+    let (identity_admission, identity_open) = tokio::sync::watch::channel(true);
+    let telemetry_directory = match_directory
+        .as_ref()
+        .and_then(|directory| directory.try_clone().ok());
+    let poller = if let Some(directory) = telemetry_directory {
+        match PollerSession::start(
+            directory,
+            media_id.clone(),
+            session.video_started_at(),
+            identity_open,
+        )
+        .await
+        {
+            Ok(poller) => Some(poller),
+            Err(error) => {
+                warn!(%error, "optional League telemetry unavailable; video capture continues");
+                None
+            }
         }
+    } else {
+        warn!("optional League telemetry directory unavailable; video capture continues");
+        None
     };
     if *cancellation.borrow() {
         let (_, video_cleanup) = tokio::join!(
-            poller.stop(),
+            async {
+                if let Some(poller) = poller {
+                    poller.stop().await;
+                }
+            },
             session.stop_with_failure("recording startup was cancelled".to_owned())
         );
         let error = video_cleanup.err().map_or_else(
@@ -1232,17 +1236,25 @@ async fn start_recording(
         false,
     );
     let now = Instant::now();
-    let match_context = match ContextSession::start(
-        media_id.clone(),
-        session.video_started_at(),
-        poller.identity_observations(),
-    ) {
-        Ok(context) => Some(context),
-        Err(code) => {
-            warn!(code, "optional League context collector unavailable");
-            None
+    let match_context = if let Some(poller) = &poller {
+        match ContextSession::start(
+            media_id.clone(),
+            session.video_started_at(),
+            poller.identity_observations(),
+            identity_admission.clone(),
+        ) {
+            Ok(context) => Some(context),
+            Err(code) => {
+                warn!(code, "optional League context collector unavailable");
+                None
+            }
         }
+    } else {
+        None
     };
+    if match_context.is_none() {
+        identity_admission.send_replace(false);
+    }
     Ok(ActiveRecording {
         media_id,
         ffprobe_path: ffmpeg.ffprobe_path().to_path_buf(),
@@ -1365,8 +1377,16 @@ async fn stop_recording_inner(
             None => session.stop().await,
         }
     };
-    let (summary, video_result, context_result) =
-        tokio::join!(poller.stop(), video_stop, context_stop);
+    let (summary, video_result, context_result) = tokio::join!(
+        async {
+            match poller {
+                Some(poller) => poller.stop().await,
+                None => Default::default(),
+            }
+        },
+        video_stop,
+        context_stop
+    );
     if let Some(Ok(context)) = &context_result {
         info!(
             requests = context.requests,

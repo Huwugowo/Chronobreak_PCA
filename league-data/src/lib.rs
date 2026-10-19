@@ -2,7 +2,10 @@
 use chronobreak_replay_time::MediaId;
 use serde::{Deserialize, Serialize};
 
+pub mod observation;
+
 pub const RESULT_FILE: &str = "league_result.json";
+pub const RESULT_SCHEMA_VERSION: u32 = 2;
 pub const MAX_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_PLAYERS: usize = 64;
 pub const MAX_TEAMS: usize = 16;
@@ -58,6 +61,10 @@ macro_rules! stats {
         #[serde(deny_unknown_fields)]
         pub struct Stats { $(pub $field: Option<u64>,)+ }
         impl Stats {
+            pub const KEYS: &'static [&'static str] = &[$(stringify!($field)),+];
+            pub fn get(&self, key: &str) -> Option<u64> {
+                match key { $(stringify!($field) => self.$field,)+ _ => None }
+            }
             pub fn valid(&self) -> bool { true $(&& self.$field.is_none_or(|v| v <= MAX_COUNTER))+ }
             pub fn alias(key: &str) -> Option<&'static str> {
                 match key { $($($alias)|+ => Some(stringify!($field)),)+ _ => None }
@@ -169,12 +176,22 @@ pub struct Team {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ResultEvidence {
+    pub run_id: MediaId,
+    pub timing: observation::RequestTiming,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ResultFile {
     pub schema_version: u32,
     pub source: String,
     pub confirmed: bool,
     pub media_id: MediaId,
     pub game_id: String,
+    /// Immutable allowlisted facts, including sparse missingness and aliases.
+    pub source_facts: observation::FinalFacts,
+    pub evidence: Option<ResultEvidence>,
     pub outcome: Outcome,
     pub ended_early: bool,
     pub coverage: Families,
@@ -192,12 +209,23 @@ pub struct ResultFile {
 }
 impl ResultFile {
     pub fn valid_for(&self, media: &MediaId, game: &str) -> bool {
-        self.schema_version == 1
+        self.schema_version == RESULT_SCHEMA_VERSION
             && self.source == "lcu_eog"
             && self.confirmed
             && &self.media_id == media
             && self.game_id == game
             && canonical_game_id(game)
+            && self.source_facts.valid_for(game)
+            && self.evidence.as_ref().is_none_or(|e| {
+                e.timing.start_us <= e.timing.end_us
+                    && e.timing.end_us <= MAX_COUNTER
+                    && bounded(&e.timing.received_at)
+                    && time::OffsetDateTime::parse(
+                        &e.timing.received_at,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .is_ok()
+            })
             && self.teams.len() <= MAX_TEAMS
             && self.teams.iter().map(|t| t.players.len()).sum::<usize>() <= MAX_PLAYERS
             && self.local_player.as_ref().is_none_or(Player::valid)

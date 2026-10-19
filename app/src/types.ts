@@ -1,4 +1,5 @@
 export type GameSummary = {
+  media_id: import("./replayTime").MediaId | null;
   timestamp: string;
   champion: string;
   game_mode: string;
@@ -138,6 +139,11 @@ export type BuiltInMusicTrack = {
 };
 
 export type ViewerEvent = {
+  source?: import("./leagueSource").SourceEpoch;
+  source_id?: number;
+  actors?: import("./leagueSource").EventActors;
+  local_participant?: number | null;
+  evidence?: import("./leagueSource").Evidence;
   event_type: string;
   game_tick: string;
   /** Undefined means game calibration did not map this observation into video. */
@@ -146,6 +152,8 @@ export type ViewerEvent = {
   victim: string | null;
   assisters: string[];
   dragon_type: string | null;
+  stolen: boolean | null;
+  recipient: string | null;
   kill_streak: number | null;
   acer: string | null;
   acing_team: string | null;
@@ -155,21 +163,9 @@ export type ViewerEvent = {
   relation: "ally" | "enemy" | "neutral";
 };
 
-export type PlayerTimelinePoint = {
-  game_tick: string;
-  replay_tick?: ReplayTick;
-  cs: number;
-  level: number;
-};
-
-export type KdaTimelinePoint = {
-  replay_tick?: ReplayTick;
-  kills: number;
-  deaths: number;
-  assists: number;
-};
-
 export type ReplayParticipant = {
+  identity?: import("./leagueSource").ParticipantReference | null;
+  is_local?: boolean;
   summoner_name: string;
   champion: string;
   relation: "ally" | "enemy" | "neutral";
@@ -191,19 +187,6 @@ export type LeagueMatch = {
   local_riot_id: string;
   map_id: number;
   game_mode: string;
-};
-
-export type PlaybackProbe = {
-  game: GameSummary;
-  video_url: string;
-  media_timeline: import("./replayTime").MediaTimelineV2;
-  local_player_name: string | null;
-  league_match: LeagueMatch | null;
-  league_result: import("./leagueResult").LeagueResult | null;
-  participants: ReplayParticipant[];
-  player_timeline: PlayerTimelinePoint[];
-  kda_timeline: KdaTimelinePoint[];
-  events: ViewerEvent[];
 };
 
 export type StorageUsage = {

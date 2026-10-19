@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewerEvent } from "./types";
+import type { EventActors, SourceEpoch } from "./leagueSource";
+import { parseMediaId } from "./replayTime";
 import {
   dragonTimelineIcon,
   highestPriorityTimelineEvent,
@@ -7,6 +9,17 @@ import {
   timelineEventPresentation,
   timelineEventsAreHomogeneous,
 } from "./timelineEventPresentation";
+
+const source = (overrides: Partial<SourceEpoch> = {}): SourceEpoch => ({
+  media_id: parseMediaId("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+  run_id: parseMediaId("11111111-1111-1111-1111-111111111111"),
+  epoch: 1,
+  ...overrides,
+});
+
+const resolved = (participant: number): EventActors["killer"] => [
+  { participant, status: "resolved" },
+];
 
 const event = (
   eventType: string,
@@ -18,6 +31,8 @@ const event = (
   victim: null,
   assisters: [],
   dragon_type: null,
+  stolen: null,
+  recipient: null,
   kill_streak: null,
   acer: null,
   acing_team: null,
@@ -25,6 +40,9 @@ const event = (
   inhibitor: null,
   result: null,
   relation: "neutral",
+  source: source(),
+  local_participant: 1,
+  actors: {},
   ...overrides,
 });
 
@@ -35,6 +53,7 @@ describe("timeline event presentation", () => {
         killer: "Me#EUW",
         victim: "Enemy Mid#EUW",
         relation: "ally",
+        actors: { killer: resolved(1), victim: resolved(2) },
       }),
       "Me#TEST",
     );
@@ -49,6 +68,7 @@ describe("timeline event presentation", () => {
         killer: "Enemy Mid#EUW",
         victim: "Me#EUW",
         relation: "enemy",
+        actors: { killer: resolved(2), victim: resolved(1) },
       }),
       "Me#TEST",
     );
@@ -66,6 +86,7 @@ describe("timeline event presentation", () => {
         victim: "Enemy Jungle",
         assisters: ["Me#EUW"],
         relation: "ally",
+        actors: { killer: resolved(2), victim: resolved(3), assister: resolved(1) },
       }),
       "Me#TEST",
     );
@@ -79,6 +100,7 @@ describe("timeline event presentation", () => {
         killer: "Enemy Top",
         victim: "Ally Top",
         relation: "enemy",
+        actors: { killer: resolved(2), victim: resolved(3) },
       }),
       "Me#TEST",
     );
@@ -250,22 +272,26 @@ describe("timeline event presentation", () => {
     const ordinaryKill = event("ChampionKill", {
       killer: "Ally Top",
       victim: "Enemy Top",
+        actors: { killer: resolved(2), victim: resolved(3) },
     });
 
     const ownAssist = event("ChampionKill", {
       killer: "Ally Jungle",
       victim: "Enemy Jungle",
       assisters: ["Me#EUW"],
+        actors: { killer: resolved(2), victim: resolved(3), assister: resolved(1) },
     });
 
     const ownKill = event("ChampionKill", {
       killer: "Me#EUW",
       victim: "Enemy Mid",
+        actors: { killer: resolved(1), victim: resolved(3) },
     });
 
     const ownDeath = event("ChampionKill", {
       killer: "Enemy Carry",
       victim: "Me#EUW",
+        actors: { killer: resolved(2), victim: resolved(1) },
     });
 
     expect(
@@ -286,6 +312,7 @@ describe("timeline event presentation", () => {
       event("Multikill", {
         killer: "Me",
         kill_streak: 3,
+        actors: { killer: resolved(1) },
       }),
       "Me",
     );
@@ -294,5 +321,26 @@ describe("timeline event presentation", () => {
     expect(triple.icon).toBe("swords");
     expect(triple.multiplier).toBe(3);
     expect(triple.clusterKey).toBe("swords");
+  });
+
+  it("uses participant identity instead of a matching display-name base", () => {
+    const eventWithOtherMe = event("ChampionKill", {
+      killer: "Me#EUW",
+      victim: "Enemy",
+      actors: { killer: resolved(2), victim: resolved(3) },
+    });
+
+    const presentation = timelineEventPresentation(eventWithOtherMe, "Me#TEST");
+
+    expect(presentation.localRole).toBeNull();
+    expect(presentation.localPriority).toBe(0);
+  });
+
+  it("does not give unresolved actor telemetry local emphasis", () => {
+    const unresolved = event("ChampionKill", {
+      actors: { victim: [{ participant: null, status: "unresolved" }] },
+    });
+
+    expect(timelineEventPresentation(unresolved, "Me#EUW").localRole).toBeNull();
   });
 });

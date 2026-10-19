@@ -1,5 +1,5 @@
 import type { ViewerEvent } from "./types";
-import { samePlayer } from "./viewerUtils";
+import { actorKeys, participantKey } from "./leagueSource";
 
 export type TimelineEventKind =
   | "kill"
@@ -103,39 +103,14 @@ export const dragonTimelineIcon = (
 
 export const timelineEventLocalRole = (
   event: ViewerEvent,
-  localPlayerName: string | null,
+  _localPlayerName: string | null,
 ): TimelineEventLocalRole => {
-  if (!localPlayerName) return null;
-
-  if (
-    event.victim !== null &&
-    samePlayer(event.victim, localPlayerName)
-  ) {
-    return "victim";
-  }
-
-  if (
-    event.killer !== null &&
-    samePlayer(event.killer, localPlayerName)
-  ) {
-    return "killer";
-  }
-
-  if (
-    event.assisters.some((assister) =>
-      samePlayer(assister, localPlayerName),
-    )
-  ) {
-    return "assister";
-  }
-
-  if (
-    event.acer !== null &&
-    samePlayer(event.acer, localPlayerName)
-  ) {
-    return "actor";
-  }
-
+  if (!event.source || !event.local_participant) return null;
+  const local = participantKey({ source: event.source, participant: event.local_participant });
+  if (actorKeys(event, "victim").includes(local)) return "victim";
+  if (actorKeys(event, "killer").includes(local)) return "killer";
+  if (actorKeys(event, "assister").includes(local)) return "assister";
+  if (actorKeys(event, "acer").includes(local) || actorKeys(event, "recipient").includes(local)) return "actor";
   return null;
 };
 

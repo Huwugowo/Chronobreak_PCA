@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js";
 import type { ReplayParticipant } from "../types";
-import { samePlayer } from "../viewerUtils";
+import { participantKey } from "../leagueSource";
 import styles from "./ChampionFilter.module.css";
 
 type Props = {
@@ -26,9 +26,9 @@ const championPortraitUrl = (
 
 function ChampionFilter(props: Props) {
   const selected = (player: ReplayParticipant) =>
-    props.selectedPlayers.includes(player.summoner_name);
+    !!player.identity && props.selectedPlayers.includes(participantKey(player.identity));
   const local = (player: ReplayParticipant) =>
-    props.localPlayerName !== null && samePlayer(player.summoner_name, props.localPlayerName);
+    player.is_local === true;
   const groups = () => [
     { relation: "ally" as const, label: "ALLIES" },
     { relation: "enemy" as const, label: "ENEMIES" },
@@ -85,7 +85,8 @@ function ChampionFilter(props: Props) {
                         [styles.local]: local(player),
                       }}
                       type="button"
-                      onClick={() => props.onToggle(player.summoner_name)}
+                      onClick={() => player.identity && props.onToggle(participantKey(player.identity))}
+                      disabled={!player.identity}
                       aria-pressed={selected(player)}
                       aria-label={`${selected(player) ? "Remove" : "Add"} ${player.champion}, ${player.summoner_name}, from timeline filter`}
                       title={`${player.champion} · ${player.summoner_name}`}

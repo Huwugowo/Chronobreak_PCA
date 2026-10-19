@@ -3,7 +3,7 @@ import {
   type ReplayTick,
 } from "./replayTime";
 import type { ViewerEvent } from "./types";
-import { samePlayer } from "./viewerUtils";
+import { sameActor } from "./leagueSource";
 
 export type MappedTimelineEvent =
   ViewerEvent & { replay_tick: ReplayTick };
@@ -18,25 +18,6 @@ export type TimelineDisplayEvent<
 
 const META_ASSOCIATION_WINDOW =
   5 * REPLAY_TICKS_PER_SECOND;
-
-const sameOptionalPlayer = (
-  left: string | null,
-  right: string | null,
-): boolean => {
-  if (left === null || right === null) {
-    return left === right;
-  }
-
-  return samePlayer(left, right);
-};
-
-const compatibleOptionalPlayer = (
-  left: string | null,
-  right: string | null,
-): boolean =>
-  left === null ||
-  right === null ||
-  samePlayer(left, right);
 
 const compatibleOptionalValue = (
   left: string | null,
@@ -63,14 +44,8 @@ const duplicatesChampionKill = <
     (candidate) =>
       candidate.event_type === "ChampionKill" &&
       candidate.replay_tick === event.replay_tick &&
-      sameOptionalPlayer(
-        candidate.killer,
-        event.killer,
-      ) &&
-      sameOptionalPlayer(
-        candidate.victim,
-        event.victim,
-      ),
+      sameActor(candidate,"killer",event,"killer") &&
+      sameActor(candidate,"victim",event,"victim"),
   );
 
 const duplicatesTurretKill = <
@@ -85,10 +60,7 @@ const duplicatesTurretKill = <
       candidate.event_type === "TurretKilled" &&
       candidate.replay_tick === event.replay_tick &&
       candidate.relation === event.relation &&
-      compatibleOptionalPlayer(
-        candidate.killer,
-        event.killer,
-      ) &&
+      sameActor(candidate,"killer",event,"killer") &&
       compatibleOptionalValue(
         candidate.turret,
         event.turret,
@@ -187,11 +159,7 @@ export const timelineDisplayEvents = <
               result,
               metaEvent,
               (candidate) =>
-                candidate.killer !== null &&
-                samePlayer(
-                  candidate.killer,
-                  metaEvent.killer!,
-                ),
+                sameActor(candidate,"killer",metaEvent,"killer"),
             );
 
       if (target) {
@@ -226,8 +194,7 @@ export const timelineDisplayEvents = <
         result,
         metaEvent,
         (candidate) =>
-          candidate.relation ===
-          metaEvent.relation,
+          sameActor(candidate,"killer",metaEvent,"acer"),
       );
 
       /*
