@@ -13,7 +13,7 @@ pub(super) const HISTORY_SQL: &str = "SELECT r.media_id,r.summary_json,r.result_
     AND (?7=0 OR (r.telemetry_status='ready' AND EXISTS(SELECT 1 FROM events e
         WHERE e.media_id=r.media_id AND e.ingestion NOT IN ('invalid','conflict')
         AND (?8 IS NULL OR e.kind=?8) AND (?9 IS NULL OR e.stolen=?9) AND (?10 IS NULL OR e.kill_streak>=?10)
-        AND ((?11 IS NULL AND ?6 IS NULL) OR EXISTS(SELECT 1 FROM event_actors a
+        AND ((?11 IS NULL AND ?6 IS NULL) OR EXISTS(SELECT 1 FROM effective_event_actors a
             JOIN participants p ON p.media_id=a.media_id AND p.run_id=a.run_id AND p.epoch=a.epoch AND p.participant_id=a.participant_id
             WHERE a.media_id=e.media_id AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal AND a.status='resolved'
             AND (?11 IS NULL OR a.role=?11) AND (?6 IS NULL OR p.riot_id=?6))))))
@@ -79,6 +79,7 @@ pub(crate) enum MatchState {
 #[derive(Debug, Serialize)]
 pub(crate) struct IndexedEvent {
     pub revision: EventRevision,
+    pub effective_actors: Option<obs::events::EventActors>,
     pub sequence: u64,
     pub ordinal: u64,
     pub evidence: obs::Evidence,
@@ -152,6 +153,11 @@ pub(crate) struct HistoryStats {
     pub deaths: Option<u64>,
     pub assists: Option<u64>,
     pub items: Option<Vec<Option<u64>>>,
+    pub keystone_id: Option<u64>,
+    pub secondary_style: Option<u64>,
+    pub summoner_spells: Option<[Option<String>; 2]>,
+    pub creep_score: Option<u64>,
+    pub duration_seconds: Option<u64>,
     pub evidence: Option<obs::Evidence>,
     pub final_evidence: Option<chronobreak_league_data::ResultEvidence>,
     pub game_tick: Option<GameTick>,
@@ -164,6 +170,11 @@ impl HistoryStats {
             deaths: None,
             assists: None,
             items: None,
+            keystone_id: None,
+            secondary_style: None,
+            summoner_spells: None,
+            creep_score: None,
+            duration_seconds: None,
             evidence: None,
             final_evidence: None,
             game_tick: None,
@@ -308,7 +319,7 @@ impl Index {
                 AND e.ingestion NOT IN ('invalid','conflict')
                 AND (?6 IS NULL OR e.game_tick>?6 OR (e.game_tick=?6 AND e.source_id>?7))
                 AND (?8 IS NULL OR e.kind=?8) AND (?9 IS NULL OR e.stolen=?9) AND (?10 IS NULL OR e.kill_streak>=?10)
-                AND ((?11 IS NULL AND ?12 IS NULL) OR EXISTS(SELECT 1 FROM event_actors a
+                AND ((?11 IS NULL AND ?12 IS NULL) OR EXISTS(SELECT 1 FROM effective_event_actors a
                     WHERE a.media_id=e.media_id AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal AND a.status='resolved'
                     AND (?11 IS NULL OR a.participant_id=?11) AND (?12 IS NULL OR a.role=?12)))
                 ORDER BY e.game_tick,e.source_id LIMIT ?13")?;
@@ -356,6 +367,12 @@ impl Index {
                     .game_tick
                     .context("indexed event game tick")?;
                 events.push(IndexedEvent {
+                    effective_actors: self.effective_actors(
+                        &scope.media_id,
+                        unsigned(row, 1)?,
+                        unsigned(row, 2)?,
+                        &revision.event.actors,
+                    )?,
                     revision,
                     sequence: unsigned(row, 1)?,
                     ordinal: unsigned(row, 2)?,
@@ -531,9 +548,15 @@ impl Index {
             } else {
                 HistoryStats::unavailable()
             };
+            let mut game: GameSummary = serde_json::from_str(&row.get::<_, String>(1)?)?;
+            game.participants = if current {
+                self.history_participants(&media, result.as_ref())?
+            } else {
+                Vec::new()
+            };
             let item = HistoryRow {
                 media_id: media,
-                game: serde_json::from_str(&row.get::<_, String>(1)?)?,
+                game,
                 stats,
                 index_status: if current {
                     row.get(3)?
@@ -575,14 +598,118 @@ impl Index {
         })
     }
 
+    fn history_participants(
+        &self,
+        media: &MediaId,
+        result: Option<&ResultFile>,
+    ) -> Result<Vec<library::ReplayParticipant>> {
+        if let Some(result) = result.filter(|r| r.teams.iter().any(|t| !t.players.is_empty())) {
+            let local_team = result.local_player.as_ref().and_then(|p| p.team_id);
+            return Ok(result
+                .teams
+                .iter()
+                .flat_map(|team| {
+                    team.players.iter().map(move |player| {
+                        let team_id = match (team.team_id, player.team_id) {
+                            (Some(a), Some(b)) if a != b => None,
+                            (a, b) => a.or(b),
+                        };
+                        library::ReplayParticipant {
+                            summoner_name: player
+                                .riot_id
+                                .clone()
+                                .unwrap_or_else(|| "Unresolved player".into()),
+                            champion: player
+                                .champion_name
+                                .clone()
+                                .unwrap_or_else(|| "Unknown".into()),
+                            relation: match (local_team, team_id) {
+                                (Some(a), Some(b)) if a == b => library::EventRelation::Ally,
+                                (Some(_), Some(_)) => library::EventRelation::Enemy,
+                                _ => library::EventRelation::Neutral,
+                            },
+                        }
+                    })
+                })
+                .collect());
+        }
+        // One complete observed roster from one source; never combine epochs or
+        // infer a team from names. Pending imports cannot supply partial hints.
+        let latest: Option<(String, u64, u64, Option<u64>)> = self.db.query_row(
+            "SELECT r.run_id,r.epoch,r.observation_id,s.local_participant
+            FROM rosters r JOIN scopes s ON s.media_id=r.media_id AND s.run_id=r.run_id AND s.epoch=r.epoch
+            JOIN evidence e ON e.media_id=r.media_id AND e.run_id=r.run_id AND e.epoch=r.epoch AND e.observation_id=r.observation_id
+            JOIN recordings g ON g.media_id=r.media_id AND g.telemetry_status='ready'
+            WHERE r.media_id=?1 ORDER BY e.end_us DESC,r.observation_id DESC LIMIT 1",
+            [media.as_str()], |r| Ok((r.get(0)?, unsigned(r,1)?, unsigned(r,2)?, optional_unsigned(r,3)?)),
+        ).optional()?;
+        let Some((run, epoch, observation, local)) = latest else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self.db.prepare("SELECT p.data FROM roster_members m JOIN roster_payloads p
+            ON p.media_id=m.media_id AND p.run_id=m.run_id AND p.epoch=m.epoch AND p.payload_id=m.payload_id
+            WHERE m.media_id=?1 AND m.run_id=?2 AND m.epoch=?3 AND m.observation_id=?4 ORDER BY m.ordinal LIMIT 65")?;
+        let mut rows = statement.query(params![
+            media.as_str(),
+            run,
+            sql_u64(epoch)?,
+            sql_u64(observation)?
+        ])?;
+        let mut players: Vec<obs::RosterPlayer> = Vec::new();
+        while let Some(row) = rows.next()? {
+            ensure!(players.len() < obs::MAX_ROSTER, "history roster capacity");
+            players.push(serde_json::from_str(&row.get::<_, String>(0)?)?);
+        }
+        let local_team = players
+            .iter()
+            .find(|p| p.participant.map(|p| p.0) == local && local.is_some())
+            .and_then(|p| p.team.as_ref());
+        Ok(players
+            .iter()
+            .map(|player| library::ReplayParticipant {
+                summoner_name: player
+                    .riot_id
+                    .clone()
+                    .unwrap_or_else(|| "Unresolved player".into()),
+                champion: player
+                    .champion_name
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".into()),
+                relation: match (local_team, player.team.as_ref()) {
+                    (Some(a), Some(b)) if a == b => library::EventRelation::Ally,
+                    (Some(_), Some(_)) => library::EventRelation::Enemy,
+                    _ => library::EventRelation::Neutral,
+                },
+            })
+            .collect())
+    }
+
     fn history_stats(&self, media: &MediaId, result: Option<&ResultFile>) -> Result<HistoryStats> {
         if let Some(result) = result {
             let p = result.local_player.as_ref();
             return Ok(HistoryStats {
                 source: StatsSource::FinalEog,
+                summoner_spells: p.map(|p| {
+                    [p.spell1_id, p.spell2_id].map(|id| {
+                        id.filter(|id| *id > 0 && u32::try_from(*id).is_ok())
+                            .map(|id| id.to_string())
+                    })
+                }),
                 kills: p.and_then(|p| p.stats.kills),
                 deaths: p.and_then(|p| p.stats.deaths),
                 assists: p.and_then(|p| p.stats.assists),
+                keystone_id: p
+                    .and_then(|p| p.perks.first())
+                    .and_then(|perk| perk.id)
+                    .filter(|id| *id > 0 && u32::try_from(*id).is_ok()),
+                secondary_style: p
+                    .and_then(|p| p.secondary_style)
+                    .filter(|id| *id > 0 && u32::try_from(*id).is_ok()),
+                creep_score: p
+                    .and_then(|p| p.stats.minions.zip(p.stats.jungle_minions))
+                    .and_then(|(lane, neutral)| lane.checked_add(neutral))
+                    .filter(|total| *total <= chronobreak_league_data::MAX_COUNTER),
+                duration_seconds: result.duration_seconds.filter(|seconds| *seconds > 0),
                 items: result
                     .source_facts
                     .local_player
@@ -633,9 +760,24 @@ impl Index {
         let scores = player.scores.as_ref();
         Ok(HistoryStats {
             source: StatsSource::RecordedSnapshot,
+            summoner_spells: player.summoner_spells.as_ref().map(|spells| {
+                [&spells.one, &spells.two].map(|spell| {
+                    spell.as_ref().and_then(|spell| {
+                        spell
+                            .id
+                            .filter(|id| *id > 0 && u32::try_from(*id).is_ok())
+                            .map(|id| id.to_string())
+                            .or_else(|| spell.display_name.clone())
+                    })
+                })
+            }),
             kills: scores.and_then(|s| s.kills),
             deaths: scores.and_then(|s| s.deaths),
             assists: scores.and_then(|s| s.assists),
+            keystone_id: None,
+            secondary_style: None,
+            creep_score: None,
+            duration_seconds: None,
             items: player
                 .items
                 .map(|items| items.into_iter().map(|i| i.item_id).collect()),

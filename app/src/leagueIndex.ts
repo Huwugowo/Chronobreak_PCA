@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { mockOverlayPage, mockReplayWindow } from "./dev/mockReplay";
 import { decodeGameSummary, decodeLeagueMatch, decodeMappedReplayTick, loadGames, useMockApi } from "./api";
 import { decodeLeagueResult, resultEvidence, type LeagueResult, type ResultEvidence } from "./leagueResult";
 import { parseMediaId, parseReplayTick, type MediaId, type ReplayTick } from "./replayTime";
@@ -18,7 +19,6 @@ const mockIdentity = (media: MediaId) => {
   if (!identity) throw new Error("Mock recording identity missing");
   return identity;
 };
-const mockCoverage = (): QueryCoverage => ({ index_status: "ready", committed: null, uncommitted_tail_bytes: 0, gap_attempts: 0, unresolved_actors: 0, unmapped_observations: 0, successful_observations: 1, observed_from: "60000000", observed_through: "60000000" });
 
 export type HistoryCursor = { recorded_at: string; media_id: MediaId };
 export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_id?: number | null; outcome?: "win" | "loss" | "unknown" | null;
@@ -26,7 +26,8 @@ export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_
   participant_riot_id?: string | null; event_kind?: string | null; stolen?: boolean | null;
   minimum_kill_streak?: number | null; role?: ActorRole | null };
 export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavailable"; kills: number | null; deaths: number | null; assists: number | null;
-  items: Array<number | null> | null; evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
+  items: Array<number | null> | null; summoner_spells: Array<string | null> | null; keystone_id: number | null; secondary_style: number | null; creep_score: number | null; duration_seconds: number | null;
+  evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
 export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string };
 export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
 export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number };
@@ -43,9 +44,12 @@ export type SourceEvent = { source_id: number; source_time?: number; game_tick: 
   assisters?: string[]; recipient?: string; kill_streak?: number; acer?: string; acing_team?: string; dragon_type?: string; stolen?: boolean;
   turret?: string; inhibitor?: string; result?: string; actors?: EventActors; issues?: Record<string, unknown> };
 export type IndexedEvent = { revision: { event: SourceEvent; fingerprint: number[]; response_fingerprint: number[]; ingestion: string };
+  effective_actors: EventActors | null;
   sequence: number; ordinal: number; evidence: Evidence; replay_tick?: ReplayTick };
 export type EventWindow = SourceScope & { events: IndexedEvent[]; next: EventCursor | null; match_state: "observed_match" | "no_observed_match" | "unknown_coverage"; coverage: QueryCoverage };
+export type RosterSpell = { id?: number; display_name?: string; raw_display_name?: string; raw_description?: string; issues?: Record<string, unknown> };
 export type RosterPlayer = { participant?: number; riot_id?: string; champion_name?: string; team?: string; level?: number;
+  is_dead?: boolean; respawn_timer?: number; summoner_spells?: { one?: RosterSpell; two?: RosterSpell; issues?: Record<string, unknown> };
   scores?: { kills?: number; deaths?: number; assists?: number; creep_score?: number; ward_score?: number };
   items?: Array<{ item_id?: number; slot?: number; [key: string]: unknown }>; [key: string]: unknown };
 export type RosterAt = SourceScope & { game_tick: string | null; age_us: number | null; evidence: Evidence | null; players: RosterPlayer[]; coverage: QueryCoverage };
@@ -53,7 +57,18 @@ export type RecordingFacts = { media_id: MediaId; local_player_name: string | nu
 export type ReplayCursor = { replay_tick: ReplayTick; source_id: number };
 export type ReplayWindowQuery = { scope: SourceEpoch; start: ReplayTick; end: ReplayTick; at: ReplayTick; after?: ReplayCursor | null; limit: number };
 export type ReplayRoster = SourceScope & { game_tick: string; observed_replay_tick: ReplayTick; age_replay_ticks: ReplayTick; evidence: Evidence; players: RosterPlayer[]; coverage: QueryCoverage };
-export type ReplayWindow = SourceScope & { events: IndexedEvent[]; next: ReplayCursor | null; roster: ReplayRoster | null; coverage: QueryCoverage };
+export type ReplayIdentity = { participant: number; riot_id: string | null; champion_name: string | null; team: string | null };
+export type ReplayWindow = SourceScope & { events: IndexedEvent[]; next: ReplayCursor | null; roster: ReplayRoster | null; identities: ReplayIdentity[]; coverage: QueryCoverage };
+export type OverlayCursor = { replay_tick: ReplayTick; observation_id: number };
+export type OverlayQuery = { scope: SourceEpoch; after: OverlayCursor | null; revision: Position | null; limit: number };
+export type OverlayPlayer = { participant: number; level: number | null; is_dead: boolean | null; respawn_timer: number | null;
+  spells: [string | null, string | null] };
+export type OverlayScores = { kills: number | null; deaths: number | null; assists: number | null; creep_score: number | null };
+export type OverlaySample = OverlayCursor & { game_tick: string; players: OverlayPlayer[]; local_scores: OverlayScores | null };
+export type OverlayPage = SourceScope & { revision: Position; identities: ReplayIdentity[] | null; samples: OverlaySample[]; next: OverlayCursor | null };
+
+export const compareOverlayCursor = (a: OverlayCursor, b: OverlayCursor) =>
+  a.replay_tick - b.replay_tick || a.observation_id - b.observation_id;
 
 const status = (value: unknown): string => { if (!["ready", "pending", "unavailable"].includes(value as string)) throw new Error("index status"); return value as string; };
 const digest = (value: unknown): number[] => { const bytes = array(value, 32); if (bytes.length !== 32) throw new Error("index digest"); return bytes.map(b => integer(b, 0, 255)); };
@@ -91,11 +106,13 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
   const rows = array(r.rows, 50).map(value => {
     const row = exact(value, ["media_id", "game", "stats", "index_status"]); const media = parseMediaId(row.media_id); const game = decodeGameSummary(row.game, "history.game");
     if (media !== game.media_id) throw new Error("history media identity");
-    const s = exact(row.stats, ["source", "kills", "deaths", "assists", "items", "evidence", "final_evidence", "game_tick"]);
+    const s = exact(row.stats, ["source", "kills", "deaths", "assists", "items", "summoner_spells", "keystone_id", "secondary_style", "creep_score", "duration_seconds", "evidence", "final_evidence", "game_tick"]);
     if (!["final_eog", "recorded_snapshot", "unavailable"].includes(s.source as string)) throw new Error("history stats source");
     const evidence = s.evidence === null ? null : decodeEvidence(s.evidence); if (evidence && evidence.source.media_id !== media) throw new Error("history evidence media");
     if (s.final_evidence !== null) resultEvidence(s.final_evidence);
     const stats: HistoryStats = { source: s.source as HistoryStats["source"], kills: nullableInteger(s.kills), deaths: nullableInteger(s.deaths), assists: nullableInteger(s.assists),
+      keystone_id: nullableInteger(s.keystone_id), secondary_style: nullableInteger(s.secondary_style), creep_score: nullableInteger(s.creep_score), duration_seconds: nullableInteger(s.duration_seconds),
+      summoner_spells: s.summoner_spells === null ? null : array(s.summoner_spells, 2).map(v => v === null ? null : text(v)),
       items: s.items === null ? null : array(s.items, 32).map(nullableInteger), evidence, final_evidence: s.final_evidence as ResultEvidence | null,
       game_tick: s.game_tick === null ? null : gameTick(s.game_tick) };
     return { media_id: media, game, stats, index_status: status(row.index_status) };
@@ -126,10 +143,11 @@ export function decodeEventWindow(value: unknown, requested: SourceEpoch): Event
   if (!sameSource(scope.source, requested)) throw new Error("event source scope changed");
   if (!["observed_match", "no_observed_match", "unknown_coverage"].includes(r.match_state as string)) throw new Error("event match state");
   const events = array(r.events, 512).map(value => {
-    const row = exact(value, ["revision", "sequence", "ordinal", "evidence", "mapped_replay_time"]); const revision = exact(row.revision, ["event", "fingerprint", "response_fingerprint", "ingestion"]);
+    const row = exact(value, ["revision", "effective_actors", "sequence", "ordinal", "evidence", "mapped_replay_time"]); const revision = exact(row.revision, ["event", "fingerprint", "response_fingerprint", "ingestion"]);
     const evidence = decodeEvidence(row.evidence); if (!sameSource(evidence.source, scope.source) || evidence.endpoint !== "events") throw new Error("event observation scope");
     if (!["accepted", "unknown_kind", "invalid", "correction", "conflict"].includes(revision.ingestion as string)) throw new Error("event ingestion state");
     return { revision: { event: sourceEvent(revision.event), fingerprint: digest(revision.fingerprint), response_fingerprint: digest(revision.response_fingerprint), ingestion: revision.ingestion as string },
+      effective_actors: row.effective_actors === null ? null : decodeActors(row.effective_actors),
       sequence: integer(row.sequence, 1), ordinal: integer(row.ordinal), evidence, replay_tick: decodeMappedReplayTick(row.mapped_replay_time, "indexed_event") };
   });
   return { ...scope, events, next: eventCursor(r.next), match_state: r.match_state as EventWindow["match_state"], coverage: coverage(r.coverage) };
@@ -143,6 +161,22 @@ export function decodeRosterAt(value: unknown, requested: SourceEpoch): RosterAt
     if (Object.keys(p).some(key => !allowed.includes(key))) throw new Error("roster source field");
     for (const key of ["participant", "level", "skin_id"]) if (key in p) integer(p[key], key === "participant" ? 1 : 0);
     for (const key of ["riot_id", "riot_id_game_name", "riot_id_tag_line", "summoner_name", "champion_name", "raw_champion_name", "skin_name", "raw_skin_name", "team", "position"]) if (key in p) text(p[key]);
+    if (p.is_dead !== undefined && typeof p.is_dead !== "boolean") throw new Error("roster death state");
+    if (p.respawn_timer !== undefined && (typeof p.respawn_timer !== "number" || !Number.isFinite(p.respawn_timer) || p.respawn_timer < 0)) throw new Error("roster respawn timer");
+    if (p.summoner_spells !== undefined) {
+      const spells = object(p.summoner_spells);
+      for (const [key, value] of Object.entries(spells)) {
+        if (key === "issues") { issues(value); continue; }
+        if (key !== "one" && key !== "two") throw new Error("roster spell slot");
+        const label = object(value);
+        for (const [field, fact] of Object.entries(label)) {
+          if (field === "issues") issues(fact);
+          else if (field === "id") integer(fact);
+          else if (["display_name", "raw_display_name", "raw_description"].includes(field)) text(fact);
+          else throw new Error("roster spell label");
+        }
+      }
+    }
     if (p.issues !== undefined) issues(p.issues);
     if (p.scores !== undefined) { const scores = object(p.scores); for (const [key, v] of Object.entries(scores)) { if (key === "issues") issues(v); else if (["kills", "deaths", "assists", "creep_score"].includes(key)) integer(v); else if (key !== "ward_score" || typeof v !== "number" || !Number.isFinite(v) || v < 0) throw new Error("roster scores"); } }
     if (p.items !== undefined) array(p.items, 32).forEach(value => { const item = object(value); for (const key of ["item_id", "slot", "count", "price"]) if (key in item) integer(item[key]); });
@@ -174,7 +208,7 @@ export async function queryHistory(token: string, query: HistoryQuery): Promise<
     if (query.after) games = games.filter(game => game.recorded_at < query.after!.recorded_at || (game.recorded_at === query.after!.recorded_at && game.media_id! > query.after!.media_id));
     const page = games.slice(0, Math.min(Math.max(query.limit, 1), 50));
     const last = page[page.length - 1];
-    return { rows: page.map(game => ({ media_id: game.media_id!, game, index_status: "ready", stats: { source: "recorded_snapshot", kills: game.kills, deaths: game.deaths, assists: game.assists, items: game.items.map(i => i.item_id), evidence: null, final_evidence: null, game_tick: null } })), next: page.length === Math.min(Math.max(query.limit, 1), 50) && games.length > page.length && last ? { recorded_at: last.recorded_at, media_id: last.media_id! } : null, indexed_recordings: catalog.length, catalog_recordings: catalog.length, unknown_recordings: unsupportedSemantic ? catalog.length : 0 };
+    return { rows: page.map(game => ({ media_id: game.media_id!, game, index_status: "ready", stats: { source: "recorded_snapshot", kills: game.kills, deaths: game.deaths, assists: game.assists, items: game.items.map(i => i.item_id), keystone_id: game.keystone_id, secondary_style: null, summoner_spells: game.summoner_spells, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null } })), next: page.length === Math.min(Math.max(query.limit, 1), 50) && games.length > page.length && last ? { recorded_at: last.recorded_at, media_id: last.media_id! } : null, indexed_recordings: catalog.length, catalog_recordings: catalog.length, unknown_recordings: unsupportedSemantic ? catalog.length : 0 };
   }
   return decodeHistoryPage(await invoke("query_league_history", { snapshotToken: token, query }));
 }
@@ -195,7 +229,7 @@ export async function loadRecordingFacts(token: string, game: string, media: Med
   return decodeRecordingFacts(await invoke("league_recording_facts", { snapshotToken: token, gameTimestamp: game }), media);
 }
 export function decodeReplayWindow(value: unknown, requested: SourceEpoch): ReplayWindow {
-  const r = exact(value, ["source", "local_participant", "events", "next", "roster", "coverage"]);
+  const r = exact(value, ["source", "local_participant", "events", "next", "roster", "identities", "coverage"]);
   const window = decodeEventWindow({ source: r.source, local_participant: r.local_participant, events: r.events, next: null, match_state: "unknown_coverage", coverage: r.coverage }, requested);
   let next: ReplayCursor | null = null;
   if (r.next !== null) { const cursor = exact(r.next, ["replay_tick", "source_id"]); next = { replay_tick: parseReplayTick(cursor.replay_tick), source_id: integer(cursor.source_id) }; }
@@ -208,7 +242,13 @@ export function decodeReplayWindow(value: unknown, requested: SourceEpoch): Repl
     if (source.local_participant !== window.local_participant) throw new Error("Replay local identity changed");
     roster = { ...source, game_tick: source.game_tick, evidence: source.evidence, observed_replay_tick: observed, age_replay_ticks: age };
   }
-  return { source: window.source, local_participant: window.local_participant, events: window.events, next, roster, coverage: window.coverage };
+  const identities = array(r.identities, 64).map(value => {
+    const identity = exact(value, ["participant", "riot_id", "champion_name", "team"]);
+    return { participant: integer(identity.participant, 1), riot_id: identity.riot_id === null ? null : text(identity.riot_id),
+      champion_name: identity.champion_name === null ? null : text(identity.champion_name), team: identity.team === null ? null : text(identity.team) };
+  });
+  if (new Set(identities.map(identity => identity.participant)).size !== identities.length) throw new Error("Duplicate replay identity participant");
+  return { source: window.source, local_participant: window.local_participant, events: window.events, next, roster, identities, coverage: window.coverage };
 }
 export async function queryReplayWindow(token: string, game: string, query: ReplayWindowQuery): Promise<ReplayWindow> {
   if (useMockApi()) {
@@ -216,13 +256,64 @@ export async function queryReplayWindow(token: string, game: string, query: Repl
     if (!recording?.media_id) throw new Error("Recording not found");
     const identity = mockIdentity(recording.media_id);
     if (!sameSource(query.scope, { media_id: recording.media_id, run_id: identity.run_id, epoch: 0 })) throw new Error("Mock replay source changed");
-    const evidence: Evidence = { id: 1, source: query.scope, endpoint: "events", timing: { start_us: 0, end_us: 0, received_at: "2026-10-16T00:00:00Z" }, game_stats: 1, calibration: 1 };
-    const cov = mockCoverage();
-    const all = [{ replay_tick: 60 * 48_000_000 as ReplayTick, source_id: 1, name: "ChampionKill" }].filter(event => (!query.after || event.replay_tick > query.after.replay_tick || (event.replay_tick === query.after.replay_tick && event.source_id > query.after.source_id)) && event.replay_tick >= query.start && event.replay_tick <= query.end);
-    const events = all.slice(0, Math.min(Math.max(query.limit, 1), 512)).map((event, index) => ({ evidence, sequence: index + 1, ordinal: 0, replay_tick: event.replay_tick, revision: { event: { source_id: event.source_id, game_tick: String(event.replay_tick / 48), name: event.name, killer: identity.riot_id, actors: { killer: [{ status: "resolved", participant: 1, raw: identity.riot_id }] } }, fingerprint: Array(32).fill(0), response_fingerprint: Array(32).fill(0), ingestion: "accepted" as const } }));
-    return { source: query.scope, local_participant: 1, next: null, roster: { source: query.scope, local_participant: 1, game_tick: "0", observed_replay_tick: 0 as ReplayTick, age_replay_ticks: query.at, evidence: { ...evidence, id: 2, endpoint: "player_list" }, players: [{ participant: 1, riot_id: identity.riot_id, champion_name: recording.champion, team: "ORDER" }], coverage: cov }, coverage: cov, events: events as IndexedEvent[] };
+    return mockReplayWindow(recording, query, identity.riot_id);
   }
   return decodeReplayWindow(await invoke("query_league_replay_window", { snapshotToken: token, gameTimestamp: game, query: { ...query, start: String(query.start), end: String(query.end), at: String(query.at), after: query.after ? { ...query.after, replay_tick: String(query.after.replay_tick) } : null } }), query.scope);
+}
+export function decodeOverlayPage(value: unknown, query: OverlayQuery): OverlayPage {
+  const r = exact(value, ["source", "local_participant", "revision", "identities", "samples", "next"]);
+  const scope = sourceScope(r);
+  if (!sameSource(scope.source, query.scope)) throw new Error("Overlay source changed");
+  const revision = position(r.revision);
+  if (!revision || (query.revision && JSON.stringify(revision) !== JSON.stringify(query.revision))) throw new Error("Overlay revision changed");
+  if (Boolean(query.after) !== Boolean(query.revision)) throw new Error("Overlay continuation revision");
+  const identities = r.identities === null ? null : array(r.identities, 64).map(value => {
+    const p = exact(value, ["participant", "riot_id", "champion_name", "team"]);
+    return { participant: integer(p.participant, 1), riot_id: p.riot_id === null ? null : text(p.riot_id),
+      champion_name: p.champion_name === null ? null : text(p.champion_name), team: p.team === null ? null : text(p.team) };
+  });
+  if ((query.after === null) !== (identities !== null) || (identities && new Set(identities.map(p => p.participant)).size !== identities.length))
+    throw new Error("Overlay source identities");
+  const cursor = (value: unknown): OverlayCursor => {
+    const c = exact(value, ["replay_tick", "observation_id"]);
+    return { replay_tick: parseReplayTick(c.replay_tick), observation_id: integer(c.observation_id) };
+  };
+  let previous = query.after;
+  const samples = array(r.samples, Math.min(128, integer(query.limit, 1, 128))).map(value => {
+    const s = exact(value, ["replay_tick", "observation_id", "game_tick", "players", "local_scores"]);
+    const key = cursor({ replay_tick: s.replay_tick, observation_id: s.observation_id });
+    if (previous && compareOverlayCursor(key, previous) <= 0) throw new Error("Overlay sample order");
+    previous = key;
+    const players = array(s.players, 64).map(value => {
+      const p = exact(value, ["participant", "level", "is_dead", "respawn_timer", "spells"]);
+      if (p.is_dead !== null && typeof p.is_dead !== "boolean") throw new Error("Overlay death state");
+      if (p.respawn_timer !== null && (typeof p.respawn_timer !== "number" || !Number.isFinite(p.respawn_timer) || p.respawn_timer < 0)) throw new Error("Overlay respawn timer");
+      const spells = array(p.spells, 2).map(v => v === null ? null : text(v));
+      if (spells.length !== 2) throw new Error("Overlay spell slots");
+      return { participant: integer(p.participant, 1), level: nullableInteger(p.level), is_dead: p.is_dead as boolean | null,
+        respawn_timer: p.respawn_timer as number | null, spells: spells as [string | null, string | null] };
+    });
+    if (new Set(players.map(p => p.participant)).size !== players.length) throw new Error("Duplicate overlay participant");
+    const scores = s.local_scores === null ? null : exact(s.local_scores, ["kills", "deaths", "assists", "creep_score"]);
+    return { ...key, game_tick: gameTick(s.game_tick), players,
+      local_scores: scores === null ? null : { kills: nullableInteger(scores.kills), deaths: nullableInteger(scores.deaths),
+        assists: nullableInteger(scores.assists), creep_score: nullableInteger(scores.creep_score) } };
+  });
+  const next = r.next === null ? null : cursor(r.next);
+  if (next && (!samples.length || compareOverlayCursor(next, samples[samples.length - 1]) !== 0)) throw new Error("Overlay continuation cursor");
+  if (new TextEncoder().encode(JSON.stringify(value)).length > 2 * 1024 * 1024) throw new Error("Overlay page capacity");
+  return { ...scope, revision, identities, samples, next };
+}
+export async function queryOverlayPage(token: string, game: string, query: OverlayQuery): Promise<OverlayPage> {
+  if (useMockApi()) {
+    const recording = (await loadGames()).find(candidate => candidate.timestamp === game);
+    if (!recording?.media_id) throw new Error("Recording not found");
+    const identity = mockIdentity(recording.media_id);
+    if (!sameSource(query.scope, { media_id: recording.media_id, run_id: identity.run_id, epoch: 0 })) throw new Error("Mock replay source changed");
+    return mockOverlayPage(recording, query, identity.riot_id);
+  }
+  return decodeOverlayPage(await invoke("query_league_overlay_page", { snapshotToken: token, gameTimestamp: game,
+    query: { ...query, after: query.after ? { ...query.after, replay_tick: String(query.after.replay_tick) } : null } }), query);
 }
 export async function queryEvents(token: string, game: string, query: WindowQuery): Promise<EventWindow> {
   return decodeEventWindow(await invoke("query_league_events", { snapshotToken: token, gameTimestamp: game, query }), query.scope);

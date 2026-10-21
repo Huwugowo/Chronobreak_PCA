@@ -71,8 +71,8 @@ export class ReplayDataController {
   private readonly cancelSchedule: NonNullable<Dependencies["clearTimeout"]>;
 
   constructor(private readonly api: Dependencies) {
-    this.schedule = api.setTimeout ?? setTimeout;
-    this.cancelSchedule = api.clearTimeout ?? clearTimeout;
+    this.schedule = api.setTimeout ?? ((callback, delay) => globalThis.setTimeout(callback, delay));
+    this.cancelSchedule = api.clearTimeout ?? (handle => globalThis.clearTimeout(handle));
   }
 
   get value(): ReplayDataState { return this.state; }
@@ -179,7 +179,25 @@ export class ReplayDataController {
     this.debounce = null;
     this.deferredWindow = intent;
     if (!this.state.scopes.some(scope => sourceKey(scope.source) === sourceKey(query.scope))) return;
+    const cached = this.state.windows.find(window => this.cachedWindowKeys.get(window) === windowKey(intent.query))
+      ?? this.state.windows.find(window => {
+        const prior = this.cachedWindowQueries.get(window);
+        // A complete containing page already has every event the narrower
+        // viewport needs. Retain its objects; the timeline clips them locally.
+        return prior && !prior.after && !window.next && sameSource(prior.scope, query.scope)
+          && prior.at === query.at && prior.start <= query.start && prior.end >= query.end;
+      });
+    if (cached) {
+      this.deferredWindow = null;
+      this.publish({ activeWindow: cached, windowError: null });
+      this.setLoading("window", false);
+      return;
+    }
     this.armDeferredWindow();
+  }
+
+  isFollowingPage(window: ReplayWindow | null): boolean {
+    return window !== null && this.cachedWindowQueries.get(window)?.after != null;
   }
 
   /** Move to the next bounded page. The preceding page stays in the four-page cache. */

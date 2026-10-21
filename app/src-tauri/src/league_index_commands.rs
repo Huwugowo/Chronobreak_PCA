@@ -299,6 +299,33 @@ pub(crate) async fn query_league_authored(
 }
 
 #[tauri::command]
+pub(crate) async fn query_league_overlay_page(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    game_timestamp: String,
+    query: league_index::OverlayQuery,
+) -> Result<league_index::OverlayPage, LibraryRefreshError> {
+    let cache = state.league_index_cache.clone();
+    let bundle = game_timestamp.clone();
+    state
+        .library
+        .index_job(
+            Arc::clone(&state.roots),
+            &snapshot_token,
+            Some(&game_timestamp),
+            false,
+            move |root, snapshot, _| {
+                let descriptor = selected_media(root, snapshot, &bundle)?;
+                let index = Index::reader(&cache, root)?;
+                index.require_catalog(&snapshot.token)?;
+                index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
+                index.overlay_page(&query, &descriptor.media_timeline)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
 pub(crate) async fn query_league_replay_window(
     state: State<'_, AppState>,
     snapshot_token: String,

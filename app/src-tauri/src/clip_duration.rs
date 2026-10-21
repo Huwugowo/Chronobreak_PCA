@@ -15,7 +15,7 @@ const OUTPUT_LIMIT: u64 = 4096;
 const DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum DurationState {
     Available { duration_ms: u64 },
     Unavailable,
@@ -204,6 +204,18 @@ fn run_child(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn duration_wire_matches_frontend_state_contract() {
+        assert_eq!(
+            serde_json::to_value(DurationState::Available { duration_ms: 13000 }).unwrap(),
+            serde_json::json!({ "state": "available", "duration_ms": 13000 })
+        );
+        assert_eq!(
+            serde_json::to_value(DurationState::Unavailable).unwrap(),
+            serde_json::json!({ "state": "unavailable" })
+        );
+    }
 
     #[test]
     fn probe_arguments_only_allow_protected_http_mov_without_external_references() {

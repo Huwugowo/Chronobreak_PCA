@@ -4,6 +4,7 @@ mod clip_duration;
 mod clip_export;
 mod config;
 mod ddragon;
+mod export_process;
 mod league_authored;
 mod league_index;
 mod league_index_commands;
@@ -349,15 +350,25 @@ async fn export_clip(
             )
             .map_err(error_string)?;
     }
-    let result = clip_export::export(
-        &output_directory,
-        &music_directory,
-        media_tools.ffmpeg(),
-        media_tools.ffprobe(),
-        request,
-        progress,
-    )
-    .await;
+    let ffmpeg = media_tools.ffmpeg().to_owned();
+    let ffprobe = media_tools.ffprobe().to_owned();
+    let runtime = tokio::runtime::Handle::current();
+    let (result, current) = export_process::run_owned(move |cancellation| {
+        let result = runtime.block_on(clip_export::export(
+            &output_directory,
+            &music_directory,
+            &ffmpeg,
+            &ffprobe,
+            request,
+            progress,
+            &cancellation,
+        ));
+        let current = completion.selection_is_current();
+        drop(completion);
+        (result, current)
+    })
+    .await
+    .map_err(error_string)?;
     #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         let (kind, payload) = match &result {
@@ -386,8 +397,6 @@ async fn export_clip(
             .record_app_event(kind, payload)
             .map_err(error_string)?;
     }
-    let current = completion.selection_is_current();
-    drop(completion);
     let result = result.map_err(error_string)?;
     if !current {
         return Err(command_error(LibraryRefreshError::Superseded));
@@ -968,10 +977,10 @@ pub fn run() {
                     let config_path = config::default_config_path()?;
                     let config = Config::load_or_create(&config_path)?;
                     let output_directory = config.resolved_output_path()?;
-                    let app_data = app
+                    let app_data = config::app_data_path(app
                         .path()
                         .app_local_data_dir()
-                        .context("could not resolve the app data directory")?;
+                        .context("could not resolve the app data directory")?)?;
                     (config_path, config, output_directory, app_data)
                 }
             };
@@ -981,10 +990,10 @@ pub fn run() {
                 let config_path = config::default_config_path()?;
                 let config = Config::load_or_create(&config_path)?;
                 let output_directory = config.resolved_output_path()?;
-                let app_data = app
+                let app_data = config::app_data_path(app
                     .path()
                     .app_local_data_dir()
-                    .context("could not resolve the app data directory")?;
+                    .context("could not resolve the app data directory")?)?;
                 (config_path, config, output_directory, app_data)
             };
 
@@ -1170,6 +1179,7 @@ pub fn run() {
         league_index_commands::query_league_events,
         league_index_commands::query_league_roster,
         league_index_commands::query_league_replay_window,
+        league_index_commands::query_league_overlay_page,
         league_index_commands::league_recording_facts,
         league_index_commands::query_league_authored,
         league_index_commands::save_league_authored_record,
@@ -1217,6 +1227,7 @@ pub fn run() {
         league_index_commands::query_league_events,
         league_index_commands::query_league_roster,
         league_index_commands::query_league_replay_window,
+        league_index_commands::query_league_overlay_page,
         league_index_commands::league_recording_facts,
         league_index_commands::query_league_authored,
         league_index_commands::save_league_authored_record,

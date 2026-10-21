@@ -18,7 +18,7 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
 vi.mock("./leagueIndex", async original => ({ ...await original<typeof import("./leagueIndex")>(),
   indexCatalog: async (token: string) => ({ snapshot_token: token, items: [], next: null, catalog_recordings: 1 }),
   queryHistory: async () => ({ rows: [{ media_id: game.media_id, game, index_status: "ready",
-    stats: { source: "unavailable", kills: null, deaths: null, assists: null, items: null, evidence: null, final_evidence: null, game_tick: null } }],
+    stats: { source: "unavailable", kills: null, deaths: null, assists: null, items: null, keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null } }],
     next: null, indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 1 }),
   resetLeagueIndex: vi.fn(),
 }));

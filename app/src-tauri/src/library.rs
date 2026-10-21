@@ -599,9 +599,18 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let mut game = game_summary_from_bundle(video_size_bytes, timestamp, &metadata);
     if game.video_available {
         let candidate = crate::league_match::read(directory, &metadata.media_id);
-        game.league_result =
+        if let Some(result) =
             crate::league_result::read(directory, &metadata.media_id, candidate.as_ref())
-                .map(|r| r.summary());
+        {
+            game.keystone_id = result
+                .local_player
+                .as_ref()
+                .and_then(|player| player.perks.first())
+                .and_then(|perk| perk.id)
+                .and_then(|id| u32::try_from(id).ok())
+                .filter(|id| *id > 0);
+            game.league_result = Some(result.summary());
+        }
     }
     game
 }
@@ -1337,6 +1346,45 @@ pub(crate) mod tests {
         assert_eq!(games.len(), 2);
         assert!(!games[0].incomplete);
         assert!(games[1].incomplete);
+    }
+
+    #[test]
+    fn history_keystone_uses_only_validated_local_final_facts() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/preprod-library/library/games");
+        for (id, keystone) in [("1792431584", 9923), ("1792432630", 8112)] {
+            let root = tempdir().unwrap();
+            let target = root.path();
+            for name in [METADATA_JSON, "league_match.json", "league_result.json"] {
+                fs::copy(fixtures.join(id).join(name), target.join(name)).unwrap();
+            }
+            // This is a summary-only fixture, never opened as media.
+            fs::write(target.join(VIDEO_MP4), [0]).unwrap();
+            assert_eq!(
+                read_game_summary(target, id.into()).keystone_id,
+                Some(keystone)
+            );
+            let result_path = target.join("league_result.json");
+            let original: serde_json::Value =
+                serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+            for value in [
+                serde_json::Value::Null,
+                json!(0),
+                json!(u64::from(u32::MAX) + 1),
+            ] {
+                let mut changed = original.clone();
+                changed["local_player"]["perks"][0]["id"] = value;
+                fs::write(&result_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+                assert_eq!(read_game_summary(target, id.into()).keystone_id, None);
+            }
+            let mut changed = original;
+            changed["media_id"] = json!("11111111-2222-4333-8444-555555555555");
+            fs::write(&result_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+            let summary = read_game_summary(target, id.into());
+            assert!(summary.keystone_id.is_none() && summary.league_result.is_none());
+            fs::remove_file(result_path).unwrap();
+            assert!(read_game_summary(target, id.into()).keystone_id.is_none());
+        }
     }
 
     #[test]

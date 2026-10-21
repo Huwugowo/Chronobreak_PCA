@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "media_id": "3e8cf178-6c1d-4b11-a9e1-a0fb25a88713",
+  "media_timeline": {
+    "schema_version": 2,
+    "replay_ticks_per_second": "48000000",
+    "media_id": "3e8cf178-6c1d-4b11-a9e1-a0fb25a88713",
+    "video": {
+      "codec": "h264",
+      "profile": "High",
+      "time_base": {
+        "numerator": "1",
+        "denominator": "15360"
+      },
+      "first_pts": "0",
+      "frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "frame_count": "7915",
+      "one_past_last_pts": "2026240",
+      "replay_end": "6332000000",
+      "exact_cfr": true
+    },
+    "audio": {
+      "present": true,
+      "codec": "aac",
+      "sample_rate": 48000,
+      "time_base": {
+        "numerator": "1",
+        "denominator": "48000"
+      },
+      "first_pts": "0",
+      "replay_start": "0",
+      "replay_end": "6331968000"
+    },
+    "container": {
+      "start_seconds": {
+        "numerator": "0",
+        "denominator": "1"
+      },
+      "duration_seconds": {
+        "numerator": "131916667",
+        "denominator": "1000000"
+      }
+    },
+    "producer": {
+      "backend": "synthetic_fixture",
+      "expected_frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "expected_frame_count": "7915",
+      "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+    },
+    "capture": null
+  },
+  "recorded_at": "2026-10-19T17:57:11.1173432Z",
+  "game_mode": "PRACTICETOOL",
+  "local_player_summoner_name": "SUPERSTAR#VOID",
+  "local_player_champion": "Akali",
+  "local_player_team": "ORDER",
+  "encoder_used": "libx264",
+  "recording_codec": "h264",
+  "recording_profile": "high",
+  "recording_resolution": "1920x1080",
+  "capture_backend": "synthetic_fixture",
+  "capture_adapter_luid": null,
+  "capture_adapter_name": null,
+  "capture_output": null,
+  "encoder_interop": null,
+  "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+  "capture_support_label": "synthetic-fixture-no-capture",
+  "source_frames_surfaced": 0,
+  "source_frames_superseded": 0,
+  "cfr_duplicates": 0,
+  "cfr_discards": 0,
+  "pool_recreations": 0,
+  "capture": null,
+  "saved": false
+}

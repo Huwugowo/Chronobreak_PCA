@@ -1,11 +1,14 @@
-import { For, Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import type { ReplayParticipant } from "../types";
 import { participantKey } from "../leagueSource";
+import type { ParticipantSpellAssets, RecordedParticipantState } from "../replayProjection";
 import styles from "./ChampionFilter.module.css";
 
 type Props = {
   ddragonAssetBaseUrl?: string | null;
   participants: readonly ReplayParticipant[];
+  participantStates?: ReadonlyMap<string, RecordedParticipantState>;
+  spellAssets?: ParticipantSpellAssets;
   selectedPlayers: readonly string[];
   localPlayerName: string | null;
   mode: "panel" | "rail" | "fullscreen";
@@ -25,6 +28,14 @@ const championPortraitUrl = (
     : null;
 
 function ChampionFilter(props: Props) {
+  const state = (player: ReplayParticipant) => player.identity
+    ? props.participantStates?.get(participantKey(player.identity)) : undefined;
+  const statusDescription = (player: ReplayParticipant) => {
+    const current = state(player);
+    return [current?.level !== undefined ? `Level ${current.level}` : null,
+      current?.dead ? current.respawnSeconds !== undefined ? `Dead, respawn in ${current.respawnSeconds} seconds` : "Dead" : null,
+    ].filter(Boolean).join(" · ");
+  };
   const selected = (player: ReplayParticipant) =>
     !!player.identity && props.selectedPlayers.includes(participantKey(player.identity));
   const local = (player: ReplayParticipant) =>
@@ -73,8 +84,8 @@ function ChampionFilter(props: Props) {
       <div class={styles.groups}>
         <For each={groups()}>
           {(group) => (
-            <section class={`${styles.group} ${styles[`group${group.relation}`]}`}>
-              <h3>{group.label}</h3>
+            <section class={`${styles.group} ${styles[`group${group.relation}`]}`} aria-label={group.label}>
+              <Show when={props.mode !== "fullscreen"}><h3>{group.label}</h3></Show>
               <div class={styles.players}>
                 <For each={group.players}>
                   {(player) => (
@@ -89,11 +100,18 @@ function ChampionFilter(props: Props) {
                       disabled={!player.identity}
                       aria-pressed={selected(player)}
                       aria-label={`${selected(player) ? "Remove" : "Add"} ${player.champion}, ${player.summoner_name}, from timeline filter`}
-                      title={`${player.champion} · ${player.summoner_name}`}
+                      aria-description={statusDescription(player) || undefined}
+                      title={`${player.champion} · ${player.summoner_name}${statusDescription(player) ? ` · ${statusDescription(player)}` : ""}`}
                       data-testid="champion-filter-option"
                       data-player-name={player.summoner_name}
+                      data-dead={state(player)?.dead === true ? "true" : undefined}
                     >
-                      <span class={styles.portrait} aria-hidden="true">
+                      <Show when={props.mode === "fullscreen"}>
+                        <span class={styles.playerName} title={player.summoner_name.split("#", 1)[0]} aria-hidden="true">
+                          {player.summoner_name.split("#", 1)[0]}
+                        </span>
+                      </Show>
+                      <span classList={{ [styles.portrait]: true, [styles.dead]: state(player)?.dead === true }} aria-hidden="true">
                         <span class={styles.portraitFallback}>
                           {monogram(player.champion)}
                         </span>
@@ -116,7 +134,37 @@ function ChampionFilter(props: Props) {
                             />
                           )}
                         </Show>
+                        <Show when={state(player)?.level !== undefined}>
+                          <span class={styles.level} data-testid="champion-level">{state(player)?.level}</span>
+                        </Show>
+                        <Show when={state(player)?.dead && state(player)?.respawnSeconds !== undefined}>
+                          <span class={styles.respawn} data-testid="champion-respawn">{state(player)?.respawnSeconds}</span>
+                        </Show>
                       </span>
+                      <Show when={props.mode === "fullscreen"}>
+                        <span class={styles.spells} aria-hidden="true">
+                          <For each={[0, 1] as const}>
+                            {(slot) => {
+                              const spell = () => state(player)?.spells[slot];
+                              // Mount/decode each recorded asset once per source.
+                              // Seeking only changes visibility, never its URL.
+                              const assets = createMemo(() => [...new Set([
+                                ...(player.identity ? props.spellAssets?.get(participantKey(player.identity))?.[slot] ?? [] : []),
+                                ...(spell() ? [spell()!] : []),
+                              ])], undefined, { equals: (a, b) => a.length === b.length && a.every((label, i) => label === b[i]) });
+                              return <span class={styles.spell} title={spell()
+                                ? `${state(player)?.spellsAreInitial ? "First recorded: " : ""}${spell()}` : "Summoner spell unavailable"}>
+                                <For each={assets()}>{label =>
+                                  <img src={props.ddragonAssetBaseUrl ? `${props.ddragonAssetBaseUrl}/spell/${encodeURIComponent(label)}` : undefined}
+                                    hidden={label !== spell() || !props.ddragonAssetBaseUrl} alt="" decoding="async" draggable={false}
+                                    onError={event => { event.currentTarget.style.visibility = "hidden"; }}
+                                    onLoad={event => { const image = event.currentTarget; void image.decode().then(() => { image.style.visibility = ""; }, () => {}); }} />
+                                }</For>
+                              </span>;
+                            }}
+                          </For>
+                        </span>
+                      </Show>
                       <Show when={props.mode === "panel"}>
                         <span class={styles.identity}>
                           <strong>{player.champion}</strong>

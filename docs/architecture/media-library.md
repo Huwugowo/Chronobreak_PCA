@@ -24,6 +24,10 @@ Game-directory allocation in `recorder/src/storage.rs` is collision-safe. Record
 
 Game media/JSON and clip MP4 filenames are authoritative; clip JPEGs are optional presentation sidecars. `app/src-tauri/src/library.rs` reconstructs core game/clip summaries and usage by scanning the configured root. A local SQLite cache projects committed League observations for search and replay queries; it never authorizes media. Data Dragon assets, SQLite and frontend state are disposable caches. Authored bookmarks/recipes are stored separately in the library root's `league_authored_records.json` and survive cache rebuilds.
 
+Normal startup accepts an optional absolute `LEAGUE_REPLAY_APP_DATA_DIR` for app-owned files/caches; an invalid override fails instead of falling back. Its absence preserves Tauri's normal app-local-data directory. Library/config and WebView profile selection remain independent.
+
+Index schema v5 keeps producer event revisions/actor references unchanged. After complete journal validation, it atomically publishes separate derived actor links, effective coverage and ready state. A raw unresolved tagless actor can use exactly one validated explicit roster `riot_id_game_name` in the same media/run/epoch, with ASCII case-insensitive equality for both matching and collisions. Missing/conflicting identities and non-player labels stay unresolved; resolved/conflict producer references are retained. SQL semantic queries use the effective-actor view; IPC returns raw `revision` and separate `effective_actors` for presentation. The v5 cache filename triggers the normal disposable rebuild from filesystem evidence; no recording migration occurs.
+
 The `refresh_library` backend builds a `LibrarySnapshot` with an opaque token,
 games, lightweight clips with unknown duration, and storage usage from one scan.
 Each accepted game summary and video size is read once; clip source labels and
@@ -33,12 +37,19 @@ The core scan never invokes a media probe. The frontend consumes this snapshot
 through one `LibraryController`, which owns the root, token, selections,
 mutations, refresh coalescing, and optional duration enrichment.
 
-Game summaries obtain optional current roster display data from a bounded manifest
-and checkpoint, without scanning the journal. These are disposable hints, never
-media authority or verified historical event evidence. Historical queries use the
-validated journal's SQL projection. Both preserve exact full identity strings;
-missing team knowledge stays neutral. Missing or invalid telemetry keeps healthy
-video and saved intent available.
+Core game summaries carry no inferred roster. Checked history rows add roster
+display data from validated final facts, or one complete indexed observation from
+a single source when final rosters are unavailable. Cards consume this history
+projection rather than the core snapshot's empty compatibility participant list.
+Exact recorded names are preserved; missing team knowledge stays neutral. No
+journal scan or additional file read occurs on a history page. Missing or invalid
+telemetry keeps healthy video and saved intent available.
+Unfiltered first pages also include incomplete filesystem entries alongside the
+bounded SQL page; subsequent SQL pages do not repeat those entries. Summoner
+spells come from checked final facts or the selected recorded snapshot, preserving
+missing slots. The versioned Data Dragon summoner manifest resolves numeric IDs,
+internal keys and recorded display names to validated image filenames. An older
+offline cache still serves its other assets when that manifest is unavailable.
 
 AppState owns a disposable `LibraryCoordinator`: one blocking scan slot, immediate
 Busy rejection of excess requests, and one completed snapshot. The blocking
@@ -115,6 +126,14 @@ originating snapshot token through dispatch and reconcile the captured root
 after every admitted mutation attempt, including stale or partial completions.
 Response admission additionally checks root, request, token, and navigation
 identity, so late work cannot publish into a newer view.
+After an export attempt, only the same editor, source, root epoch and navigation
+can adopt its completed refresh's new token. Retry waits for descriptor validation
+against that token; refresh failure or changed source blocks stale dispatch.
+The admitted export worker owns completion, staging and child cleanup even when
+its waiter disappears. Encoding has a duration-derived deadline (5 minutes to
+6 hours) and a 120-second progress stall limit; thumbnails have a 30-second limit.
+Progress records retain at most 8 KiB and diagnostics 64 KiB. Interruption kills
+and reaps the child before admission releases and never triggers encoder fallback.
 
 ## Game bundles
 
@@ -201,16 +220,42 @@ page reads never aggregate all historical observations. History describes the la
 checked projection in its accepted snapshot; selected replay reads also recheck
 the current source stamp before returning data.
 KDA and inventory use nullable final EOG facts or an explicitly labelled recorded
-snapshot. An unknown scalar remains unknown. Negative event queries require
+snapshot. History also projects final keystone/secondary rune-tree IDs and total CS
+(lane plus neutral minions). CS requires both components; CS/min uses positive
+final game duration, independently of recording length or discontinuous replay
+clocks. These fields remain unavailable for provisional snapshots. An unknown
+scalar remains unknown. Negative event queries require
 successful observations spanning the requested interval, without relevant gaps,
 uncommitted bytes or unresolved/missing mappings; otherwise coverage stays unknown.
 
 The Games screen imports incrementally while idle. The viewer mounts video from
 the media descriptor first, then loads small final facts and selected-source replay
-windows. It debounces viewport/playhead requests, keeps at most four event pages,
-and offers explicit event pagination. A window contains at most 512 events and the
-latest mapped roster at or before the requested time, including sample age. It
-does not interpolate roster state across gaps or request SQL data every frame.
+windows. It debounces viewport requests, keeps at most four event pages,
+and offers explicit event pagination. A window contains at most 512 events;
+its legacy single-roster field is not the temporal overlay's state owner.
+The overlay independently loads compact complete snapshots from mapped SQLite
+rosters, in pages of at most 128 samples / 2 MiB. Continuations carry an exclusive
+replay-tick/observation-ID cursor and the same committed journal position, rejecting
+mixed revisions. The first page supplies consistent source-wide participant
+identities. Each sample contains only its mapped replay tick, original game clock,
+participant level/dead/timer/spells and local KDA/CS. Raw roster payloads, items,
+descriptions, event data and repeated observation evidence are not retained.
+One selected source retains at most 131,072 samples / 64 MiB serialized sample
+data; overflow is an explicit unavailable error, never silent truncation.
+Video-driven binary lookup requires a proven predecessor: while continuation is
+pending, the last loaded replay tick and later positions remain unavailable,
+including equal-tick samples split between pages. Event paging cannot evict this
+timeline. Source change/disposal releases it. The shared library reader retains
+one active read overall and one latest pending intent in each of two explicit
+lanes, details and overlay; navigation/root/refresh invalidates both.
+Replay details remain loading until the selected overlay timeline is complete;
+video playback stays available during loading or an optional-data failure.
+Only after completion, the frontend derives distinct first-recorded spell-loadout
+context from the earliest mapped sample. Before that sample, it supplies two
+nullable spell labels per recorded participant, without any temporal status.
+Normal samples replace it completely; source changes/errors clear it. No extra
+query, persisted data or final-result substitution is involved.
+It does not interpolate roster state across gaps or request SQL data every frame.
 Clip export obtains exact frame authority from the media descriptor.
 
 Settings can rebuild searchable data. Reset exclusively acquires the index writer

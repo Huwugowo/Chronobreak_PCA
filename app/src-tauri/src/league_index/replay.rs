@@ -41,12 +41,20 @@ pub(crate) struct ReplayRoster {
     pub coverage: QueryCoverage,
 }
 #[derive(Debug, Serialize)]
+pub(crate) struct ReplayIdentity {
+    pub participant: obs::ParticipantId,
+    pub riot_id: Option<String>,
+    pub champion_name: Option<String>,
+    pub team: Option<String>,
+}
+#[derive(Debug, Serialize)]
 pub(crate) struct ReplayWindow {
     pub source: obs::SourceEpoch,
     pub local_participant: Option<obs::ParticipantId>,
     pub events: Vec<IndexedEvent>,
     pub next: Option<ReplayCursor>,
     pub roster: Option<ReplayRoster>,
+    pub identities: Vec<ReplayIdentity>,
     pub coverage: QueryCoverage,
 }
 
@@ -125,6 +133,12 @@ impl Index {
                     source_id: unsigned(row, 6)?,
                 });
                 events.push(IndexedEvent {
+                    effective_actors: self.effective_actors(
+                        &scope.media_id,
+                        unsigned(row, 1)?,
+                        unsigned(row, 2)?,
+                        &revision.event.actors,
+                    )?,
                     revision,
                     sequence: unsigned(row, 1)?,
                     ordinal: unsigned(row, 2)?,
@@ -144,6 +158,11 @@ impl Index {
             events,
             next,
             roster,
+            identities: if coverage.index_status == "ready" {
+                self.replay_identities(scope)?
+            } else {
+                Vec::new()
+            },
             coverage,
         };
         ensure!(
@@ -151,6 +170,40 @@ impl Index {
             "replay window response capacity"
         );
         Ok(output)
+    }
+
+    // Source-wide descriptors, not a roster sample at the playhead. Each
+    // missing or conflicting descriptor stays unknown; no scores/items are read.
+    pub(super) fn replay_identities(&self, scope: &ScopeQuery) -> Result<Vec<ReplayIdentity>> {
+        let mut statement = self.db.prepare(
+            "SELECT json_extract(data,'$.participant'),
+            CASE WHEN COUNT(DISTINCT json_extract(data,'$.riot_id'))=1 THEN NULLIF(MIN(json_extract(data,'$.riot_id')),'') END,
+            CASE WHEN COUNT(DISTINCT json_extract(data,'$.champion_name'))=1 THEN NULLIF(MIN(json_extract(data,'$.champion_name')),'') END,
+            CASE WHEN COUNT(DISTINCT json_extract(data,'$.team'))=1 THEN NULLIF(MIN(json_extract(data,'$.team')),'') END
+            FROM roster_payloads WHERE media_id=?1 AND run_id=?2 AND epoch=?3
+            AND json_extract(data,'$.participant') IS NOT NULL
+            GROUP BY json_extract(data,'$.participant')
+            ORDER BY json_extract(data,'$.participant') LIMIT 65",
+        )?;
+        let mut rows = statement.query(params![
+            scope.media_id.as_str(),
+            scope.run_id.as_str(),
+            sql_u64(scope.epoch)?
+        ])?;
+        let mut identities = Vec::new();
+        while let Some(row) = rows.next()? {
+            ensure!(
+                identities.len() < obs::MAX_ROSTER,
+                "replay identity capacity"
+            );
+            identities.push(ReplayIdentity {
+                participant: obs::ParticipantId(unsigned(row, 0)?),
+                riot_id: row.get(1)?,
+                champion_name: row.get(2)?,
+                team: row.get(3)?,
+            });
+        }
+        Ok(identities)
     }
 
     fn roster_at_replay(&self, scope: &ScopeQuery, at: ReplayTick) -> Result<Option<ReplayRoster>> {

@@ -1,4 +1,5 @@
 import {
+  For,
   Match,
   Show,
   Switch,
@@ -58,10 +59,11 @@ import { createPlaybackDiagnostics } from "../playbackDiagnostics";
 import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
-import { indexRecording, loadRecordingFacts, queryReplayWindow, sourceScopes } from "../leagueIndex";
+import { indexRecording, loadRecordingFacts, queryOverlayPage, queryReplayWindow, sourceScopes } from "../leagueIndex";
+import { ReplayOverlayController } from "../replayOverlayController";
 import { ReplayDataController } from "../replayDataController";
 import { sameSource, sourceKey } from "../leagueSource";
-import { replayEvent, replayParticipants } from "../replayProjection";
+import { replayEvent, replayParticipants, recordedGameClock, overlayParticipantStates } from "../replayProjection";
 
 type Props = {
   ddragonAssetBaseUrl?: string | null;
@@ -197,6 +199,10 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     loadRecordingFacts, indexRecording, sourceScopes, queryReplayWindow });
   const [data, setData] = createSignal(replayData.value);
   const unsubscribeData = replayData.subscribe(setData);
+  const overlayData = new ReplayOverlayController({ gameTimestamp: props.gameTimestamp, replayEnd: replayEnd as ReplayTick,
+    readReplay: props.readReplay, queryOverlayPage });
+  const [overlay, setOverlay] = createSignal(overlayData.value);
+  const unsubscribeOverlay = overlayData.subscribe(setOverlay);
   const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
   const activeScope = createMemo(() => data().scopes.find(scope => sourceKey(scope.source) === selectedSource())
     ?? data().scopes[data().scopes.length - 1]);
@@ -205,11 +211,14 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     return window && scope && sameSource(window.source, scope.source) ? window : null;
   });
   const roster = () => activeWindow()?.roster ?? null;
-  const detailsError = () => data().factsError ?? data().windowError ?? data().error;
+  createEffect(() => overlayData.select(activeScope()));
+  const detailsError = () => data().factsError ?? data().windowError ?? overlay().error ?? data().error;
   const details = () => data().facts;
   const detailsReady = () => Boolean(details() && (activeWindow() || data().indexing === "unavailable"
-    || (data().indexing === "ready" && !data().loading.scopes && data().scopes.length === 0)));
-  const retryDetails = () => replayData.retry();
+    || (data().indexing === "ready" && !data().loading.scopes && data().scopes.length === 0))
+    && (!activeScope() || (overlay().scope && sameSource(overlay().scope!.source, activeScope()!.source)
+      && overlay().status === "ready")));
+  const retryDetails = () => { overlayData.retry(); return replayData.retry(); };
   const clearOpeningReadinessTimeout = () => {
     if (props.opening && benchmarkScenarioStarted && detailsReady() && benchmarkMediaReadyTimerId !== undefined) {
       window.clearTimeout(benchmarkMediaReadyTimerId);
@@ -238,6 +247,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   onCleanup(() => {
     if (detailsPaint !== undefined) cancelAnimationFrame(detailsPaint);
     unsubscribeData(); replayData.dispose();
+    unsubscribeOverlay(); overlayData.dispose();
   });
   createEffect(() => {
     if (detailsError()) {
@@ -269,25 +279,30 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
 
   const events = createMemo<MappedViewerEvent[]>(() => {
     const window = activeWindow();
-    return (window?.events ?? []).map(row => replayEvent(row, window!, window!.roster))
+    return (window?.events ?? []).map(row => replayEvent(row, window!, window!.roster, window!.identities))
       .filter(hasReplayTick).sort((left, right) => left.replay_tick - right.replay_tick);
   });
-  const participants = createMemo(() => replayParticipants(roster()));
+  const participants = createMemo(() => {
+    const scope = activeScope(), source = overlay().scope;
+    return scope && source && sameSource(scope.source, source.source) ? replayParticipants(scope, overlay().identities) : [];
+  }, undefined, {
+    // A timed roster refresh must not recreate unchanged identity slots/assets.
+    equals: (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
+  });
 
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   const [selectedPlayers, setSelectedPlayers] = createSignal<readonly string[]>([]);
   const [presentedPosition, setPresentedPosition] = createSignal<ReplayTick | null>(null);
+  const [observedPosition, setObservedPosition] = createSignal<ReplayTick | null>(null);
   const [playback, setPlayback] = createSignal<PlaybackSnapshot>();
   const [replayPosition, setReplayPosition] = createSignal<ReplayTick>(0 as ReplayTick);
   const [timelineViewport, setTimelineViewport] = createSignal<TimelineViewport>(
     wholeTimelineViewport(replayEnd as ReplayTick),
   );
-  const rosterQueryBucket = createMemo(() => Math.floor(replayPosition() / (2 * REPLAY_TICKS_PER_SECOND)));
   const requestCurrentWindow = () => {
     const scope = activeScope();
     if (!scope) return;
-    replayData.requestWindow({ scope: scope.source, ...timelineViewport(),
-      at: Math.min(replayEnd, rosterQueryBucket() * 2 * REPLAY_TICKS_PER_SECOND) as ReplayTick });
+    replayData.requestWindow({ scope: scope.source, ...timelineViewport(), at: 0 as ReplayTick });
   };
   createEffect(requestCurrentWindow);
   const [isPlaying, setIsPlaying] = createSignal(false);
@@ -345,7 +360,24 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       selected.some((player) => eventInvolvesPlayer(event, player)),
     );
   });
-  const recordedScores = createMemo(() => roster()?.players.find(player => player.participant === roster()?.local_participant)?.scores);
+  const overlaySample = createMemo(() => {
+    overlay(); // Page arrivals can make the current presented position complete.
+    return overlayData.sampleAt(observedPosition());
+  });
+  const recordedScores = () => overlaySample()?.local_scores;
+  const recordedState = createMemo(() => {
+    const sample = overlaySample();
+    if (!sample) return null;
+    const player = sample.players.find(player => player.participant === activeScope()?.local_participant);
+    const scores = sample.local_scores;
+    return { kills: scores?.kills ?? undefined, deaths: scores?.deaths ?? undefined, assists: scores?.assists ?? undefined,
+      creep_score: scores?.creep_score ?? undefined, level: player?.level ?? undefined, clock: recordedGameClock(sample.game_tick) };
+  });
+  const participantStates = createMemo(() => {
+    const scope = activeScope(), source = overlay().scope;
+    return scope && source && sameSource(scope.source, source.source)
+      ? overlayParticipantStates(scope, overlaySample(), observedPosition(), overlay().initialLoadout) : new Map();
+  });
   createEffect(() => { activeScope(); setSelectedPlayers([]); });
   const togglePlayerFilter = (summonerName: string) => {
     setSelectedPlayers((selected) =>
@@ -365,6 +397,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     setMediaError(value.error);
     setClockSource(value.authority === "rvfc" ? "VIDEO FRAME" : "ANIMATION FRAME");
     if (value.seek.presented === null) setPresentedPosition(null);
+    // A seek request does not replace the displayed frame. In particular, its
+    // RVFC may arrive before seeked; a later queue update must not erase it.
+    if (value.readiness !== "ready") setObservedPosition(null);
     if (value.queue !== "IDLE" && value.seek.requestedPreview !== null) setReplayPosition(value.seek.requestedPreview);
   };
 
@@ -1083,6 +1118,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     });
     const unsubscribe = controller.subscribe(syncSnapshot);
     const unsubscribeFrames = controller.subscribeFrames((tick, authority) => {
+      setObservedPosition(tick);
       if (authority === "rvfc") setPresentedPosition(tick);
       if (!editingEndpoint()) {
         const range = clipRange();
@@ -1253,28 +1289,12 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         <label>Recorded source
           <select aria-label="Recorded source" value={activeScope() ? sourceKey(activeScope()!.source) : ""}
             onChange={event => setSelectedSource(event.currentTarget.value)}>
-            {data().scopes.map((scope, index) => <option value={sourceKey(scope.source)}>
-              Source {index + 1} · epoch {scope.source.epoch} · {scope.source.run_id.slice(0, 8)}
-            </option>)}
+            <For each={data().scopes}>{(scope, index) => <option value={sourceKey(scope.source)}>
+              Source {index() + 1} · epoch {scope.source.epoch} · {scope.source.run_id.slice(0, 8)}
+            </option>}</For>
           </select>
         </label>
       </Show>
-      <Show when={activeWindow()}>{window =>
-        <section role="status" data-testid="replay-coverage">
-          {window().events.length} events in this page · {window().coverage.gap_attempts} recorded gaps
-          {window().coverage.successful_observations === 0 ? " · Event coverage unavailable" : ""}
-          {window().coverage.unmapped_observations ? ` · ${window().coverage.unmapped_observations} observations without video mapping` : ""}
-          {window().coverage.unresolved_actors ? ` · ${window().coverage.unresolved_actors} unresolved actors` : ""}
-          {window().coverage.uncommitted_tail_bytes ? " · Uncommitted recording tail" : ""}
-          {roster() ? ` · Roster sampled ${(roster()!.age_replay_ticks / REPLAY_TICKS_PER_SECOND).toFixed(1)}s before the queried position` : " · No mapped roster at this position"}
-          <Show when={window().next}>
-            <span> · More events available</span>
-            <button type="button" disabled={data().loading.window} onClick={() => replayData.loadMore()}>Next events</button>
-          </Show>
-          <button type="button" disabled={data().loading.window} onClick={requestCurrentWindow}>First events</button>
-        </section>
-      }</Show>
-
       <div class={styles.replayView} aria-label="Replay" data-testid="replay-panel">
         <div class={styles.windowedGrid}>
           <div
@@ -1335,14 +1355,22 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
             </Show>
 
             <FullscreenOverlay
+                spellAssets={overlay().spellAssets}
+                participantStates={participantStates()}
                 ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
                 champion={props.game.champion}
+                recordedState={recordedState()}
                 localPlayerName={details()?.local_player_name ?? null}
                 events={visibleEvents()}
                 mediaTimeline={mediaTimeline}
                 replayTick={replayPosition()}
                 timelineViewport={timelineViewport()}
                 onTimelineViewportChange={setTimelineViewport}
+                hasMoreEvents={Boolean(activeWindow()?.next)}
+                hasEarlierEvents={replayData.isFollowingPage(activeWindow())}
+                eventsLoading={data().loading.window}
+                onNextEvents={() => replayData.loadMore()}
+                onFirstEvents={requestCurrentWindow}
                 presentedTick={presentedPosition()}
                 isPlaying={isPlaying()}
                 playback={playback()}

@@ -24,16 +24,23 @@ import ReplayTimeline from "./ReplayTimeline";
 import ChampionFilter from "./ChampionFilter";
 import PlaybackControls, { type PlaybackControlsProps } from "./PlaybackControls";
 import styles from "./FullscreenOverlay.module.css";
+import type { ParticipantSpellAssets, RecordedParticipantState, RecordedReplayState } from "../replayProjection";
 
 type Props = {
   ddragonAssetBaseUrl?: string | null;
   champion: string;
+  recordedState?: RecordedReplayState | null;
   localPlayerName: string | null;
   events: readonly ViewerEvent[];
   mediaTimeline: MediaTimelineV2;
   replayTick: ReplayTick;
   timelineViewport: TimelineViewport;
   onTimelineViewportChange: (viewport: TimelineViewport) => void;
+  hasMoreEvents?: boolean;
+  hasEarlierEvents?: boolean;
+  eventsLoading?: boolean;
+  onNextEvents?: () => void;
+  onFirstEvents?: () => void;
   presentedTick: ReplayTick | null;
   isPlaying: boolean;
   playback: PlaybackControlsProps["state"];
@@ -42,6 +49,8 @@ type Props = {
   onVolume: PlaybackControlsProps["onVolume"];
   mediaAvailable: boolean;
   participants: readonly ReplayParticipant[];
+  participantStates?: ReadonlyMap<string, RecordedParticipantState>;
+  spellAssets?: ParticipantSpellAssets;
   selectedPlayers: readonly string[];
   clipRange: ClipRange | null;
   onPlayerToggle: (summonerName: string) => void;
@@ -128,6 +137,15 @@ function FullscreenOverlay(props: Props) {
       onPointerDown={noteActivity}
       data-testid="fullscreen-overlay"
     >
+      <div classList={{[styles.recordedState]:true,[styles.hudHidden]:!topBarVisible()}} aria-label="Recorded state" title="Last available recorded sample">
+        <span>Recorded state</span>
+        <dl>
+          <div><dt>K / D / A</dt><dd>{props.recordedState?.kills ?? "—"} / {props.recordedState?.deaths ?? "—"} / {props.recordedState?.assists ?? "—"}</dd></div>
+          <div><dt>CS</dt><dd>{props.recordedState?.creep_score ?? "—"}</dd></div>
+          <div><dt>Level</dt><dd>{props.recordedState?.level ?? "—"}</dd></div>
+          <div><dt>Game clock</dt><dd>{props.recordedState?.clock ?? "—"}</dd></div>
+        </dl>
+      </div>
       <div
         classList={{
           [styles.rosterHud]: true,
@@ -141,6 +159,8 @@ function FullscreenOverlay(props: Props) {
         <ChampionFilter
           ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
           participants={props.participants}
+          participantStates={props.participantStates}
+          spellAssets={props.spellAssets}
           selectedPlayers={props.selectedPlayers}
           localPlayerName={props.localPlayerName}
           mode="fullscreen"
@@ -237,6 +257,13 @@ function FullscreenOverlay(props: Props) {
               {formatDuration(replayTickToMilliseconds(replayEnd()))}
             </span>
           </span>
+
+          <Show when={props.hasEarlierEvents}>
+            <button class={styles.cancelClipControl} type="button" disabled={props.eventsLoading} onClick={props.onFirstEvents}>First events</button>
+          </Show>
+          <Show when={props.hasMoreEvents}>
+            <button class={styles.cancelClipControl} type="button" disabled={props.eventsLoading} onClick={props.onNextEvents}>Next events</button>
+          </Show>
 
           <Show
             when={props.clipRange}

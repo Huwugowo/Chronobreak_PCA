@@ -357,6 +357,23 @@
   transition: opacity 220ms ease;
 }
 
+.recordedState {
+  position: absolute;
+  z-index: 4;
+  top: 16px;
+  right: 20px;
+  padding: 9px 12px;
+  border-radius: 5px;
+  background: rgba(2, 3, 6, 0.72);
+  font-size: 11px;
+  transition: opacity 220ms ease;
+}
+
+.recordedState > span { color: #aeb5c3; font-size: 9px; }
+.recordedState dl { display: flex; gap: 18px; margin: 5px 0 0; }
+.recordedState dt { color: #aeb5c3; font-size: 9px; }
+.recordedState dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
+
 .bottomHud {
   position: absolute;
   z-index: 6;

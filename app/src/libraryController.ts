@@ -25,7 +25,8 @@ type Dependencies = {
   durations: (token: string, ids: string[], retry: boolean) => Promise<ClipDurations>;
 };
 type DurationIntent = { origin: LibraryOrigin; epoch: number; ids: string[]; retry: boolean };
-export type ReplayRead = <T>(work: (token: string) => Promise<T>) => Promise<T>;
+export type ReplayReadLane = "details" | "overlay";
+export type ReplayRead = <T>(work: (token: string) => Promise<T>, lane?: ReplayReadLane) => Promise<T>;
 type ReplayIntent = { run: () => Promise<void>; cancel: () => void };
 export type OperationResult<T> =
   | { admitted: true; value: T }
@@ -57,14 +58,15 @@ export class LibraryController {
   private navigation = 0;
   private scanActive = false;
   private scanPending = false;
+  private refreshCompletion: ((origin: LibraryOrigin | null) => void) | null = null;
   private mutationActive = false;
   private durationActive: DurationIntent | null = null;
   private durationPending: DurationIntent | null = null;
   private durationEpoch = 0;
   private clipsVisible = false;
   private replayActive = false;
-  private replayPending: ReplayIntent | null = null;
-  private replayRequest = 0;
+  private replayPending = new Map<ReplayReadLane, ReplayIntent>();
+  private replayRequest: Record<ReplayReadLane, number> = { details: 0, overlay: 0 };
 
   constructor(private readonly api: Dependencies) {}
   get value(): LibraryState { return this.state; }
@@ -102,7 +104,9 @@ export class LibraryController {
     this.refresh();
   }
   refresh(mutationRefresh: LibraryState["mutationRefresh"] = null) {
-    if (this.closed || this.state.root === null) return;
+    if (this.closed || this.state.root === null) return Promise.resolve(null);
+    this.refreshCompletion?.(null);
+    const completion = new Promise<LibraryOrigin | null>(resolve => { this.refreshCompletion = resolve; });
     this.scanPending = true;
     this.supersedeReplay();
     this.supersedeDurations();
@@ -111,10 +115,11 @@ export class LibraryController {
       // while the backend has invalidated the old selected token.
       actionable: false, error: null, mutationRefresh });
     this.pumpRefresh();
+    return completion;
   }
   /** Reconcile a completed export even when its UI response was superseded. */
   invalidateRoot(root: string) {
-    if (!this.closed && this.state.root === root) this.refresh();
+    return !this.closed && this.state.root === root ? this.refresh() : Promise.resolve(null);
   }
   private pumpRefresh() {
     if (this.closed || this.scanActive || this.mutationActive || !this.scanPending) return;
@@ -122,6 +127,7 @@ export class LibraryController {
     this.scanActive = true;
     const request = this.state.request;
     const rootEpoch = this.rootEpoch;
+    const completion = this.refreshCompletion;
     const current = () => !this.closed && request === this.state.request && rootEpoch === this.rootEpoch;
     void (async () => {
       try {
@@ -137,6 +143,10 @@ export class LibraryController {
       } catch (error) {
         if (current()) this.publish({ refreshing: false, actionable: false, error: libraryError(error) });
       } finally {
+        if (this.refreshCompletion === completion) {
+          this.refreshCompletion = null;
+          completion?.(current() && this.state.actionable ? this.origin() : null);
+        }
         this.scanActive = false;
         this.pumpRefresh();
       }
@@ -166,43 +176,46 @@ export class LibraryController {
   }
   clearDeletion() { this.publish({ deletion: null }); }
 
-  /** Shared across viewer/exporter lifetimes: one active read and one latest intent. */
-  readReplay<T>(origin: LibraryOrigin, game: string, work: (token: string) => Promise<T>): Promise<T> {
+  /** One active read across lifetimes, latest pending intent per independent purpose. */
+  readReplay<T>(origin: LibraryOrigin, game: string, work: (token: string) => Promise<T>, lane: ReplayReadLane = "details"): Promise<T> {
     const currentSelection = () => this.mayPublish(origin) &&
       this.state.snapshot?.games.some(item => item.timestamp === game);
     if (!currentSelection()) return Promise.reject(new Error("Replay selection became stale. Return to games."));
-    const request = ++this.replayRequest;
-    this.replayPending?.cancel();
+    const request = ++this.replayRequest[lane];
+    this.replayPending.get(lane)?.cancel();
     return new Promise<T>((resolve, reject) => {
       const stale = () => reject(new Error("Replay selection became stale. Return to games."));
-      this.replayPending = {
+      this.replayPending.set(lane, {
         cancel: stale,
         run: async () => {
-          if (!currentSelection() || request !== this.replayRequest) { stale(); return; }
+          if (!currentSelection() || request !== this.replayRequest[lane]) { stale(); return; }
           try {
             const result = await work(origin.token);
-            if (currentSelection() && request === this.replayRequest) resolve(result);
+            if (currentSelection() && request === this.replayRequest[lane]) resolve(result);
             else stale();
           } catch (error) {
-            if (currentSelection() && request === this.replayRequest) reject(error);
+            if (currentSelection() && request === this.replayRequest[lane]) reject(error);
             else stale();
           }
         },
-      };
+      });
       this.pumpReplay();
     });
   }
   private pumpReplay() {
-    if (this.closed || this.replayActive || !this.replayPending) return;
-    const intent = this.replayPending;
-    this.replayPending = null;
+    if (this.closed || this.replayActive) return;
+    const next = this.replayPending.entries().next().value;
+    if (!next) return;
+    const [lane, intent] = next;
+    this.replayPending.delete(lane);
     this.replayActive = true;
     void intent.run().finally(() => { this.replayActive = false; this.pumpReplay(); });
   }
   private supersedeReplay() {
-    this.replayRequest++;
-    this.replayPending?.cancel();
-    this.replayPending = null;
+    this.replayRequest.details++;
+    this.replayRequest.overlay++;
+    for (const intent of this.replayPending.values()) intent.cancel();
+    this.replayPending.clear();
   }
 
   async mutate<T>(origin: LibraryOrigin, id: string, work: (token: string) => Promise<T>,
@@ -341,6 +354,8 @@ export class LibraryController {
   }
   dispose() {
     this.closed = true;
+    this.refreshCompletion?.(null);
+    this.refreshCompletion = null;
     this.supersedeReplay();
     this.scanPending = false;
     this.durationPending = null;

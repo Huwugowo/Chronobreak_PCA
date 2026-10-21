@@ -168,13 +168,13 @@ fn asset_cache_key(kind: &str, asset: &str) -> Result<String> {
         }
         "spell" => {
             if asset.is_empty()
-                || !asset
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                || !asset.chars().all(|character| {
+                    character.is_alphanumeric() || matches!(character, '_' | ' ' | '\'')
+                })
             {
                 bail!("invalid spell asset");
             }
-            Ok(asset.to_ascii_lowercase())
+            Ok(normalized_asset_key(asset))
         }
         "item" | "rune" => asset
             .parse::<u32>()
@@ -197,7 +197,10 @@ fn asset_remote_url(
             let filename = champion_icon_filename(cache_directory, version, asset)?;
             Ok(format!("{BASE_URL}/cdn/{version}/img/champion/{filename}"))
         }
-        "spell" => Ok(format!("{BASE_URL}/cdn/{version}/img/spell/{asset}.png")),
+        "spell" => {
+            let filename = spell_icon_filename(cache_directory, version, asset)?;
+            Ok(format!("{BASE_URL}/cdn/{version}/img/spell/{filename}"))
+        }
         "item" => Ok(format!("{BASE_URL}/cdn/{version}/img/item/{asset}.png")),
         "rune" => {
             let icon = rune_icon_path(cache_directory, version, asset.parse::<u32>()?)?;
@@ -205,6 +208,41 @@ fn asset_remote_url(
         }
         _ => bail!("unsupported Data Dragon asset kind"),
     }
+}
+
+fn spell_icon_filename(cache_directory: &Path, version: &str, spell: &str) -> Result<String> {
+    let path = cache_directory.join(version).join("summoner.json");
+    // Older offline caches can still serve the original internal-name routes.
+    if !path.exists()
+        && spell.starts_with("Summoner")
+        && spell.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return Ok(format!("{spell}.png"));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    let wanted = normalized_asset_key(spell);
+    let filename = value
+        .get("data")
+        .and_then(serde_json::Value::as_object)
+        .context("spell manifest has no data map")?
+        .iter()
+        .find_map(|(key, entry)| {
+            [
+                Some(key.as_str()),
+                entry.get("key").and_then(serde_json::Value::as_str),
+                entry.get("name").and_then(serde_json::Value::as_str),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|name| normalized_asset_key(name) == wanted)
+            .then(|| entry.get("image")?.get("full")?.as_str())
+            .flatten()
+        })
+        .context("spell icon is absent from the cached manifest")?;
+    if !valid_icon_filename(filename) {
+        bail!("spell manifest contains an invalid icon filename");
+    }
+    Ok(filename.to_owned())
 }
 
 fn champion_icon_filename(cache_directory: &Path, version: &str, champion: &str) -> Result<String> {
@@ -331,8 +369,13 @@ async fn refresh(cache_directory: &Path) -> Result<DdragonStatus> {
     let item_path = version_directory.join("item.json");
     let champion_path = version_directory.join("champion.json");
     let runes_path = version_directory.join("runesReforged.json");
+    let spells_path = version_directory.join("summoner.json");
 
-    if item_path.is_file() && champion_path.is_file() && runes_path.is_file() {
+    if item_path.is_file()
+        && champion_path.is_file()
+        && runes_path.is_file()
+        && spells_path.is_file()
+    {
         return summarize_cache(cache_directory, version);
     }
 
@@ -347,9 +390,16 @@ async fn refresh(cache_directory: &Path) -> Result<DdragonStatus> {
             "{BASE_URL}/cdn/{version}/data/en_US/runesReforged.json"
         ))
         .send();
-    let (item_response, champion_response, runes_response) =
-        tokio::try_join!(item_request, champion_request, runes_request)
-            .context("failed to download Data Dragon manifests")?;
+    let spells_request = client
+        .get(format!("{BASE_URL}/cdn/{version}/data/en_US/summoner.json"))
+        .send();
+    let (item_response, champion_response, runes_response, spells_response) = tokio::try_join!(
+        item_request,
+        champion_request,
+        runes_request,
+        spells_request
+    )
+    .context("failed to download Data Dragon manifests")?;
     let item_bytes = item_response
         .error_for_status()
         .context("item manifest returned an error")?
@@ -372,6 +422,8 @@ async fn refresh(cache_directory: &Path) -> Result<DdragonStatus> {
     validate_manifest(&item_bytes, "item")?;
     validate_manifest(&champion_bytes, "champion")?;
     validate_rune_manifest(&runes_bytes)?;
+    let spells_bytes = spells_response.error_for_status()?.bytes().await?;
+    validate_manifest(&spells_bytes, "spell")?;
     fs::create_dir_all(&version_directory).with_context(|| {
         format!(
             "failed to create Data Dragon cache {}",
@@ -381,6 +433,7 @@ async fn refresh(cache_directory: &Path) -> Result<DdragonStatus> {
     config::write_atomic(&item_path, &item_bytes)?;
     config::write_atomic(&champion_path, &champion_bytes)?;
     config::write_atomic(&runes_path, &runes_bytes)?;
+    config::write_atomic(&spells_path, &spells_bytes)?;
     summarize_cache(cache_directory, version)
 }
 
@@ -562,5 +615,32 @@ mod tests {
         assert!(asset_cache_key("spell", "../../secret").is_err());
         assert!(asset_cache_key("other", "1001").is_err());
         assert!(!valid_version("15/10/1"));
+    }
+
+    #[test]
+    fn resolves_spell_ids_and_recorded_names_without_inventing_unknown_icons() {
+        let root = tempfile::tempdir().unwrap();
+        let version = root.path().join("16.20.1");
+        fs::create_dir(&version).unwrap();
+        fs::write(version.join("summoner.json"), br#"{"data":{"SummonerFlash":{"key":"4","name":"Flash","image":{"full":"SummonerFlash.png"}},"SummonerHaste":{"key":"6","name":"Ghost","image":{"full":"SummonerHaste.png"}}}}"#).unwrap();
+        for name in ["4", "Flash", "SummonerFlash"] {
+            assert!(
+                asset_remote_url(root.path(), "16.20.1", "spell", name)
+                    .unwrap()
+                    .ends_with("/SummonerFlash.png")
+            );
+        }
+        assert!(
+            asset_remote_url(root.path(), "16.20.1", "spell", "6")
+                .unwrap()
+                .ends_with("/SummonerHaste.png")
+        );
+        assert!(asset_remote_url(root.path(), "16.20.1", "spell", "999999").is_err());
+        fs::write(
+            version.join("summoner.json"),
+            br#"{"data":{"bad":{"key":"4","image":{"full":"../secret.png"}}}}"#,
+        )
+        .unwrap();
+        assert!(asset_remote_url(root.path(), "16.20.1", "spell", "4").is_err());
     }
 }

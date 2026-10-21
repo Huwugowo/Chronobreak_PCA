@@ -47,7 +47,7 @@ const ddragonAsset = (
   return `${status.asset_base_url}/${kind}/${encodeURIComponent(String(asset))}`;
 };
 
-const unavailableStats: HistoryStats = { source: "unavailable", kills: null, deaths: null, assists: null, items: null, evidence: null, final_evidence: null, game_tick: null };
+const unavailableStats: HistoryStats = { source: "unavailable", kills: null, deaths: null, assists: null, items: null, keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null };
 
 const hideFailedImage = (event: Event) => {
   if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true;
@@ -171,11 +171,13 @@ function GamesLibrary(props: Props) {
     const rows = props.history?.page?.rows;
     if (rows) {
       const matches = rows.map(row => props.games.find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
-      if (!props.history?.laterPage && !semantic) matches.push(...props.games.filter(game => game.incomplete && basicMatch(game)));
-      return matches.slice(0, 50);
+      if (!props.history?.laterPage && !semantic) {
+        matches.unshift(...props.games.filter(game => game.incomplete && basicMatch(game) && !matches.some(match => match.timestamp === game.timestamp)));
+      }
+      return matches;
     }
     if (semantic) return [];
-    return props.games.filter(basicMatch).slice(0, 50);
+    return props.games.filter(basicMatch);
     function basicMatch(game: GameSummary) {
       const matchesSearch =
         !query
@@ -189,7 +191,8 @@ function GamesLibrary(props: Props) {
       return matchesSearch && matchesChampion && matchesMode && matchesSaved;
     }
   };
-  const statsFor = (game: GameSummary) => props.history?.page?.rows.find(row => row.media_id === game.media_id && row.game.timestamp === game.timestamp)?.stats ?? unavailableStats;
+  const rowFor = (game: GameSummary) => props.history?.page?.rows.find(row => row.media_id === game.media_id && row.game.timestamp === game.timestamp);
+  const statsFor = (game: GameSummary) => rowFor(game)?.stats ?? unavailableStats;
 
   return (
     <section class={matchStyles.matchHistory} aria-label="Match History">
@@ -278,6 +281,12 @@ function GamesLibrary(props: Props) {
                 const outcome = displayedOutcome(game);
                 const health = replayHealth(game);
                 const stats = () => statsFor(game);
+                const participants = () => rowFor(game)?.game.participants ?? game.participants;
+                const finalCs = () => stats().source === "final_eog" ? stats().creep_score : null;
+                const csPerMinute = () => {
+                  const cs = finalCs(), duration = stats().duration_seconds;
+                  return cs !== null && duration !== null && duration > 0 ? (cs * 60 / duration).toFixed(1) : "—";
+                };
                 const championAsset = () => ddragonAsset(
                   props.ddragon,
                   "champion",
@@ -351,9 +360,9 @@ function GamesLibrary(props: Props) {
 
                           <span class={matchStyles.loadout}>
                             <span class={matchStyles.spells}>
-                              <For each={game.summoner_spells.slice(0, 2)}>
-                                {(spell: string) => (
-                                  <span class={matchStyles.assetIcon} title={spell.replace(/^Summoner/, "")}>
+                              <For each={(stats().summoner_spells ?? (rowFor(game) ? [null, null] : game.summoner_spells)).slice(0, 2)}>
+                                {(spell) => (
+                                  <span class={matchStyles.assetIcon} title={spell?.replace(/^Summoner/, "") ?? "Summoner spell unavailable"}>
                                     <Show when={ddragonAsset(props.ddragon, "spell", spell)}>
                                       <img
                                         src={ddragonAsset(props.ddragon, "spell", spell)!}
@@ -368,16 +377,29 @@ function GamesLibrary(props: Props) {
                               </For>
                             </span>
 
-                            <span class={`${matchStyles.assetIcon} ${matchStyles.runeIcon}`} title="Keystone rune">
-                              <Show when={ddragonAsset(props.ddragon, "rune", game.keystone_id)}>
-                                <img
-                                  src={ddragonAsset(props.ddragon, "rune", game.keystone_id)!}
-                                  alt=""
-                                  loading="lazy"
-                                  decoding="async"
-                                  onError={hideFailedImage}
-                                />
-                              </Show>
+                            <span class={matchStyles.runes}>
+                              <span class={`${matchStyles.assetIcon} ${matchStyles.runeIcon}`} title="Keystone rune">
+                                <Show when={ddragonAsset(props.ddragon, "rune", stats().keystone_id ?? game.keystone_id)}>
+                                  <img
+                                    src={ddragonAsset(props.ddragon, "rune", stats().keystone_id ?? game.keystone_id)!}
+                                    alt=""
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={hideFailedImage}
+                                  />
+                                </Show>
+                              </span>
+                              <span class={`${matchStyles.assetIcon} ${matchStyles.runeIcon} ${matchStyles.secondaryRune}`} title="Secondary rune tree">
+                                <Show when={ddragonAsset(props.ddragon, "rune", stats().secondary_style)}>
+                                  <img
+                                    src={ddragonAsset(props.ddragon, "rune", stats().secondary_style)!}
+                                    alt=""
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={hideFailedImage}
+                                  />
+                                </Show>
+                              </span>
                             </span>
                           </span>
                         </span>
@@ -390,7 +412,6 @@ function GamesLibrary(props: Props) {
                               {stats().assists ?? "—"}
                             </strong>
                             <em>{formatKdaRatio(stats())}</em>
-                            <small>{stats().source === "final_eog" ? "Final EOG" : stats().source === "recorded_snapshot" ? "Recorded snapshot" : "League data unavailable"}</small>
                           </span>
 
                           <span class={matchStyles.items} aria-hidden="true">
@@ -413,9 +434,14 @@ function GamesLibrary(props: Props) {
                         </span>
                       </span>
 
+                      <span class={matchStyles.farming} aria-label="Final creep score" title="Final lane and neutral minions killed; rate uses recorded final game duration">
+                        <strong>CS {finalCs() ?? "—"}</strong>
+                        <small>{csPerMinute()} / min</small>
+                      </span>
+
                       <span class={matchStyles.teamRosters} aria-label="Team rosters">
                         <span class={matchStyles.teamRoster} data-team="ally">
-                          <For each={game.participants.filter((participant) => participant.relation === "ally").slice(0, 5)}>
+                          <For each={participants().filter((participant) => participant.relation === "ally")}>
                             {(participant) => (
                               <span class={matchStyles.rosterPlayer}>
                                 <span class={matchStyles.rosterChampion} aria-hidden="true">
@@ -444,7 +470,7 @@ function GamesLibrary(props: Props) {
                         </span>
 
                         <span class={matchStyles.teamRoster} data-team="enemy">
-                          <For each={game.participants.filter((participant) => participant.relation === "enemy").slice(0, 5)}>
+                          <For each={participants().filter((participant) => participant.relation === "enemy")}>
                             {(participant) => (
                               <span class={matchStyles.rosterPlayer}>
                                 <span class={matchStyles.rosterChampion} aria-hidden="true">

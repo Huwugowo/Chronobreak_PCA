@@ -96,6 +96,7 @@ type PendingSeek = {
   from: ReplayTick;
   presented: ReplayTick | null;
   settled: boolean;
+  result: Promise<SeekOutcome>;
   resolve(outcome: SeekOutcome): void;
 };
 const zero = 0 as ReplayTick;
@@ -507,7 +508,9 @@ export function createPlaybackController(
     const request = pending;
     pending = undefined;
     const current = media.read().tick;
-    if (current !== null && Math.abs(current - request.target) <= Math.ceil(frameTicks() / 2)) {
+    const alreadyPresented = !media.hasVideoFrameCallback || state.presented !== null
+      && Math.abs(state.presented - request.target) <= Math.ceil(frameTicks() / 2);
+    if (current !== null && Math.abs(current - request.target) <= Math.ceil(frameTicks() / 2) && alreadyPresented) {
       state = { ...state, dispatched: null };
       emit("seek_deduped", { target_ms: ms(request.target), actual_media_time_ms: media.read().browserSeconds * 1_000, reason: request.reason }, request);
       settle(request, "deduplicated");
@@ -547,6 +550,18 @@ export function createPlaybackController(
     const dispatched = frameBoundaryToReplayTick(frame, timeline.video.frameRate);
     cancelPlay({ status: "superseded", reason: "Newer seek intent" });
     if (settings.playAfter !== undefined) desiredPlaying = settings.playAfter;
+    // Pointer down/up and scrub moves can repeat the same frame while it is
+    // still seeking. Keep its callback/epoch instead of cancelling the only
+    // presentation a paused video will produce.
+    const repeated = pending?.target === dispatched ? pending
+      : !pending && (active ?? waiter)?.target === dispatched ? active ?? waiter : undefined;
+    if (repeated) {
+      repeated.preview = preview;
+      state = requestPreview(state, preview);
+      emit("seek_deduped", { target_ms: ms(dispatched), reason, in_flight: true }, settings);
+      publish();
+      return repeated.result;
+    }
     settle(active, "superseded", "Newer seek intent");
     settle(waiter, "superseded", "Newer seek intent");
     if (pending) emit("seek_pending_replaced", { target_ms: ms(pending.target), replacement_target_ms: ms(dispatched) }, pending);
@@ -558,11 +573,11 @@ export function createPlaybackController(
     healthySince = null;
     resetRateObservation();
     state = requestPreview(state, preview);
-    const result = new Promise<SeekOutcome>((resolve) => {
-      pending = { target: dispatched, preview, reason, actionId: settings.actionId, generation: state.generation,
-        intent, epoch: 0, requestedAt: clock.now(), dispatchedAt: 0, from: media.read().tick ?? state.presented ?? zero,
-        presented: null, settled: false, resolve };
-    });
+    let resolve!: (outcome: SeekOutcome) => void;
+    const result = new Promise<SeekOutcome>(complete => { resolve = complete; });
+    pending = { target: dispatched, preview, reason, actionId: settings.actionId, generation: state.generation,
+      intent, epoch: 0, requestedAt: clock.now(), dispatchedAt: 0, from: media.read().tick ?? state.presented ?? zero,
+      presented: null, settled: false, result, resolve };
     emit("seek_requested", { requested_preview_ms: ms(preview), raw_requested_ms: ms(target), from_ms: ms(pending!.from), reason }, pending);
     if (readiness === "recovering") recoveryTarget = preview;
     dispatchPending(); publish(); return result;

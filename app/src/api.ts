@@ -1,6 +1,7 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { decodeLeagueResultSummary } from "./leagueResult";
+import mockItemNames from "./dev/mockItemNames.json";
 import type {
   AppSettings,
   AutoDeleteResult,
@@ -698,11 +699,11 @@ export const loadDdragonStatus = async (): Promise<DdragonStatus> => {
   if (useMockApi()) {
     return {
       state: "ready",
-      version: "16.16.1",
-      asset_base_url: null,
-      item_count: 527,
-      champion_count: 172,
-      cache_directory: "browser preview",
+      version: "16.18.1",
+      asset_base_url: new URL("/mock-ddragon", window.location.href).href,
+      item_count: 21,
+      champion_count: 18,
+      cache_directory: "bundled development preview",
       error: null,
     };
   }
@@ -710,7 +711,7 @@ export const loadDdragonStatus = async (): Promise<DdragonStatus> => {
 };
 
 export const resolveItemName = async (itemId: string): Promise<string | null> => {
-  if (useMockApi()) return itemId === "1001" ? "Boots" : null;
+  if (useMockApi()) return (mockItemNames as Record<string, string>)[itemId] ?? null;
   return invoke<string | null>("resolve_item_name", { itemId });
 };
 

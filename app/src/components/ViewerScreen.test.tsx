@@ -3,19 +3,21 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import ViewerScreen from "./ViewerScreen";
 import { loadReplayDescriptor, loadServerMetrics } from "../api";
-import { indexRecording, loadRecordingFacts, queryReplayWindow, sourceScopes } from "../leagueIndex";
-import type { ReplayWindow } from "../leagueIndex";
+import { indexRecording, loadRecordingFacts, queryOverlayPage, queryReplayWindow, sourceScopes } from "../leagueIndex";
+import type { OverlayPage, ReplayWindow } from "../leagueIndex";
 import type { GameSummary, LeagueMatch, ReplayDescriptor, ReplayParticipant, ViewerEvent } from "../types";
 import type { LeagueResult } from "../leagueResult";
 import { parseMediaId, type FrameBoundary, type ReplayTick } from "../replayTime";
 import { buildScenarioActions, emitReplayBenchmarkEvent, replayBenchmarkObserver } from "../benchmark";
 import { STAT_KEYS, type FinalStats } from "../leagueResult";
+import { sourceKey } from "../leagueSource";
+import timelineStyles from "./ReplayTimeline.module.css";
 
 const diagnosticHarness = vi.hoisted(() => ({ held: false }));
 vi.mock("../api", async original => ({ ...await original<typeof import("../api")>(),
   loadReplayDescriptor: vi.fn(), loadServerMetrics: vi.fn() }));
 vi.mock("../leagueIndex", async original => ({ ...await original<typeof import("../leagueIndex")>(),
-  loadRecordingFacts: vi.fn(), indexRecording: vi.fn(), sourceScopes: vi.fn(), queryReplayWindow: vi.fn() }));
+  loadRecordingFacts: vi.fn(), indexRecording: vi.fn(), sourceScopes: vi.fn(), queryOverlayPage: vi.fn(), queryReplayWindow: vi.fn() }));
 vi.mock("../playbackDiagnostics", () => ({ createPlaybackDiagnostics: () => ({
   ready: diagnosticHarness.held ? new Promise(() => {}) : Promise.resolve(false), bind: vi.fn(), dispose: vi.fn(),
 }) }));
@@ -23,7 +25,7 @@ vi.mock("../benchmark", async original => ({ ...await original<typeof import("..
   emitReplayBenchmarkEvent: vi.fn(), replayBenchmarkObserver: vi.fn(() => null),
   buildScenarioActions: vi.fn() }));
 
-afterEach(() => { diagnosticHarness.held = false; vi.restoreAllMocks(); vi.mocked(loadRecordingFacts).mockReset(); vi.mocked(indexRecording).mockReset(); vi.mocked(sourceScopes).mockReset(); vi.mocked(queryReplayWindow).mockReset(); vi.mocked(emitReplayBenchmarkEvent).mockClear(); vi.mocked(replayBenchmarkObserver).mockReset().mockReturnValue(null); vi.mocked(buildScenarioActions).mockReset(); document.body.replaceChildren(); });
+afterEach(() => { diagnosticHarness.held = false; vi.restoreAllMocks(); vi.mocked(loadRecordingFacts).mockReset(); vi.mocked(indexRecording).mockReset(); vi.mocked(sourceScopes).mockReset(); vi.mocked(queryOverlayPage).mockReset(); vi.mocked(queryReplayWindow).mockReset(); vi.mocked(emitReplayBenchmarkEvent).mockClear(); vi.mocked(replayBenchmarkObserver).mockReset().mockReturnValue(null); vi.mocked(buildScenarioActions).mockReset(); document.body.replaceChildren(); });
 
 type ReplayFixture = { game: GameSummary; video_url: string; media_timeline: ReplayDescriptor["media_timeline"]; local_player_name: string | null; league_match: LeagueMatch | null; league_result: LeagueResult | null; participants: ReplayParticipant[]; events: ViewerEvent[] };
 const replayProbe = (): ReplayFixture => ({
@@ -45,12 +47,18 @@ const resolvedWindow = (probe: ReplayFixture, selected?: { media_id: typeof prob
   const evidence = { id: 1, source, endpoint: "player_list", timing: { start_us: 0, end_us: 0, received_at: "2026-10-16T00:00:00Z" }, game_stats: 1, calibration: 1 };
   const eventEvidence = { ...evidence, id: 2, endpoint: "events" };
   const events = probe.events.map((event, index) => ({ sequence: index + 1, ordinal: 0, evidence: eventEvidence, replay_tick: event.replay_tick!, revision: { event: { source_id: index + 1, game_tick: event.game_tick, name: event.event_type, killer: event.killer ?? undefined, victim: event.victim ?? undefined, assisters: event.assisters, actors: { killer: [{ status: "resolved", participant: 1, raw: "player1" }] } }, fingerprint: Array(32).fill(0), response_fingerprint: Array(32).fill(0), ingestion: "accepted" } }));
-  return { source, local_participant: 1, events, next: null, coverage, roster: { source, local_participant: 1, game_tick: "0", observed_replay_tick: 0 as ReplayTick,
+  return { source, local_participant: 1, events, next: null, coverage, identities: [{ participant: 1, team: "ORDER", riot_id: "player1", champion_name: "Ahri" }, { participant: 2, team: "CHAOS", riot_id: "enemy2", champion_name: "Zed" }], roster: { source, local_participant: 1, game_tick: "0", observed_replay_tick: 0 as ReplayTick,
     age_replay_ticks: 0 as ReplayTick, evidence, coverage, players: [
-      { participant: 1, riot_id: "player1", champion_name: "Ahri", team: "ORDER", scores: { kills: 1, deaths: 2, assists: 3 } },
+      { participant: 1, riot_id: "player1", champion_name: "Ahri", team: "ORDER", level:7, scores: { kills: 1, deaths: 2, assists: 3, creep_score:43 } },
       { participant: 2, riot_id: "enemy2", champion_name: "Zed", team: "CHAOS", scores: { kills: 4, deaths: 5, assists: 6 } },
     ] } } as any;
 };
+const overlayFor = (window: ReplayWindow): OverlayPage => ({ source: window.source, local_participant: window.local_participant,
+  revision: { end_offset: 10, last_sequence: 1, checksum: Array(32).fill(0) }, identities: window.identities, next: null,
+  samples: window.roster ? [{ replay_tick: window.roster.observed_replay_tick, observation_id: 1, game_tick: window.roster.game_tick,
+    local_scores: { kills: 1, deaths: 2, assists: 3, creep_score: 43 }, players: window.roster.players.flatMap(p => p.participant === undefined ? [] : [{
+      participant: p.participant, level: p.level ?? null, is_dead: p.is_dead ?? null, respawn_timer: p.respawn_timer ?? null,
+      spells: [p.summoner_spells?.one?.display_name ?? null, p.summoner_spells?.two?.id ? String(p.summoner_spells.two.id) : null] }]) }] : [] });
 const setFixture = (probe: ReplayFixture, epochs = [0]) => {
   const scopes = epochs.map(epoch => ({ source: { media_id: probe.media_timeline.mediaId,
     run_id: parseMediaId(`123e4567-e89b-42d3-a456-42661417400${epoch + 1}`), epoch }, local_participant: 1 }));
@@ -59,6 +67,7 @@ const setFixture = (probe: ReplayFixture, epochs = [0]) => {
   vi.mocked(loadRecordingFacts).mockResolvedValue(facts);
   vi.mocked(indexRecording).mockResolvedValue({ media_id: probe.media_timeline.mediaId, status: "ready", batches: 1, position: null, tail_bytes: 0 });
   vi.mocked(sourceScopes).mockResolvedValue(scopes);
+  vi.mocked(queryOverlayPage).mockImplementation(async (_token, _game, query) => ({ ...overlayFor(resolvedWindow(probe)), source: query.scope }));
   vi.mocked(queryReplayWindow).mockImplementation(async (_token, _game, query) => {
     const source = query.scope;
     const roster = { source, local_participant: 1, game_tick: "0", observed_replay_tick: query.at,
@@ -72,10 +81,46 @@ const setFixture = (probe: ReplayFixture, epochs = [0]) => {
       .map((event, index) => ({ sequence: index + 1, ordinal: 0, evidence, replay_tick: event.replay_tick!, revision: { event: { source_id: index + 1, game_tick: event.game_tick, name: event.event_type,
         killer: event.killer ?? undefined, victim: event.victim ?? undefined, assisters: event.assisters,
         actors: { killer: [{ status: "resolved", participant: 1, raw: "player1" }] } }, fingerprint: Array(32).fill(0), response_fingerprint: Array(32).fill(0), ingestion: "accepted" } }));
-    return { source, local_participant: 1, events, next: null, roster, coverage } as any;
+    return { source, local_participant: 1, events, next: null, roster, coverage, identities: roster.players.map(({ participant, team, riot_id, champion_name }) => ({ participant, team, riot_id, champion_name })) } as any;
   });
   return { scopes, facts };
 };
+
+it("shows opening spell icons without a video or timeline interaction and omits overlay team headings", async () => {
+  const probe = replayProbe();
+  setFixture(probe);
+  const overlay = overlayFor(resolvedWindow(probe));
+  overlay.samples[0].replay_tick = 25 * 48_000_000 as ReplayTick;
+  overlay.samples[0].players[0].spells = ["Flash", "Ghost"];
+  overlay.samples[0].players[0].is_dead = true;
+  overlay.samples[0].players[0].respawn_timer = 10;
+  overlay.samples[0].players[1].spells = ["Teleport", null];
+  vi.mocked(queryOverlayPage).mockResolvedValue(overlay);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
+    video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2));
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
+    const rails = host.querySelector('[data-testid="champion-filter-fullscreen"]')!;
+    expect(rails.querySelectorAll("h3")).toHaveLength(0);
+    expect(rails.querySelector('[aria-label="ALLIES"]')).not.toBeNull();
+    expect(rails.querySelector('[aria-label="ENEMIES"]')).not.toBeNull();
+    const selectedImages = [...rails.querySelectorAll<HTMLImageElement>('[class*="spell"] img')].filter(img => !img.hidden);
+    expect(selectedImages.map(img => img.src)).toEqual(["Flash", "Ghost", "Teleport"].map(label => `http://assets.test/ddragon/16.20.1/spell/${label}`));
+    expect(selectedImages.every(img => img.parentElement?.title.startsWith("First recorded: "))).toBe(true);
+    expect(rails.querySelectorAll('[data-testid="champion-level"], [data-testid="champion-respawn"], [data-dead="true"]')).toHaveLength(0);
+    expect(host.querySelector("video")!.currentTime).toBe(0);
+    expect([...host.querySelectorAll('[aria-label="Recorded state"] dd')].map(node => node.textContent?.replace(/\s+/g, " ").trim()))
+      .toEqual(["— / — / —", "—", "—", "—"]);
+  } finally { dispose(); }
+});
 
 it("shows confirmed partial EOG facts alongside recorded totals without replacing the video", async () => {
   const probe=replayProbe();
@@ -86,7 +131,7 @@ it("shows confirmed partial EOG facts alongside recorded totals without replacin
   setFixture(probe);vi.mocked(loadReplayDescriptor).mockResolvedValue({snapshot_token:"snapshot",game_timestamp:"1",video_url:probe.video_url,media_timeline:probe.media_timeline});vi.mocked(loadServerMetrics).mockReturnValue(new Promise(()=>{}));
   vi.spyOn(HTMLMediaElement.prototype,"pause").mockImplementation(()=>{});vi.spyOn(HTMLMediaElement.prototype,"load").mockImplementation(()=>{});
   const host=document.createElement("div");document.body.append(host);const dispose=render(()=><ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work=>work("snapshot")} onBack={()=>{}} onExportClip={()=>{}}/>,host);
-  try{await vi.waitFor(()=>expect(host.querySelector('[data-testid="replay-coverage"]')).not.toBeNull());expect(host.querySelector('[data-testid="league-result"]')?.textContent).toContain("WIN · Partial final facts");expect(host.textContent).toContain("Match confirmed");expect(host.textContent).toContain("FINAL EOG K / D / A6 / 2 / 9");expect(host.textContent).toContain("RECORDED K / D / A1 / 2 / 3");expect(host.querySelectorAll("video")).toHaveLength(1);}finally{dispose();}
+  try{await vi.waitFor(()=>expect(host.querySelector('[data-testid="league-result"]')?.textContent).toContain("WIN · Partial final facts"));expect(host.querySelector('[data-testid="replay-coverage"]')).toBeNull();expect(host.textContent).toContain("RECORDED K / D / A— / — / —");expect(host.textContent).toContain("Match confirmed");expect(host.textContent).toContain("FINAL EOG K / D / A6 / 2 / 9");expect(host.querySelectorAll("video")).toHaveLength(1);}finally{dispose();}
 });
 
 it("marks only the persistent primary video across layout and recovery, then releases it", async () => {
@@ -146,6 +191,36 @@ it("marks only the persistent primary video across layout and recovery, then rel
   expect(document.querySelector('[data-qb-primary-playback="true"]')).toBeNull();
 });
 
+it("shows champion filters and event colors without a seek or a fabricated roster sample", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1000, height: 50, left: 0, right: 1000, top: 0, bottom: 50, x: 0, y: 0, toJSON: () => ({}) });
+  const probe = replayProbe();
+  probe.events = [{ event_type: "ChampionKill", game_tick: "1000000", replay_tick: 48_000_000 as ReplayTick,
+    killer: "player1", victim: "enemy2", assisters: [], dragon_type: null, stolen: null, recipient: null,
+    kill_streak: null, acer: null, acing_team: null, turret: null, inhibitor: null, result: null, relation: "ally" }];
+  setFixture(probe);
+  const initial = resolvedWindow(probe);
+  initial.roster = null;
+  initial.events[0].effective_actors = initial.events[0].revision.event.actors;
+  vi.mocked(queryReplayWindow).mockResolvedValue(initial);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector('[data-event-icon="swords"]')?.classList.contains(timelineStyles.eventally)).toBe(true));
+    expect(host.querySelector("video")!.currentTime).toBe(0);
+    expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2);
+    expect(host.querySelector('[aria-label="Add Ahri, player1, from timeline filter"]')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('[data-testid="champion-filter-option"]')!.click();
+    expect(host.querySelector('[data-testid="champion-filter-option"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).toContain("RECORDED K / D / A— / — / —");
+    expect(host.querySelector('[data-testid="replay-coverage"]')).toBeNull();
+    expect(queryReplayWindow).toHaveBeenCalledWith("snapshot", "1", expect.objectContaining({ at: 0 }));
+  } finally { dispose(); }
+});
+
 it("switches recorded epochs without retaining stale participants or a stale window", async () => {
   const probe = replayProbe();
   const fixture = setFixture(probe, [0, 1]);
@@ -153,6 +228,8 @@ it("switches recorded epochs without retaining stale participants or a stale win
   const first = new Promise<unknown>(resolve => { releaseFirst = resolve; });
   vi.mocked(queryReplayWindow).mockImplementation((_token, _game, query) =>
     query.scope.epoch === 0 ? first : Promise.resolve(resolvedWindow(probe, query.scope)));
+  vi.mocked(queryOverlayPage).mockImplementation(async (_token, _game, query) =>
+    overlayFor(query.scope.epoch === 0 ? await first as ReplayWindow : resolvedWindow(probe, query.scope)));
   vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
   vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
@@ -164,14 +241,19 @@ it("switches recorded epochs without retaining stale participants or a stale win
       const node = host.querySelector<HTMLSelectElement>('[aria-label="Recorded source"]');
       expect(node).not.toBeNull(); return node!;
     });
-    select.value = JSON.stringify(fixture.scopes[1].source);
+    await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2));
+    select.value = sourceKey(fixture.scopes[0].source);
     select.dispatchEvent(new Event("change", { bubbles: true }));
-    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-coverage"]')?.textContent).toContain("Roster sampled"));
+    await vi.waitFor(() => expect(vi.mocked(queryReplayWindow).mock.calls.some(([, , query]) => query.scope.epoch === 0)).toBe(true));
+    expect(host.textContent).toContain("RECORDED K / D / A— / — / —");
+    expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(0);
+    select.value = sourceKey(fixture.scopes[1].source);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     releaseFirst(resolvedWindow(probe, fixture.scopes[0].source));
-    await Promise.resolve(); await Promise.resolve();
-    expect(host.querySelector('[data-testid="replay-coverage"]')?.textContent).toContain("Roster sampled");
-    expect(host.textContent).toContain("RECORDED K / D / A1 / 2 / 3");
-    expect(vi.mocked(queryReplayWindow).mock.calls.some(([, , query]) => query.scope.epoch === 1)).toBe(true);
+    await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2));
+    expect(select.value).toBe(sourceKey(fixture.scopes[1].source));
+    expect(host.textContent).toContain("RECORDED K / D / A— / — / —");
+    await vi.waitFor(() => expect(vi.mocked(queryReplayWindow).mock.calls.some(([, , query]) => query.scope.epoch === 1)).toBe(true));
   } finally { dispose(); }
 });
 
@@ -209,7 +291,8 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toContain("Loading replay details");
     expect(host.querySelectorAll('[aria-label^="Seek to"]')).toHaveLength(0);
     expect(host.querySelector('[data-testid="fullscreen-hud"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="champion-filter-option"]')).toBeNull();
+    // Source identities are ready independently of the held event page.
+    await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2));
     expect(vi.mocked(emitReplayBenchmarkEvent).mock.calls.some(([kind]) => kind === "viewer_mounted")).toBe(true);
     expect(vi.mocked(emitReplayBenchmarkEvent).mock.calls.some(([kind]) => kind === "playback_payload_ready")).toBe(false);
     Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 }, paused: { get: () => paused } });
@@ -337,13 +420,17 @@ it("does not mount a late descriptor or request details after the viewer is disp
 
 it.each(["media-first", "details-first"] as const)("starts the benchmark once after both readiness gates (%s)", async order => {
   const probe = replayProbe();
+  const details = resolvedWindow(probe);
+  Object.assign(details.roster.players[0], { is_dead:true, respawn_timer:12.4,
+    summoner_spells:{one:{display_name:"Flash"},two:{id:6}} });
   let resolveDetails!: (value: ReplayWindow) => void;
   setFixture(probe);
+  vi.mocked(queryOverlayPage).mockResolvedValue(overlayFor(details));
   vi.mocked(queryReplayWindow).mockReturnValue(new Promise<ReplayWindow>(resolve => { resolveDetails = resolve; }));
   vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
     video_url: probe.video_url, media_timeline: probe.media_timeline });
   vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
-  const observer = { nextMediaGeneration: () => 1, scenario: () => ({ kind: "cold_open" }),
+  const observer = { nextMediaGeneration: () => 1, nextActionId: () => "seek-1", scenario: () => ({ kind: "cold_open" }),
     emit: vi.fn(), complete: vi.fn() };
   vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
   vi.mocked(buildScenarioActions).mockReturnValue([]);
@@ -357,6 +444,7 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
   Object.defineProperty(prototype, "cancelVideoFrameCallback", { configurable: true, value: () => {} });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
     readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
@@ -373,19 +461,45 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
       readyMedia();
       await Promise.resolve();
       expect(buildScenarioActions).not.toHaveBeenCalled();
-      resolveDetails(resolvedWindow(probe));
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-coverage"]')).not.toBeNull());
+      resolveDetails(details);
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
     } else {
-      resolveDetails(resolvedWindow(probe));
+      resolveDetails(details);
       await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
       expect(buildScenarioActions).not.toHaveBeenCalled();
       readyMedia();
     }
     await vi.waitFor(() => expect(buildScenarioActions).toHaveBeenCalledTimes(1));
+    expect(host.querySelector('[aria-label="Recorded state"]')?.textContent).toContain("CS43Level7Game clock0:00");
+    const champion = host.querySelector('[data-player-name="player1"]')!;
+    expect(champion.querySelector('[data-testid="champion-level"]')?.textContent).toBe("7");
+    expect(champion.getAttribute("data-dead")).toBe("true");
+    expect(champion.querySelector('[data-testid="champion-respawn"]')?.textContent).toBe("13");
+    expect([...champion.querySelectorAll('[class*="spell"] img')].map(img=>img.getAttribute("src")))
+      .toEqual(["http://assets.test/ddragon/16.20.1/spell/Flash","http://assets.test/ddragon/16.20.1/spell/6"]);
     primary.dispatchEvent(new Event("canplay"));
     frame(performance.now(), { mediaTime: 1 } as VideoFrameCallbackMetadata);
     await Promise.resolve();
     expect(buildScenarioActions).toHaveBeenCalledTimes(1);
+    expect(champion.querySelector('[data-testid="champion-respawn"]')?.textContent).toBe("12");
+    const spellImages = [...champion.querySelectorAll('[class*="spell"] img')];
+    const queryCount = vi.mocked(queryReplayWindow).mock.calls.length;
+    // A paused seek may present before seeked. Queue publications must neither
+    // erase that frame nor reset the roster query to zero and remount assets.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    expect(primary.paused).toBe(true);
+    expect(primary.currentTime).toBe(16);
+    expect(champion.querySelector('[data-testid="champion-respawn"]')?.textContent).toBe("12");
+    expect(spellImages.every(image => image.isConnected)).toBe(true);
+    frame(performance.now(), { mediaTime: 16 } as VideoFrameCallbackMetadata);
+    primary.dispatchEvent(new Event("seeked"));
+    primary.dispatchEvent(new Event("canplay"));
+    expect(champion.querySelector('[data-testid="champion-respawn"]')?.textContent).toBe("0");
+    expect(champion.getAttribute("data-dead")).toBe("true");
+    expect([...champion.querySelectorAll('[class*="spell"] img')]).toEqual(spellImages);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(vi.mocked(queryReplayWindow).mock.calls.length).toBe(queryCount);
+    expect(queryOverlayPage).toHaveBeenCalledTimes(1);
   } finally {
     dispose();
     ["requestVideoFrameCallback", "cancelVideoFrameCallback"].forEach((name, index) => {
@@ -471,7 +585,7 @@ it.each(["media-first", "details-first", "details-fail", "details-timeout", "dis
       else if (outcome === "details-timeout") readinessTimeout!();
       else {
         resolveDetails(resolvedWindow(probe));
-        await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-coverage"]')).not.toBeNull());
+        await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
       }
       await vi.waitFor(() => expect(observer.complete).toHaveBeenCalledTimes(1));
       expect(observer.complete.mock.calls[0][0]).toBe(outcome === "media-first" || outcome === "details-first" ? "complete" : "failed");

@@ -142,6 +142,30 @@ pub fn default_config_path() -> Result<PathBuf> {
     Ok(project.config_dir().join("config.toml"))
 }
 
+/// Select an isolated native cache directory when explicitly requested.
+pub fn app_data_path(default: PathBuf) -> Result<PathBuf> {
+    app_data_path_with_override(default, env::var_os("LEAGUE_REPLAY_APP_DATA_DIR"))
+}
+
+fn app_data_path_with_override(
+    default: PathBuf,
+    override_path: Option<std::ffi::OsString>,
+) -> Result<PathBuf> {
+    let path = match override_path {
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() {
+                bail!("LEAGUE_REPLAY_APP_DATA_DIR must be an absolute directory");
+            }
+            path
+        }
+        None => default,
+    };
+    fs::create_dir_all(&path)
+        .with_context(|| format!("could not create app data directory {}", path.display()))?;
+    Ok(path)
+}
+
 pub fn save(path: &Path, config: &Config) -> Result<()> {
     config.validate()?;
     if let Some(parent) = path.parent() {
@@ -210,6 +234,30 @@ fn expand_user_path(value: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_data_override_is_explicit_and_never_falls_back_on_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let default = directory.path().join("default");
+        let isolated = directory.path().join("isolated");
+        assert_eq!(
+            app_data_path_with_override(default.clone(), Some(isolated.clone().into_os_string()))
+                .unwrap(),
+            isolated
+        );
+        assert!(!default.exists());
+        for value in ["", "relative"] {
+            assert!(app_data_path_with_override(default.clone(), Some(value.into())).is_err());
+        }
+        let file = directory.path().join("file");
+        fs::write(&file, b"not a directory").unwrap();
+        assert!(app_data_path_with_override(default.clone(), Some(file.into_os_string())).is_err());
+        assert!(!default.exists());
+        assert_eq!(
+            app_data_path_with_override(default.clone(), None).unwrap(),
+            default
+        );
+    }
 
     #[test]
     fn preserves_unowned_sections_when_saving() {

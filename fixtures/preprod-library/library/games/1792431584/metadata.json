@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "media_id": "a8bf1b1f-5fd3-4f9d-bcdb-8f3534af9b00",
+  "media_timeline": {
+    "schema_version": 2,
+    "replay_ticks_per_second": "48000000",
+    "media_id": "a8bf1b1f-5fd3-4f9d-bcdb-8f3534af9b00",
+    "video": {
+      "codec": "h264",
+      "profile": "High",
+      "time_base": {
+        "numerator": "1",
+        "denominator": "15360"
+      },
+      "first_pts": "0",
+      "frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "frame_count": "60398",
+      "one_past_last_pts": "15461888",
+      "replay_end": "48318400000",
+      "exact_cfr": true
+    },
+    "audio": {
+      "present": true,
+      "codec": "aac",
+      "sample_rate": 48000,
+      "time_base": {
+        "numerator": "1",
+        "denominator": "48000"
+      },
+      "first_pts": "0",
+      "replay_start": "0",
+      "replay_end": "48318384000"
+    },
+    "container": {
+      "start_seconds": {
+        "numerator": "0",
+        "denominator": "1"
+      },
+      "duration_seconds": {
+        "numerator": "1006633333",
+        "denominator": "1000000"
+      }
+    },
+    "producer": {
+      "backend": "synthetic_fixture",
+      "expected_frame_rate": {
+        "numerator": "60",
+        "denominator": "1"
+      },
+      "expected_frame_count": "60398",
+      "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+    },
+    "capture": null
+  },
+  "recorded_at": "2026-10-19T17:39:44.5530567Z",
+  "game_mode": "SWIFTPLAY",
+  "local_player_summoner_name": "SUPERSTAR#VOID",
+  "local_player_champion": "Master Yi",
+  "local_player_team": "ORDER",
+  "encoder_used": "libx264",
+  "recording_codec": "h264",
+  "recording_profile": "high",
+  "recording_resolution": "1920x1080",
+  "capture_backend": "synthetic_fixture",
+  "capture_adapter_luid": null,
+  "capture_adapter_name": null,
+  "capture_output": null,
+  "encoder_interop": null,
+  "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+  "capture_support_label": "synthetic-fixture-no-capture",
+  "source_frames_surfaced": 0,
+  "source_frames_superseded": 0,
+  "cfr_duplicates": 0,
+  "cfr_discards": 0,
+  "pool_recreations": 0,
+  "capture": null,
+  "saved": false
+}

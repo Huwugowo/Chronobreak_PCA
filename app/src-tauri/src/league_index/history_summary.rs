@@ -29,7 +29,7 @@ impl Index {
                 CASE WHEN r.telemetry_status!='ready' OR r.tail_bytes>0 OR EXISTS(SELECT 1 FROM gaps g WHERE g.media_id=r.media_id) THEN 1 ELSE 0 END
                 | CASE WHEN r.queue_id IS NULL THEN 2 ELSE 0 END
                 | CASE WHEN r.outcome='unknown' THEN 4 ELSE 0 END
-                | CASE WHEN EXISTS(SELECT 1 FROM event_actors a WHERE a.media_id=r.media_id AND a.status!='resolved') THEN 8 ELSE 0 END
+                | CASE WHEN EXISTS(SELECT 1 FROM effective_event_actors a WHERE a.media_id=r.media_id AND a.status!='resolved') THEN 8 ELSE 0 END
                 | CASE WHEN NOT EXISTS(SELECT 1 FROM scopes s WHERE s.media_id=r.media_id) OR EXISTS(
                     SELECT 1 FROM scopes s WHERE s.media_id=r.media_id AND (
                         NOT EXISTS(SELECT 1 FROM evidence e WHERE e.media_id=s.media_id AND e.run_id=s.run_id AND e.epoch=s.epoch AND e.endpoint='events' AND e.observed=1)

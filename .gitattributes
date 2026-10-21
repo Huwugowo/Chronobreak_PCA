@@ -1,2 +1,6 @@
 media-runtime/runtime-lock.json text eol=lf
 media-runtime/notices/* text eol=lf
+fixtures/preprod-library/**/*.json -text
+fixtures/preprod-library/**/*.jsonl -text
+fixtures/preprod-library/**/*.mp4 -text
+fixtures/preprod-library/source-manifest.json whitespace=trailing-space,space-before-tab,cr-at-eol

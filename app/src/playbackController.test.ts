@@ -132,10 +132,38 @@ describe("concrete playback controller", () => {
     expect(await latest).toMatchObject({ status: "presented", target: tick(30) });
   });
 
-  it("deduplicates within half a frame without fabricating presentation", async () => {
+  it("deduplicates within half a frame only after that frame was presented", async () => {
     const { media, controller } = setup(); media.metadata(); media.update({ tick: tick(10 + 1 / 240) });
+    media.frame(tick(10)); media.update({ tick: tick(10 + 1 / 240) });
     expect(await controller.seek(tick(10))).toMatchObject({ status: "deduplicated" });
-    expect(media.seeks).toHaveLength(0); expect(controller.snapshot().seek.presented).toBeNull();
+    expect(media.seeks).toHaveLength(0); expect(controller.snapshot().seek.presented).toBe(tick(10));
+  });
+
+  it("still requests presentation when currentTime already matches an unpresented target", async () => {
+    const { media, controller } = setup(); media.metadata(); media.update({ tick: tick(10) });
+    const result = controller.seek(tick(10));
+    expect(media.seeks).toEqual([tick(10)]);
+    expect(controller.snapshot().seek.presented).toBeNull();
+    media.seeked(); media.frame(tick(10));
+    expect(await result).toMatchObject({ status: "presented", presented: tick(10) });
+    expect(media.state.paused).toBe(true);
+  });
+
+  it.each([false, true])("shares a repeated paused seek without cancelling its frame (seeked first: %s)", async seekedFirst => {
+    const { media, controller } = setup(); media.metadata(); media.frame(tick(0));
+    const first = controller.seek(tick(10));
+    if (seekedFirst) media.seeked();
+    const callback = media.allCallbacks[media.allCallbacks.length - 1]!;
+    const epoch = controller.snapshot().seek.nextEpoch;
+    expect(controller.seek(tick(10))).toBe(first);
+    expect(controller.snapshot().seek.nextEpoch).toBe(epoch);
+    expect(media.allCallbacks[media.allCallbacks.length - 1]).toBe(callback);
+    media.frame(tick(10));
+    if (!seekedFirst) media.seeked();
+    expect(await first).toMatchObject({ status: "presented", presented: tick(10) });
+    expect(media.seeks).toEqual([tick(10)]);
+    expect(controller.snapshot().queue).toBe("IDLE");
+    expect(media.state.paused).toBe(true);
   });
 
   it("accepts presentation before seeked without releasing the native slot early", async () => {
@@ -423,7 +451,7 @@ describe("presented rate capability and audio intent", () => {
     controller.setRate(8); presentFor(media, 0, 5_000);
     expect(media.opens).toHaveLength(2);
     expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, outcome: "limited" });
-    media.metadata(); await Promise.resolve();
+    media.metadata(); media.seeked(); media.frame(media.state.tick!); await Promise.resolve();
     presentFor(media, 0, 3_000);
     expect(controller.snapshot().readiness).toBe("degraded");
     expect(media.rates.filter((value) => value === 8)).toHaveLength(1);
@@ -463,7 +491,7 @@ describe("presented rate capability and audio intent", () => {
     vi.advanceTimersByTime(5_000);
     expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, outcome: "limited" });
     expect(media.opens).toHaveLength(2);
-    media.metadata(); await Promise.resolve(); presentFor(media, 1);
+    media.metadata(); media.seeked(); media.frame(media.state.tick!); await Promise.resolve(); presentFor(media, 1);
     expect(controller.snapshot().rate).toMatchObject({ selected: 8, effective: 1, observed: 1, outcome: "limited" });
     expect(media.rates.filter((value) => value === 8)).toHaveLength(1);
   });
@@ -503,7 +531,8 @@ describe("presented rate capability and audio intent", () => {
     expect(controller.snapshot().rate).toMatchObject({ selected: 8, applied: 1, observed: null, outcome: "unknown" });
     expect(controller.snapshot().rate.limitation).toContain("no presented-frame evidence");
     vi.advanceTimersByTime(6_000); expect(media.opens).toHaveLength(2);
-    media.metadata(); await Promise.resolve();
+    // Acknowledge the recovery seek, then withhold continuous rate evidence.
+    media.metadata(); media.seeked(); media.frame(media.state.tick!); await Promise.resolve();
     vi.advanceTimersByTime(6_000); expect(controller.snapshot().readiness).toBe("degraded");
     expect(media.opens).toHaveLength(2); controller.dispose();
   });

@@ -713,42 +713,58 @@
       "id": "QB-DATA-002",
       "kind": "feature",
       "name": "Authoritative Post-game Results and Statistics",
-        "description": "Confirm a provisional in-game League match candidate through exact post-game LCU game identity, then attach authoritative results and useful participant/team statistics to the correct recording.",
+      "description": "Confirm a provisional in-game League match candidate through exact post-game LCU game identity, then attach authoritative results and useful participant/team statistics to the correct recording.",
       "priority": "P1",
       "area": "match-data",
       "status": "done",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-DATA-001", "QB-DATA-003", "QB-REPLAY-012"],
-        "evidence": [
-          "2026-09-29 planning evidence only: three existing completed-match captures contain matching gameflow/end-of-game/history IDs. End-of-game supplies ten participants and two teams, while captured history supplies one participant; aborted practice can lack end-of-game data. See docs/product/league-data-capabilities.md.",
-          "User-approved data refinement expands the original result-only scope to useful allowlisted final gameplay statistics; the reviewed v2 is the current implementation design.",
-          "2026-10-01 design boundary: QB-DATA-003 records only a provisional gameId/queueId candidate. QB-DATA-002 must require exact gameId equality from /lol-end-of-game/v1/eog-stats-block before attaching final result/statistics; optional completed participant/champion data may corroborate recorded Live observations.",
-          "2026-10-08 implementation evidence: bounded EOG confirmation/final facts pass automated checks and release builds. Actual app-closed WIN passes exact game/media binding, ten-player facts, production readers, 85 event mappings and full 1080p60 decode (21,785-byte result/52-byte summary). Two subsequent PRACTICETOOL quit/surrender recordings pass media/reader checks without results; all three candidates are distinct and no earlier WIN carries over. Terminal resource diagnostics and in-flight expiry/deletion accounting are implemented and verified. See docs/execution/qb-data-002.md.",
-          "2026-10-13 user-directed closure: without League access for the foreseeable period, the user accepted the implemented WIN/unknown outcome and final-statistics scope and asked to consider this feature closed. Real primary-local LOSS, explicit delayed-EOG confirmation and full real EOG resource measurements are deferred, not passed; LOSS remains disabled. Applicable combined-source tests, checks and production builds passed as recorded in docs/reviews/repository-consolidation-2026-10-13.md. The acceptance criteria below explicitly record this limited closure; the immutable v2 plan and detailed verification history are preserved."
-        ],
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-DATA-003",
+        "QB-REPLAY-012"
+      ],
+      "evidence": [
+        "2026-09-29 planning evidence only: three existing completed-match captures contain matching gameflow/end-of-game/history IDs. End-of-game supplies ten participants and two teams, while captured history supplies one participant; aborted practice can lack end-of-game data. See docs/product/league-data-capabilities.md.",
+        "User-approved data refinement expands the original result-only scope to useful allowlisted final gameplay statistics; the reviewed v2 is the current implementation design.",
+        "2026-10-01 design boundary: QB-DATA-003 records only a provisional gameId/queueId candidate. QB-DATA-002 must require exact gameId equality from /lol-end-of-game/v1/eog-stats-block before attaching final result/statistics; optional completed participant/champion data may corroborate recorded Live observations.",
+        "2026-10-08 implementation evidence: bounded EOG confirmation/final facts pass automated checks and release builds. Actual app-closed WIN passes exact game/media binding, ten-player facts, production readers, 85 event mappings and full 1080p60 decode (21,785-byte result/52-byte summary). Two subsequent PRACTICETOOL quit/surrender recordings pass media/reader checks without results; all three candidates are distinct and no earlier WIN carries over. Terminal resource diagnostics and in-flight expiry/deletion accounting are implemented and verified. See docs/execution/qb-data-002.md.",
+        "2026-10-13 user-directed closure: without League access for the foreseeable period, the user accepted the implemented WIN/unknown outcome and final-statistics scope and asked to consider this feature closed. Real primary-local LOSS, explicit delayed-EOG confirmation and full real EOG resource measurements are deferred, not passed; LOSS remains disabled. Applicable combined-source tests, checks and production builds passed as recorded in docs/reviews/repository-consolidation-2026-10-13.md. The acceptance criteria below explicitly record this limited closure; the immutable v2 plan and detailed verification history are preserved."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": "docs/exec-plans/qb-data-002-post-game-confirmation-v2.md",
         "progress": "docs/execution/qb-data-002.md"
       },
-        "acceptance_criteria": [
-          "The recorder acquires post-game data with the app closed and confirms a QB-DATA-003 provisional candidate only when `/lol-end-of-game/v1/eog-stats-block` exposes a valid gameId exactly equal to the candidate gameId. It uses at most 18 attempts over a 180-second in-memory retry window; stale blocks, account switches and latest-history/display-name/timestamp heuristics cannot attach another match.",
-          "Confirmation is a distinct persisted result sidecar from 003's provisional candidate. Missing, delayed, malformed, mismatched, expired or unavailable EOG leaves the provisional recording playable with no result sidecar and never attaches WIN/LOSS or final facts.",
-          "After exact gameId confirmation, retain available allowlisted result and final identity/loadout, duration/version/queue/map, KDA/CS, earned/spent gold, damage, healing/shielding, vision/wards, multikill/objective and rune/stat-counter facts from validated EOG data. Live GameEnd events alone never establish Victory/Defeat; early-surrender/remake indicators preserve an unknown outcome unless the binary result evidence agrees.",
-          "For the user-accepted 2026-10-13 closure, the primary EOG localPlayer WIN field must be a binary integer and observed WIN:1 may project WIN only when optional team/roster corroborators do not conflict. WIN:0 and absent, invalid or conflicting outcome evidence remain unknown while valid stats are retained. LOSS support is deferred until its primary-local source encoding is established by a real defeat and affected outcome checks pass.",
-          "Represent field-family coverage as present, partial or missing with confirmed identity and source provenance. Invalid, negative, overflowing, error-object and conflicting-alias values become null; credentials, rewards, raw bodies and unlisted keys are discarded.",
-          "Bounded reconciliation is in-memory only: at most four pending jobs, one request in flight per job, ten-second-or-slower retry spacing, oldest-job overflow and cancellation on confirmation, expiry, deletion, shutdown or failed publication. Recorder restart may lose the optional result but never invalidates healthy media.",
-          "Install at most one generation-bound result sidecar after healthy canonical publication. The writer never creates directories, rewrites metadata.saved or blocks app deletion; it revalidates directory/media/provisional identity immediately before no-replace rename and abandons safely on mismatch or concurrent deletion.",
-          "Expose typed confirmed, partial and unknown post-game facts to replay details and a compact authoritative library/search summary without delaying media-first playback or requiring a broad analytics UI. A missing result file means unknown; no unavailable sidecar is created.",
-          "Only the bounded read-only loopback EOG endpoint and allowlisted gameplay fields are used. No history endpoint, credentials, raw bodies, unrelated account/social data or real identifiers in diagnostics/public fixtures are included.",
-          "Deterministic confirmation/retry/writer/consumer tests, actual app-closed WIN/unavailable-result/consecutive-candidate isolation evidence, synthetic bounded-work checks and applicable recorder/app verification pass. At the user's explicit 2026-10-13 closure request, real primary-local LOSS, explicit delayed-EOG confirmation and full real EOG resource measurements are deferred beyond this accepted scope; no pass or real-game performance claim is made for those checks."
+      "acceptance_criteria": [
+        "The recorder acquires post-game data with the app closed and confirms a QB-DATA-003 provisional candidate only when `/lol-end-of-game/v1/eog-stats-block` exposes a valid gameId exactly equal to the candidate gameId. It uses at most 18 attempts over a 180-second in-memory retry window; stale blocks, account switches and latest-history/display-name/timestamp heuristics cannot attach another match.",
+        "Confirmation is a distinct persisted result sidecar from 003's provisional candidate. Missing, delayed, malformed, mismatched, expired or unavailable EOG leaves the provisional recording playable with no result sidecar and never attaches WIN/LOSS or final facts.",
+        "After exact gameId confirmation, retain available allowlisted result and final identity/loadout, duration/version/queue/map, KDA/CS, earned/spent gold, damage, healing/shielding, vision/wards, multikill/objective and rune/stat-counter facts from validated EOG data. Live GameEnd events alone never establish Victory/Defeat; early-surrender/remake indicators preserve an unknown outcome unless the binary result evidence agrees.",
+        "For the user-accepted 2026-10-13 closure, the primary EOG localPlayer WIN field must be a binary integer and observed WIN:1 may project WIN only when optional team/roster corroborators do not conflict. WIN:0 and absent, invalid or conflicting outcome evidence remain unknown while valid stats are retained. LOSS support is deferred until its primary-local source encoding is established by a real defeat and affected outcome checks pass.",
+        "Represent field-family coverage as present, partial or missing with confirmed identity and source provenance. Invalid, negative, overflowing, error-object and conflicting-alias values become null; credentials, rewards, raw bodies and unlisted keys are discarded.",
+        "Bounded reconciliation is in-memory only: at most four pending jobs, one request in flight per job, ten-second-or-slower retry spacing, oldest-job overflow and cancellation on confirmation, expiry, deletion, shutdown or failed publication. Recorder restart may lose the optional result but never invalidates healthy media.",
+        "Install at most one generation-bound result sidecar after healthy canonical publication. The writer never creates directories, rewrites metadata.saved or blocks app deletion; it revalidates directory/media/provisional identity immediately before no-replace rename and abandons safely on mismatch or concurrent deletion.",
+        "Expose typed confirmed, partial and unknown post-game facts to replay details and a compact authoritative library/search summary without delaying media-first playback or requiring a broad analytics UI. A missing result file means unknown; no unavailable sidecar is created.",
+        "Only the bounded read-only loopback EOG endpoint and allowlisted gameplay fields are used. No history endpoint, credentials, raw bodies, unrelated account/social data or real identifiers in diagnostics/public fixtures are included.",
+        "Deterministic confirmation/retry/writer/consumer tests, actual app-closed WIN/unavailable-result/consecutive-candidate isolation evidence, synthetic bounded-work checks and applicable recorder/app verification pass. At the user's explicit 2026-10-13 closure request, real primary-local LOSS, explicit delayed-EOG confirmation and full real EOG resource measurements are deferred beyond this accepted scope; no pass or real-game performance claim is made for those checks."
       ],
       "verification": [
-        {"type": "automated", "description": "Use sanitized synthetic normal/practice/mode fixtures and fake time/transport to test field coverage, source conflicts, delayed/restarted acquisition, identity isolation, bounded retries and deletion-safe persistence in temporary libraries.", "command": null},
-        {"type": "inspection", "description": "Review endpoint/field allowlists, late-writer ownership, missingness/provenance and media-first consumer compatibility; raw diagnostic captures remain ignored and local.", "command": null},
-        {"type": "manual", "description": "Verify a completed match collected with the app closed exposes correct authoritative results/statistics; verify an unavailable/aborted case stays explicitly partial or unknown.", "command": null}
+        {
+          "type": "automated",
+          "description": "Use sanitized synthetic normal/practice/mode fixtures and fake time/transport to test field coverage, source conflicts, delayed/restarted acquisition, identity isolation, bounded retries and deletion-safe persistence in temporary libraries.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Review endpoint/field allowlists, late-writer ownership, missingness/provenance and media-first consumer compatibility; raw diagnostic captures remain ignored and local.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Verify a completed match collected with the app closed exposes correct authoritative results/statistics; verify an unavailable/aborted case stays explicitly partial or unknown.",
+          "command": null
+        }
       ],
-        "notes": "Closed at the user's request on 2026-10-13 with implemented WIN/unknown and final statistics accepted; unavailable League access defers the remaining real LOSS/delayed-EOG/resource checks, not their results. LOSS remains disabled. Second data collection unit, after QB-DATA-003, owning exact EOG gameId confirmation, optional completed participant/champion corroboration, final result/statistics and bounded in-memory retries. The immutable v2 design is docs/exec-plans/qb-data-002-post-game-confirmation-v2.md; its original live gates and the explicit closure deviation remain in docs/execution/qb-data-002.md. No Match-V5/RSO, history endpoint, audio work, general LCU automation or analytics UI.",
+      "notes": "Closed at the user's request on 2026-10-13 with implemented WIN/unknown and final statistics accepted; unavailable League access defers the remaining real LOSS/delayed-EOG/resource checks, not their results. LOSS remains disabled. Second data collection unit, after QB-DATA-003, owning exact EOG gameId confirmation, optional completed participant/champion corroboration, final result/statistics and bounded in-memory retries. The immutable v2 design is docs/exec-plans/qb-data-002-post-game-confirmation-v2.md; its original live gates and the explicit closure deviation remain in docs/execution/qb-data-002.md. No Match-V5/RSO, history endpoint, audio work, general LCU automation or analytics UI.",
       "user_value": 4.5,
       "differentiation": 4,
       "difficulty": 4,
@@ -758,7 +774,7 @@
       "id": "QB-DATA-003",
       "kind": "feature",
       "name": "Recording-bound League Match Context",
-        "description": "Record a provisional local League match candidate for each new recording using exact local identity and in-game session signals; authoritative confirmation and final facts belong to QB-DATA-002.",
+      "description": "Record a provisional local League match candidate for each new recording using exact local identity and in-game session signals; authoritative confirmation and final facts belong to QB-DATA-002.",
       "priority": "P0",
       "area": "match-data",
       "status": "done",
@@ -772,33 +788,33 @@
         "2026-10-01 real-client feasibility passed after root evidence review: v3 startup/mid-match, standalone diagnostic restart, bot closure, distinct Practice Tool session and its closure show exact local Riot ID, required game/queue and compatible map/queue-mode agreement. Incomplete bot-game LCU arrays invalidated roster/champion binding; v3 excludes those and process-proof mechanisms. Detailed sanitized reports and limitations remain in docs/execution/qb-data-003.md.",
         "2026-10-01 provisional reducer/recording-owned collector, existing Live tap and pre-publication 64-KiB no-clobber sidecar are implemented. Owned cancellation/abandonment, fresh consecutive identity, directory replacement/reparse and concurrent-writer fixtures passed. Recorder all-target/all-feature tests: 159 library, 3 binary and 3 example passed, 6 existing checks ignored; check/Clippy/fmt passed. Virtual-hour fixtures establish bounded request work, not a measured memory/performance claim.",
         "2026-10-01 optional full-probe/TypeScript projection and visible provisional marker implemented; core scan/descriptor/time schemas unchanged. Missing/corrupt/oversized/wrong-media/unsupported context preserves playback, save protection and delete behavior. App Rust tests 96 passed/1 ignored, frontend 216 passed; TypeScript/build/Clippy/fmt passed. Bare confirmed markers remain unsupported until QB-DATA-002 supplies its exact EOG contract.",
-          "2026-10-01 ten-minute generated production-service capture passed with missing Live data: healthy H.264/AAC canonical publication, 36,284 frames at 60 FPS, strict full decode, 61 resident-memory samples (70,045,696 initial/72,630,272 peak/72,593,408 final bytes), and joined zero-request LCU collector. This proves missing-data isolation, not delayed LCU acquisition or League performance. A real isolated recorder run then published a 612.053-second H.264/AAC recording with 61 snapshots, 70 events, four LCU requests, and an 859-byte provisional sidecar whose media ID matched metadata and game log. The user accepted this run as the integrated QB-DATA-003 evidence; recording duration is not an acceptance criterion. Exact post-game confirmation and final facts remain owned by QB-DATA-002."
+        "2026-10-01 ten-minute generated production-service capture passed with missing Live data: healthy H.264/AAC canonical publication, 36,284 frames at 60 FPS, strict full decode, 61 resident-memory samples (70,045,696 initial/72,630,272 peak/72,593,408 final bytes), and joined zero-request LCU collector. This proves missing-data isolation, not delayed LCU acquisition or League performance. A real isolated recorder run then published a 612.053-second H.264/AAC recording with 61 snapshots, 70 events, four LCU requests, and an 859-byte provisional sidecar whose media ID matched metadata and game log. The user accepted this run as the integrated QB-DATA-003 evidence; recording duration is not an acceptance criterion. Exact post-game confirmation and final facts remain owned by QB-DATA-002."
       ],
       "execution": {
         "workflow": "planned",
         "plan": "docs/exec-plans/qb-data-003-recording-match-context-v3.md",
         "progress": "docs/execution/qb-data-003.md"
       },
-        "acceptance_criteria": [
-          "The recorder owns collection with the app closed. Windows LCU discovery validates process/path and adjacent lockfile identity; private loopback HTTPS uses finite GET allowlists, redacted credentials and bounded time/bytes/concurrency. Denied, absent or ambiguous clients and non-Windows remain explicitly unavailable.",
-          "A bounded read-only real-client probe establishes that LCU InProgress exposes positive gameId and explicit queueId, current-summoner exposes a full Riot ID, Live active-player exposes the exact same full Riot ID, and map/game-mode values are compatible through ordinary startup and mid-match observation. Synthetic evidence cannot pass this gate.",
-          "Provisional binding requires two consecutive fresh coherent rounds agreeing on InProgress, gameId, queueId, local full Riot ID and compatible map/game mode. No LCU teamOne/teamTwo/playerChampionSelections, roster equality, champion mapping, bot semantics or account-only fallback participates in 003 binding. A provisional candidate is explicitly not authoritative until QB-DATA-002 confirms its gameId after the match.",
-          "Inspect no game/client command lines, process memory or listener-owner tables for association. Do not add launch-ID/platform endpoints or new Live requests. Use only the allowlisted LCU gameflow/current-summoner GETs and the existing Live active-player/game-data snapshot round without changing polling cadence or replay clocks.",
-          "Preserve provisional game_id as a canonical decimal string, required queue_id, local full Riot ID, compatible source map/mode values and comparison provenance attached to media_id. Status is provisional; final result/statistics and authoritative confirmation belong to QB-DATA-002.",
-          "Install at most one size-bounded versioned league_match.json before canonical publication through an owned, joined writer. Never overwrite an existing sidecar, recreate removed directories, modify metadata.saved or permit writes after publication. Directory identity checks reject replacement/reparse targets without claiming to protect sibling media from deletion.",
-          "Full PlaybackProbe and its TypeScript contract expose optional status-aware provisional/confirmed context including game_id and queue_id; old schema-v2 bundles and missing/corrupt/wrong-media/unsupported sidecars retain valid playback. ReplayDescriptor, core library scan and metadata/game-log/time schemas remain unchanged.",
-          "LCU/Live availability or provisional identity failure does not gate video readiness, drive shutdown, add Live requests or create unbounded work. Optional failure preserves existing snapshots/events. Async network cancellation meets the planned deadline; blocking discovery/filesystem workers remain owned and joined without a false bounded-cancellation claim.",
-          "Synthetic provisional reducer/transport/service/temporary-library tests cover exact identity, required IDs, compatible modes, stale/changed rounds, provisional persistence and failure isolation; integrated app-closed verification proves provisional publication. Exact EOG confirmation and final facts are outside QB-DATA-003 and owned by QB-DATA-002; applicable project-wide verification passes before completion."
-        ],
+      "acceptance_criteria": [
+        "The recorder owns collection with the app closed. Windows LCU discovery validates process/path and adjacent lockfile identity; private loopback HTTPS uses finite GET allowlists, redacted credentials and bounded time/bytes/concurrency. Denied, absent or ambiguous clients and non-Windows remain explicitly unavailable.",
+        "A bounded read-only real-client probe establishes that LCU InProgress exposes positive gameId and explicit queueId, current-summoner exposes a full Riot ID, Live active-player exposes the exact same full Riot ID, and map/game-mode values are compatible through ordinary startup and mid-match observation. Synthetic evidence cannot pass this gate.",
+        "Provisional binding requires two consecutive fresh coherent rounds agreeing on InProgress, gameId, queueId, local full Riot ID and compatible map/game mode. No LCU teamOne/teamTwo/playerChampionSelections, roster equality, champion mapping, bot semantics or account-only fallback participates in 003 binding. A provisional candidate is explicitly not authoritative until QB-DATA-002 confirms its gameId after the match.",
+        "Inspect no game/client command lines, process memory or listener-owner tables for association. Do not add launch-ID/platform endpoints or new Live requests. Use only the allowlisted LCU gameflow/current-summoner GETs and the existing Live active-player/game-data snapshot round without changing polling cadence or replay clocks.",
+        "Preserve provisional game_id as a canonical decimal string, required queue_id, local full Riot ID, compatible source map/mode values and comparison provenance attached to media_id. Status is provisional; final result/statistics and authoritative confirmation belong to QB-DATA-002.",
+        "Install at most one size-bounded versioned league_match.json before canonical publication through an owned, joined writer. Never overwrite an existing sidecar, recreate removed directories, modify metadata.saved or permit writes after publication. Directory identity checks reject replacement/reparse targets without claiming to protect sibling media from deletion.",
+        "Full PlaybackProbe and its TypeScript contract expose optional status-aware provisional/confirmed context including game_id and queue_id; old schema-v2 bundles and missing/corrupt/wrong-media/unsupported sidecars retain valid playback. ReplayDescriptor, core library scan and metadata/game-log/time schemas remain unchanged.",
+        "LCU/Live availability or provisional identity failure does not gate video readiness, drive shutdown, add Live requests or create unbounded work. Optional failure preserves existing snapshots/events. Async network cancellation meets the planned deadline; blocking discovery/filesystem workers remain owned and joined without a false bounded-cancellation claim.",
+        "Synthetic provisional reducer/transport/service/temporary-library tests cover exact identity, required IDs, compatible modes, stale/changed rounds, provisional persistence and failure isolation; integrated app-closed verification proves provisional publication. Exact EOG confirmation and final facts are outside QB-DATA-003 and owned by QB-DATA-002; applicable project-wide verification passes before completion."
+      ],
       "verification": [
         {
           "type": "manual",
-                                 "description": "First-milestone read-only real-client probe: establish required game/queue fields, exact local full Riot ID agreement, compatible map/mode and ordinary lifecycle coverage for a provisional candidate; roster arrays are diagnostic only.",
+          "description": "First-milestone read-only real-client probe: establish required game/queue fields, exact local full Riot ID agreement, compatible map/mode and ordinary lifecycle coverage for a provisional candidate; roster arrays are diagnostic only.",
           "command": null
         },
         {
           "type": "automated",
-                                 "description": "Test two-round provisional identity association, required IDs, compatible map/mode, stale/changed rounds, ordering/freshness, credential rotation, bounded transport/workers, existing Live request reuse and provisional sidecar isolation; prove roster arrays do not gate 003.",
+          "description": "Test two-round provisional identity association, required IDs, compatible map/mode, stale/changed rounds, ordering/freshness, credential rotation, bounded transport/workers, existing Live request reuse and provisional sidecar isolation; prove roster arrays do not gate 003.",
           "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features"
         },
         {
@@ -818,11 +834,11 @@
         },
         {
           "type": "manual",
-                                 "description": "With the app closed, verify provisional game/queue identity during recording, normal publication and unchanged playback. Exact EOG confirmation and final facts are verified by the separate QB-DATA-002 unit.",
+          "description": "With the app closed, verify provisional game/queue identity during recording, normal publication and unchanged playback. Exact EOG confirmation and final facts are verified by the separate QB-DATA-002 unit.",
           "command": null
         }
       ],
-        "notes": "Execute v3 as saved; v2 and v1 remain superseded design history. The first real bot-game evidence showed incomplete/mode-dependent roster arrays, so 003 is provisional identity only: exact local Riot ID, InProgress, gameId/queueId and compatible map/mode. The user accepted the 2026-10-01 integrated recording as sufficient evidence; duration has no acceptance meaning. QB-DATA-002 owns exact EOG gameId confirmation and final facts. Do not restore roster/process proof or request EOG from 003. Existing poller retains timing/event ownership; no raw archive, audio or analytics UI.",
+      "notes": "Execute v3 as saved; v2 and v1 remain superseded design history. The first real bot-game evidence showed incomplete/mode-dependent roster arrays, so 003 is provisional identity only: exact local Riot ID, InProgress, gameId/queueId and compatible map/mode. The user accepted the 2026-10-01 integrated recording as sufficient evidence; duration has no acceptance meaning. QB-DATA-002 owns exact EOG gameId confirmation and final facts. Do not restore roster/process proof or request EOG from 003. Existing poller retains timing/event ownership; no raw archive, audio or analytics UI.",
       "user_value": 5,
       "differentiation": 4,
       "difficulty": 4,
@@ -837,12 +853,19 @@
       "area": "match-data",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-DATA-001", "QB-DATA-003", "QB-REPLAY-012"],
+      "dependencies": [
+        "QB-DATA-001",
+        "QB-DATA-003",
+        "QB-REPLAY-012"
+      ],
       "evidence": [
         "2026-09-29 planning evidence only: current poller retains a subset of observed roster/local-player fields and omits FirstBlood.Recipient from the normalized event contract. docs/product/league-data-capabilities.md distinguishes available facts from unsupported all-player histories.",
         "Existing deduplicated 10-second diagnostics establish field availability, not an optimal faster polling cadence or collection overhead budget."
       ],
-      "execution": {"workflow": "planned", "plan": null},
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
       "acceptance_criteria": [
         "Finalize a source/consumer/field matrix before implementation, distinguishing static facts, source events, sampled state, derived observations and unavailable data. Preserve useful available gameplay facts without promising all-player gold/health, movement, ward-location or per-hit histories absent from these sources.",
         "Retain source event IDs, kinds, game timestamps and supported event-specific participants/objectives, including FirstBlood.Recipient, with deduplication and explicit handling of unknown/partial variants rather than silent fabrication.",
@@ -854,9 +877,21 @@
         "Deterministic sanitized fixture tests, measured cadence/resource benchmarks, long-match/restart compatibility checks and applicable recorder/app verification pass before completion."
       ],
       "verification": [
-        {"type": "automated", "description": "Use synthetic normal/bot/practice/partial payloads, fake time and cumulative event streams to test field coverage, deduplication, unknowns, temporal uncertainty and bounded persistence.", "command": null},
-        {"type": "benchmark", "description": "Measure candidate endpoint/cadence combinations and long-match persistence costs before selecting production defaults; report coverage gains and resource budgets separately from formal capture-performance claims.", "command": null},
-        {"type": "manual", "description": "Check representative event/state facts against their recorded replay interval and prove API gaps remain visible as missing coverage.", "command": null}
+        {
+          "type": "automated",
+          "description": "Use synthetic normal/bot/practice/partial payloads, fake time and cumulative event streams to test field coverage, deduplication, unknowns, temporal uncertainty and bounded persistence.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure candidate endpoint/cadence combinations and long-match persistence costs before selecting production defaults; report coverage gains and resource budgets separately from formal capture-performance claims.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Check representative event/state facts against their recorded replay interval and prove API gaps remain visible as missing coverage.",
+          "command": null
+        }
       ],
       "notes": "Recommended third collection unit after post-game acquisition, but QB-DATA-002 is not an artificial dependency. Remains draft until field contracts, cadence measurements and storage/compatibility decisions are settled. Reuse existing captures before requesting new field-discovery games. Viewer presentation gaps are separate consumer work; no audio, Match-V5/RSO or OPGG-like UI implementation.",
       "user_value": 5,
@@ -1021,12 +1056,12 @@
         "QB-REPLAY-001"
       ],
       "evidence": [
-        "app/src/viewerUtils.ts performs binary-search timeline lookup and app/src/components/ViewerScreen.tsx renders recorded champion, KDA, CS, level, and item state from the presented-frame clock.",
-        "APP-VIEWER.md explicitly limits the surface to available descriptive data and records backward-seek behavior.",
-        "PHASES.md records Phase 4 validation; Tauri tests and frontend type-check passed on 2026-08-11."
+        "ViewerScreen derives compact local KDA, CS, level and game clock from the latest mapped roster sample at or before observed video position. FullscreenOverlay displays these values; missing samples/fields stay unavailable.",
+        "rosterAtPresentedPosition rejects a future sample on backward seeks; recordedGameClock formats the signed sampled game tick directly without interpolation or correction. Focused existing helper/viewer tests cover this behavior.",
+        "2026-10-20 production Swiftplay desktop: zero initially shows unavailable state; seek to 52.433333 s shows recorded 0/0/0, CS 0, level 3, game clock 0:28; backward seek to zero clears it. Frontend 251 tests/typecheck/build and app Rust 136 tests (three ignored), fmt and Clippy pass."
       ],
       "execution": {
-        "workflow": "planned",
+        "workflow": "direct",
         "plan": null
       },
       "acceptance_criteria": [
@@ -1047,7 +1082,7 @@
           "command": null
         }
       ],
-      "notes": "Existing shipped baseline; no coaching or inferred unavailable state is part of this feature. The 2026-09-29 data inventory identified a scoped consumer-review follow-up: ViewerScreen computes playhead state, but current visible state usage needs verification against this feature's historical evidence. Do not increase collection cadence to compensate for a presentation gap; no UI implementation or re-verification is claimed by the data planning pass.",
+      "notes": "Descriptive recorded state only, with no coaching or inferred unavailable values. The September redesign removed the former state panel; the 2026-10-20 direct repair restores a compact overlay through existing SQLite replay windows. Current evidence supersedes historical claims about visible item state and obsolete lookup/document paths. No acquisition cadence or timing reconstruction changes.",
       "user_value": 4,
       "differentiation": 5,
       "difficulty": 4,
@@ -2294,11 +2329,17 @@
       "area": "replay",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-REPLAY-009", "QB-REPLAY-012"],
+      "dependencies": [
+        "QB-REPLAY-009",
+        "QB-REPLAY-012"
+      ],
       "evidence": [
         "2026-09-15 product decision: exact user-facing previous/next-frame stepping is deferred/opportunistic and does not block subsequent replay work. Exact timing, frame identity, frame-aligned clip/export boundaries and event/media alignment remain independently owned by completed QB-REPLAY-012; this is a scope/priority decision, not implementation evidence."
       ],
-      "execution": {"workflow": "planned", "plan": null},
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
       "acceptance_criteria": [
         "While paused, previous-frame and next-frame controls and documented keyboard shortcuts target the exact adjacent video frame for canonical Chronobreak CFR recordings.",
         "Stepping uses exact frame/rational replay-time identity and authoritative presented-frame timing, not repeated approximate floating-point millisecond arithmetic or assignment of currentTime alone.",
@@ -2307,9 +2348,21 @@
         "Representative recordings meet a measured stepping correctness and latency target, and stepping does not regress playback recovery, audio synchronization, or resource stability."
       ],
       "verification": [
-        {"type": "automated", "description": "Test adjacent-frame arithmetic, boundary behavior, stale generations, keyboard controls, presented-frame reconciliation, and unsupported-media degradation with deterministic fixtures.", "command": "npm run test --prefix app"},
-        {"type": "benchmark", "description": "Measure previous/next-frame latency and correctness on representative canonical recordings and compare WebView presented-frame evidence.", "command": null},
-        {"type": "manual", "description": "Pause, step in both directions at early/middle/late timestamps, and verify visible frame identity and keyboard behavior.", "command": null}
+        {
+          "type": "automated",
+          "description": "Test adjacent-frame arithmetic, boundary behavior, stale generations, keyboard controls, presented-frame reconciliation, and unsupported-media degradation with deterministic fixtures.",
+          "command": "npm run test --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure previous/next-frame latency and correctness on representative canonical recordings and compare WebView presented-frame evidence.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Pause, step in both directions at early/middle/late timestamps, and verify visible frame identity and keyboard behavior.",
+          "command": null
+        }
       ],
       "notes": "Deferred/opportunistic only; no replay feature depends on delivery of these user controls. Keep QB-REPLAY-012 exact timing, frame identity, frame-aligned clip/export boundaries and event/media alignment independent of this feature. Use the existing QB-REPLAY-009 HTMLVideoElement/WebView boundary. Inability to prove exact adjacent-frame presentation cleanly within this stack is an acceptable reason to leave the feature deferred, never authorization for WebCodecs, libmpv, native decoding, a custom playback backend, or replacement/substantial re-architecture of current playback. Any future implementation must still satisfy the exact-stepping acceptance criteria; unavailable or approximate behavior is not completion.",
       "user_value": 4.5,
@@ -2326,9 +2379,15 @@
       "area": "replay",
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-REPLAY-001", "QB-REPLAY-012"],
+      "dependencies": [
+        "QB-REPLAY-001",
+        "QB-REPLAY-012"
+      ],
       "evidence": [],
-      "execution": {"workflow": "planned", "plan": null},
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
       "acceptance_criteria": [
         "Zoom changes the visible window on the canonical replay timeline around a stable cursor/playhead/viewport anchor; panning is bounded at recording start/end and preserves playhead correctness.",
         "Events, bookmarks, clip boundaries, previews, and precise canonical-time navigation remain aligned to canonical time through repeated zoom/pan operations, and viewport manipulation alone never triggers an authoritative media seek.",
@@ -2337,9 +2396,21 @@
         "Basic zoom/pan remains Solid/WebView-first and does not require a custom GPU/native renderer unless measured validation proves the default path insufficient."
       ],
       "verification": [
-        {"type": "automated", "description": "Verify deterministic canonical-time/viewport mapping, anchor preservation, bounds, repeated-cycle stability, LOD selection, filter composition, alignment, and no-seek viewport changes on sparse and event-heavy fixtures.", "command": "npm run test --prefix app"},
-        {"type": "benchmark", "description": "Measure rendering and interaction responsiveness on representative long/event-heavy matches across zoom levels.", "command": null},
-        {"type": "manual", "description": "Navigate whole match -> event cluster -> precise moment -> canonical frame-aligned boundaries while zooming and panning; optional previous/next-frame stepping is not required.", "command": null}
+        {
+          "type": "automated",
+          "description": "Verify deterministic canonical-time/viewport mapping, anchor preservation, bounds, repeated-cycle stability, LOD selection, filter composition, alignment, and no-seek viewport changes on sparse and event-heavy fixtures.",
+          "command": "npm run test --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Measure rendering and interaction responsiveness on representative long/event-heavy matches across zoom levels.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Navigate whole match -> event cluster -> precise moment -> canonical frame-aligned boundaries while zooming and panning; optional previous/next-frame stepping is not required.",
+          "command": null
+        }
       ],
       "notes": "Filtering and LOD are separate concerns. Use QB-REPLAY-001 event semantics, QB-REPLAY-002 filters, QB-REPLAY-003 previews, and QB-REPLAY-012 canonical time; do not invent a second timeline, thumbnail system, or speculative semantic-density feature. Exact frame-aligned coordinates remain supplied by QB-REPLAY-012; zoom/LOD does not require QB-REPLAY-015 user stepping controls.",
       "user_value": 4.5,
@@ -2906,6 +2977,376 @@
       "differentiation": 4,
       "difficulty": 2,
       "stage": "ready"
+    },
+    {
+      "id": "QB-DEV-001",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Complete Development Replay Preview",
+      "description": "Restore offline fixture icons and representative replay state in development previews, and correct the browser timer receiver that prevented replay details and timeline queries from loading.",
+      "priority": "P1",
+      "area": "development",
+      "status": "done",
+      "parent_id": null,
+      "dependencies": [
+        "QB-REPLAY-001",
+        "QB-REPLAY-007"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Development mocks resolve bundled same-origin champion, item, spell and rune icons without network or native library access.",
+        "Replay windows provide stable scoped event identities, diverse events across the replay, cursor pagination and ten-player roster state with scores and items.",
+        "Production ignores the development mock switch.",
+        "Replay detail scheduling and cancellation preserve the browser global timer receiver."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Preview contract and asset integrity tests, full frontend tests, typecheck and build.",
+          "command": "npm run test --prefix app; npm run check --prefix app; npm run build --prefix app"
+        }
+      ],
+      "evidence": [
+        "2026-10-19: fixed browser timer Illegal invocation by calling timers through globalThis; regression test covers replay window loading and cancellation with receiver-enforcing timers.",
+        "Bundled 47 cached Data Dragon 16.18.1 icons for offline preview; preview tests verify PNG signatures for every mock champion, roster portrait, item, spell and rune and validate browser/desktop mock selection plus production exclusion.",
+        "Mock replay now provides 17 fixed scoped events across 30 minutes, cursor pagination and a ten-player roster with sampled scores/items; projection and overlapping-window identity tests pass.",
+        "All 28 frontend test files / 238 tests, TypeScript typecheck and Vite production build passed. Browser UI verified library icons, ten roster filters and visible timeline markers with no replay-detail error. Native desktop UI was not separately exercised; its mock API selection is covered by tests."
+      ],
+      "notes": "Includes the shared replay controller timer correction reproduced in the browser. No SQLite, native backend or user media changes. Review follow-up: this is a UI preview, not backend end-to-end evidence. Mock export still validates the selected recording ID against the unrelated base mock timeline ID and can fail media_identity_mismatch; semantic history filters return unknown/empty; clip/music URLs are empty; generated roster scores and inventories are illustrative rather than event-derived. Consolidating the development adapter and providing a current journal-bearing desktop fixture remain discovered follow-up work."
+    },
+    {
+      "id": "QB-REPLAY-019",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Complete Match Card Presentation",
+      "description": "Restore indexed team rosters, stack the keystone and secondary rune tree, and show final CS and CS per minute beside match-card performance.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-018",
+        "QB-LIB-008"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Match cards display the recorded primary keystone above the secondary rune-tree emblem using the existing asset cache and stable missing-asset behavior.",
+        "Both available team rosters render from checked indexed final facts or a single recorded source roster, preserving unknown teams and partial rosters without invented players.",
+        "Final CS and one-decimal CS/min appear immediately right of the KDA/items group; total CS includes lane and neutral minions and the rate uses positive final game duration, never video duration or a provisional snapshot.",
+        "Missing CS components/duration remain unavailable; zero is displayed correctly; existing card playback/save/delete behavior and earlier replay fixes remain intact.",
+        "The roster disappearance is traced to a specific historical change with a supported explanation.",
+        "Only the main champion portrait is centered and minimally cropped to hide the square source image edge, preserving the circular slot and surrounding layout."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused indexed-roster/final-fact/card regressions, frontend suite/typecheck/build, backend suite/fmt/Clippy and canonical validation.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Inspect real isolated desktop cards for loaded stacked rune icons, real team rosters, Swiftplay CS136/8.3 per minute and Practice Tool partial roster/zero CS; confirm layout and playback entry.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-20: Checked SQL history rows now project final team rosters or one complete recorded source roster, and the card reads that projection. Final rune/secondary style, lane-plus-neutral CS and positive final game duration are projected through the existing bounded history query/strict decoder. Missing CS components remain null; no video-duration or provisional-stat substitution is used.",
+        "2026-10-20: Frontend 245/245 tests across 28 files, backend 129 passed/3 existing ignored, TypeScript, Rust fmt/Clippy -D warnings, fresh production Tauri build and canonical validation passed. Regressions cover indexed-roster card consumption, stacked rune URLs and failed assets, real fixture rosters/runes/CS/duration across rebuilds, nullable/zero CS and recorded-snapshot exclusion; existing playback/save/delete checks pass.",
+        "2026-10-20: Actual isolated desktop verification confirmed loaded 9923/8000 and 8112/8400 rune stacks, Swiftplay five-player allied/enemy columns and CS136/8.3 per minute, Practice Tool one-player/empty-opponent roster and CS0/0.0 per minute. Geometry checks and screenshot verify CS immediately after KDA/items without overlap. Playback opens at zero with ten champion filters. Evidence: ignored build/match-cards-check.cjs and build/match-cards-dev.png. Final normal release launched and responsive; temporary debug app closed.",
+        "Git trace: 783e4bb (2026-09-21) populated summary participants; 6c7174f (2026-09-22) added card roster presentation. 5740eea (2026-10-19) moved history semantics into the index and emptied compatibility participants but left the roster consumer attached to that empty field. The visible disappearance was a data-wiring regression, now covered by the indexed-row card check.",
+        "2026-10-20 portrait refinement: desktop geometry confirms the image and slot centers coincide exactly. The initial four-pixel crop removed the flat rim but left its feathered shadow, as shown by the user screenshot. Compared scales 1.066667, 1.10, 1.12 and 1.142857 in the actual desktop; selected 128/(128-2*8)=1.142857 to remove the complete softened rim. The circular 52px slots and card geometry stay unchanged; real asset/card checks and TypeScript/Vite build pass. Fresh production Tauri release build passes and the updated normal preprod is running."
+      ],
+      "notes": "User-requested bounded match-card completion. No acquisition, stored schema, telemetry reconstruction, fake API or broad UI redesign. Recorded names remain exact; unknown teams are not inferred. CS includes lane and neutral minions and uses final game duration, including the unchanged accelerated Practice Tool clock. 2026-10-20: Main card portraits use a centered 14.286% zoom, cropping eight pixels per source edge including the feathered rim; the prior four-pixel crop left a visible shadow. Other portrait sizes retain their styling."
+    },
+    {
+      "id": "QB-REPLAY-018",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Recorded Identity and Keystone Presentation",
+      "description": "Show recorded champion identities on first replay open and preserve the validated final keystone in match history.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-017",
+        "QB-LIB-008"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "The champion sidebar appears at initial video position using recorded source-scoped identities even before the first mapped roster sample.",
+        "Source-wide identity context supplies no future scores, items or temporal roster; missing or conflicting descriptors remain unavailable.",
+        "History displays the recorded local keystone from a validated final result, preserving absence when no valid rune is recorded.",
+        "Champion filters retain a deterministic source-scoped order and ally/enemy grouping while seeking through reordered or partial timed roster samples."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Source isolation/conflict and initial sidebar regressions, real fixture keystone projection, frontend tests/typecheck/build and backend tests/fmt/Clippy.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Open Swiftplay in isolated desktop preprod, confirm rune image and ten champion filters at time zero without seeking, and use a participant filter.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-20: Replay windows expose consistent source-scoped Riot ID/champion/team descriptors for initial champion filters and event colors. Conflicting descriptors remain null independently; the temporal roster, scores and items remain unavailable before their first mapped sample. History projects a bounded nonzero local keystone ID only from the existing validated final-result reader.",
+        "2026-10-20: Frontend 245/245 tests across 28 files, backend 129 passed/3 existing ignored, TypeScript, Rust fmt/Clippy -D warnings and fresh production Tauri build passed. Regressions cover initial filters without a roster/seek, source isolation/descriptor conflicts, real fixture rune IDs and missing/invalid/out-of-range/mismatched final rune facts.",
+        "2026-10-20: Actual isolated desktop hot-reload runtime showed both rune images loaded (9923 Swiftplay/8112 Practice Tool), all ten champion portraits at video time zero, immediate local participant filtering, initial event colors and unavailable temporal KDA. Runtime assertions and screenshot retained under ignored build/replay-identities-check.cjs and build/replay-identities-dev.png. Fresh normal release preprod launched and responsive after verification; temporary debug app closed.",
+        "2026-10-20 follow-up: Champion filters now use consistent source-wide identities sorted by participant ID for both order and team grouping, independently of timed rosters. Existing projection regression covers reversed samples/identity input and unknown teams. Focused helper/preview tests 11 passed, viewer/helper tests 21 passed and TypeScript passed. Actual desktop Swiftplay retained all ten positions and teams at initial zero, 9:14, 15:40, 0:52 and backward zero while sampled state changed normally. Full frontend 251/251 tests and fresh production Tauri release build pass; normal release preprod updated."
+      ],
+      "notes": "Bounded follow-up to user-reported missing history rune and initial champion sidebar. Extended the existing source-wide identity context; no recorder, source-data, schema or preprod-specific consumer changes. This unit restored the keystone icon; QB-REPLAY-019 subsequently adds the secondary tree to the card. 2026-10-20: Direct follow-up completed: overlay participant order and grouping remain fixed within the selected source."
+    },
+    {
+      "id": "QB-REPLAY-017",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Replay Presentation and Timeline Refresh Fixes",
+      "description": "Remove match-card result-source text and the replay diagnostic bar, show available event colors on initial open, and eliminate event-icon flicker during timeline zoom changes.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-001"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Match cards no longer display the Final EOG/result-source text.",
+        "The diagnostic event/coverage/roster bar and First events button above the replay are removed while normal replay controls and event navigation remain usable.",
+        "Opening a replay at the initial position shows all event colors supported by recorded identity/team evidence without requiring a timeline click or fabricating unavailable temporal state.",
+        "Zooming in and back out reuses already available event data/icons without a perceptible empty-marker reload; source-scoped querying and canonical event timestamps remain correct."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused initial event-presentation/viewport regression checks, frontend suite, typecheck and production build; backend regressions for consistent source-scoped team context.",
+          "command": "npm run test --prefix app; npm run check --prefix app; npm run build --prefix app; cargo test --manifest-path app/src-tauri/Cargo.toml"
+        },
+        {
+          "type": "manual",
+          "description": "Verify initial colors, removed labels and repeated timeline zoom cycles in the real isolated desktop preprod, measuring any refresh delay.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-20: Removed match-card result-source labels and the replay diagnostic bar. Source-scoped consistent recorded team context colors initial events without supplying future roster state; conflicts/missing/unresolved actors remain neutral. Exact and complete containing pages are reused immediately within the existing four-page/2048-event cache, retaining generation, source, roster-time and pagination guards.",
+        "2026-10-20: Frontend suite 245/245 across 28 files, TypeScript check, production Vite build, backend suite 128 passed/3 intentionally ignored, Rust formatting and Clippy -D warnings passed. Regression coverage includes initial colors with no roster/seek, team conflicts/source isolation, cached zooms, cursor completeness and stale responses.",
+        "2026-10-20: Actual isolated Tauri desktop with Swiftplay data opens at video time zero with 27 blue, 6 red and 18 neutral rendered markers/clusters; diagnostic bar absent and no broken event images. Zoom-out previously retained only 25/54 markers for about 198 ms. After correction all 51 markers/clusters were present in the first sampled frame (8-14 ms) throughout three wheel zoom cycles and full-match reset; this is local fixture evidence, not a general performance budget.",
+        "2026-10-20: Fresh production Tauri executable built successfully and the packaged WebView independently confirmed both removed labels, initial colors and repeated wheel zoom/full reset with all markers present in the first sampled frame (7-13 ms). Normal event navigation sought Minions Spawned to 52.433333 seconds with video ready and no media error. Temporary debug session was closed after verification."
+      ],
+      "notes": "2026-10-20 user-reported UI follow-up. Bounded replay presentation correction, with a small query/decoder addition for truthful initial team colors. No raw recording changes, clock repair, playback redesign or adaptive LOD work. Dense event-page navigation remains in the existing playback controls; source-selector options retain their identity during data updates."
+    },
+    {
+      "id": "QB-DEV-002",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Production-path Preprod Recording Library",
+      "description": "Run the normal desktop app and hot-reload UI against an isolated copy of real Master Yi Swiftplay League data with clearly synthetic timing-compatible video, exercising production SQLite, replay, save and clip-export paths.",
+      "priority": "P1",
+      "area": "development",
+      "status": "done",
+      "parent_id": null,
+      "dependencies": [
+        "QB-LIB-008",
+        "QB-REPLAY-001",
+        "QB-REPLAY-007",
+        "QB-DIST-001",
+        "QB-DATA-001",
+        "QB-DATA-002",
+        "QB-DATA-003"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-dev-002-production-path-preprod-library-v3.md",
+        "progress": "docs/execution/qb-dev-002.md"
+      },
+      "acceptance_criteria": [
+        "The primary preprod dataset uses unchanged Master Yi Swiftplay telemetry/match/result sidecars from Huwugowo/Chronobreak_PCA commit 7802292d5fa6b9c1a59f8bcc667bd55513adc756. Original metadata is preserved separately; a clearly derived strict metadata file describes actual synthetic video at the exact original video frame grid, with original and substitute provenance distinguished.",
+        "Simple documented release and hot-reload launch commands run the normal desktop app with mocks disabled against a separate writable library, config, WebView profile and SQLite/cache state; personal library/settings remain untouched and effective storage stays pinned to the owned directory.",
+        "Fixture import and replay use normal validation, SQLite import, history filtering, source-scoped replay queries and media delivery without preseeded database rows, alternate decoders or preview API responses.",
+        "Browsing, event/participant search, playback, valid event seeking and temporal overlay roster state work on Swiftplay; save intent survives restart; a real clip exports and reopens; SQLite rebuild preserves source data and restores queries. Synthetic video does not claim visual gameplay/event alignment.",
+        "Launch preserves the mutable preprod library across runs. Explicit bounded reset restores pristine prepared fixtures only inside the owned directory, refusing unsafe paths or an active session.",
+        "Focused automated checks and actual desktop browse/export/restart/rebuild verification pass. No new generator/test framework, fake API, preseeded SQLite, consumer preprod branches or recorder implementation changes are introduced.",
+        "The app derives roster-scoped associations for unambiguous tagless actor game-name aliases without changing raw journal evidence. Duplicate, conflicting, missing and non-player identities remain unresolved; query/replay/coverage semantics agree and cache rebuild reproduces them.",
+        "Original Practice Tool data remains an adverse timing regression fixture: out-of-range events, discontinuous clocks and unavailable mappings remain truthful, without clamping, fabricated offsets or corrected recording data."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Validate unchanged real sidecars through production journal/index/query paths, temporal roster facts, raw-versus-derived actor association and Practice Tool unavailable mappings; probe/decode synthetic media and actual clip output.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Verify launch/reset isolation and run applicable project-wide checks and the normal desktop build.",
+          "command": "npm run desktop:build --prefix app"
+        },
+        {
+          "type": "manual",
+          "description": "Run normal desktop Swiftplay browse/search/play/seek/overlay/save/export/reopen/restart/cache-rebuild flows; check strict isolation and Practice Tool after-media/unavailable behavior. Placeholder silence and lack of visual gameplay alignment are explicit.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-20: fixtures/preprod-library preserves ten unchanged real sidecars and both original metadata files from Chronobreak_PCA 7802292; separately documented synthetic H.264/AAC videos and strict derived metadata match original video grids. Hash/probe/full-decode checks pass.",
+        "tools/preprod_launch.ps1 runs current main release or ordinary Tauri dev with mocks disabled, isolated copied library/config/app-data/WebView profile and locked runtime. First-use/preservation/reset, ownership/reparse/session-lock/retention safeguards and source preservation pass.",
+        "SQLite v5 derives unambiguous media/run/epoch-scoped roster aliases separately from raw producer actors and atomically publishes effective coverage. Real-fixture, collision/conflict/missing/non-player and isolation regressions pass; Practice Tool after-media and unavailable mappings remain unchanged.",
+        "Actual desktop verified history/event/participant filtering, ten-player temporal roster, playback, forward/backward event seeking, save across restart, 13-second clip export/thumbnail/reopen and SQLite rebuild. Ordinary desktop CSS hot reload passes. Fixed the exposed clip-duration IPC tag mismatch and verified the UI shows 0:13.",
+        "127 app tests passed, 3 existing ignored; packaged protected-route probe test passed; 28 frontend files/239 tests, TypeScript, Vite, fmt, Clippy, fresh Tauri release build, canonical validation and diff checks passed. Detailed results and explicit synthetic-video/untested-UI limits are retained in docs/execution/qb-dev-002.md."
+      ],
+      "notes": "2026-10-20 explicit user scope revision before implementation: prioritize real UI development using Master Yi Swiftplay data from the separate Chronobreak_PCA repo commit 7802292. Original MP4 is unavailable and cannot be transferred; user requests a meaningless substitute. Preserve original metadata and real journal/calibration/identity evidence, derive truthful synthetic-media metadata, retain Practice Tool as an adverse timing fixture, keep launch/reset small and strictly isolated, and do not change recorder implementation. QB-DEV-001 remains a separate browser preview. Clarifications: preprod starts at valid filesystem library files regardless of origin and works without League installed; release/hot reload use latest integrated main. Existing feature-to-field work and QB-DATA-003/002/004 responsibilities are not reopened, unfinished features are not required, and no separate UI audit/consolidation gate is added. Preserve the approved fixtures, synthetic video, isolation, launcher, association fix, safeguards and focused verification."
+    },
+    {
+      "id": "QB-LIB-012",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Restore Library Spells and Incomplete Cards",
+      "description": "Restore checked summoner spell icons and keep incomplete recordings visible alongside paginated match history.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-REPLAY-019"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "History cards resolve available final or recorded summoner spells through the versioned asset cache, preserving missing slots and offline placeholders.",
+        "Incomplete filesystem recordings remain visible on the first unfiltered history page even when its 50 indexed rows are full; later pages do not duplicate them.",
+        "Existing indexed card stats, filters and library actions remain intact."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Extend existing card, asset and real fixture checks; run frontend checks and app Rust checks.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Inspect both real preprod spell pairs in the production desktop app.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "Checked history projects final or recorded spell slots; Data Dragon summoner.json resolves numeric IDs, internal keys and recorded names through validated filenames, retaining older offline cache availability.",
+        "Existing card tests cover a full 50-row SQL page plus an incomplete filesystem entry and no duplicate on later pages. Real Swiftplay/Practice fixtures retain spell pairs 4/6 and 4/12 across index rebuild.",
+        "2026-10-20 production Tauri desktop: both spell pairs loaded; existing roster/rune/CS layout and immediate ten-player replay filters retained. TypeScript/build, 251 frontend tests, 136 app Rust tests (three ignored), fmt and Clippy pass."
+      ],
+      "notes": "Direct repair following the regression audit. Uses existing checked history projections and the versioned asset cache; no acquisition or stored-schema changes."
+    },
+    {
+      "id": "QB-REPLAY-020",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Champion Overlay Status",
+      "description": "Show player names, recorded summoner spells, current level and death status on the fixed replay champion rails.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-004", "QB-REPLAY-018", "QB-LIB-012"],
+      "execution": { "workflow": "planned", "plan": "docs/exec-plans/qb-replay-020-recorded-overlay-timeline-v2.md", "progress": "docs/execution/qb-replay-020.md" },
+      "acceptance_criteria": [
+        "Each player's recorded name appears above their overlay champion portrait, with the Riot #tag omitted and long names contained within the video.",
+        "Each overlay champion has two compact spell slots beside its portrait, using recorded roster spell labels and the existing asset cache. Before the first mapped sample, show its first-recorded spell loadout as opening context without requiring timeline input; missing slots remain unavailable.",
+        "Available recorded level appears as a small number layered on the portrait; a recorded dead champion has a grayscale portrait and an overlaid respawn countdown.",
+        "Countdown progression follows observed replay position, pauses and seeks with the video, resynchronizes to recorded samples and never declares a champion alive from a predicted deadline alone.",
+        "Temporal state is joined by source-scoped participant identity without moving portraits or leaking future levels/death/scores on backward seeks; only the explicit opening spell context precedes its sample. Missing fields stay unavailable, and normal temporal spell slots fully replace opening context.",
+        "The fullscreen champion rails omit visible ALLIES/ENEMIES headings and the legacy local-player dot over spell slots while retaining accessible team grouping.",
+        "Existing replay controls, participant filtering and isolated production-path preprod remain usable."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Focused strict-decoder, participant-state projection and viewer regressions; frontend suite, typecheck/build and canonical validation.", "command": null },
+        { "type": "manual", "description": "Open the actual isolated Swiftplay desktop replay at paused zero without timeline input: inspect twenty loaded visible spell icons, names without Riot tags and absent team headings, then playback, pause, backward seeking, temporal level/death transitions and fixed champion positions.", "command": null }
+      ],
+      "evidence": [
+        "2026-10-21: Compact SQLite overlay pages supply an independent source-scoped timeline with committed-revision checks, bounded loading and video-driven binary lookup. Recorded spell variants retain decoded image nodes; seeks no longer depend on event pages. First-recorded spell-only context covers the opening segment; future temporal status and unmapped facts remain unavailable. No recorder or persisted-schema changes.",
+        "Actual fresh production desktop: ten distant paused Swiftplay seeks had zero blank/stale overlay frames, zero spell image mutations/loads and zero seek-triggered reads. Playback, pause, backward zero, 2x speed, dead/alive transitions, fixed rails, filtering and fullscreen pass. Practice keeps 32 mapped observations and its original last valid 1:28 clock, excluding later out-of-range observations. Detailed evidence is retained in the execution checkpoint.",
+        "Opening follow-up: 262 frontend tests / 30 files, TypeScript and fresh production frontend/Tauri builds pass. Actual desktop at 1440x900 and 1000x650 opens paused zero with twenty visible loaded spell icons, no timeline input, ten names without #tags and no team headings. End/Home retains all image nodes and restores opening spells without future levels/death. Ten distant seeks again have zero blank/stale frames, image loads/mutations or seek reads; normal timers/controls and Practice mappings pass. Canonical/diff checks pass. Prior unchanged backend baseline: 136 Rust tests, 3 existing ignored, fmt and Clippy.",
+        "2026-10-21 Flash-marker follow-up: fullscreen-only CSS removes the legacy local-player dot. Fresh release inspection at 1440x900 and 1000x650 confirms no dot, twenty visible loaded spell icons and working filters. All 262 frontend tests, TypeScript and production frontend/Tauri builds pass."
+      ],
+      "notes": "The large-seek repair replaces event-window ownership rather than hiding stale state. Initial details readiness waits for the complete selected overlay timeline; video remains usable while loading or on optional-data failure. V2 explicitly adds first-recorded opening spell context, with timed samples fully replacing it including null slots. Existing browser preview compatibility is preserved in its development fixture adapter. Known evolved Smite asset coverage remains separate in QB-LIB-013."
+    },
+    {
+      "id": "QB-LIB-013",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Evolved Summoner Spell Assets",
+      "description": "Resolve recorded evolved Smite variants that are absent from the standard Data Dragon summoner manifest.",
+      "priority": "P2",
+      "area": "library-storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-012"],
+      "execution": { "workflow": "adaptive", "plan": null },
+      "acceptance_criteria": [
+        "Recorded evolved spell identifiers resolve to verified matching assets through the existing cache without substituting a different spell or weakening asset validation.",
+        "Unavailable assets retain stable placeholders and do not prevent playback."
+      ],
+      "verification": [],
+      "evidence": [],
+      "notes": "Discovered during QB-REPLAY-020: real Swiftplay later records Primal Smite / SummonerSmiteAvatarDefensive, absent from the cached official 16.20.1 summoner.json. Existing asset resolution reports it unavailable; the overlay retains the slot and recorded-name tooltip. All 20 normal spell icons load at replay 1:45. This asset coverage follow-up is separate from recorded overlay status."
+    },
+    {
+      "id": "QB-CLIP-008",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Export Retry and Process Ownership",
+      "description": "Keep repeated exports admitted against refreshed source identity and bound owned encoder execution and cleanup.",
+      "priority": "P1",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-clip-008-export-retry-and-process-ownership.md",
+        "progress": "docs/execution/qb-clip-008.md"
+      },
+      "acceptance_criteria": [
+        "A second export or retry in the same editor uses the refreshed admitted origin while preserving the draft/options; refresh failure or changed source prevents stale export.",
+        "Encoder and thumbnail stdout/stderr, progress records and runtime/stall waits are bounded; interruption kills and reaps the child before admission releases and does not trigger software fallback.",
+        "Caller cancellation retains worker ownership through child cleanup; sources and atomic batch publication remain protected.",
+        "Normal isolated desktop export succeeds twice and produces playable outputs with thumbnails."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused frontend retry and self-hosted process lifecycle cases, frontend suite/build, app Rust tests/fmt/Clippy and canonical validation.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Two exports from the same isolated preprod editor; inspect outputs and source preservation.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "Guarded refresh completion rebinds only the same editor/source/root/navigation, revalidates its descriptor and blocks stale retries. Five focused frontend cases cover success/failure repeat, pending refresh, replaced/missing source and refresh failure.",
+        "Owned worker retains completion and cleanup after caller cancellation. Streaming progress/diagnostics and process runtime/stall waits are bounded; six self-hosted process tests cover progress/floods, malformed records, deadlines/stalls and cancellation/reaping.",
+        "2026-10-20 production preprod exported the same 13-second selection twice in one editor. Both H.264/AAC MP4s fully decode and have valid JPEGs; source hashes are unchanged and no partial remains. Full frontend 251 tests, backend 136 tests (three ignored), fmt, Clippy, typecheck and production build pass; details in docs/execution/qb-clip-008.md."
+      ],
+      "notes": "Focused preserved mechanisms adapted to current descriptor/controller APIs; existing encoder fallback, atomic publication and source protection remain in use. No job service, recorder change or new test framework."
     }
   ]
 }

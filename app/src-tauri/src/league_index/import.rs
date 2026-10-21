@@ -131,6 +131,7 @@ impl Index {
         let cp = state.snapshot();
         let tx = self.db.transaction()?;
         if ready {
+            super::actors::refresh(&tx, media)?;
             // One summary per completed projection, not a whole-history rescan
             // after every bounded import batch. Readers of pending projections
             // retain the original live coverage calculation.

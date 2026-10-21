@@ -10,7 +10,7 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (rea
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 const page = (id: number, next: ReplayWindow["next"] = null): ReplayWindow => ({ ...scope, events: Array.from({ length: 1 }, () => ({ sequence: id } as ReplayWindow["events"][number])), next, roster: null,
-  coverage: {} as ReplayWindow["coverage"] });
+  identities: [], coverage: {} as ReplayWindow["coverage"] });
 
 function setup(overrides: Partial<ConstructorParameters<typeof ReplayDataController>[0]> = {}) {
   const api = {
@@ -26,6 +26,30 @@ function setup(overrides: Partial<ConstructorParameters<typeof ReplayDataControl
 }
 
 describe("ReplayDataController", () => {
+  it("calls browser timers with their global receiver while loading and disposing replay details", async () => {
+    vi.useFakeTimers();
+    const schedule = globalThis.setTimeout, cancel = globalThis.clearTimeout;
+    const checkedSchedule = vi.spyOn(globalThis, "setTimeout").mockImplementation(function (this: unknown, ...args: Parameters<typeof setTimeout>) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return schedule(...args);
+    });
+    const checkedCancel = vi.spyOn(globalThis, "clearTimeout").mockImplementation(function (this: unknown, ...args: Parameters<typeof clearTimeout>) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return cancel(...args);
+    });
+    const { api, controller } = setup();
+    try {
+      controller.requestWindow(query()); await controller.initialize();
+      expect(controller.value.error).toBeNull();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(api.queryReplayWindow).toHaveBeenCalledOnce();
+      controller.requestWindow({ ...query(), at: tick(700) });
+      controller.dispose();
+      expect(checkedCancel).toHaveBeenCalled();
+    } finally {
+      checkedSchedule.mockRestore(); checkedCancel.mockRestore(); vi.useRealTimers();
+    }
+  });
   it("loads facts independently, then scopes and a debounced selected source page", async () => {
     vi.useFakeTimers(); const { api, controller } = setup();
     controller.requestWindow(query()); const started = controller.initialize();
@@ -75,11 +99,75 @@ describe("ReplayDataController", () => {
     const { api, controller } = setup({ queryReplayWindow: vi.fn(async () =>
       page(++call, call < 6 ? { replay_tick: tick(call), source_id: call } : null)) });
     await controller.initialize(); controller.requestWindow(query()); await vi.advanceTimersByTimeAsync(120);
+    expect(controller.isFollowingPage(controller.value.activeWindow)).toBe(false);
     for (let index = 0; index < 5; index++) { controller.loadMore(); await vi.advanceTimersByTimeAsync(120); }
+    expect(controller.isFollowingPage(controller.value.activeWindow)).toBe(true);
     expect(api.queryReplayWindow).toHaveBeenCalledTimes(6);
     expect(controller.value.windows).toHaveLength(4);
     expect(controller.value.windows.flatMap(item => item.events)).toHaveLength(4);
     expect(controller.value.activeWindow?.next).toBeNull(); vi.useRealTimers();
+  });
+
+  it("restores an exact cached viewport immediately without refetching or retaining a superseded intent", async () => {
+    vi.useFakeTimers(); let call = 0;
+    const { api, controller } = setup({ queryReplayWindow: vi.fn(async () => page(++call)) });
+    await controller.initialize(); controller.requestWindow(query()); await vi.advanceTimersByTimeAsync(120);
+    const whole = controller.value.activeWindow;
+    controller.requestWindow({ ...query(), end: tick(1500) }); await vi.advanceTimersByTimeAsync(120);
+    controller.requestWindow({ ...query(), at: tick(600) });
+    controller.requestWindow(query());
+    expect(controller.value.activeWindow).toBe(whole);
+    expect(controller.value.loading.window).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(api.queryReplayWindow).toHaveBeenCalledTimes(2);
+    controller.requestWindow({ ...query(), at: tick(600) }); await vi.advanceTimersByTimeAsync(120);
+    expect(api.queryReplayWindow).toHaveBeenCalledTimes(3);
+    controller.dispose(); vi.useRealTimers();
+  });
+
+  it("does not let an in-flight response replace a restored cached window", async () => {
+    vi.useFakeTimers(); const held = deferred<ReplayWindow>();
+    const read = vi.fn().mockResolvedValueOnce(page(1)).mockReturnValueOnce(held.promise);
+    const { controller } = setup({ queryReplayWindow: read });
+    await controller.initialize(); controller.requestWindow(query()); await vi.advanceTimersByTimeAsync(120);
+    const whole = controller.value.activeWindow;
+    controller.requestWindow({ ...query(), end: tick(1500) }); await vi.advanceTimersByTimeAsync(120);
+    controller.requestWindow(query());
+    held.resolve(page(2)); await flush();
+    expect(controller.value.activeWindow).toBe(whole);
+    expect(read).toHaveBeenCalledTimes(2);
+    controller.dispose(); vi.useRealTimers();
+  });
+
+  it("keeps a complete containing page during repeated zooms without replacing its events or roster time", async () => {
+    vi.useFakeTimers(); const { api, controller } = setup();
+    await controller.initialize(); controller.requestWindow(query()); await vi.advanceTimersByTimeAsync(120);
+    const whole = controller.value.activeWindow;
+    for (let zoom = 1; zoom <= 10; zoom++) {
+      controller.requestWindow({ ...query(), start: tick(zoom * 10), end: tick(1000 - zoom * 10) });
+      expect(controller.value.activeWindow).toBe(whole);
+    }
+    controller.requestWindow(query());
+    expect(controller.value.activeWindow).toBe(whole);
+    expect(api.queryReplayWindow).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    controller.requestWindow({ ...query(), at: tick(600) }); await vi.advanceTimersByTimeAsync(120);
+    expect(api.queryReplayWindow).toHaveBeenCalledTimes(2);
+    controller.dispose(); vi.useRealTimers();
+  });
+
+  it("refetches a narrower viewport when cached pages are truncated or start after a cursor", async () => {
+    vi.useFakeTimers();
+    const read = vi.fn().mockResolvedValueOnce(page(1, { replay_tick: tick(100), source_id: 1 }))
+      .mockResolvedValueOnce(page(2)).mockResolvedValue(page(3));
+    const { controller } = setup({ queryReplayWindow: read });
+    await controller.initialize(); controller.requestWindow(query()); await vi.advanceTimersByTimeAsync(120);
+    controller.loadMore(); await vi.advanceTimersByTimeAsync(120);
+    controller.requestWindow({ ...query(), start: tick(200), end: tick(700) }); await vi.advanceTimersByTimeAsync(120);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenLastCalledWith("snapshot", "game", expect.objectContaining({ after: null, start: 200, end: 700 }));
+    controller.dispose(); vi.useRealTimers();
   });
 
   it("rechecks scope membership after replacing a debounced intent and accepts reordered scope keys", async () => {

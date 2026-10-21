@@ -24,7 +24,7 @@ pub(super) fn interval(
 ) -> Result<(u64, u64)> {
     let gaps = db.query_row("SELECT COALESCE(SUM(attempts),0) FROM gaps WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND endpoint=?4 AND (game_tick IS NULL OR game_tick BETWEEN ?5 AND ?6)",
             params![scope.media_id.as_str(),scope.run_id.as_str(),sql_u64(scope.epoch)?,endpoint,start.get(),end.get()], |r| unsigned(r,0))?;
-    let unresolved = db.query_row("SELECT COUNT(*) FROM events e JOIN event_actors a ON a.media_id=e.media_id AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal
+    let unresolved = db.query_row("SELECT COUNT(*) FROM events e JOIN effective_event_actors a ON a.media_id=e.media_id AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal
             WHERE e.media_id=?1 AND e.run_id=?2 AND e.epoch=?3 AND e.game_tick BETWEEN ?4 AND ?5 AND a.status!='resolved'",
             params![scope.media_id.as_str(),scope.run_id.as_str(),sql_u64(scope.epoch)?,start.get(),end.get()], |r| unsigned(r,0))?;
     Ok((gaps, unresolved))

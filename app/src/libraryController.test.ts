@@ -24,6 +24,31 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 describe("LibraryController", () => {
+  it("retains independent overlay and event reads in one bounded worker", async () => {
+    const held = deferred<string>();
+    const calls: string[] = [];
+    const controller = new LibraryController({ refresh: async () => snapshot("token", "1"),
+      durations: async () => ({ snapshot_token: "token", clips: [] }) });
+    controller.setRoot("A"); await flush();
+    const origin = controller.origin()!;
+    const active = controller.readReplay(origin, "1", () => { calls.push("active"); return held.promise; }, "overlay");
+    const oldDetails = controller.readReplay(origin, "1", async () => "old details");
+    const replaced = expect(oldDetails).rejects.toThrow("stale");
+    const details = controller.readReplay(origin, "1", async () => { calls.push("details"); return "details"; });
+    expect(calls).toEqual(["active"]);
+    held.resolve("overlay");
+    await expect(active).resolves.toBe("overlay");
+    await expect(details).resolves.toBe("details");
+    await replaced;
+    expect(calls).toEqual(["active", "details"]);
+    const another = deferred<string>();
+    const staleActive = controller.readReplay(origin, "1", () => another.promise);
+    const stalePending = controller.readReplay(origin, "1", async () => "never", "overlay");
+    const staleResults = [expect(staleActive).rejects.toThrow("stale"), expect(stalePending).rejects.toThrow("stale")];
+    controller.navigate(false); another.resolve("late");
+    await Promise.all(staleResults); controller.dispose();
+  });
+
   it("bounds replay reads across remounts to one active and one latest intent", async () => {
     const active = deferred<string>();
     const calls: string[] = [];

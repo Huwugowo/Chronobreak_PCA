@@ -115,6 +115,19 @@ CREATE TABLE IF NOT EXISTS event_actors(
   PRIMARY KEY(media_id,sequence,revision_ordinal,role,ordinal)
 );
 CREATE INDEX IF NOT EXISTS event_actor_predicate ON event_actors(media_id,run_id,epoch,participant_id,role,sequence,revision_ordinal);
+-- App-derived identity is disposable and never changes the producer's revision.
+CREATE TABLE IF NOT EXISTS derived_actor_links(
+  media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,
+  sequence INTEGER NOT NULL, revision_ordinal INTEGER NOT NULL, role TEXT NOT NULL, ordinal INTEGER NOT NULL,
+  participant_id INTEGER NOT NULL, basis TEXT NOT NULL CHECK(basis='validated_roster_game_name'),
+  PRIMARY KEY(media_id,sequence,revision_ordinal,role,ordinal)
+);
+CREATE VIEW IF NOT EXISTS effective_event_actors AS
+  SELECT a.media_id,a.run_id,a.epoch,a.sequence,a.revision_ordinal,a.role,a.ordinal,
+    COALESCE(d.participant_id,a.participant_id) AS participant_id,
+    CASE WHEN d.participant_id IS NOT NULL THEN 'resolved' ELSE a.status END AS status
+  FROM event_actors a LEFT JOIN derived_actor_links d
+    ON d.media_id=a.media_id AND d.sequence=a.sequence AND d.revision_ordinal=a.revision_ordinal AND d.role=a.role AND d.ordinal=a.ordinal;
 CREATE TABLE IF NOT EXISTS gaps(
   media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,
   run_id TEXT NOT NULL, epoch INTEGER NOT NULL, sequence INTEGER NOT NULL,

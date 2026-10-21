@@ -16,14 +16,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod actors;
 mod authored;
 mod coverage;
 mod history_summary;
 mod import;
+mod overlay;
 mod query;
 mod replay;
 pub(crate) mod reset;
 pub(crate) use authored::AuthoredPage;
+pub(crate) use overlay::{OverlayPage, OverlayQuery};
 pub(crate) use replay::{ReplayWindow, ReplayWindowQuery};
 pub(crate) use reset::ResetResult;
 #[cfg(test)]
@@ -32,7 +35,7 @@ pub(crate) use query::{
     EventWindow, HistoryPage, HistoryQuery, RosterAt, ScopeQuery, SourceScope, WindowQuery,
 };
 
-const VERSION: i64 = 4;
+const VERSION: i64 = 5;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 const IMPORT_BATCHES: usize = 4;
@@ -347,6 +350,7 @@ impl Index {
             "event_revisions",
             "events",
             "event_actors",
+            "derived_actor_links",
             "gaps",
         ] {
             tx.execute(

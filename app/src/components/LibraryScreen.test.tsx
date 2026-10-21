@@ -43,14 +43,16 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   document.body.append(host);
   const origin = { root: "A", rootEpoch: 1, request: 1, token: "token-a", navigation: 1 };
   const [actionable, setActionable] = createSignal(true);
+  const [assets, setAssets] = createSignal(ddragon);
+  const [games, setGames] = createSignal([game]);
   const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,error:null,indexError:null,laterPage:false});
   const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn();
   const dispose = render(() => <LibraryScreen
     tab="games"
-    games={[game]}
+    games={games()}
     history={history()}
     clips={[]}
-    ddragon={ddragon}
+    ddragon={assets()}
     actionable={actionable()}
     busyId={null}
     snapshotOrigin={origin}
@@ -67,15 +69,40 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(host.textContent).not.toContain("Remake");
   expect(host.querySelector('[aria-label="Match History"]')).not.toBeNull();
   expect(host.textContent).not.toContain("PERFECT KDA");
-  const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],evidence:null,final_evidence:null,game_tick:null};
+  const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],keystone_id:9923,secondary_style:8000,summoner_spells:["4","6"],creep_score:136,duration_seconds:985,evidence:null,final_evidence:null,game_tick:null};
   setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
-  expect(host.textContent).toContain("Final EOG"); expect(host.textContent).not.toContain("PERFECT KDA");
+  expect(host.textContent).not.toContain("Final EOG"); expect(host.textContent).not.toContain("PERFECT KDA");
+  expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS 1368.3 / min");
+  setAssets({...ddragon,state:"ready",asset_base_url:"http://assets.test/ddragon/16.20.1"});
+  expect([...host.querySelectorAll("[class*=spells] img")].map(img=>img.getAttribute("src"))).toEqual(["http://assets.test/ddragon/16.20.1/spell/4","http://assets.test/ddragon/16.20.1/spell/6"]);
+  const primary = host.querySelector('[title="Keystone rune"] img')!;
+  const secondary = host.querySelector('[title="Secondary rune tree"] img')!;
+  expect(primary.getAttribute("src")).toContain("/rune/9923");
+  expect(secondary.getAttribute("src")).toContain("/rune/8000");
+  expect(primary.parentElement!.parentElement).toBe(secondary.parentElement!.parentElement);
+  expect(primary.parentElement!.nextElementSibling).toBe(secondary.parentElement);
+  secondary.dispatchEvent(new Event("error"));
+  expect((secondary as HTMLImageElement).hidden).toBe(true);
+  expect(secondary.parentElement!.isConnected).toBe(true);
   setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game,stats:{...stats,deaths:0},index_status:"ready"}]}});
   expect(host.textContent).toContain("PERFECT KDA");
   const roster = host.querySelector('[aria-label="Team rosters"]')!;
   expect(roster.querySelector('[data-team="ally"]')?.textContent).toContain("Ally");
   expect(roster.querySelector('[data-team="enemy"]')?.textContent).toContain("Enemy");
   expect(roster.textContent).not.toContain("Unknown team");
+  // The core snapshot is deliberately empty after the index migration. The
+  // checked history row must remain the roster's source, independent of it.
+  const indexedGame = {...game,participants:[{summoner_name:"Indexed ally",champion:"Lux",relation:"ally" as const},{summoner_name:"Indexed enemy",champion:"Garen",relation:"enemy" as const}]};
+  setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,creep_score:0},index_status:"ready"}]}});
+  expect(roster.textContent).toContain("Indexed ally");
+  expect(roster.textContent).toContain("Indexed enemy");
+  expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS 00.0 / min");
+  for (const missing of [{creep_score:null}, {duration_seconds:null}, {duration_seconds:0}]) {
+    setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,...missing},index_status:"ready"}]}});
+    expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toContain("— / min");
+  }
+  setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,source:"recorded_snapshot"},index_status:"ready"}]}});
+  expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS —— / min");
   const open = host.querySelector<HTMLButtonElement>('[aria-label^="Open Ahri"]')!;
   const save = host.querySelector<HTMLButtonElement>('[aria-label="Save Ahri recording"]')!;
   const remove = [...host.querySelectorAll("button")].find(button => button.textContent?.includes("Delete recording"))!;
@@ -88,5 +115,13 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(opened).toHaveBeenCalledTimes(1);
   expect(saved).toHaveBeenCalledTimes(1);
   expect(deleted).toHaveBeenCalledTimes(1);
+  // A full SQL page must not displace filesystem entries that cannot be indexed.
+  const complete = Array.from({length:50}, (_,i)=>({...game,timestamp:String(1000+i),media_id:`9c82b929-7c85-4c27-a6d0-${String(i).padStart(12,"0")}` as GameSummary["media_id"]}));
+  setGames([...complete,{...game,timestamp:"incomplete",incomplete:true}]);
+  setHistory({...history(),laterPage:false,page:{...history().page!,rows:complete.map(game=>({game,media_id:game.media_id!,stats,index_status:"ready"})),next:{recorded_at:game.recorded_at,media_id:complete[49].media_id!}}});
+  expect(host.querySelectorAll("article")).toHaveLength(51);
+  expect(host.textContent).toContain("INCOMPLETE");
+  setHistory({...history(),laterPage:true});
+  expect(host.querySelectorAll("article")).toHaveLength(50);
   dispose();
 });

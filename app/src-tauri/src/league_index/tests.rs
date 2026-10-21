@@ -3,6 +3,8 @@ use obs::{Endpoint, Evidence, ObservationId, Record};
 use std::io::{Cursor, Write};
 use tempfile::{TempDir, tempdir};
 
+#[path = "preprod_tests.rs"]
+mod preprod_tests;
 #[cfg(windows)]
 #[path = "production_path_tests.rs"]
 mod production_path_tests;
@@ -380,6 +382,8 @@ fn roster_age_and_latest_empty_roster_do_not_resurrect_players_or_stats() {
         StatsSource::RecordedSnapshot
     ));
     assert_eq!(history.rows[0].stats.kills, None);
+    assert_eq!(history.rows[0].game.participants.len(), 1);
+    assert!(history.rows[0].stats.creep_score.is_none());
     f.game_stats(201, 6_000_000, false);
     f.commit(
         &[Record::RosterObservation {
@@ -466,6 +470,10 @@ fn final_nullable_facts_replace_recorded_projection_independently() {
     f.ready(&mut index);
     let mut result = library::tests::result_fixture(&f.source.media_id);
     result.local_player.as_mut().unwrap().stats.deaths = None;
+    result.local_player.as_mut().unwrap().stats.minions = Some(127);
+    result.local_player.as_mut().unwrap().stats.jungle_minions = None;
+    result.local_player.as_mut().unwrap().secondary_style = Some(8000);
+    result.duration_seconds = Some(0);
     result.queue_id = Some(400);
     result.source_facts.local_player = Some(obs::FinalPlayer {
         game_id: Some(result.game_id.clone()),
@@ -512,6 +520,9 @@ fn final_nullable_facts_replace_recorded_projection_independently() {
         (Some(6), None, Some(9))
     );
     assert_eq!(stats.items, Some(vec![Some(0), None]));
+    assert!(stats.creep_score.is_none());
+    assert!(stats.duration_seconds.is_none());
+    assert_eq!(stats.secondary_style, Some(8000));
     let aliases: String = index
         .db
         .query_row(
@@ -1030,4 +1041,74 @@ fn replay_windows_follow_each_ingestion_calibration_and_keep_roster_age() {
     );
     let plan:String=index.db.query_row("EXPLAIN QUERY PLAN SELECT source_id FROM events WHERE media_id=?1 AND run_id=?2 AND epoch=0 AND replay_tick BETWEEN 0 AND 100000000 ORDER BY replay_tick,source_id",params![f.source.media_id.as_str(),f.source.run_id.as_str()],|r|r.get(3)).unwrap();
     assert!(plan.contains("events_replay_window"), "{plan}");
+}
+
+#[test]
+fn replay_identity_context_omits_conflicting_descriptors_and_stays_inside_its_source() {
+    use chronobreak_replay_time::ReplayTick;
+    let f = Fixture::new(1);
+    let mut index = f.index();
+    f.ready(&mut index);
+    let query = ReplayWindowQuery {
+        scope: f.scope(),
+        start: ReplayTick::new(0).unwrap(),
+        end: ReplayTick::new(100_000_000).unwrap(),
+        at: ReplayTick::new(0).unwrap(),
+        after: None,
+        limit: 512,
+    };
+    let read = |index: &Index| index.replay_window(&query, &f.timeline()).unwrap();
+    let initial = read(&index);
+    assert!(initial.roster.is_none());
+    assert!(!initial.identities.is_empty());
+    let participant = initial.identities[0].participant;
+    let team = initial.identities[0].team.clone();
+    let params = params![
+        f.source.media_id.as_str(),
+        f.source.run_id.as_str(),
+        sql_u64(f.source.epoch).unwrap()
+    ];
+    // A descriptor in another epoch must not affect this source's context.
+    index.db.execute(
+        "INSERT INTO roster_payloads SELECT media_id,run_id,epoch+1,payload_id,json_set(data,'$.team','different')
+        FROM roster_payloads WHERE media_id=?1 AND run_id=?2 AND epoch=?3", params,
+    ).unwrap();
+    assert_eq!(
+        read(&index)
+            .identities
+            .iter()
+            .find(|t| t.participant == participant)
+            .unwrap()
+            .team,
+        team
+    );
+    let conflicting = serde_json::json!({"participant":participant,"team":"different", "champion_name":"different", "riot_id":"different#ID"}).to_string();
+    index
+        .db
+        .execute(
+            "INSERT INTO roster_payloads VALUES (?1,?2,?3,999999,?4)",
+            params![
+                f.source.media_id.as_str(),
+                f.source.run_id.as_str(),
+                sql_u64(f.source.epoch).unwrap(),
+                conflicting
+            ],
+        )
+        .unwrap();
+    let conflicted = read(&index);
+    let identity = conflicted
+        .identities
+        .iter()
+        .find(|t| t.participant == participant)
+        .unwrap();
+    assert!(identity.team.is_none());
+    assert!(identity.champion_name.is_none());
+    assert!(identity.riot_id.is_none());
+    index.db.execute("UPDATE roster_payloads SET data=json_remove(data,'$.team') WHERE media_id=?1 AND run_id=?2 AND epoch=?3", params).unwrap();
+    assert!(
+        read(&index)
+            .identities
+            .iter()
+            .all(|identity| identity.team.is_none())
+    );
 }

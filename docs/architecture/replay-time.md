@@ -37,6 +37,40 @@ observation's referenced calibration. Window queries compare these projected
 coordinates directly; they do not invert the current calibration for older source
 epochs. A changed media timeline invalidates the projection. Returned roster samples
 include their source time, mapped replay time and age, without interpolation.
+Replay windows also carry source-wide participant identities for champion filters
+and event colors before the first mapped roster sample. Riot IDs, champion names
+and teams are each included only when consistent within the same media/run/epoch;
+missing or conflicting descriptors stay null. This context supplies no timed
+roster, scores or items; a missing roster at the playhead remains missing.
+Champion filter positions and ally/enemy grouping use that consistent identity
+context, sorted by participant ID, throughout the selected source. Timed roster
+samples may reorder or omit players without moving the filter portraits.
+The compact replay overlay owns a separate paged, source-scoped recorded timeline,
+independent of event-window lifetime. Binary lookup displays the latest complete
+sample at/before the video, including local KDA, CS, level and sampled game clock.
+Its lookup follows observed video position (RVFC, or the
+explicit media-clock approximation), never an unpresented seek request. A sample
+mapped after that position is hidden on backward seek. Game clock is formatted
+directly from that sample's signed game tick, without extrapolation or correction
+of Practice Tool clock jumps. Missing fields remain unavailable.
+The fixed champion rails join spell slots, level and death state from the same
+available sample by source-scoped participant identity. Source identities own
+fixed rail slots; known spell asset variants mount/decode once in those slots,
+and only their visibility follows selected spell labels. After complete timeline
+loading, a distinct first-recorded loadout supplies only the first mapped sample's
+two nullable spell labels during the opening segment before that sample (or before
+the first video observation). Tooltips identify this context as first recorded.
+It supplies no level, death, timer, clock or scores. Normal temporal samples fully
+replace its slots, including nulls; later unavailable samples, pending-page
+frontiers and errors cannot reuse it. Source changes clear the context. Loading
+an asset alone never selects it. A dead portrait is grey;
+its countdown subtracts observed replay elapsed time from the sampled respawn
+timer and rounds up to whole seconds, with zero as the minimum. Playback pause,
+speed and seeks therefore affect the countdown through the primary video, with
+no wall-clock interval. New roster samples override the display; reaching zero
+alone never marks a champion alive. Missing death/timer fields do not imply a
+death or a respawn, and a future roster is hidden during backward seeks. This
+display does not reconstruct or correct an accelerated/discontinuous game clock.
 
 The recorder writes only a private `video.partial.mp4` while recording. On stop, it performs a bounded packaged-ffprobe stream-summary probe (five seconds and one MiB combined output maximum), reconciles the candidate against recorder evidence, constructs v2 metadata, and atomically publishes canonical video and metadata. Uncertain, malformed, timeout, or identity-mismatched candidates remain partial and are never promoted.
 
@@ -45,6 +79,13 @@ For the native empty-moov fragmented MP4, ffprobe omits `nb_frames`. The finaliz
 ## Viewer synchronization
 
 The viewer tracks four distinct facts: requested preview target, dispatched seek, seeked observation, and presented frame. Every dispatched seek has a monotonically increasing epoch within a media generation. Recovery increments the generation and invalidates every older event. A qualifying RVFC frame settles only its current generation/epoch; a stale or off-target callback cannot overwrite presentation state.
+
+Ordinary seek queue updates retain the last accepted frame and its observed
+overlay state until a new accepted frame arrives. In particular, a later
+`seeked` event cannot erase an RVFC that arrived first. Repeated requests for
+the same in-flight frame share its seek and presentation result; an idle seek
+can skip native seeking only when the matching frame is already presented
+(or the browser explicitly uses the media-clock approximation).
 
 Play, pause, rate, and fullscreen/layout changes preserve the same coordinate system. QB-REPLAY-012 owns exact replay timing, frame identity, frame-aligned clip/export boundaries, and event/media alignment independently of user stepping controls. If optional previous/next-frame stepping (QB-REPLAY-015) is implemented, it consumes the adjacent validated frame boundary and existing presented-frame evidence. Its absence does not block replay work; inability to implement it cleanly within the existing HTMLVideoElement/WebView stack does not authorize WebCodecs, libmpv, native decoding, a custom playback backend, or replacement/substantial re-architecture of playback. Backdrop and optional music previews are slaves: they derive a clip-relative target from primary presented video, use their own epochs, and resynchronize under a bounded drift/cooldown policy. They never become clip or replay authority.
 

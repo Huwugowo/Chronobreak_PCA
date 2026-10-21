@@ -46,7 +46,7 @@ it("retries the same imported file after preparation fails and releases the succ
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div");
   document.body.append(host);
-  const dispose = render(() => <ClipExporterScreen
+  const dispose = render(() => <ClipExporterScreen admissionError={null}
     draft={{ gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId,
       startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
     outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "C:\\output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }} onBack={() => {}} onExported={() => {}}
