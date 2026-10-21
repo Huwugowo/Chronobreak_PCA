@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
 import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHistoryPreview";
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
@@ -150,10 +150,32 @@ function GamesLibrary(props: Props) {
   const [actorRole, setActorRole] = createSignal("");
   const [outcomeFilter, setOutcomeFilter] = createSignal("");
   const [stolenOnly, setStolenOnly] = createSignal(false);
-  createEffect(() => props.onHistoryQuery?.({ limit: 50, search: searchQuery().trim() || null,
-    champion: championFilter() || null, mode: modeFilter() || null, saved_only: savedOnly(),
-    participant_riot_id: riotId().trim() || null, event_kind: eventKind() || null,
-    role: actorRole() as ActorRole || null, outcome: outcomeFilter() as HistoryQuery["outcome"] || null, stolen: stolenOnly() ? true : null }));
+  const [textPending, setTextPending] = createSignal(false);
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(on(
+    [searchQuery, championFilter, modeFilter, savedOnly, riotId, eventKind,
+      actorRole, outcomeFilter, stolenOnly, () => JSON.stringify(props.snapshotOrigin)],
+    (values, previous) => {
+      clearTimeout(searchTimer);
+      const query: HistoryQuery = { limit: 50, search: searchQuery().trim() || null,
+        champion: championFilter() || null, mode: modeFilter() || null, saved_only: savedOnly(),
+        participant_riot_id: riotId().trim() || null, event_kind: eventKind() || null,
+        role: actorRole() as ActorRole || null, outcome: outcomeFilter() as HistoryQuery["outcome"] || null,
+        stolen: stolenOnly() ? true : null };
+      const dispatch = () => {
+        setTextPending(false);
+        props.onHistoryQuery?.(query);
+      };
+      // Discrete filters and context changes include the latest text immediately.
+      if (previous && query.search && values.slice(1).every((value, index) => value === previous[index + 1])) {
+        setTextPending(true);
+        searchTimer = setTimeout(dispatch, 180);
+      } else dispatch();
+    },
+  ));
+  onCleanup(() => clearTimeout(searchTimer));
+  const updating = () => textPending() || !!props.history?.loading;
+  const paginationDisabled = () => updating() || !!props.history?.error;
 
   const savedCount = () => props.games.filter((game) => game.saved).length;
 
@@ -265,6 +287,7 @@ function GamesLibrary(props: Props) {
         </div>
       </details>
       <p class={matchStyles.coverage} role="status">
+        <Show when={updating()}>Updating matches. </Show>
         <Show when={props.history?.indexing}>Updating League data. </Show>
         <Show when={props.history?.page?.unknown_recordings}>{props.history?.page?.unknown_recordings} recordings have incomplete query coverage. </Show>
         <Show when={props.history?.error || props.history?.indexError}>League data unavailable. Recordings remain playable.</Show>
@@ -275,7 +298,7 @@ function GamesLibrary(props: Props) {
         fallback={<MatchHistoryEmptyState />}
       >
         <div class={matchStyles.matchScroller}>
-          <section class={matchStyles.matchList} aria-label="Recorded matches">
+          <section class={matchStyles.matchList} aria-label="Recorded matches" aria-busy={updating()}>
             <For each={filteredGames()}>
               {(game: GameSummary) => {
                 const outcome = displayedOutcome(game);
@@ -548,9 +571,9 @@ function GamesLibrary(props: Props) {
         </div>
       </Show>
       <div class={matchStyles.toolbar}>
-        <Show when={props.history?.laterPage}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryFirst} disabled={props.history?.loading}>First page</button></Show>
-        <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={props.history?.loading}>Next 50 recordings</button></Show>
-        <Show when={props.games.length > 0 && filteredGames().length === 0 && !props.history?.loading}><span>No observed matches. Coverage may be incomplete.</span></Show>
+        <Show when={props.history?.laterPage}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryFirst} disabled={paginationDisabled()}>First page</button></Show>
+        <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={paginationDisabled()}>Next 50 recordings</button></Show>
+        <Show when={props.games.length > 0 && filteredGames().length === 0 && !updating()}><span>No observed matches. Coverage may be incomplete.</span></Show>
       </div>
     </section>
   );

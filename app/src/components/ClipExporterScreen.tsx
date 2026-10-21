@@ -18,6 +18,7 @@ import {
   releaseImportedMusicPreview,
 } from "../api";
 import { createImportedMusicPreview } from "../importedMusicPreview";
+import { createVerticalPreviewBackdrop } from "../verticalPreviewBackdrop";
 import { formatBytes, formatDuration } from "../format";
 import type {
   BuiltInMusicTrack,
@@ -91,7 +92,7 @@ const presetLabel = (preset: ClipExportPreset): string =>
 
 function ClipExporterScreen(props: Props) {
   let previewVideo!: HTMLVideoElement;
-  let previewBackdropVideo: HTMLVideoElement | undefined;
+  let backdrop: ReturnType<typeof createVerticalPreviewBackdrop> | undefined;
   let musicPreview!: HTMLAudioElement;
   let previewAnimationFrameId: number | undefined;
   let previewSeekTimerId: number | undefined;
@@ -118,6 +119,7 @@ function ClipExporterScreen(props: Props) {
   const [previewPlaying, setPreviewPlaying] = createSignal(false);
   const [previewTimeMs, setPreviewTimeMs] = createSignal(0);
   const [previewError, setPreviewError] = createSignal<string | null>(null);
+  const [backdropError, setBackdropError] = createSignal(false);
   const [musicPreviewError, setMusicPreviewError] = createSignal<string | null>(null);
   const [exporting, setExporting] = createSignal(false);
   const [progress, setProgress] = createSignal<ClipExportProgress>({
@@ -202,17 +204,17 @@ function ClipExporterScreen(props: Props) {
   const pausePreview = () => {
     clearPreviewClock();
     previewVideo?.pause();
-    previewBackdropVideo?.pause();
     musicPreview?.pause();
     setPreviewPlaying(false);
   };
 
   const setMediaTime = (element: HTMLMediaElement | undefined, seconds: number) => {
-    if (!element || element.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    if (!element || element.readyState < HTMLMediaElement.HAVE_METADATA) return "unavailable";
     try {
       element.currentTime = clamp(seconds, 0, Math.max(0, element.duration || seconds));
+      return "assigned";
     } catch {
-      // The next media event retries synchronization after metadata is available.
+      return "failed";
     }
   };
 
@@ -225,13 +227,6 @@ function ClipExporterScreen(props: Props) {
   };
 
   const syncSecondaryMedia = (timeMs: number, force = false) => {
-    const seconds = timeMs / 1_000;
-    if (
-      previewBackdropVideo &&
-      (force || Math.abs(previewBackdropVideo.currentTime - seconds) > 0.08)
-    ) {
-      setMediaTime(previewBackdropVideo, seconds);
-    }
     if (musicPreviewSource() && musicPreview?.readyState >= HTMLMediaElement.HAVE_METADATA) {
       const musicTime = musicTimeFor(timeMs);
       if (force || Math.abs(musicPreview.currentTime - musicTime) > 0.12) {
@@ -247,7 +242,16 @@ function ClipExporterScreen(props: Props) {
       clipEndMs(),
     );
     setPreviewTimeMs(targetMs);
-    setMediaTime(previewVideo, targetMs / 1_000);
+    backdrop?.setSeekPending(true);
+    const seek = setMediaTime(previewVideo, targetMs / 1_000);
+    if (seek === "failed") {
+      pausePreview();
+      setPreviewError("The source recording could not seek to the selected preview position.");
+      return;
+    }
+    // Native no-op seeks need not emit seeked. Its synchronous seeking state
+    // distinguishes an in-flight decode from an already-current decoded frame.
+    backdrop?.setSeekPending(seek !== "assigned" || pendingPreviewSeekMs !== undefined || previewVideo.seeking);
     syncSecondaryMedia(targetMs, true);
   };
 
@@ -277,13 +281,11 @@ function ClipExporterScreen(props: Props) {
       clamp(requestedMs, clipStartMs(), clipEndMs()),
     );
     pendingPreviewSeekMs = requestedMs;
+    backdrop?.setSeekPending(true);
     dispatchPreviewSeek();
   };
 
   const resumeSecondaryMedia = () => {
-    if (previewPreset() === "vertical" && previewBackdropVideo) {
-      void previewBackdropVideo.play().catch(() => undefined);
-    }
     if (musicPreviewSource() && musicPreview) {
       void musicPreview.play().catch(() => {
         setMusicPreviewError("The selected music could not be played in the live preview.");
@@ -397,24 +399,28 @@ function ClipExporterScreen(props: Props) {
     if (musicPreview) musicPreview.volume = musicVolume();
   });
 
-  createEffect(() => {
-    const preset = previewPreset();
-    if (preset !== "vertical") {
-      previewBackdropVideo?.pause();
-      return;
-    }
-    queueMicrotask(() => {
-      syncSecondaryMedia(previewTimeMs(), true);
-      if (previewPlaying()) resumeSecondaryMedia();
+  const VerticalBackdrop = () => {
+    let canvas!: HTMLCanvasElement;
+    createEffect(() => {
+      const source = probe()!.video_url;
+      setBackdropError(false);
+      const owner = createVerticalPreviewBackdrop(previewVideo, canvas, () => setBackdropError(true), source);
+      backdrop = owner;
+      owner.setSeekPending(pendingPreviewSeekMs !== undefined || previewVideo.seeking);
+      onCleanup(() => {
+        owner.dispose();
+        if (backdrop === owner) backdrop = undefined;
+      });
     });
-  });
+    return <canvas ref={canvas} class={styles.verticalBackdrop} aria-hidden="true" />;
+  };
 
   onCleanup(() => {
     pausePreview();
     importedPreview.dispose();
     if (previewSeekTimerId !== undefined) window.clearTimeout(previewSeekTimerId);
     previewVideo?.removeAttribute("src");
-    previewBackdropVideo?.removeAttribute("src");
+    backdrop?.dispose();
     musicPreview?.removeAttribute("src");
     musicPreview?.load();
   });
@@ -596,18 +602,7 @@ function ClipExporterScreen(props: Props) {
                   }}
                 >
                   <Show when={previewPreset() === "vertical"}>
-                    <video
-                      ref={(element) => {
-                        previewBackdropVideo = element;
-                      }}
-                      class={styles.verticalBackdrop}
-                      src={probe()!.video_url || undefined}
-                      playsinline
-                      muted
-                      preload="auto"
-                      aria-hidden="true"
-                      onLoadedMetadata={() => syncSecondaryMedia(previewTimeMs(), true)}
-                    />
+                    <VerticalBackdrop />
                   </Show>
                   <div
                     classList={{
@@ -631,6 +626,7 @@ function ClipExporterScreen(props: Props) {
                     <video
                       ref={previewVideo}
                       class={styles.livePreviewVideo}
+                        crossorigin="anonymous"
                       src={probe()!.video_url || undefined}
                       playsinline
                       preload="auto"
@@ -651,6 +647,7 @@ function ClipExporterScreen(props: Props) {
                         setPreviewTimeMs(previewVideo.currentTime * 1_000);
                         syncSecondaryMedia(previewVideo.currentTime * 1_000, true);
                         dispatchPreviewSeek();
+                        backdrop?.setSeekPending(pendingPreviewSeekMs !== undefined || previewVideo.seeking);
                       }}
                       onError={() => {
                         pausePreview();
@@ -704,6 +701,9 @@ function ClipExporterScreen(props: Props) {
                   <span>{musicMode() === "none" ? "GAME AUDIO" : "GAME + MUSIC MIX"}</span>
                 </div>
               </div>
+              <Show when={backdropError()}>
+                <div class={styles.errorState} role="alert">The blurred background could not be drawn. Reopen the vertical preview to retry.</div>
+              </Show>
 
               <Show when={previewPreset() === "vertical"}>
                 <div class={styles.reframeControls}>

@@ -3,6 +3,7 @@ import {
   Show,
   createEffect,
   createMemo,
+  createSelector,
   createSignal,
   onCleanup,
   onMount,
@@ -260,6 +261,7 @@ function TimelineEventGlyph(props: TimelineEventGlyphProps) {
 
 function ReplayTimeline(props: Props) {
   let rail!: HTMLDivElement;
+  let positionControl!: HTMLDivElement;
 
   const viewport = () => props.viewport;
   const setViewport = (
@@ -321,6 +323,20 @@ function ReplayTimeline(props: Props) {
       ),
     ),
   );
+
+  // Display events are sorted by tick. Keep frame-rate work logarithmic and
+  // notify anchor bindings only when the passed-event boundary changes.
+  const elapsedAnchorCount = createMemo(() => {
+    const events = anchorEvents(), playhead = props.playhead;
+    let low = 0, high = events.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (events[middle].replay_tick <= playhead) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  });
+  const anchorElapsed = createSelector(elapsedAnchorCount, (index: number, count) => index < count);
 
   const clusters = createMemo(() =>
     clusterTimelineEvents(
@@ -439,6 +455,7 @@ function ReplayTimeline(props: Props) {
   ) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    positionControl.focus({ preventScroll: true });
     endClipDrag?.();
     cancelSeek();
     seekPointer = { element: event.currentTarget, id: event.pointerId };
@@ -617,7 +634,13 @@ function ReplayTimeline(props: Props) {
   };
 
   const handleRailKey = (event: KeyboardEvent) => {
+    if (event.altKey || event.metaKey) return;
     let target: ReplayTick | undefined;
+
+    if (!event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      const direction = event.key === "ArrowLeft" ? -1 : 1;
+      target = (props.playhead + direction * (event.ctrlKey ? 5 : 1) * REPLAY_TICKS_PER_SECOND) as ReplayTick;
+    }
 
     if (event.key === "PageDown") {
       target = (props.playhead - 30 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
@@ -630,6 +653,7 @@ function ReplayTimeline(props: Props) {
 
     if (target !== undefined) {
       event.preventDefault();
+      event.stopPropagation();
       props.onSeek(
         Math.min(props.duration, Math.max(0, target)) as ReplayTick,
       );
@@ -638,12 +662,14 @@ function ReplayTimeline(props: Props) {
 
     if (event.key === "0") {
       event.preventDefault();
+      event.stopPropagation();
       resetViewport();
       return;
     }
 
     if (event.key === "+" || event.key === "=" || event.key === "-") {
       event.preventDefault();
+      event.stopPropagation();
       const anchor = isTickInTimelineViewport(props.playhead, viewport())
         ? props.playhead
         : timelineTickAtRatio(0.5, viewport());
@@ -665,6 +691,7 @@ function ReplayTimeline(props: Props) {
       (event.key === "ArrowLeft" || event.key === "ArrowRight")
     ) {
       event.preventDefault();
+      event.stopPropagation();
       const direction = event.key === "ArrowLeft" ? -1 : 1;
       const delta = Math.round(viewportSpan() * 0.15 * direction) as ReplayTick;
       setViewport(
@@ -723,13 +750,8 @@ function ReplayTimeline(props: Props) {
       <div
         ref={rail}
         class={styles.rail}
-        role="slider"
-        tabIndex={0}
-        aria-label="Replay position"
-        aria-valuemin={0}
-        aria-valuemax={Math.floor(replayTickToMilliseconds(props.duration) / 1_000)}
-        aria-valuenow={Math.floor(replayTickToMilliseconds(props.playhead) / 1_000)}
-        aria-valuetext={`${formatDuration(replayTickToMilliseconds(props.playhead))} of ${formatDuration(replayTickToMilliseconds(props.duration))}`}
+        role="group"
+        aria-label="Replay timeline"
         title="Wheel to zoom / Shift+wheel to pan / 0 to show full match"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -740,9 +762,23 @@ function ReplayTimeline(props: Props) {
           if (!seeking()) setHoverRatio(null);
         }}
         onWheel={handleWheel}
-        onKeyDown={handleRailKey}
         data-testid="replay-timeline"
       >
+        <div
+          ref={positionControl}
+          class={styles.positionControl}
+          role="slider"
+          tabIndex={0}
+          aria-label="Replay position"
+          aria-description="Left and right arrows seek one second. Control plus arrows seeks five seconds. Shift plus arrows pans. Home and End seek to the start and end. Page Up and Page Down seek thirty seconds. Plus and minus zoom; zero shows the full match."
+          aria-orientation="horizontal"
+          aria-valuemin={0}
+          aria-valuemax={props.duration / REPLAY_TICKS_PER_SECOND}
+          aria-valuenow={props.playhead / REPLAY_TICKS_PER_SECOND}
+          aria-valuetext={`${formatDuration(replayTickToMilliseconds(props.playhead))} of ${formatDuration(replayTickToMilliseconds(props.duration))}`}
+          title="Left/Right: 1 second; Ctrl+Left/Right: 5 seconds; Home/End: start/end; PageUp/PageDown: 30 seconds; Shift+Left/Right: pan; +/- or wheel: zoom; 0: full match"
+          onKeyDown={handleRailKey}
+        />
         <div class={styles.ruler} aria-hidden="true" data-testid="timeline-ruler">
           <For each={rulerTicks()}>
             {(tick) => {
@@ -815,7 +851,7 @@ function ReplayTimeline(props: Props) {
 
         <div class={styles.markers}>
           <For each={anchorEvents()}>
-            {(event) => (
+            {(event, index) => (
               <span
                 class={styles.eventAnchor}
                 style={`left:${timelineRatioAtTick(
@@ -824,7 +860,7 @@ function ReplayTimeline(props: Props) {
                 ) * 100}%`}
                 data-event-anchor="true"
                 data-elapsed={
-                  event.replay_tick <= props.playhead
+                  anchorElapsed(index())
                     ? "true"
                     : undefined
                 }

@@ -6,7 +6,7 @@ import LibraryScreen from "./LibraryScreen";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
 
-afterEach(() => document.body.replaceChildren());
+afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
 it("renders Games from the core snapshot when Data Dragon enrichment fails", () => {
   const game: GameSummary = {
@@ -123,5 +123,73 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(host.textContent).toContain("INCOMPLETE");
   setHistory({...history(),laterPage:true});
   expect(host.querySelectorAll("article")).toHaveLength(50);
+  dispose();
+});
+
+it("coalesces typing, applies filters and clearing immediately, and cancels pending text on disposal", async () => {
+  vi.useFakeTimers();
+  const host = document.createElement("div"); document.body.append(host);
+  const onQuery = vi.fn();
+  const [origin, setOrigin] = createSignal({ root: "A", rootEpoch: 1, request: 1, token: "a", navigation: 1 });
+  const dispose = render(() => <LibraryScreen tab="games" games={[]} clips={[]}
+    ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
+    actionable snapshotOrigin={{ ...origin() }} busyId={null} onHistoryQuery={onQuery}
+    onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
+    onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search matches"]')!;
+  const type = (text: string) => { search.value = text; search.dispatchEvent(new Event("input", { bubbles: true })); };
+  onQuery.mockClear();
+  for (const text of ["M", "Master", "Master Yi"]) { type(text); await vi.advanceTimersByTimeAsync(60); }
+  expect(onQuery).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Updating matches.");
+  await vi.advanceTimersByTimeAsync(120);
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: "Master Yi" }));
+  onQuery.mockClear(); type("Ahri");
+  const event = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
+  event.value = "ChampionKill"; event.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: "Ahri", event_kind: "ChampionKill" }));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(onQuery).toHaveBeenCalledTimes(1);
+  onQuery.mockClear(); type("");
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: null }));
+  onQuery.mockClear(); type("new context");
+  setOrigin({ root: "B", rootEpoch: 2, request: 2, token: "b", navigation: 2 });
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: "new context" }));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(onQuery).toHaveBeenCalledTimes(1);
+  type("unmounted"); dispose(); onQuery.mockClear();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(onQuery).not.toHaveBeenCalled();
+});
+
+it("keeps checked cards and their stats visible while a semantic query updates", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const game: GameSummary = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
+    champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
+    kills: 2, deaths: 1, assists: 3, summoner_spells: [], keystone_id: null, items: [], participants: [],
+    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
+  const [history, setHistory] = createSignal<HistoryState>({ loading: false, indexing: false, error: null, indexError: null, laterPage: false,
+    page: { rows: [{ media_id: game.media_id!, game, index_status: "ready", stats: { source: "final_eog", kills: 9, deaths: 1, assists: 2,
+      items: null, summoner_spells: null, keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null,
+      evidence: null, final_evidence: null, game_tick: null } }], next: { recorded_at: game.recorded_at, media_id: game.media_id! },
+      indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 0 } });
+  const dispose = render(() => <LibraryScreen tab="games" games={[game]} clips={[]} history={history()}
+    ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
+    actionable snapshotOrigin={null} busyId={null} onHistoryQuery={() => setHistory(state => ({ ...state, loading: true }))}
+    onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
+    onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  const card = host.querySelector("article");
+  const filter = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
+  filter.value = "ChampionKill"; filter.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(host.querySelector("article")).toBe(card);
+  expect(card?.textContent).toContain("11.00:1 KDA");
+  expect(host.querySelector('[aria-label="Recorded matches"]')?.getAttribute("aria-busy")).toBe("true");
+  expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 recordings")?.disabled).toBe(true);
+  setHistory(state => ({ ...state, loading: false, error: "Search failed" }));
+  expect(host.querySelector("article")).toBe(card);
+  expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 recordings")?.disabled).toBe(true);
+  setHistory(state => ({ ...state, loading: false, page: { ...state.page!, rows: [], next: null } }));
+  expect(host.querySelector("article")).toBeNull();
+  expect(host.textContent).not.toContain("Updating matches.");
   dispose();
 });

@@ -1,4 +1,4 @@
-import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { formatDuration } from "../format";
 import type {
   ClipRange,
@@ -73,8 +73,15 @@ type Props = {
 
 function FullscreenOverlay(props: Props) {
   let idleTimer: number | undefined;
+  let overlay: HTMLDivElement | undefined;
+  let heldPointer: number | undefined;
 
   const [topBarVisible, setTopBarVisible] = createSignal(true);
+  const [hovered, setHovered] = createSignal(false);
+  const [focused, setFocused] = createSignal(false);
+  const [pressed, setPressed] = createSignal(false);
+  const canHide = () => props.fullscreen && props.isPlaying && !props.clipRange
+    && !hovered() && !focused() && !pressed();
 
   const replayEnd = createMemo(() => props.mediaTimeline.video.replayEnd);
   const replayTickToMilliseconds = (tick: ReplayTick): number =>
@@ -92,49 +99,69 @@ function FullscreenOverlay(props: Props) {
   const noteActivity = () => {
     setTopBarVisible(true);
     if (idleTimer !== undefined) window.clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => setTopBarVisible(false), 3_200);
-  };
-  const holdHud = () => {
-    setTopBarVisible(true);
-    if (idleTimer !== undefined) {
-      window.clearTimeout(idleTimer);
+    idleTimer = undefined;
+    if (canHide()) idleTimer = window.setTimeout(() => {
       idleTimer = undefined;
-    }
+      if (canHide()) setTopBarVisible(false);
+    }, 3_200);
   };
-
-  const releaseHud = () => {
+  createEffect(noteActivity);
+  const inHud = (target: EventTarget | null) => target instanceof Element
+    && !!overlay?.contains(target) && !!target.closest("[data-hud-region]");
+  const pointerDown = (event: PointerEvent) => {
+    if (inHud(event.target)) { heldPointer = event.pointerId; setPressed(true); }
+    noteActivity();
+  };
+  const pointerUp = (event: PointerEvent) => {
+    if (pressed() && event.pointerId !== heldPointer) return;
+    heldPointer = undefined;
+    setPressed(false);
+    noteActivity();
+  };
+  const windowBlur = () => {
+    heldPointer = undefined;
+    setPressed(false); setHovered(false); setFocused(false);
+    noteActivity();
+  };
+  const windowFocus = () => {
+    setFocused(inHud(document.activeElement));
     noteActivity();
   };
 
   onMount(() => {
-    noteActivity();
-
-    // Wake fullscreen chrome from any pointer activity, even when the HUD
-    // itself is hidden and therefore cannot receive pointer events.
+    // Observe the video's events without adding a surface above it.
     window.addEventListener("pointermove", noteActivity, {
       passive: true,
       capture: true,
     });
-    window.addEventListener("pointerdown", noteActivity, {
+    window.addEventListener("pointerdown", pointerDown, {
       passive: true,
       capture: true,
     });
+    window.addEventListener("pointerup", pointerUp, true);
+    window.addEventListener("pointercancel", pointerUp, true);
+    window.addEventListener("lostpointercapture", pointerUp, true);
+    window.addEventListener("blur", windowBlur);
+    window.addEventListener("focus", windowFocus);
+    window.addEventListener("keydown", noteActivity, true);
 
     onCleanup(() => {
       window.removeEventListener("pointermove", noteActivity, true);
-      window.removeEventListener("pointerdown", noteActivity, true);
+      window.removeEventListener("pointerdown", pointerDown, true);
+      window.removeEventListener("pointerup", pointerUp, true);
+      window.removeEventListener("pointercancel", pointerUp, true);
+      window.removeEventListener("lostpointercapture", pointerUp, true);
+      window.removeEventListener("blur", windowBlur);
+      window.removeEventListener("focus", windowFocus);
+      window.removeEventListener("keydown", noteActivity, true);
       if (idleTimer !== undefined) window.clearTimeout(idleTimer);
     });
   });
 
   return (
     <div
-      classList={{
-        [styles.overlayRoot]: true,
-        [styles.overlayRootHudWake]: !topBarVisible(),
-      }}
-      onPointerMove={noteActivity}
-      onPointerDown={noteActivity}
+      ref={overlay}
+      class={styles.overlayRoot}
       data-testid="fullscreen-overlay"
     >
       <div classList={{[styles.recordedState]:true,[styles.hudHidden]:!topBarVisible()}} aria-label="Recorded state" title="Last available recorded sample">
@@ -151,10 +178,11 @@ function FullscreenOverlay(props: Props) {
           [styles.rosterHud]: true,
           [styles.hudHidden]: !topBarVisible(),
         }}
-        onPointerEnter={holdHud}
-        onPointerLeave={releaseHud}
-        onFocusIn={holdHud}
-        onFocusOut={releaseHud}
+        data-hud-region
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        onFocusIn={() => setFocused(true)}
+        onFocusOut={event => setFocused(inHud(event.relatedTarget))}
       >
         <ChampionFilter
           ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
@@ -174,11 +202,11 @@ function FullscreenOverlay(props: Props) {
           [styles.bottomHud]: true,
           [styles.hudHidden]: !topBarVisible(),
         }}
-        onPointerEnter={holdHud}
-        onPointerLeave={releaseHud}
-        onFocusIn={holdHud}
-        onFocusOut={releaseHud}
-        onPointerMove={noteActivity}
+        data-hud-region
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        onFocusIn={() => setFocused(true)}
+        onFocusOut={event => setFocused(inHud(event.relatedTarget))}
         aria-label="Replay controls"
         data-testid="fullscreen-hud"
       >

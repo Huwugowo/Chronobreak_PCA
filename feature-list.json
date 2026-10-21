@@ -3262,8 +3262,16 @@
       "area": "replay",
       "status": "done",
       "parent_id": "EPIC-REPLAY",
-      "dependencies": ["QB-REPLAY-004", "QB-REPLAY-018", "QB-LIB-012"],
-      "execution": { "workflow": "planned", "plan": "docs/exec-plans/qb-replay-020-recorded-overlay-timeline-v2.md", "progress": "docs/execution/qb-replay-020.md" },
+      "dependencies": [
+        "QB-REPLAY-004",
+        "QB-REPLAY-018",
+        "QB-LIB-012"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-replay-020-recorded-overlay-timeline-v2.md",
+        "progress": "docs/execution/qb-replay-020.md"
+      },
       "acceptance_criteria": [
         "Each player's recorded name appears above their overlay champion portrait, with the Riot #tag omitted and long names contained within the video.",
         "Each overlay champion has two compact spell slots beside its portrait, using recorded roster spell labels and the existing asset cache. Before the first mapped sample, show its first-recorded spell loadout as opening context without requiring timeline input; missing slots remain unavailable.",
@@ -3274,8 +3282,16 @@
         "Existing replay controls, participant filtering and isolated production-path preprod remain usable."
       ],
       "verification": [
-        { "type": "automated", "description": "Focused strict-decoder, participant-state projection and viewer regressions; frontend suite, typecheck/build and canonical validation.", "command": null },
-        { "type": "manual", "description": "Open the actual isolated Swiftplay desktop replay at paused zero without timeline input: inspect twenty loaded visible spell icons, names without Riot tags and absent team headings, then playback, pause, backward seeking, temporal level/death transitions and fixed champion positions.", "command": null }
+        {
+          "type": "automated",
+          "description": "Focused strict-decoder, participant-state projection and viewer regressions; frontend suite, typecheck/build and canonical validation.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Open the actual isolated Swiftplay desktop replay at paused zero without timeline input: inspect twenty loaded visible spell icons, names without Riot tags and absent team headings, then playback, pause, backward seeking, temporal level/death transitions and fixed champion positions.",
+          "command": null
+        }
       ],
       "evidence": [
         "2026-10-21: Compact SQLite overlay pages supply an independent source-scoped timeline with committed-revision checks, bounded loading and video-driven binary lookup. Recorded spell variants retain decoded image nodes; seeks no longer depend on event pages. First-recorded spell-only context covers the opening segment; future temporal status and unmapped facts remain unavailable. No recorder or persisted-schema changes.",
@@ -3284,6 +3300,121 @@
         "2026-10-21 Flash-marker follow-up: fullscreen-only CSS removes the legacy local-player dot. Fresh release inspection at 1440x900 and 1000x650 confirms no dot, twenty visible loaded spell icons and working filters. All 262 frontend tests, TypeScript and production frontend/Tauri builds pass."
       ],
       "notes": "The large-seek repair replaces event-window ownership rather than hiding stale state. Initial details readiness waits for the complete selected overlay timeline; video remains usable while loading or on optional-data failure. V2 explicitly adds first-recorded opening spell context, with timed samples fully replacing it including null slots. Existing browser preview compatibility is preserved in its development fixture adapter. Known evolved Smite asset coverage remains separate in QB-LIB-013."
+    },
+    {
+      "id": "QB-LIB-014",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Stable Library Search Updates",
+      "description": "Coalesce typed search intents and retain checked match cards while the next history query loads.",
+      "priority": "P1",
+      "area": "library-search",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-008"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Text search dispatches only the latest intent after 180 ms of quiet typing; clearing text and discrete filters apply immediately with the latest text.",
+        "Previously checked history cards remain visible during a replacement query with an explicit updating indication and disabled pagination; errors are visible and do not erase those cards.",
+        "Superseded responses, root/snapshot changes and disposal cannot publish stale results or delayed text queries; checked media membership and bounded query serialization remain intact."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Fake-time UI and controller regressions for typing, immediate filters, retained cards, pagination, errors, invalidation and cleanup; complete frontend suite, typecheck/build and canonical validation.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-21: 180 ms coalescing, immediate clearing/filter changes, retained checked cards, loading/error pagination guards and stale/disposal protection pass fake-time/controller regressions. Full frontend suite: 278 tests / 31 files; TypeScript, Vite, fresh production Tauri build and canonical/diff checks pass.",
+        "Isolated production WebView smoke: Master Yi search returns Swiftplay; replacement Akali intent immediately retains the previous card with aria-busy and Updating indication, then displays Practice Tool; clearing restores both recordings. No personal library was used."
+      ],
+      "notes": "Review repaired value-based origin comparison and stale pagination admission after failed replacement queries. Broader SQL/index/backend and QB-LIB-001 work remain separate."
+    },
+    {
+      "id": "QB-REPLAY-021",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Playback-aware Replay HUD Inactivity",
+      "description": "Keep replay controls available while paused, windowed or editing, and hide them only during idle fullscreen playback without intercepting video clicks.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-001"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Only fullscreen playing replay with no clip selection may hide the HUD after 3.2 seconds; pause, windowed mode and clip selection reveal it immediately.",
+        "Hover, keyboard focus and pointer interaction within the HUD keep controls visible independently; release rearms inactivity only when all holds end.",
+        "Activity is observed through one centralized timer path, hidden chrome does not intercept video clicks, and disposal removes its listeners and timer."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Fake-time component tests cover eligibility transitions, independent hover/focus/drag holds, wake events and cleanup; frontend suite, typecheck/build and canonical validation.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Use the isolated production desktop replay to check paused/windowed/fullscreen playback, clip selection, keyboard focus and a first video click with hidden controls.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-21: nine fake-time HUD regressions pass, including independent focus/hover/pointer holds, eligibility transitions, lost capture/window focus recovery and listener/timer cleanup. Combined 278 frontend tests / 31 files, TypeScript, Vite and fresh production Tauri build pass.",
+        "Isolated production WebView smoke passes paused/windowed/fullscreen/clip-preview/focused-control visibility. Idle fullscreen playback hides controls (opacity 0, pointer-events none); the first video click pauses playback and reveals controls. Native Windows screenshot capture remains unavailable; these checks used the actual production WebView through a temporary local diagnostic connection."
+      ],
+      "notes": "Centralized inactivity observation preserves pointer-transparent video interaction. Synthetic preprod media proves control behavior, not gameplay alignment."
+    },
+    {
+      "id": "QB-REPLAY-022",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Accessible Timeline Position Control",
+      "description": "Give the replay position slider precise local keyboard seeking and keep event and clip buttons outside its accessibility subtree.",
+      "priority": "P2",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-001"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Focused replay position supports Left/Right one-second seeks and Ctrl+Left/Right five-second seeks bounded by replay duration; Home/End, Page keys and existing Shift+arrow viewport panning and zoom remain usable without duplicate global seeks.",
+        "The position slider contains no interactive descendants; event markers and clip endpoints retain their separate focus, activation and editing behavior.",
+        "Pointer scrub, marker selection and clip dragging keep the same viewport geometry and media seek authority; keyboard instructions are exposed on the position control."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused timeline tests for exact keyboard seek targets/bounds, modifier and marker isolation, slider structure and existing pointer/clip regressions; full frontend suite, typecheck/build and canonical validation.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Exercise the focused position slider, marker navigation and clip editing in isolated production desktop replay.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-10-21: timeline/viewer regressions (42 tests) and full frontend suite (278 tests / 31 files), TypeScript, Vite and fresh production Tauri build pass. Slider has no interactive descendants; exact increments, bounds, propagation, viewport and pointer/clip behavior are covered.",
+        "Isolated production WebView smoke: focused slider Right seeks 0 to 1 s, Ctrl+Right to 6 s; Home/End reach 0 and 1006.633333 s, PageDown advances 30 s. Minions marker seeks to 52.433333 s. Separate clip handle responds to keyboard and mouse dragging while remaining outside the slider subtree."
+      ],
+      "notes": "Viewer-wide shortcut expansion remains QB-REPLAY-005. Synthetic preprod media proves control and seek behavior, not gameplay alignment."
     },
     {
       "id": "QB-LIB-013",
@@ -3295,8 +3426,13 @@
       "area": "library-storage",
       "status": "not-started",
       "parent_id": "EPIC-LIBRARY",
-      "dependencies": ["QB-LIB-012"],
-      "execution": { "workflow": "adaptive", "plan": null },
+      "dependencies": [
+        "QB-LIB-012"
+      ],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
       "acceptance_criteria": [
         "Recorded evolved spell identifiers resolve to verified matching assets through the existing cache without substituting a different spell or weakening asset validation.",
         "Unavailable assets retain stable placeholders and do not prevent playback."
@@ -3347,6 +3483,290 @@
         "2026-10-20 production preprod exported the same 13-second selection twice in one editor. Both H.264/AAC MP4s fully decode and have valid JPEGs; source hashes are unchanged and no partial remains. Full frontend 251 tests, backend 136 tests (three ignored), fmt, Clippy, typecheck and production build pass; details in docs/execution/qb-clip-008.md."
       ],
       "notes": "Focused preserved mechanisms adapted to current descriptor/controller APIs; existing encoder fallback, atomic publication and source protection remain in use. No job service, recorder change or new test framework."
+    },
+    {
+      "id": "QB-LIB-015",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Real-journal Initial Index Characterization",
+      "description": "Measure fresh-cache import, explicit rebuild and persisted reuse of the real preprod journals before selecting an indexing optimization.",
+      "priority": "P1",
+      "area": "library-search",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-DEV-002"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "An opt-in release test copies both unchanged preprod bundles into a temporary library and uses a separate temporary SQLite cache; sources and the active preprod cache remain untouched.",
+        "Measurements separate fixture copy/scan, cache open/reconcile, bounded production recording calls and persisted reopen/reuse; report actual commits/pages, per-call distributions and source/cache bytes for three repetitions.",
+        "Fresh import and rebuild produce equivalent queryable projections, reuse imports zero batches, and source bytes remain unchanged. Results distinguish backend timings, deterministic frontend pacing and unmeasured real UI/cold-disk time.",
+        "A concise reproducible report identifies the next measured investigation or bounded optimization without changing production integrity, import admission, schema or concurrency."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run opt-in release real-journal measurements, existing real-fixture regressions, app formatting/Clippy and applicable app tests; validate canonical state and diff hygiene.",
+          "command": "cargo test --release --manifest-path app/src-tauri/Cargo.toml real_preprod_index_measurements -- --ignored --nocapture"
+        }
+      ],
+      "evidence": [
+        "app/src-tauri/src/league_index/preprod_tests.rs: 2026-10-21: opt-in release characterization passed three isolated fresh/rebuild/reopen runs; source SHA-256 unchanged, equivalent counts/scopes, zero batches on reuse. Existing real-fixture query regression passed.",
+        "docs/performance/initial-index-characterization.md: Real Swiftplay fresh median 4.506s vs 22.1s calculated inter-call waits; production WebView rebuilds 35.531/37.546/35.974s. Explicit cold-disk, UI completion and incomplete IPC-accounting limits retained.",
+        "docs/performance/initial-index-characterization.md: App tests: 136 passed, 4 ignored with normal Windows child access; sandbox run had readiness-fixture failure (135 passed). App fmt and all-target Clippy passed. Release opt-in test passed separately."
+      ],
+      "notes": "Measurement-only direct unit. Any material persistence/concurrency/cross-subsystem optimization is a separate planned feature. Existing synthetic rebuild/query measurements do not characterize the real roster-heavy source."
+    },
+    {
+      "id": "QB-LIB-016",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Short Yield Between Bounded Index Calls",
+      "description": "Reduce avoidable initial-index waiting by shortening the existing frontend continuation timer, preserving bounded serial imports and responsive queries.",
+      "priority": "P1",
+      "area": "library-search",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-015"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Continue imports through a short timer task yield instead of a fixed 100ms wait, preserving one active import, independent latest query handling, four-commit backend calls and existing admission/error behavior.",
+        "Pending work stops after close or leaving Games; stale-context completions cannot publish or restart old imports, and foreground searches remain usable during indexing.",
+        "Three isolated production WebView rebuilds on the same preprod fixture improve the measured 35.974s baseline median; report results and actual responsiveness observations without claiming capture or cold-disk performance."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Controller tests cover pending-work serialization, query responsiveness, yielding and cancellation; run frontend tests, typecheck, production build, canonical and diff checks.",
+          "command": "npm run test --prefix app"
+        },
+        {
+          "type": "manual",
+          "description": "Build fresh Tauri production executable; measure three preprod rebuilds and verify search/navigation during active indexing."
+        }
+      ],
+      "evidence": [
+        "app/src/historyController.ts: 4ms task yield replaces 100ms wait; serial importer, independent queries, backend bound and admission unchanged.",
+        "app/src/historyController.test.ts: pending importer serialization, independent query, continuation yield and close cancellation regression passed; all 279 frontend tests across 31 files passed. TypeScript, Vite and fresh Tauri production build passed.",
+        "docs/performance/initial-index-characterization.md: three real production WebView rebuilds 8.613/10.358/9.116s vs baseline 35.531/37.546/35.974s; median 74.7% lower. Visible rAF max gap 17.4ms. Active-index local filtering, replay open/5s seek and return/completion passed; no capture or cold-disk claim."
+      ],
+      "notes": "Direct bounded timer adjustment within existing frontend scheduler. No new concurrency, lifecycle, persistence, capture policy or backend batch changes."
+    },
+    {
+      "id": "QB-LIB-017",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Economical Match History Rendering",
+      "description": "Defer offscreen match-card image/render work while preserving the complete searchable, keyboard-accessible page.",
+      "priority": "P2",
+      "area": "library-search",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-014"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Characterize a deterministic 50-card rich library page with visible/offscreen image and render measurements before choosing the bounded optimization.",
+        "Offscreen assets/render work is deferred without changing card data, actions, keyboard access, search/pagination or layout geometry; visible cards and newly scrolled content load correctly.",
+        "Repeat the representative browser measurement after the change and report actual gains and limits; introduce list virtualization only if evidence justifies its additional lifecycle complexity."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run relevant library regressions, frontend suite, TypeScript/build, canonical validation and diff hygiene."
+        },
+        {
+          "type": "manual",
+          "description": "Measure the same 50-card fixture before/after; verify top/end scrolling, image loading, keyboard access and filtering in a real browser."
+        }
+      ],
+      "evidence": [
+        "docs/performance/library-rendering.md: native image lazy loading already existed; content-visibility auto defers 33/50 cards while keeping DOM, actions and page height. 50 rich cards / 1092 images, three Edge browser runs each: median mount-to-second-frame milestone 141.4ms baseline vs 110.7ms optimized; no image/memory/capture or production-tail-latency claim.",
+        "tools/library_benchmark/measure.mjs and app/library-benchmark.html: repeatable isolated component fixture; focus/Enter on last card, reveal image loading, menu action at 1280x800 and 1000x700, filtering/clearing and stable scroll height passed. No media modified.",
+        "2026-10-21: all 279 frontend tests / 31 files, TypeScript, Vite and fresh Tauri production build passed; canonical validation and git diff --check passed."
+      ],
+      "notes": "Native lazy images already present. Bounded CSS content-visibility optimization with intrinsic height; no virtualization, observer, mounting or lifecycle mechanism. Measure browser rendering and check focus/menu/scroll correctness."
+    },
+    {
+      "id": "QB-REPLAY-023",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Boundary-driven Timeline Marker State",
+      "description": "Reduce frame-rate reactive work for elapsed timeline events while preserving continuous playhead motion and exact seek/event semantics.",
+      "priority": "P2",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-001",
+        "QB-REPLAY-022"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Measure marker reactive work on a deterministic dense visible timeline before and after the bounded change, separating operation counts from browser frame-time observations.",
+        "Elapsed marker state remains exactly event.replay_tick <= playhead for ordinary playback, repeated ticks, forward/backward seeks, duplicate timestamps and event/window/filter replacement, without reevaluating every anchor on every ordinary frame.",
+        "Continuous playhead geometry, marker selection, keyboard/pointer seeking, viewport pan/zoom and clip endpoint behavior retain existing semantics; no new event reads or media seek authority is introduced."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused dense-timeline boundary/reactivity and existing interaction regressions; frontend suite, typecheck/build, canonical validation and diff checks."
+        },
+        {
+          "type": "benchmark",
+          "description": "Repeat the same dense timeline fixture before/after; report reactive work and actual browser scheduling limits, not a capture/video-decode performance claim."
+        }
+      ],
+      "evidence": [
+        "docs/performance/timeline-marker-reactivity.md: 512 visible anchors, 240 frames, three Edge 155 trials per implementation. Playhead reads 124080 to 1440 (98.84% fewer); median accumulated synchronous update time 284.4ms to 28.4ms. Frame-gap p95 unchanged; isolated dev-renderer evidence, no video/capture FPS claim.",
+        "Binary-search inclusive elapsed boundary with index selector preserves duplicate/equal ticks, forward/backward seeks, event and viewport replacement; continuous head/fill geometry asserted on every simulated frame. Browser fixture ArrowRight/End/Home elapsed counts 2/512/1 verified.",
+        "2026-10-21: 281 frontend tests / 31 files passed; strengthened timeline suite 28 tests passed, TypeScript, Vite and fresh Tauri production build passed. Canonical validation and diff hygiene passed. Rebuilt app relaunched with the isolated preproduction library."
+      ],
+      "notes": "Bounded local derived-state change: binary-search memo for sorted visible event upper bound, then selector keyed by anchor index. No new lifecycle, event fetching, timer, persistent state or media authority. Baseline measured before editing the production expression."
+    },
+    {
+      "id": "QB-CLIP-009",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Vertical Preview Decode Characterization",
+      "description": "Measure active video presentation and source loading in the actual vertical clip editor before deciding whether a decoder optimization is warranted.",
+      "priority": "P2",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Use an isolated fixture library and actual production editor to compare horizontal and vertical preview video elements, playback/pause/seek behavior and presented/decode counters; preserve source media.",
+        "Distinguish duplicate media work from useful simultaneous views and from unproven GPU/CPU savings; retain reproducible observations and limitations.",
+        "Record a concrete canonical disposition for any demonstrated unnecessary work. Meaningful media lifecycle or architecture changes require a separate planned implementation before product edits."
+      ],
+      "verification": [
+        {
+          "type": "inspection",
+          "description": "Trace only exporter video ownership and existing diagnostics/fixture access; compare with production DOM and bounded counters."
+        },
+        {
+          "type": "manual",
+          "description": "Exercise horizontal/vertical, playback/pause, seeking and return in the isolated production editor; record source preservation and actual results."
+        },
+        {
+          "type": "automated",
+          "description": "Validate canonical state and diff hygiene; run additional checks only if relevant code changes."
+        }
+      ],
+      "evidence": [
+        "docs/performance/vertical-preview-decoding.md: actual production WebView2 155.0.4283.62, isolated synthetic 1080p60 source, three 3-second trials per mode. Median combined per-element decoded-frame delta 366 vertical vs 180 horizontal; both vertical layers present frames. No physical decoder, CPU/GPU savings or representative gameplay claim.",
+        "Pause freezes both counters; paused 4s/1s seeks settle exactly. Switching to horizontal pauses detached backdrop; return leaves one replay video. Synthetic source SHA-256 unchanged. tools/vertical_preview/measure.mjs reproduces bounded UI-driven measurements; Node syntax, canonical validation and diff hygiene passed.",
+        "Duplicate source work disposition: QB-CLIP-010 planned single-source canvas backdrop; retain both useful visual layers and measure added drawing cost before completion."
+      ],
+      "notes": "Measurement-only direct feature. Do not infer duplicate hardware decoder ownership from the count of video DOM nodes or unscoped Media properties. Do not implement decoder/lifecycle redesign within characterization."
+    },
+    {
+      "id": "QB-CLIP-010",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Single-source Vertical Clip Preview",
+      "description": "Render the blurred vertical backdrop from the primary preview video instead of loading and synchronizing a second media element.",
+      "priority": "P2",
+      "area": "export",
+      "status": "in-progress",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-009"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-clip-010-gpu-vertical-preview-v2.md",
+        "progress": "docs/execution/qb-clip-010.md"
+      },
+      "acceptance_criteria": [
+        "Vertical preview mounts exactly one source video while retaining the full-frame blurred background, sharp crop, focus/framing controls and safe-area overlay. Horizontal and Discord previews preserve their existing behavior.",
+        "Backdrop follows the primary presented frames during playback and exact paused seeking, loop/restart and preset changes. No independent backdrop seek, play, load, audio or time authority remains.",
+        "At most one owned frame callback is pending; callbacks/drawing stop or are cancelled on pause, horizontal mode, source replacement and disposal. Stale callbacks cannot draw into a new source or detached canvas; no per-frame allocation or unbounded image buffering.",
+        "Canvas/context/draw failure produces a visible local preview error and releases the renderer; it does not silently add a second video or alter export/source contracts.",
+        "Repeat production WebView measurements with changing synthetic 1080p60 media. Prove the single decoded source, visible advancing backdrop, unchanged sharp foreground, and bounded rendering overhead using the predefined plan gates. No unsupported hardware-decoder or global FPS claim.",
+        "Focused renderer lifecycle and exporter integration tests, frontend suite/typecheck/build, fresh Tauri build, source-preservation checks, durable architecture/evidence and canonical validation pass."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Deterministic frame-owner/canvas lifecycle tests and exporter integration; complete frontend tests, TypeScript/Vite, fresh production Tauri build and canonical/diff validation."
+        },
+        {
+          "type": "manual",
+          "description": "Actual isolated production editor: initial paused frame, play/pause, forward/backward seeks, restart/loop, switch presets while playing, framing/focus and return; inspect foreground and blurred backdrop, audio and existing export options."
+        },
+        {
+          "type": "benchmark",
+          "description": "Interleaved old/new production measurements on the same changing synthetic source, decode/presentation/drop counters plus owned process-tree CPU; compare against gates specified before implementation."
+        }
+      ],
+      "evidence": [
+        "2026-10-21: one-source canvas implementation; focused 9/full 289 frontend tests, TypeScript/Vite and fresh Tauri build passed. Actual changing-source production windows: old 2 videos each +601 decoded frames; new 1 video +601, canvas visibly follows, no new drops/seeks/pauses. Three synthetic H.264/AAC exports fully decoded; source hash unchanged. See docs/performance/vertical-preview-decoding.md and execution checkpoint.",
+        "2026-10-21: complete five interleaved valid pairs after CSS layer promotion FAILED CPU gate: baseline median .403508 logical cores, median paired increase .316595 vs allowed .060526. All foreground drop deltas zero. Diagnostics implicate filtered-canvas presentation; original 2D design requires superseding. See execution checkpoint and performance report. Status remains in-progress.",
+        "2026-10-21: reviewed v2 GPU shader design supersedes failed CSS-filtered 2D path; existing exact-origin anonymous CORS needs no backend/security change. GPU implementation, 295 frontend tests, typecheck/build and actual protected texture/visual/lifecycle checks passed. First shader series FAILED CPU: paired increase .192871 vs .084796 allowed; drops passed. Final fixed-storage/native-unpack shader five-pair series also FAILED CPU: baseline median .497193, paired increase .376924 vs .074579 allowed; all foreground drops zero. Actual hardware renderer NVIDIA/ANGLE D3D11, no GL error. V2 rejected for performance completion; feature remains open. Original plan and failed measurements retained."
+      ],
+      "notes": "Planned because this changes secondary media lifecycle/presentation ownership. Scope is preview only; exporter FFmpeg, media security, source identity, playback controller and persisted data remain unchanged."
+    },
+    {
+      "id": "QB-UI-001",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Compact UI usability fixes",
+      "description": "Make existing library and replay controls usable at narrow desktop widths with readable labels and larger clip endpoint targets; remove unused fullscreen CSS.",
+      "priority": "P2",
+      "area": "desktop-ui",
+      "status": "done",
+      "dependencies": [],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Match cards retain their information without horizontal scrolling at 800px and 1000px desktop viewport widths.",
+        "Active labels below 10px in champion filters, viewer and clip exporter use at least 10px text without overlap.",
+        "Clip endpoint pointer targets are at least 24px wide while preserving precise endpoint positions and keyboard behavior.",
+        "Remove only fullscreen CSS selectors with no component consumers; preserve current HUD appearance."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run frontend tests, typecheck and production build; validate canonical state and diff."
+        },
+        {
+          "type": "manual",
+          "description": "Inspect browser fixtures at narrow and wide widths and verify endpoint target geometry and interaction."
+        }
+      ],
+      "evidence": [
+        "2026-10-21: Added a two-row match card layout at narrow desktop widths, retaining context, loadout/KDA/items, CS, recording metadata and both rosters. Browser fixture checks at 800/1000/1280px reported no horizontal document/card overflow; actual application library also fits at 800px.",
+        "2026-10-21: Raised sub-10px labels in champion filters, viewer and exporter to 10px; reduced rail heading tracking and allowed the vertical safe-area caption to wrap. Expanded timeline endpoint hit targets to 24x24px with unchanged 12px visible grips and centered endpoint geometry. Browser drag from the enlarged outer edge changed clip end from 1:15 to 2:30; existing keyboard tests pass.",
+        "2026-10-21: Removed unused fullscreen scrubber/rail/marker CSS after auditing all module consumers; active fullscreen transport, roster and recorded-state HUD visually verified. Screenshots: ignored build/ui-compact-{library,replay,fullscreen,export,vertical}.png.",
+        "2026-10-21: Frontend Vitest 33 files / 295 tests passed; TypeScript check and Vite production build passed. Canonical schema/lifecycle validation and git diff --check passed. No backend or media behavior changes."
+      ],
+      "notes": "User requested minimal sufficient fixes and explicitly excluded evolved Smite (QB-LIB-013). No component ownership refactor or CPU optimization."
     }
   ]
 }

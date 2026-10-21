@@ -129,6 +129,62 @@ const renderTimeline = (
   };
 };
 
+it("keeps elapsed anchors exact across equality, duplicate ticks, seeks and event/viewport replacement", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const [playhead, setPlayhead] = createSignal(tick(0));
+  const [events, setEvents] = createSignal([event("ChampionKill", 8), event("ChampionKill", 2), event("ChampionKill", 2), event("ChampionKill", 6)]);
+  const [viewport, setViewport] = createSignal(wholeTimelineViewport(tick(100)));
+  disposers.push(render(() => <ReplayTimeline duration={tick(100)} playhead={playhead()}
+    events={events()} viewport={viewport()} onViewportChange={setViewport}
+    localPlayerName={null} clip={null} onSeek={() => {}} onEventSelect={() => {}}
+    onClipEndpointEditStart={() => {}} onClipEndpointPreview={() => {}} onClipEndpointEditFinish={() => {}}
+    onClipEndpointKeyDown={() => {}} onClipEndpointKeyUp={() => {}} onClipEndpointBlur={() => {}} />, host));
+  const verify = () => {
+    const expected = events().filter(e => e.replay_tick >= viewport().start && e.replay_tick <= viewport().end)
+      .sort((a, b) => a.replay_tick - b.replay_tick).map(e => e.replay_tick <= playhead());
+    expect([...host.querySelectorAll('[data-event-anchor]')].map(e => e.getAttribute("data-elapsed") === "true")).toEqual(expected);
+  };
+  verify();
+  for (const next of [tick(2) - 1, tick(2), tick(2), tick(3), tick(100), tick(6), tick(2) - 1, tick(0)]) {
+    setPlayhead(next as ReplayTick); verify();
+  }
+  setPlayhead(tick(6));
+  setEvents([event("ChampionKill", 9), event("ChampionKill", 0), event("ChampionKill", 6)]); verify();
+  setViewport({ start: tick(5), end: tick(10) }); verify();
+  setEvents([event("ChampionKill", 5), event("ChampionKill", 7)]); verify();
+  setEvents([]); verify();
+  setEvents([event("ChampionKill", 6), event("ChampionKill", 6)]); verify();
+});
+
+it("does not subscribe every dense anchor to ordinary frame updates", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const [playhead, setPlayhead] = createSignal(tick(0));
+  let reads = 0;
+  const props = {
+    duration: tick(1200), viewport: wholeTimelineViewport(tick(1200)),
+    events: Array.from({ length: 512 }, (_, index) => event("ChampionKill", 20 + index * 2)),
+    get playhead() { reads++; return playhead(); },
+    onViewportChange: () => {}, localPlayerName: null, clip: null,
+    onSeek: () => {}, onEventSelect: () => {}, onClipEndpointEditStart: () => {},
+    onClipEndpointPreview: () => {}, onClipEndpointEditFinish: () => {},
+    onClipEndpointKeyDown: () => {}, onClipEndpointKeyUp: () => {}, onClipEndpointBlur: () => {},
+  };
+  disposers.push(render(() => <ReplayTimeline {...props} />, host));
+  expect(host.querySelectorAll('[data-event-anchor]')).toHaveLength(512);
+  reads = 0;
+  for (let frame = 1; frame <= 120; frame++) {
+    setPlayhead(tick(frame / 60));
+    const expectedPercent = frame / 60 / 1200 * 100;
+    expect(parseFloat((host.querySelector(`.${styles.head}`) as HTMLElement).style.left)).toBeCloseTo(expectedPercent, 6);
+    expect(parseFloat((host.querySelector(`.${styles.fill}`) as HTMLElement).style.width)).toBeCloseTo(expectedPercent, 6);
+  }
+  // Allow the continuously animated head, fill, overview and ARIA values;
+  // the work must be independent of the 512 unchanged marker bindings.
+  expect(reads).toBeLessThan(120 * 20);
+  expect(host.querySelector('[data-event-anchor][data-elapsed="true"]')).toBeNull();
+  expect(host.querySelector('[role="slider"]')?.getAttribute("aria-valuenow")).toBe("2");
+});
+
 beforeEach(() => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -569,14 +625,74 @@ it("seeks, zooms and pans the actual rail using the shared viewport before detai
   expect(h.seek).toHaveBeenCalledTimes(1);
   pointer(h.rail, "pointerup", 500);
   expect(h.seek).toHaveBeenLastCalledWith(tick(50)); expect(c.held.size).toBe(0);
-  h.rail.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
+  const slider = h.host.querySelector<HTMLElement>('[role="slider"]')!;
+  expect(document.activeElement).toBe(slider);
+  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
   expect(h.viewport().end - h.viewport().start).toBe(tick(80));
   const zoomed = h.viewport();
-  h.rail.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true }));
+  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true }));
   expect(h.viewport().start).toBeGreaterThan(zoomed.start);
   expect(h.viewport().end - h.viewport().start).toBe(tick(80));
-  h.rail.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
   expect(h.viewport()).toEqual({ start: tick(0), end: tick(100) });
+});
+
+it("keeps the slider separate from buttons and owns precise bounded keyboard seeks", () => {
+  const h = mount();
+  const slider = h.host.querySelector<HTMLElement>('[role="slider"]')!;
+  expect(slider.querySelector("button")).toBeNull();
+  expect(slider.contains(h.handle)).toBe(false);
+  expect(slider.getAttribute("aria-description")).toContain("one second");
+  const globalKey = vi.fn(); window.addEventListener("keydown", globalKey);
+  try {
+    for (const [key, ctrlKey, expected] of [
+      ["ArrowLeft", false, 29], ["ArrowRight", false, 31],
+      ["ArrowLeft", true, 25], ["ArrowRight", true, 35],
+      ["Home", false, 0], ["End", false, 100],
+      ["PageDown", false, 0], ["PageUp", false, 60],
+    ] as const) {
+      const event = new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true, cancelable: true });
+      slider.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(h.seek).toHaveBeenLastCalledWith(tick(expected));
+    }
+    expect(globalKey).not.toHaveBeenCalled();
+    const calls = h.seek.mock.calls.length;
+    h.handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    expect(h.seek).toHaveBeenCalledTimes(calls);
+    expect(globalKey).toHaveBeenCalledOnce();
+  } finally { window.removeEventListener("keydown", globalKey); }
+});
+
+it("clamps small keyboard seeks at both replay boundaries", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const [playhead, setPlayhead] = createSignal(tick(0));
+  const seek = vi.fn();
+  const dispose = render(() => <ReplayTimeline duration={tick(100)} playhead={playhead()}
+    viewport={wholeTimelineViewport(tick(100))} onViewportChange={() => {}} events={[]}
+    localPlayerName={null} clip={null} onSeek={seek} onEventSelect={() => {}}
+    onClipEndpointEditStart={() => {}} onClipEndpointPreview={() => {}} onClipEndpointEditFinish={() => {}}
+    onClipEndpointKeyDown={() => {}} onClipEndpointKeyUp={() => {}} onClipEndpointBlur={() => {}} />, host);
+  disposers.push(dispose);
+  const slider = host.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+  expect(seek).toHaveBeenLastCalledWith(tick(0));
+  setPlayhead(tick(99.5));
+  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", ctrlKey: true, bubbles: true }));
+  expect(seek).toHaveBeenLastCalledWith(tick(100));
+  expect(slider.getAttribute("aria-valuenow")).toBe("99.5");
+});
+
+it("does not route focused event marker keys through the position slider", () => {
+  const { host, onViewportChange } = renderTimeline([event("ChampionKill", 20)]);
+  const marker = host.querySelector<HTMLButtonElement>('[aria-label^="Seek to"]')!;
+  expect(marker).not.toBeNull();
+  expect(marker.closest('[role="slider"]')).toBeNull();
+  marker.focus();
+  marker.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
+  marker.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true }));
+  expect(onViewportChange).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(marker);
 });
 
 it.each(["pointerup", "pointercancel", "lostpointercapture", "dispose"])("releases clip capture and listeners on %s", ending => {

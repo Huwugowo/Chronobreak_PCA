@@ -25,6 +25,15 @@ exporter's source changes or its preview is disposed.
 
 ## Library and viewer flow
 
+The Games search field coalesces text for 180 ms; clearing it and changing discrete
+filters submit immediately with the latest text. `HistoryController` retains the
+last checked page while a replacement loads, with an explicit updating state.
+Pagination is disabled during text/query work and after query failure so a retained
+page's cursor cannot be combined with a failed query's filters. Page and pagination
+position publish together only after query-generation and snapshot admission.
+A new library origin clears retained history; pending text timers are cancelled on
+origin changes or disposal. Origin comparison uses its values, not object identity.
+
 Opening a selected game first requests a token-bound `ReplayDescriptor`: snapshot
 token, game ID, protected loopback video URL and validated schema-v2 media timeline.
 Rust uses the strict bundle reader and requires a nonempty regular video, but does
@@ -55,6 +64,21 @@ controls. The consolidated HUD and rail stay mounted across fullscreen changes,
 including mid-drag. Each rail releases pointer capture and gesture listeners when
 a gesture ends or is cancelled, and releases those resources and its resize
 observer on unmount.
+
+The position slider is an empty focusable sibling of event and clip buttons;
+the surrounding rail owns pointer geometry and capture. Focused Left/Right seek
+one second, Ctrl+Left/Right five seconds, Home/End the replay bounds, and Page
+Up/Down thirty seconds. Shift+Left/Right pans, plus/minus zooms and zero restores
+the full viewport. Handled keys stop before viewer-wide shortcuts. Pointer
+scrubbing focuses the position slider; event and clip controls retain their own
+focus and activation behavior.
+
+The HUD hides after 3.2 seconds only during fullscreen playback with no clip
+selection or hover/focus/pointer interaction hold. Pause, windowed mode and clip
+selection reveal controls immediately. Pointer capture loss and window focus
+transitions reconcile interaction holds. Window capture listeners observe activity
+while the overlay root remains pointer-transparent, so a hidden HUD does not
+consume the first video click. Disposal removes the inactivity timer and listeners.
 
 `LibraryController` owns one active replay read and one replaceable latest intent
 across viewer/exporter lifetimes. Admission includes root epoch, request, token,
@@ -118,11 +142,31 @@ assignments do not prove audible output.
 
 `requestVideoFrameCallback` is the presented-frame authority. Requested, dispatched, seeked, and presented values retain distinct generation/epoch state. Timeline markers, seeks, event cards, champion filters, and recorded player state use mapped replay ticks from the same payload; unavailable/before/after-media observations are explicit. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
 
+Timeline elapsed-anchor state uses the sorted visible events' inclusive upper
+bound, calculated by a binary-search memo. An index selector notifies elapsed
+bindings when that boundary changes; individual anchors do not subscribe directly
+to each presented frame. Head/fill/overview geometry retains continuous updates.
+
 Data Dragon manifests/icons enrich champion and item presentation but do not gate playback. Cached versions continue to work offline; unavailable images fall back to fixed-layout placeholders.
 
 ## Clip flow
 
 A supported replay event or timeline action enters clip mode with heuristic pre/post-roll. The user can adjust a media-bound, half-open source-frame interval subject to the minimum duration, choose output presets, vertical framing, music, and audio levels, then submit a request through Tauri.
+
+The vertical editor uses the same primary video for its sharp layer and blurred
+context. A display-only WebGL canvas owner uploads the primary presented frame
+and applies two separable Gaussian shader passes plus brightness/saturation in a
+fixed source-aspect backing store capped at 640 pixels on the longest side. Source
+texture storage and the intermediate framebuffer are allocated once per binding;
+a ResizeObserver maps the 17 CSS-pixel blur to backing pixels using cover geometry.
+The primary sets anonymous mode before source assignment, using existing exact-origin
+loopback CORS without changing capability or CSP admission. It owns at most one video-frame
+callback and no media source, clock, playback or audio. Queued/native seeks gate
+paused drawing until the final seek settles; already-current seeks release the
+gate without requiring a native seeked event. Pause, hidden documents, source
+replacement and disposal cancel continuous drawing. Source-bound generations
+reject late callbacks. Local drawing failure releases the owner and displays an
+error without changing export behavior or creating a fallback video.
 
 `app/src-tauri/src/clip_export.rs` validates the source bundle and request, selects H.264 hardware encoders with software fallback, and invokes ffmpeg directly without a shell. It emits progress, stages all outputs, verifies Discord size with corrective retry, generates thumbnails, and atomically exposes the completed batch. Failure removes partial outputs while preserving source media. Successful MP4/JPEG pairs become visible on the next filesystem library scan; source association comes from the MP4 filename.
 

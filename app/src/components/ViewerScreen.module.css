@@ -54,7 +54,7 @@
 .gameIdentity p {
   color: var(--color-muted);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 720;
   letter-spacing: 0.14em;
 }
@@ -88,7 +88,7 @@
   overflow: hidden;
   color: var(--color-muted-bright);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.08em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -220,7 +220,7 @@
   color: #fff;
   background: rgba(0, 47, 167, 0.82);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.11em;
   cursor: pointer;

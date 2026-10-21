@@ -49,18 +49,20 @@ export class HistoryController {
   }
   setQuery(query: HistoryQuery) {
     this.query = { ...query, after: null, limit: 50 };
-    this.publish({ page: null, laterPage: false });
     this.requestQuery();
   }
   nextPage() {
-    if (!this.state.page?.next || this.state.loading) return;
+    if (!this.state.page?.next || this.state.loading || this.state.error) return;
     this.query = { ...this.query, after: this.state.page.next };
-    this.publish({ laterPage: true }); this.requestQuery();
+    this.requestQuery();
   }
-  firstPage() { this.query = { ...this.query, after: null }; this.publish({ laterPage: false }); this.requestQuery(); }
+  firstPage() {
+    if (this.state.loading || this.state.error) return;
+    this.query = { ...this.query, after: null }; this.requestQuery();
+  }
   private requestQuery() {
     this.queryGeneration++; this.queryPending = true;
-    this.publish({ loading: true }); this.pumpQuery();
+    this.publish({ loading: true, error: null }); this.pumpQuery();
   }
   private pumpQuery() {
     const context = this.context;
@@ -71,7 +73,7 @@ export class HistoryController {
       if (!this.current(context) || generation !== this.queryGeneration) return;
       // SQL results cannot admit new media or overwrite the accepted scan.
       for (const row of page.rows) if (!context.games.some(game => game.timestamp === row.game.timestamp && game.media_id === row.media_id)) throw new Error("History recording changed since the scan");
-      this.publish({ page, loading: false, error: null });
+      this.publish({ page, laterPage: !!query.after, loading: false, error: null });
     }).catch(error => {
       if (this.current(context) && generation === this.queryGeneration) this.publish({ loading: false, error: libraryError(error) });
     }).finally(() => { this.queryActive = false; this.pumpQuery(); });
@@ -79,7 +81,9 @@ export class HistoryController {
   private schedule() {
     if (this.closed || this.importActive || !this.context || (!this.catalogPending && !this.pending.size)) return;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.pumpImport(), 100);
+    // Yield to input/rendering between bounded worker calls without adding
+    // 100 ms for every four journal commits in a long recording.
+    this.timer = setTimeout(() => this.pumpImport(), 4);
   }
   private pumpImport() {
     const context = this.context;

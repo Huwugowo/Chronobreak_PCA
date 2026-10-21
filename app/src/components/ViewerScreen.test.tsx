@@ -308,7 +308,7 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     primary.dispatchEvent(new Event("seeked"));
     await vi.waitFor(() => expect(play).toHaveBeenCalled());
     const rail = () => host.querySelector<HTMLElement>('[data-testid="replay-timeline"]')!;
-    rail().dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
+    rail().querySelector<HTMLElement>('[role="slider"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
     const viewport = () => [...host.querySelectorAll('[data-testid="timeline-viewport-readout"] > span')]
       .map(boundary => boundary.textContent).join(" - ");
     const zoomed = viewport();

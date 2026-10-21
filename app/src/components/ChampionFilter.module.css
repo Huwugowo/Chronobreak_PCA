@@ -15,7 +15,7 @@
 .identity small {
   color: rgba(248, 245, 239, 0.43);
   font-family: var(--font-mono);
-  font-size: 6px;
+  font-size: 10px;
   letter-spacing: 0.11em;
 }
 
@@ -49,7 +49,7 @@
   color: rgba(248, 245, 239, 0.58);
   background: rgba(255, 255, 255, 0.025);
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   cursor: pointer;
@@ -64,7 +64,7 @@
 }
 
 .allButton span {
-  font-size: 5px;
+  font-size: 10px;
 }
 
 .allButton:hover,
@@ -196,11 +196,11 @@
 .level {
   right: 1px;
   bottom: 1px;
-  min-width: 13px;
+  min-width: 16px;
   padding: 1px 2px;
   background: rgba(0, 0, 0, 0.82);
-  font-size: 9px;
-  line-height: 11px;
+  font-size: 10px;
+  line-height: 12px;
   text-align: center;
 }
 
@@ -268,7 +268,7 @@
 }
 
 .identity small {
-  font-size: 5px;
+  font-size: 10px;
 }
 
 .local::after {
@@ -314,8 +314,9 @@
 }
 
 .rail .group h3 {
+  letter-spacing: 0;
   margin-bottom: 5px;
-  font-size: 5px;
+  font-size: 10px;
   text-align: center;
 }
 

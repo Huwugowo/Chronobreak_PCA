@@ -4,6 +4,161 @@ use chronobreak_replay_time::{MappedReplayTime, ReplayTick};
 use obs::events::{ActorRole, ActorStatus};
 
 #[test]
+#[ignore = "release real-journal import characterization; not disk-cold or UI latency"]
+fn real_preprod_index_measurements() {
+    use std::time::{Duration, Instant};
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/preprod-library/library/games");
+    for repetition in 1..=3 {
+        let root = tempdir().unwrap();
+        let cache = tempdir().unwrap();
+        let started = Instant::now();
+        let mut originals = Vec::new();
+        let mut source_bytes = 0u64;
+        for id in ["1792431584", "1792432630"] {
+            let target = root.path().join("games").join(id);
+            fs::create_dir_all(&target).unwrap();
+            for entry in fs::read_dir(fixtures.join(id)).unwrap() {
+                let file = entry.unwrap();
+                let bytes = fs::read(file.path()).unwrap();
+                source_bytes += u64::try_from(bytes.len()).unwrap();
+                let destination = target.join(file.file_name());
+                fs::write(&destination, &bytes).unwrap();
+                originals.push((file.path(), destination, Sha256::digest(&bytes)));
+            }
+        }
+        let copy_wall = started.elapsed();
+        let started = Instant::now();
+        let summaries = library::list_games(root.path()).unwrap();
+        let scan_wall = started.elapsed();
+        assert_eq!(summaries.len(), 2);
+        let started = Instant::now();
+        let mut index = Index::open(cache.path(), root.path()).unwrap();
+        let open_wall = started.elapsed();
+        let started = Instant::now();
+        index.reconcile(&summaries, "real-measurement").unwrap();
+        println!(
+            "real-index setup {}",
+            serde_json::json!({
+                "repetition": repetition, "copy_and_hash_us": copy_wall.as_micros(),
+                "source_bytes": source_bytes,
+                "scan_us": scan_wall.as_micros(), "open_us": open_wall.as_micros(),
+                "reconcile_us": started.elapsed().as_micros(),
+            })
+        );
+        for summary in &summaries {
+            let media = summary.media_id.as_ref().unwrap();
+            let mut prior = None;
+            for rebuild in [false, true] {
+                let started = Instant::now();
+                let mut pages: Vec<Duration> = Vec::new();
+                let mut batches = 0u64;
+                loop {
+                    assert!(
+                        pages.len() < 1024,
+                        "import must finish within bounded pages"
+                    );
+                    let page_started = Instant::now();
+                    let progress = index
+                        .recording(
+                            root.path(),
+                            summary,
+                            rebuild && pages.is_empty(),
+                            &|| Ok(()),
+                        )
+                        .unwrap();
+                    pages.push(page_started.elapsed());
+                    assert!(progress.batches as usize <= IMPORT_BATCHES);
+                    batches += u64::from(progress.batches);
+                    if progress.status == "ready" {
+                        break;
+                    }
+                    assert_eq!(progress.status, "pending");
+                }
+                let wall = started.elapsed();
+                let counts: Vec<i64> = [
+                    "commits",
+                    "events",
+                    "rosters",
+                    "roster_payloads",
+                    "evidence",
+                ]
+                .iter()
+                .map(|table| {
+                    index
+                        .db
+                        .query_row(
+                            &format!("SELECT COUNT(*) FROM {table} WHERE media_id=?1"),
+                            [media.as_str()],
+                            |row| row.get(0),
+                        )
+                        .unwrap()
+                })
+                .collect();
+                assert_eq!(u64::try_from(counts[0]).unwrap(), batches);
+                let scopes = serde_json::to_value(index.scopes(media).unwrap()).unwrap();
+                let projection = (counts.clone(), scopes);
+                if let Some(previous) = &prior {
+                    assert_eq!(previous, &projection);
+                }
+                prior = Some(projection);
+                pages.sort_unstable();
+                let percentile = |p: usize| pages[(pages.len() - 1) * p / 100].as_micros();
+                let db = cache_path(cache.path(), root.path());
+                let cache_bytes: u64 = [
+                    db.clone(),
+                    PathBuf::from(format!("{}-wal", db.display())),
+                    PathBuf::from(format!("{}-shm", db.display())),
+                ]
+                .iter()
+                .filter_map(|path| fs::metadata(path).ok().map(|m| m.len()))
+                .sum();
+                println!(
+                    "real-index import {}",
+                    serde_json::json!({
+                        "repetition":repetition,"bundle":summary.timestamp,"rebuild":rebuild,
+                        "wall_us":wall.as_micros(),"pages":pages.len(),"journal_commits":batches,
+                        "page_p50_us":percentile(50),"page_p95_us":percentile(95),"page_p99_us":percentile(99),
+                        "page_max_us":pages.last().unwrap().as_micros(),"projection_counts":counts,
+                        "journal_bytes":fs::metadata(root.path().join("games").join(&summary.timestamp).join(JOURNAL)).unwrap().len(),
+                        "retained_cache_bytes":cache_bytes,
+                        "calculated_100ms_inter_page_gaps_us":pages.len().saturating_sub(1) * 100_000,
+                    })
+                );
+            }
+        }
+        drop(index);
+        let started = Instant::now();
+        let mut index = Index::open(cache.path(), root.path()).unwrap();
+        let reopen_wall = started.elapsed();
+        let started = Instant::now();
+        index.reconcile(&summaries, "real-reopen").unwrap();
+        let reconcile_wall = started.elapsed();
+        for summary in &summaries {
+            let started = Instant::now();
+            let progress = index
+                .recording(root.path(), summary, false, &|| Ok(()))
+                .unwrap();
+            assert_eq!(progress.status, "ready");
+            assert_eq!(progress.batches, 0);
+            println!(
+                "real-index reuse {}",
+                serde_json::json!({
+                    "repetition":repetition,"bundle":summary.timestamp,
+                    "reopen_us":reopen_wall.as_micros(),"reconcile_us":reconcile_wall.as_micros(),
+                    "recording_us":started.elapsed().as_micros(),"batches":progress.batches,
+                })
+            );
+        }
+        for (source, copy, digest) in originals {
+            assert_eq!(Sha256::digest(fs::read(source).unwrap()), digest);
+            assert_eq!(Sha256::digest(fs::read(copy).unwrap()), digest);
+        }
+    }
+}
+
+#[test]
 fn real_preprod_sources_import_query_and_rebuild_without_rewriting_evidence() {
     let fixtures =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/preprod-library/library/games");

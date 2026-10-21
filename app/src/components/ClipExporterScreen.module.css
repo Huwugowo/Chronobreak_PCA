@@ -23,7 +23,7 @@ display: grid;
   margin: 0 0 7px;
   color: var(--color-blue-soft);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 780;
   letter-spacing: 0.17em;
 }
@@ -54,7 +54,7 @@ display: flex;
 .exportPanel dt {
   color: var(--color-muted);
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 10px;
   font-weight: 730;
   letter-spacing: 0.13em;
 }
@@ -253,7 +253,7 @@ position: relative;
   width: calc(100% + 52px);
   height: calc(100% + 52px);
   object-fit: cover;
-  filter: blur(17px) brightness(0.48) saturate(0.82);
+
 }
 
 .previewForeground {
@@ -305,9 +305,11 @@ position: relative;
   transform: translateX(-50%);
   color: rgba(255, 255, 255, 0.56);
   font-family: var(--font-mono);
-  font-size: 5px;
-  letter-spacing: 0.12em;
-  white-space: nowrap;
+  font-size: 10px;
+  width: 90%;
+  text-align: center;
+  letter-spacing: 0;
+  white-space: normal;
 }
 
 .previewMessage {
@@ -322,7 +324,7 @@ position: relative;
   color: var(--color-muted);
   background: rgba(2, 3, 5, 0.9);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.13em;
   text-align: center;
 }
@@ -344,7 +346,7 @@ display: grid;
 .previewStatusLine {
   color: var(--color-muted-bright);
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 10px;
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
@@ -376,7 +378,7 @@ display: grid;
   align-items: center;
   gap: 12px;
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 10px;
   letter-spacing: 0.1em;
 }
 
@@ -507,7 +509,7 @@ display: grid;
   display: flex;
   justify-content: space-between;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .progressBlock > span {
@@ -578,13 +580,13 @@ display: inline-flex;
   grid-template-columns: 72px minmax(0, 1fr);
   gap: 8px;
   color: var(--color-muted-bright);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .exportSuccess li strong {
   color: var(--color-text);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   text-transform: uppercase;
 }
 

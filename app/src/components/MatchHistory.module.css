@@ -115,6 +115,10 @@
 .matchItem {
   position: relative;
   min-height: 109px;
+  /* Keep cards searchable/focusable while skipping distant layout and paint.
+     The estimate is the 107px content box plus the existing 2px border. */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 107px;
   overflow: visible;
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-surface);
@@ -653,4 +657,21 @@
 .matchItem[data-outcome="remake"],
 .matchItem[data-outcome="terminated"] {
   --match-accent: var(--accent-neutral);
+}
+
+/* Keep the full match summary when the desktop content rail narrows. */
+@media (max-width: 1200px) {
+  .matchOpen {
+    min-width: 0;
+    grid-template-columns: 100px minmax(296px, 1fr) 76px 74px;
+    grid-template-areas:
+      "context player farming recording"
+      "rosters rosters rosters rosters";
+    padding-block: 12px;
+  }
+  .matchContext { grid-area: context; }
+  .playerSummary { grid-area: player; }
+  .farming { grid-area: farming; }
+  .recordingMeta { grid-area: recording; }
+  .teamRosters { grid-area: rosters; max-width: none; }
 }
