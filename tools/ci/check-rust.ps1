@@ -1,6 +1,9 @@
 param([string]$Toolchain = '1.97.1')
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path "$PSScriptRoot/../..").Path
+$previousTauriConfig = $env:TAURI_CONFIG
+# Static checks do not package the separately verified media runtime.
+$env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'
 Push-Location $repoRoot
 try {
     foreach ($crate in @('replay-time', 'league-data', 'media-runtime', 'recorder', 'app/src-tauri')) {
@@ -15,4 +18,5 @@ try {
     }
 } finally {
     Pop-Location
+    $env:TAURI_CONFIG = $previousTauriConfig
 }

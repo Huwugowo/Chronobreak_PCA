@@ -37,6 +37,10 @@ and Clippy. The frontend job runs type checking, tests and a production build.
 The Rust job invokes `tools/ci/check-rust.ps1`, checking formatting, Clippy and
 locked all-target/all-feature tests for replay-time, league-data, media-runtime,
 recorder and the Tauri backend. Every failing native command terminates the job.
+The helper temporarily overrides Tauri bundle resources with an empty list so a
+clean checkout can run static checks without a staged media runtime. It restores
+the caller's configuration afterward; production bundle resource validation and
+the explicit packaged-runtime checks remain unchanged.
 
 Reproduce the Rust baseline locally after installing that toolchain:
 
