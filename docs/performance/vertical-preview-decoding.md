@@ -230,3 +230,15 @@ Low-power and high-performance context requests select the same NVIDIA adapter.
 This rules out a software-renderer explanation for this observed candidate;
 it does not locate all browser/compositor cost or prove general GPU savings.
 The v2 design remains rejected for performance completion; QB-CLIP-010 stays open.
+
+
+## Production disposition — 2026-10-22
+
+QB-CLIP-011 restores the synchronized dual-video preview on the normal application
+path. It is the better measured option, not an asserted ideal long-term design.
+The rejected single-source GPU code, tests, immutable designs and failed results
+remain for research and are not imported by production. QB-CLIP-010 stays incomplete.
+Revisit only with a materially different credible performance hypothesis; do not
+weaken thresholds or continue isolated shader tuning. The next performance focus
+is whole-application playback/seeking/search/resize responsiveness, memory/VRAM,
+and recorder contention under realistic use.

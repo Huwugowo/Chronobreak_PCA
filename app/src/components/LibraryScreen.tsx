@@ -290,7 +290,9 @@ function GamesLibrary(props: Props) {
         <Show when={updating()}>Updating matches. </Show>
         <Show when={props.history?.indexing}>Updating League data. </Show>
         <Show when={props.history?.page?.unknown_recordings}>{props.history?.page?.unknown_recordings} recordings have incomplete query coverage. </Show>
-        <Show when={props.history?.error || props.history?.indexError}>League data unavailable. Recordings remain playable.</Show>
+        <Show when={props.history?.error}>Could not update matches. Recordings remain playable. </Show>
+        <Show when={props.history?.indexError}>League data unavailable. Recordings remain playable. </Show>
+        <Show when={props.history?.page && (updating() || props.history?.error)}>Showing previous results.</Show>
       </p>
 
       <Show

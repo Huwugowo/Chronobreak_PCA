@@ -2,17 +2,15 @@
 
 Feature: `QB-CLIP-010`
 ExecPlan: `docs/exec-plans/qb-clip-010-gpu-vertical-preview-v2.md`
-Updated: 2026-10-21
+Updated: 2026-10-22
 
 ## Current milestone
 
-V2 GPU renderer implemented and functionally verified; final resource gate FAILED.
+V2 resource gate failed. Experiment retained; production restoration is QB-CLIP-011.
 
 ## Active unit
 
-Implement the reviewed v2 shader renderer behind the existing source-bound owner.
-GPU renderer, anonymous source binding and CSS replacement implemented and tested; CPU acceptance failed;
-preserve unrelated UI/index/performance work.
+None. QB-CLIP-010 remains incomplete and inactive in the normal application path.
 
 ## Completed
 
@@ -32,18 +30,13 @@ preserve unrelated UI/index/performance work.
 
 ## In flight
 
-V2 only changes the backdrop rendering path; actual protected video texture
-upload, visual match, context loss/resources and performance remain unverified.
-Current CSS layer workaround is failed v1 state and must be removed by v2.
-Administrator measurement authorization persists; worker queues have stop files.
-A fresh owned queue/UAC worker may be needed for the new complete measurement.
+No further shader or renderer work authorized without a credible materially
+different performance hypothesis. The baseline is restored separately.
 
 ## Remaining
 
-1. Implement WebGL owner, anonymous source binding and remove CSS filters.
-2. Focused GPU/lifecycle/integration tests; real protected-source visual proof.
-3. Full frontend/build, five valid paired resource windows, export/source safety,
-   durable architecture/evidence and canonical completion validation.
+A future candidate must satisfy the unchanged original acceptance/resource gates.
+The user prioritizes whole-application behavior under realistic contention first.
 
 ## Verification
 
@@ -114,8 +107,7 @@ from retained QB-CLIP-009 characterization to preserve historical behavior.
 
 ## Blockers
 
-No permission blocker remains. Performance and visual correctness of the shader
-replacement are unproven; retain in-progress until the unchanged full gates pass.
+The measured CPU regression rejects v2 for production. No permission blocker.
 
 ## Next action
 
@@ -171,4 +163,11 @@ that software rendering caused the regression, or that native unpack solved it.
 The GPU replacement is rejected for performance completion. No permission blocker;
 no criteria weakened; no done claim. No source recordings modified. Next design
 must address measured presentation cost, not repeat filter/layout/texture tweaks
-without new causal evidence. Current product edits remain uncommitted for review.
+without new causal evidence. Experiment was committed in 021ff6d; QB-CLIP-011 now removes it from the active product path.
+
+
+2026-10-22 disposition: user approved restoration of the better measured dual-video
+baseline via QB-CLIP-011. This does not satisfy or weaken QB-CLIP-010 criteria;
+research code/tests/plans/results are retained, while production has no import.
+Do not resume micro-adjusting v2. Whole-application interaction/resource profiling
+and recorder contention take priority over a new single-source experiment.

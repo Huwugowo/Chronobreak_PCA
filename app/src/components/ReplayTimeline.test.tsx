@@ -648,6 +648,8 @@ it("keeps the slider separate from buttons and owns precise bounded keyboard see
     for (const [key, ctrlKey, expected] of [
       ["ArrowLeft", false, 29], ["ArrowRight", false, 31],
       ["ArrowLeft", true, 25], ["ArrowRight", true, 35],
+      ["ArrowDown", false, 29], ["ArrowUp", false, 31],
+      ["ArrowDown", true, 25], ["ArrowUp", true, 35],
       ["Home", false, 0], ["End", false, 100],
       ["PageDown", false, 0], ["PageUp", false, 60],
     ] as const) {
@@ -675,11 +677,15 @@ it("clamps small keyboard seeks at both replay boundaries", () => {
     onClipEndpointKeyDown={() => {}} onClipEndpointKeyUp={() => {}} onClipEndpointBlur={() => {}} />, host);
   disposers.push(dispose);
   const slider = host.querySelector<HTMLElement>('[role="slider"]')!;
-  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-  expect(seek).toHaveBeenLastCalledWith(tick(0));
+  for (const key of ["ArrowLeft", "ArrowDown"]) {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    expect(seek).toHaveBeenLastCalledWith(tick(0));
+  }
   setPlayhead(tick(99.5));
-  slider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", ctrlKey: true, bubbles: true }));
-  expect(seek).toHaveBeenLastCalledWith(tick(100));
+  for (const key of ["ArrowRight", "ArrowUp"]) {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true }));
+    expect(seek).toHaveBeenLastCalledWith(tick(100));
+  }
   expect(slider.getAttribute("aria-valuenow")).toBe("99.5");
 });
 

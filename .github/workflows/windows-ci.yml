@@ -1,0 +1,50 @@
+name: Windows quality
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci --prefix app
+      - run: npm run check --prefix app
+      - run: npm test --prefix app
+      - run: npm run build --prefix app
+
+  rust:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/build/ci-target
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # Static/deterministic checks only. Hardware and desktop suites stay separate.
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+      - name: Check Rust crates
+        shell: pwsh
+        run: ./tools/ci/check-rust.ps1

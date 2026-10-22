@@ -637,8 +637,8 @@ function ReplayTimeline(props: Props) {
     if (event.altKey || event.metaKey) return;
     let target: ReplayTick | undefined;
 
-    if (!event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-      const direction = event.key === "ArrowLeft" ? -1 : 1;
+    if (!event.shiftKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      const direction = event.key === "ArrowLeft" || event.key === "ArrowDown" ? -1 : 1;
       target = (props.playhead + direction * (event.ctrlKey ? 5 : 1) * REPLAY_TICKS_PER_SECOND) as ReplayTick;
     }
 
@@ -770,13 +770,13 @@ function ReplayTimeline(props: Props) {
           role="slider"
           tabIndex={0}
           aria-label="Replay position"
-          aria-description="Left and right arrows seek one second. Control plus arrows seeks five seconds. Shift plus arrows pans. Home and End seek to the start and end. Page Up and Page Down seek thirty seconds. Plus and minus zoom; zero shows the full match."
+          aria-description="Left/Down seek back one second; Right/Up seek forward one second. Control plus arrows seeks five seconds. Shift plus Left/Right pans. Home and End seek to the start and end. Page Up and Page Down seek thirty seconds. Plus and minus zoom; zero shows the full match."
           aria-orientation="horizontal"
           aria-valuemin={0}
           aria-valuemax={props.duration / REPLAY_TICKS_PER_SECOND}
           aria-valuenow={props.playhead / REPLAY_TICKS_PER_SECOND}
           aria-valuetext={`${formatDuration(replayTickToMilliseconds(props.playhead))} of ${formatDuration(replayTickToMilliseconds(props.duration))}`}
-          title="Left/Right: 1 second; Ctrl+Left/Right: 5 seconds; Home/End: start/end; PageUp/PageDown: 30 seconds; Shift+Left/Right: pan; +/- or wheel: zoom; 0: full match"
+          title="Left/Down or Right/Up: 1 second; Ctrl+arrows: 5 seconds; Home/End: start/end; PageUp/PageDown: 30 seconds; Shift+Left/Right: pan; +/- or wheel: zoom; 0: full match"
           onKeyDown={handleRailKey}
         />
         <div class={styles.ruler} aria-hidden="true" data-testid="timeline-ruler">

@@ -153,20 +153,15 @@ Data Dragon manifests/icons enrich champion and item presentation but do not gat
 
 A supported replay event or timeline action enters clip mode with heuristic pre/post-roll. The user can adjust a media-bound, half-open source-frame interval subject to the minimum duration, choose output presets, vertical framing, music, and audio levels, then submit a request through Tauri.
 
-The vertical editor uses the same primary video for its sharp layer and blurred
-context. A display-only WebGL canvas owner uploads the primary presented frame
-and applies two separable Gaussian shader passes plus brightness/saturation in a
-fixed source-aspect backing store capped at 640 pixels on the longest side. Source
-texture storage and the intermediate framebuffer are allocated once per binding;
-a ResizeObserver maps the 17 CSS-pixel blur to backing pixels using cover geometry.
-The primary sets anonymous mode before source assignment, using existing exact-origin
-loopback CORS without changing capability or CSP admission. It owns at most one video-frame
-callback and no media source, clock, playback or audio. Queued/native seeks gate
-paused drawing until the final seek settles; already-current seeks release the
-gate without requiring a native seeked event. Pause, hidden documents, source
-replacement and disposal cancel continuous drawing. Source-bound generations
-reject late callbacks. Local drawing failure releases the owner and displays an
-error without changing export behavior or creating a fallback video.
+The production vertical editor uses a sharp primary video and a muted background
+video with CSS blur/brightness/saturation. The primary owns transport and time;
+background drift beyond 80ms and explicit seeks are synchronized to it. Both pause
+together, and the background releases its source on preset exit/disposal.
+This restores the better measured baseline (QB-CLIP-011), not a claim that two
+videos are the ideal long-term design. The QB-CLIP-010 single-source owner and GPU
+renderer remain isolated research code, absent from the production import graph;
+their failed resource measurements and immutable plans are retained. Revisit only
+with a materially different credible performance hypothesis.
 
 `app/src-tauri/src/clip_export.rs` validates the source bundle and request, selects H.264 hardware encoders with software fallback, and invokes ffmpeg directly without a shell. It emits progress, stages all outputs, verifies Discord size with corrective retry, generates thumbnails, and atomically exposes the completed batch. Failure removes partial outputs while preserving source media. Successful MP4/JPEG pairs become visible on the next filesystem library scan; source association comes from the MP4 filename.
 

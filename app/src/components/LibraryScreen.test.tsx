@@ -162,7 +162,8 @@ it("coalesces typing, applies filters and clearing immediately, and cancels pend
   expect(onQuery).not.toHaveBeenCalled();
 });
 
-it("keeps checked cards and their stats visible while a semantic query updates", () => {
+it("identifies retained cards during debounce, loading and failure, then clears the notice on success", async () => {
+  vi.useFakeTimers();
   const host = document.createElement("div"); document.body.append(host);
   const game: GameSummary = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
     champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
@@ -178,18 +179,30 @@ it("keeps checked cards and their stats visible while a semantic query updates",
     actionable snapshotOrigin={null} busyId={null} onHistoryQuery={() => setHistory(state => ({ ...state, loading: true }))}
     onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
     onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  setHistory(state => ({ ...state, loading: false }));
   const card = host.querySelector("article");
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search matches"]')!;
+  search.value = "Jinx"; search.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(history().loading).toBe(false);
+  expect(host.textContent).toContain("Showing previous results.");
+  expect(host.querySelector("article")).toBe(card);
+  await vi.advanceTimersByTimeAsync(180);
+  expect(history().loading).toBe(true);
   const filter = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
   filter.value = "ChampionKill"; filter.dispatchEvent(new Event("change", { bubbles: true }));
   expect(host.querySelector("article")).toBe(card);
   expect(card?.textContent).toContain("11.00:1 KDA");
+  expect(host.textContent).toContain("Showing previous results.");
   expect(host.querySelector('[aria-label="Recorded matches"]')?.getAttribute("aria-busy")).toBe("true");
   expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 recordings")?.disabled).toBe(true);
   setHistory(state => ({ ...state, loading: false, error: "Search failed" }));
+  expect(host.textContent).toContain("Could not update matches.");
+  expect(host.textContent).toContain("Showing previous results.");
   expect(host.querySelector("article")).toBe(card);
   expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 recordings")?.disabled).toBe(true);
-  setHistory(state => ({ ...state, loading: false, page: { ...state.page!, rows: [], next: null } }));
+  setHistory(state => ({ ...state, loading: false, error: null, page: { ...state.page!, rows: [], next: null } }));
   expect(host.querySelector("article")).toBeNull();
   expect(host.textContent).not.toContain("Updating matches.");
+  expect(host.textContent).not.toContain("Showing previous results.");
   dispose();
 });

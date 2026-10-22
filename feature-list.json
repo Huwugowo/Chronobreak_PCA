@@ -3728,7 +3728,7 @@
         "2026-10-21: complete five interleaved valid pairs after CSS layer promotion FAILED CPU gate: baseline median .403508 logical cores, median paired increase .316595 vs allowed .060526. All foreground drop deltas zero. Diagnostics implicate filtered-canvas presentation; original 2D design requires superseding. See execution checkpoint and performance report. Status remains in-progress.",
         "2026-10-21: reviewed v2 GPU shader design supersedes failed CSS-filtered 2D path; existing exact-origin anonymous CORS needs no backend/security change. GPU implementation, 295 frontend tests, typecheck/build and actual protected texture/visual/lifecycle checks passed. First shader series FAILED CPU: paired increase .192871 vs .084796 allowed; drops passed. Final fixed-storage/native-unpack shader five-pair series also FAILED CPU: baseline median .497193, paired increase .376924 vs .074579 allowed; all foreground drops zero. Actual hardware renderer NVIDIA/ANGLE D3D11, no GL error. V2 rejected for performance completion; feature remains open. Original plan and failed measurements retained."
       ],
-      "notes": "Planned because this changes secondary media lifecycle/presentation ownership. Scope is preview only; exporter FFmpeg, media security, source identity, playback controller and persisted data remain unchanged."
+      "notes": "Planned because this changes secondary media lifecycle/presentation ownership. Scope is preview only; exporter FFmpeg, media security, source identity, playback controller and persisted data remain unchanged. 2026-10-22: Rejected renderer removed from production by QB-CLIP-011; retained research only. No new candidate without materially different credible performance hypothesis."
     },
     {
       "id": "QB-UI-001",
@@ -3767,6 +3767,165 @@
         "2026-10-21: Frontend Vitest 33 files / 295 tests passed; TypeScript check and Vite production build passed. Canonical schema/lifecycle validation and git diff --check passed. No backend or media behavior changes."
       ],
       "notes": "User requested minimal sufficient fixes and explicitly excluded evolved Smite (QB-LIB-013). No component ownership refactor or CPU optimization."
+    },
+    {
+      "id": "QB-CLIP-011",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Restore measured vertical preview baseline",
+      "description": "Remove the rejected GPU experiment from the normal exporter path and restore the previously measured dual-video preview without losing the experimental implementation or evidence.",
+      "priority": "P1",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-009"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Production vertical preview uses the prior synchronized muted backdrop video and sharp primary video with the existing blur, framing and focus; horizontal previews mount only the primary source.",
+        "Normal application modules do not import the rejected GPU renderer; retain its code, tests, plans and failed measurements for research. QB-CLIP-010 remains incomplete and explicitly inactive in production.",
+        "Focused exporter transport, source replacement and cleanup regressions pass, alongside frontend suite/typecheck/build, fresh desktop build and actual isolated preview checks. Preserve source media."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Exporter regressions, full frontend suite/typecheck/build, production desktop build, canonical and diff validation."
+        },
+        {
+          "type": "manual",
+          "description": "Isolated synthetic desktop editor: two vertical/one horizontal source, paused seeking, playback, preset switches, framing/focus, return and source hash."
+        }
+      ],
+      "evidence": [
+        "2026-10-22: Production imports no GPU/canvas backdrop; restored CSS-filtered muted video with primary-owned time, 80ms drift correction and explicit preset/disposal release. Experiment code/tests, original criteria and failed measurements remain retained; QB-CLIP-010 is incomplete and inactive.",
+        "2026-10-22: Exporter 3 focused tests and full frontend 33 files/295 tests passed; TypeScript/Vite and fresh Tauri release build passed. Current bundle contains no GPU upload renderer. Canonical/diff checks passed.",
+        "2026-10-22: Actual isolated production synthetic1080p60 editor: two advancing vertical videos, muted backdrop with expected filter; paused 4s/1s seeks settled both exactly, playing horizontal/vertical switches passed; return leaves one video/no canvas. Framing/focus inspected. Source SHA256 remains 5e624be7d4d59211b6a229c9c7d130e59df4e8de6b133c6986be6dd4aa431589. Ignored build/preview-restoration-check.json and ui-restored-vertical.png retain details. No new CPU/FPS claim; previous measurements justify the baseline choice."
+      ],
+      "notes": "User explicitly prioritizes restoring the better measured option; it is not claimed to be the ideal long-term renderer. Revisit only with a materially different credible performance hypothesis."
+    },
+    {
+      "id": "QB-DEV-003",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Windows automated quality baseline",
+      "description": "Run locked frontend checks and deterministic Rust checks on GitHub-hosted Windows for pushes and pull requests; keep interactive hardware performance validation separate.",
+      "priority": "P2",
+      "area": "development",
+      "status": "in-progress",
+      "dependencies": [],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Windows CI runs TypeScript, frontend tests and production frontend build using locked npm dependencies.",
+        "Windows CI runs Rust formatting, Clippy and deterministic backend tests with a pinned compatible toolchain and lockfiles; failures propagate.",
+        "CI has read-only repository permissions, cancels superseded runs and does not pretend hosted runners validate hardware capture, desktop interaction, GPU performance or League FPS."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Validate workflow structure and run corresponding local Windows commands; report hosted CI execution separately and keep non-done until a real hosted run passes."
+        }
+      ],
+      "evidence": [
+        "2026-10-22: Added read-only Windows2025 push/PR/manual jobs, Node24 locked npm install/typecheck/test/build, pinnedRust1.97.1 fmt/lockedClippy/test helper for all five crates, cancellation and timeouts. Independent review found no actionable issues.",
+        "2026-10-22: Exact check-rust.ps1 passed on local Windows with pinned1.97.1: formatting/Clippy all five crates, 405 tests passed across19 binaries,14 intentional ignores. Detailed ignored build/windows-ci-rust.log retained. Hosted run has not run: workflow is local and must be pushed to GitHub. Keep in-progress pending first hosted pass."
+      ],
+      "notes": "Infrastructure only; no gameplay-performance claim. Whole-application responsiveness and recorder contention are the next profiling priority; indexing query churn and HUD timers are investigation targets, not pre-authorized speculative refactors."
+    },
+    {
+      "id": "QB-REPLAY-024",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Vertical arrow timeline shortcuts",
+      "description": "Complete the focused replay position slider with Up/Down equivalents to Right/Left.",
+      "priority": "P3",
+      "area": "replay",
+      "status": "done",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-022"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Up/Down seek forward/back one second; Ctrl adds five-second steps, bounded by duration. Preserve horizontal panning, other navigation and event/clip focus isolation.",
+        "Keyboard instructions describe the supported directions; focused regressions and full frontend/typecheck/build pass."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test all four directions, Ctrl, boundaries, propagation and marker/clip isolation; complete frontend checks."
+        }
+      ],
+      "evidence": [
+        "2026-10-22: Up/Down mirror Right/Left through existing seek authority; all four directions/Ctrl steps, bounds, propagation and marker/clip isolation pass 28 focused tests. Instructions updated. Full33-file/295-test frontend suite, TypeScript and Vite production build pass."
+      ]
+    },
+    {
+      "id": "QB-LIB-018",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Explicit retained search result feedback",
+      "description": "Clarify that retained match cards belong to the last successful query while a replacement is pending or failed.",
+      "priority": "P3",
+      "area": "library-search",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-014"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Visible status explicitly identifies previous results during a pending replacement and after a failed replacement, including typed-search debounce.",
+        "Preserve checked cards, actionable media membership, error feedback and pagination guards; clear the retained-results notice after success. Do not rewrite the query controller."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "UI regressions cover pending debounce/loading, failed replacement and subsequent success; full frontend/typecheck/build."
+        }
+      ],
+      "evidence": [
+        "2026-10-22: Status now explicitly says Showing previous results during typing debounce/replacement loading and after failure; failed updates have specific feedback. Existing retained cards, media membership and pagination guards remain unchanged. Fake-time regression proves pending/loading/error/success feedback; full33-file/295-test frontend suite, TypeScript and Vite build pass."
+      ]
+    },
+    {
+      "id": "QB-PERF-005",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Integrated app and recorder contention characterization",
+      "description": "Characterize realistic release-app playback, rapid seeks, search and resize responsiveness, memory/VRAM and concurrent recorder effects before choosing further optimizations.",
+      "priority": "P2",
+      "area": "performance",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [
+        "QB-REPLAY-008",
+        "QB-CLIP-011"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Reuse existing replay/capture benchmark infrastructure and dedicated fixtures; distinguish synthetic UI observations from real League gameplay evidence.",
+        "Measure interaction-to-result/presentation tail latency, frame presentation/drops, memory/VRAM growth and resource contention under representative combined workflows. Compare real League FPS with and without the relevant recorder/application load under controlled conditions.",
+        "Record actionable bottlenecks and uncertainty before implementation. Profile indexing query dispatch/cancellation/input latency within realistic workload; investigate HUD timer work only if meaningful handler overhead is observed."
+      ],
+      "verification": [],
+      "evidence": [],
+      "notes": "User prioritizes whole-application responsiveness and League FPS impact over endless isolated micro-optimization. Refine workload, capture protocol and environment before ready/planning; no current whole-app/League/power guarantee. Smite excluded. Existing shader experiment stays inactive until a materially different credible hypothesis exists."
     }
   ]
 }

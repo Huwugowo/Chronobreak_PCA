@@ -29,6 +29,27 @@ npm run build --prefix app
 
 Recorder Clippy is part of the completion baseline for recorder changes.
 
+## Windows CI baseline
+
+`.github/workflows/windows-ci.yml` runs on pushes, pull requests and manual dispatch.
+It uses Windows 2025, Node 24 with `npm ci`, and pinned Rust 1.97.1 with rustfmt
+and Clippy. The frontend job runs type checking, tests and a production build.
+The Rust job invokes `tools/ci/check-rust.ps1`, checking formatting, Clippy and
+locked all-target/all-feature tests for replay-time, league-data, media-runtime,
+recorder and the Tauri backend. Every failing native command terminates the job.
+
+Reproduce the Rust baseline locally after installing that toolchain:
+
+```powershell
+rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci/check-rust.ps1
+```
+
+The workflow has read-only repository permissions and cancels superseded runs.
+Ignored packaged-runtime, hardware, real-library and desktop performance suites
+remain explicit separate checks. A passing hosted run establishes this automated
+baseline, not gameplay FPS, GPU behavior or whole-application responsiveness.
+
 ## Builds
 
 Build the standalone recorder when recorder packaging or release behavior changes:

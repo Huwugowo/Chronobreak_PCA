@@ -1,5 +1,3 @@
-import { createVerticalPreviewGpu } from "../verticalPreviewGpu";
-vi.mock("../verticalPreviewGpu", () => ({ createVerticalPreviewGpu: vi.fn() }));
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
@@ -85,76 +83,56 @@ it("retries the same imported file after preparation fails and releases the succ
   expect(audio!.hasAttribute("src")).toBe(false);
 });
 
-it("uses one source in every preset and admits only settled paused frames to the backdrop", async () => {
+it("synchronizes the muted vertical baseline and releases it on preset changes and disposal", async () => {
   vi.mocked(loadReplayDescriptor).mockResolvedValue({snapshot_token:"test-snapshot",game_timestamp:"1",media_timeline:descriptor.media_timeline,video_url:descriptor.video_url});
   vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
-  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockReturnValue(false);
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(2);
-  vi.spyOn(HTMLVideoElement.prototype, "videoWidth", "get").mockReturnValue(1920);
-  vi.spyOn(HTMLVideoElement.prototype, "videoHeight", "get").mockReturnValue(1080);
-  const drawImage = vi.fn(), clearRect = vi.fn();
-  vi.mocked(createVerticalPreviewGpu).mockReturnValue({draw:drawImage,clear:clearRect,dispose:vi.fn()});
-  vi.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get").mockReturnValue(276);
-  vi.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get").mockReturnValue(450);
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  const previous = Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, "requestVideoFrameCallback");
-  Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", { configurable: true, value: vi.fn(() => 1) });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ClipExporterScreen admissionError={null}
     draft={{gameTimestamp:"1",mediaId:descriptor.media_timeline.mediaId,startFrame:60 as FrameBoundary,endFrameExclusive:300 as FrameBoundary}}
-    outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{root:"C:\\output",rootEpoch:1,request:1,token:"test-snapshot",navigation:1}}
+    outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{root:"output",rootEpoch:1,request:1,token:"test-snapshot",navigation:1}}
     onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work=>work("test-snapshot")} />,host);
+  let backdrop: HTMLVideoElement | null = null;
   try {
     await vi.waitFor(() => expect(host.querySelector("video")).not.toBeNull());
-    const video = host.querySelector("video")!;
-    let nativeTime = 0, nativeSeeking = false, failSeek = false;
-    Object.defineProperty(video, "currentTime", { configurable: true, get: () => nativeTime, set: (value: number) => {
-      if (failSeek) throw new Error("native seek failed");
-      if (value !== nativeTime) { nativeTime = value; nativeSeeking = true; }
-    }});
-    Object.defineProperty(video, "seeking", { configurable: true, get: () => nativeSeeking });
+    const primary = host.querySelector("video")!;
+    primary.dispatchEvent(new Event("loadedmetadata"));
     const preset = (name: string) => [...host.querySelectorAll('div[role="group"] > div')].find(e=>e.textContent?.includes(name))!.querySelector("button")!.click();
     preset("TikTok");
-    expect(host.querySelectorAll("video")).toHaveLength(1);
-    expect(host.querySelector("video")).toBe(video);
-    expect(host.querySelector("canvas")).not.toBeNull();
-    video.dispatchEvent(new Event("loadedmetadata"));
-    drawImage.mockClear(); video.dispatchEvent(new Event("loadeddata"));
-    expect(drawImage).not.toHaveBeenCalled();
-    nativeSeeking = false; video.dispatchEvent(new Event("seeked")); expect(drawImage).toHaveBeenCalled();
+    expect(host.querySelectorAll("video")).toHaveLength(2);
+    expect(host.querySelector("canvas")).toBeNull();
+    backdrop = host.querySelector('video[aria-hidden="true"]')!;
+    expect(backdrop.muted).toBe(true);
+    expect(backdrop.src).toBe(primary.src);
+    backdrop.dispatchEvent(new Event("loadedmetadata"));
+    expect(primary.currentTime).toBe(1); expect(backdrop.currentTime).toBe(1);
     const slider = host.querySelector('input[aria-label="Clip preview position"]') as HTMLInputElement;
     slider.value = "2000"; slider.dispatchEvent(new Event("input", {bubbles:true}));
-    drawImage.mockClear(); video.dispatchEvent(new Event("canplay")); expect(drawImage).not.toHaveBeenCalled();
-    nativeSeeking = false; video.dispatchEvent(new Event("seeked")); expect(video.currentTime).toBe(2); expect(drawImage).toHaveBeenCalled();
-    await new Promise(resolve => setTimeout(resolve, 110));
-    slider.value = "2000"; slider.dispatchEvent(new Event("input", {bubbles:true}));
-    drawImage.mockClear(); video.dispatchEvent(new Event("canplay")); expect(drawImage).toHaveBeenCalled();
-    await new Promise(resolve => setTimeout(resolve, 110));
-    failSeek = true; slider.value = "3000"; slider.dispatchEvent(new Event("input", {bubbles:true}));
+    expect(primary.currentTime).toBe(2); expect(backdrop.currentTime).toBe(2);
+    [...host.querySelectorAll("button")].find(e=>e.textContent === "PLAY CLIP")!.click();
+    await vi.waitFor(() => expect(host.textContent).toContain("PAUSE"));
+    expect(play.mock.contexts).toContain(primary); expect(play.mock.contexts).toContain(backdrop);
+    [...host.querySelectorAll("button")].find(e=>e.textContent === "PAUSE")!.click();
+    expect(pause.mock.contexts).toContain(backdrop);
+    preset("1080p publish");
+    expect(host.querySelectorAll("video")).toHaveLength(1);
+    expect(backdrop.hasAttribute("src")).toBe(false);
+    preset("TikTok");
+    backdrop = host.querySelector('video[aria-hidden="true"]')!;
+    expect(backdrop.src).toBe(primary.src);
+    await new Promise(resolve=>setTimeout(resolve,110));
+    vi.spyOn(primary,"currentTime","set").mockImplementation(()=>{throw new Error("native seek failed");});
+    slider.value="3000";slider.dispatchEvent(new Event("input",{bubbles:true}));
     expect(host.textContent).toContain("could not seek");
-    preset("Adaptive quality"); expect(host.querySelectorAll("video")).toHaveLength(1); expect(host.querySelector("canvas")).toBeNull();
-    drawImage.mockClear(); video.dispatchEvent(new Event("seeked")); expect(drawImage).not.toHaveBeenCalled();
-    preset("1080p publish"); expect(host.querySelectorAll("video")).toHaveLength(1); expect(host.querySelector("canvas")).toBeNull();
-  } finally {
-    dispose();
-    if (previous) Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", previous);
-    else delete (HTMLVideoElement.prototype as unknown as Record<string, unknown>).requestVideoFrameCallback;
-  }
+  } finally { dispose(); }
+  expect(backdrop!.hasAttribute("src")).toBe(false);
 });
 
-it("sets anonymous mode before initial and replacement video sources", async () => {
-  const assignments: Array<{src:string,mode:string|null}> = [];
-  const setAttribute = Element.prototype.setAttribute;
-  vi.spyOn(Element.prototype,"setAttribute").mockImplementation(function(this:Element,name:string,value:string) {
-    if(this instanceof HTMLVideoElement && name === "src") assignments.push({src:value,mode:this.crossOrigin});
-    setAttribute.call(this,name,value);
-  });
-  const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,"src")!;
-  vi.spyOn(HTMLMediaElement.prototype,"src","set").mockImplementation(function(this:HTMLMediaElement,value:string) {
-    if(this instanceof HTMLVideoElement) assignments.push({src:value,mode:this.crossOrigin});
-    native.set!.call(this,value);
-  });
+it("replaces source bindings without retaining the previous media source", async () => {
   vi.spyOn(HTMLMediaElement.prototype,"pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype,"load").mockImplementation(() => {});
   vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
@@ -167,9 +145,16 @@ it("sets anonymous mode before initial and replacement video sources", async () 
     outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{root:"output",rootEpoch:1,request:1,token:"test-snapshot",navigation:1}}
     onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work=>work("test-snapshot")} />,host);
   try {
-    await vi.waitFor(() => expect(assignments.some(a=>a.src.includes("/games/1/"))).toBe(true));
+    await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain("/games/1/"));
+    [...host.querySelectorAll('div[role="group"] > div')].find(e=>e.textContent?.includes("TikTok"))!.querySelector("button")!.click();
+    const oldBackdrop=host.querySelector('video[aria-hidden="true"]')!;
+    expect(host.querySelectorAll("video")).toHaveLength(2);
     setId("2");
-    await vi.waitFor(() => expect(assignments.some(a=>a.src.includes("/games/2/"))).toBe(true));
-    expect(assignments.every(a=>a.mode === "anonymous")).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.querySelectorAll("video")).toHaveLength(2);
+      for (const video of host.querySelectorAll("video")) expect(video.src).toContain("/games/2/");
+    });
+    expect(oldBackdrop.hasAttribute("src")).toBe(false);
+    expect(host.querySelector("canvas")).toBeNull();
   } finally {dispose();}
 });
