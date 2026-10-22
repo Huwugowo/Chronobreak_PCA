@@ -3815,7 +3815,7 @@
       "description": "Run locked frontend checks and deterministic Rust checks on GitHub-hosted Windows for pushes and pull requests; keep interactive hardware performance validation separate.",
       "priority": "P2",
       "area": "development",
-      "status": "in-progress",
+      "status": "done",
       "dependencies": [],
       "execution": {
         "workflow": "direct",
@@ -3835,7 +3835,8 @@
       "evidence": [
         "2026-10-22: Added read-only Windows2025 push/PR/manual jobs, Node24 locked npm install/typecheck/test/build, pinnedRust1.97.1 fmt/lockedClippy/test helper for all five crates, cancellation and timeouts. Independent review found no actionable issues.",
         "2026-10-22: Exact check-rust.ps1 passed on local Windows with pinned1.97.1: formatting/Clippy all five crates, 405 tests passed across19 binaries,14 intentional ignores. Detailed ignored build/windows-ci-rust.log retained.",
-        "2026-10-22: First hosted run https://github.com/Huwugowo/Chronobreak_PCA/actions/runs/39746982200 passed frontend checks but exposed the clean-checkout absence of staged bundle resources in the Rust job. CI helper now temporarily clears bundle resources only for static checks and restores the caller configuration; production packaging and explicit staged-runtime validation remain intact. Corrected helper passed locally: all five fmt/Clippy checks,405 tests,14 intentional ignores; raw ignored build/windows-ci-rust-clean-config.log retained. Keep in-progress pending a hosted pass."
+        "2026-10-22: First hosted run https://github.com/Huwugowo/Chronobreak_PCA/actions/runs/39746982200 passed frontend checks but exposed the clean-checkout absence of staged bundle resources in the Rust job. CI helper now temporarily clears bundle resources only for static checks and restores the caller configuration; production packaging and explicit staged-runtime validation remain intact. Corrected helper passed locally: all five fmt/Clippy checks,405 tests,14 intentional ignores; raw ignored build/windows-ci-rust-clean-config.log retained.",
+        "2026-10-22: Hosted Windows run https://github.com/Huwugowo/Chronobreak_PCA/actions/runs/39748397087 passed both jobs on 07ffbeed9ec2e7302d755e3f587c5f6c730ef9ab: locked npm install, TypeScript,295 frontend tests,production frontend build; all five Rust fmt/lockedClippy/test checks,405 passed across19 binaries,14 intentional ignores. Raw ignored build/windows-ci-rust-live.log and build/windows-ci-hosted-rerun.log retained. This proves the automated baseline only; no hardware or gameplay-performance claim."
       ],
       "notes": "Infrastructure only; no gameplay-performance claim. Whole-application responsiveness and recorder contention are the next profiling priority; indexing query churn and HUD timers are investigation targets, not pre-authorized speculative refactors."
     },
