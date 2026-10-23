@@ -242,6 +242,12 @@ export class ReplayBenchmarkObserver {
   private mediaGeneration = -1;
   private opening: OpeningCycle | undefined;
   private readonly windowStateEvents = new Set<string>();
+  private readonly eventListeners = new Set<(event: BenchmarkEventInput) => void>();
+
+  subscribeEvents(listener: (event: BenchmarkEventInput) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
 
   private readonly handleWindowBlur = (): void => {
     this.recordWindowStateEvent(
@@ -290,7 +296,7 @@ export class ReplayBenchmarkObserver {
     return performance.now() + this.monotonicOffsetMs;
   }
 
-  nextActionId(kind: "play" | "pause" | "rate" | "seek" | "export"): string {
+  nextActionId(kind: "play" | "pause" | "rate" | "seek" | "export" | "search" | "resize"): string {
     this.actionSequence += 1;
     return `${kind}-${this.actionSequence}`;
   }
@@ -350,7 +356,7 @@ export class ReplayBenchmarkObserver {
       return true;
     }
     const scenario = this.scenario();
-    const accepted = this.buffer.push({
+    const event: BenchmarkEventInput = {
       scenario_id: scenario.id,
       trial_id: scenario.trial_id,
       monotonic_ms: meta.monotonicMs ?? this.now(),
@@ -359,7 +365,9 @@ export class ReplayBenchmarkObserver {
       generation: meta.generation,
       action_id: meta.actionId,
       payload: sanitizePayload(payload),
-    });
+    };
+    const accepted = this.buffer.push(event);
+    if (accepted) this.eventListeners.forEach(listener => listener(event));
     if (kind === "scenario_started") {
       this.scenarioActive = true;
       if (
@@ -522,6 +530,7 @@ export class ReplayBenchmarkObserver {
         ? this.lastError ?? "benchmark observer lost required telemetry"
         : reason;
     this.stopped = true;
+    this.eventListeners.clear();
     const scenario = this.scenario();
     await invoke("complete_replay_benchmark", {
       terminal: {
@@ -608,6 +617,8 @@ export type ScenarioAction =
   | { kind: "rate"; rate: number; durationMs: number }
   | { kind: "seek"; targetMs: number; reason: string }
   | { kind: "scrub"; targetsMs: number[]; intervalMs: number }
+  | { kind: "desktop-resize" }
+  | { kind: "render-ready" }
   | { kind: "fullscreen"; enabled: boolean; seekTargetMs?: number }
   | { kind: "clip-mode"; enabled: boolean; anchorMs?: number };
 
@@ -626,6 +637,28 @@ export const buildScenarioActions = (
       : boundedNumber(parameters.measured_ms, 30_000, 100, 86_400_000);
   const stablePlaybackMs = boundedNumber(parameters.stable_playback_ms, 1_000, 500, 10_000);
   switch (scenario.kind) {
+    case "whole_app": {
+      const seeks = deterministicSeekTargets(durationMs, scenario.seed ?? 1, { count: 160 });
+      const scrubs = deterministicSeekTargets(durationMs, scenario.seed ?? 1, { count: 40 });
+      return [
+        { kind: "seek", targetMs: 52_433, reason: "render-preconditioning" },
+        { kind: "fullscreen", enabled: true },
+        { kind: "render-ready" },
+        { kind: "fullscreen", enabled: false },
+        { kind: "play" },
+        { kind: "stable-playback", durationMs: 30_000 },
+        { kind: "seek", targetMs: 0, reason: "seek-preconditioning" },
+        ...seeks.flatMap(targetMs => [
+          { kind: "seek" as const, targetMs, reason: "benchmark" }, { kind: "wait" as const, durationMs: 187 },
+        ]),
+        ...Array.from({ length: 5 }, (_, index) => ({ kind: "scrub" as const,
+          targetsMs: scrubs.slice(index * 8, (index + 1) * 8), intervalMs: 17 })),
+        { kind: "desktop-resize" },
+        { kind: "pause" },
+      ];
+    }
+    case "desktop_resize":
+      return [{ kind: "play" }, { kind: "wait", durationMs: warmupMs }, { kind: "desktop-resize" }, { kind: "pause" }];
     case "replay_open":
     case "cold_open":
     case "warm_open":
@@ -749,6 +782,12 @@ export const buildScenarioActions = (
       }).flat();
     }
     case "lifecycle": {
+      if (scenario.id === "settled-memory") return [
+        { kind: "seek", targetMs: 52_433, reason: "render-preconditioning" },
+        { kind: "fullscreen", enabled: true }, { kind: "render-ready" },
+        { kind: "fullscreen", enabled: false }, { kind: "play" },
+        { kind: "stable-playback", durationMs: 2_000 }, { kind: "pause" },
+      ];
       if (typeof scenario.duration_seconds !== "number") return [];
       const targets = deterministicSeekTargets(durationMs, scenario.seed ?? 1, {
         count: Math.max(4, Math.ceil(measuredMs / 10_000)),

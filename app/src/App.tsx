@@ -59,6 +59,7 @@ import type {
 } from "./types";
 import { LibraryController, type LibraryOrigin } from "./libraryController";
 import { HistoryController } from "./historyController";
+import { observeBenchmarkHistory, runBenchmarkIndexSearch, runBenchmarkSearchSequence, waitForBenchmarkLibraryReturn, waitForBenchmarkMemoryWindow, waitForBenchmarkSearchReady } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 import styles from "./App.module.css";
@@ -95,10 +96,14 @@ function App() {
     durations: (token, ids, retry) => import("./api").then(api => api.resolveClipDurations(token, ids, retry)),
   });
   const [libraryState, setLibraryState] = createSignal(controller.value);
-  const history = new HistoryController({ current: origin => controller.mayPublish(origin), catalog: indexCatalog, recording: indexRecording, history: queryHistory });
+  const history = new HistoryController({ current: origin => controller.mayPublish(origin), catalog: indexCatalog, recording: indexRecording, history: queryHistory,
+    observeQuery: event => observeBenchmarkHistory(event, generation => history.isQueryCurrent(generation) &&
+      navigation().screen === "library" && (navigation() as Extract<NavigationState, { screen: "library" }>).tab === "games"),
+  });
   const [historyState, setHistoryState] = createSignal(history.value);
   const unsubscribeHistory = history.subscribe(setHistoryState);
-  onCleanup(() => { unsubscribeHistory(); history.close(); });
+  const benchmarkActionsAbort = new AbortController();
+  onCleanup(() => { benchmarkActionsAbort.abort(); unsubscribeHistory(); history.close(); });
   const [viewerSelection, setViewerSelection] = createSignal<{ game: GameSummary; origin: LibraryOrigin }>();
   const currentViewer = createMemo(() => {
     libraryState();
@@ -491,6 +496,60 @@ function App() {
     if (benchmarkNavigationStarted || benchmarkFailureStarted) return;
     benchmarkNavigationStarted = true;
     observer.emit("scenario_started", { kind: scenario.kind }, { required: true });
+    if (scenario.kind === "library_search" && scenario.id === "cold-index-search") {
+      try {
+        if (scenario.iterations !== 1) throw new Error("indexing diagnostic requires one search iteration");
+        const fixture = observer.fixtureForScenario();
+        const term = games()?.find(game => game.timestamp === fixture?.game_timestamp)?.champion;
+        if (!term || term.length > 32) throw new Error("indexing search fixture unavailable");
+        const result = await runBenchmarkIndexSearch(observer, history, term, games()?.length ?? 0, benchmarkActionsAbort.signal);
+        observer.emit("scenario_completed", { kind: scenario.kind, ...result }, { required: true });
+        await observer.complete("complete", null, result);
+      } catch (error) {
+        if (benchmarkActionsAbort.signal.aborted) return;
+        const reason = error instanceof Error ? error.message : String(error);
+        observer.emit("scenario_failed", { phase: "indexing_search", reason }, { required: true });
+        await observer.complete("failed", reason);
+      }
+      return;
+    }
+    if (scenario.kind === "library_search" || scenario.kind === "whole_app") {
+      const signal = benchmarkActionsAbort.signal;
+      try {
+        observer.emit("search_preconditioning_started", {}, { required: true });
+        await waitForBenchmarkSearchReady(history, signal);
+        const fixture = observer.fixtureForScenario();
+        const selected = games()?.find(game => game.timestamp === fixture?.game_timestamp);
+        const term = selected?.champion;
+        const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
+        if (!input || !term || term.length > 32) throw new Error("search workload fixture/input unavailable");
+        const requested = scenario.iterations ?? 8;
+        if (typeof requested !== "number" || !Number.isSafeInteger(requested) || requested < 1 || requested > 100) {
+          throw new Error("search iterations must be between 1 and 100");
+        }
+        observer.emit("search_preconditioning_ready", { catalog_count: games()?.length, iterations: requested }, { required: true });
+        if (scenario.kind === "whole_app" && (requested !== 8 || games()?.length !== 2)) {
+          throw new Error("whole-app workload requires eight search iterations and the settled two-game library");
+        }
+        for (let iteration = 0; iteration < requested; iteration++) {
+          await runBenchmarkSearchSequence(observer, input, Array.from(term, (_, index) => term.slice(0, index + 1)), "typing", signal);
+          await runBenchmarkSearchSequence(observer, input, ["zzzzzz"], "settled", signal);
+          await runBenchmarkSearchSequence(observer, input, [""], "clear", signal);
+        }
+        observer.emit("search_workload_completed", { search_sequences: requested * 3 }, { required: true });
+        if (scenario.kind === "library_search") {
+          observer.emit("scenario_completed", { kind: scenario.kind, search_sequences: requested * 3 }, { required: true });
+          await observer.complete("complete", null, { search_sequences: requested * 3 });
+          return;
+        }
+      } catch (error) {
+        if (signal.aborted) return;
+        const reason = error instanceof Error ? error.message : String(error);
+        observer.emit("scenario_failed", { phase: "library_search", reason }, { required: true });
+        await observer.complete("failed", reason);
+        return;
+      }
+    }
     if (scenario.kind === "app_idle") {
       const requested =
         scenario.parameters?.duration_ms ??
@@ -538,6 +597,19 @@ function App() {
         benchmarkFailureStarted = true;
         observer.emit("scenario_failed", { reason: "delivery_route_probe_failed" }, { required: true });
         await observer.complete("failed", "delivery route probe failed");
+        return;
+      }
+    }
+    if (scenario.kind === "lifecycle" && scenario.id === "settled-memory") {
+      try {
+        if (scenario.iterations !== 6) throw new Error("memory check requires six viewer cycles");
+        await waitForBenchmarkSearchReady(history, benchmarkActionsAbort.signal);
+        await waitForBenchmarkMemoryWindow(observer, history, 0, benchmarkActionsAbort.signal);
+      } catch (error) {
+        if (benchmarkActionsAbort.signal.aborted) return;
+        const reason = error instanceof Error ? error.message : String(error);
+        observer.emit("scenario_failed", { phase: "memory_baseline", reason }, { required: true });
+        await observer.complete("failed", reason);
         return;
       }
     }
@@ -604,6 +676,12 @@ function App() {
       return;
     }
     if (loading() || libraryState().refreshing || !libraryState().actionable) return;
+    if (observer.scenario().kind === "library_search" && observer.scenario().id === "cold-index-search") {
+      // Start as soon as the normal scanned library is admitted, before import
+      // completion, capability probing or the settled-search precondition.
+      void beginBenchmarkScenario(observer, observer.scenario());
+      return;
+    }
     if (isOpeningScenario(observer.scenario())) {
       if (benchmarkLibraryReadinessStarted) return;
       benchmarkLibraryReadinessStarted = true;
@@ -787,9 +865,35 @@ function App() {
       if (!observer) return;
       const scenario = observer.scenario();
       benchmarkViewerCycles += 1;
+      if (scenario.kind === "lifecycle" && scenario.id === "settled-memory") {
+        const cycle = benchmarkViewerCycles;
+        observer.emit(cycle === 6 ? "viewer_close_requested" : "viewer_reopen_requested",
+          { completed_cycles: cycle, expected_cycles: 6 }, { required: true });
+        setNavigation({ screen: "library", tab: "games" });
+        benchmarkReopenTimer = window.setTimeout(async () => {
+          benchmarkReopenTimer = undefined;
+          try {
+            await waitForBenchmarkMemoryWindow(observer, history, cycle, benchmarkActionsAbort.signal);
+            if (cycle === 6) {
+              observer.emit("scenario_completed", { kind: scenario.kind, viewer_cycles: cycle }, { required: true });
+              await observer.complete("complete", null, { viewer_cycles: cycle });
+            } else {
+              const fixture = observer.fixtureForScenario();
+              if (!fixture) throw new Error("memory cycle fixture unavailable");
+              openViewer(fixture.game_timestamp);
+            }
+          } catch (error) {
+            if (benchmarkActionsAbort.signal.aborted) return;
+            const reason = error instanceof Error ? error.message : String(error);
+            observer.emit("scenario_failed", { phase: "memory_return", reason }, { required: true });
+            await observer.complete("failed", reason);
+          }
+        }, 0);
+        return;
+      }
       const requestedIterations = scenario.iterations;
       const iterations =
-        typeof requestedIterations === "number" && Number.isSafeInteger(requestedIterations)
+        scenario.kind === "whole_app" ? 1 : typeof requestedIterations === "number" && Number.isSafeInteger(requestedIterations)
           ? Math.min(10_000, Math.max(1, requestedIterations))
           : scenario.kind === "warm_open"
             ? 6
@@ -798,20 +902,33 @@ function App() {
         const completeCycles = () => {
           observer.emit(
             "scenario_completed",
-            { kind: scenario.kind, viewer_cycles: benchmarkViewerCycles },
+            { kind: scenario.kind, viewer_cycles: benchmarkViewerCycles,
+              ...(scenario.kind === "whole_app" ? { search_sequences: 24 } : {}) },
             { required: true },
           );
           void observer.complete("complete", null, { viewer_cycles: benchmarkViewerCycles });
         };
-        if (scenario.kind === "lifecycle") {
+        if (scenario.kind === "lifecycle" || scenario.kind === "whole_app") {
           observer.emit(
             "viewer_close_requested",
             { completed_cycles: benchmarkViewerCycles },
             { required: true },
           );
           setNavigation({ screen: "library", tab: "games" });
-          benchmarkReopenTimer = window.setTimeout(() => {
+          benchmarkReopenTimer = window.setTimeout(async () => {
             benchmarkReopenTimer = undefined;
+            if (scenario.kind === "whole_app") {
+              try {
+                const count = await waitForBenchmarkLibraryReturn(history, benchmarkActionsAbort.signal);
+                observer.emit("library_return_ready", { catalog_count: count, authority: "two-animation-frame-paint-opportunity" }, { required: true });
+              } catch (error) {
+                if (benchmarkActionsAbort.signal.aborted) return;
+                const reason = error instanceof Error ? error.message : String(error);
+                observer.emit("scenario_failed", { phase: "library_return", reason }, { required: true });
+                await observer.complete("failed", reason);
+                return;
+              }
+            }
             completeCycles();
           }, 0);
         } else {
@@ -908,7 +1025,7 @@ function App() {
               tab={(navigation() as Extract<NavigationState, { screen: "library" }>).tab}
               games={games() ?? []}
               history={historyState()}
-              onHistoryQuery={query => history.setQuery(query)}
+              onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}
               onHistoryNext={() => history.nextPage()}
               onHistoryFirst={() => history.firstPage()}
               clips={clips() ?? []}

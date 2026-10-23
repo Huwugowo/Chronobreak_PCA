@@ -337,6 +337,44 @@ class MatrixPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(matrix.MatrixError, "manifest changed"):
             matrix.verify_matrix(plan_path)
 
+    def test_library_search_is_bounded_and_preserved_in_launch(self) -> None:
+        scenario = self.specification["arms"][0]["scenario"]
+        scenario.update(kind="library_search", iterations=8)
+        self.write_sources()
+        plan = json.loads(matrix.plan_matrix(self.template_path, self.specification_path).read_text(encoding="utf-8"))
+        manifest = json.loads(Path(plan["launches"][0]["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["scenarios"][0]["kind"], "library_search")
+        self.assertEqual(manifest["scenarios"][0]["iterations"], 8)
+        from jsonschema import Draft202012Validator
+        schema = json.loads((SCHEMA_ROOT / "manifest-v1.schema.json").read_text(encoding="utf-8"))
+        Draft202012Validator(schema).validate(manifest)
+        manifest["scenarios"][0]["iterations"] = 101
+        self.assertFalse(Draft202012Validator(schema).is_valid(manifest))
+        for bad in (0, 101, True, 1.5):
+            scenario["iterations"] = bad
+            self.write_sources()
+            with self.subTest(iterations=bad), self.assertRaises(matrix.MatrixError):
+                matrix._validate_scenario(scenario, {"representative-h264"}, "search", allow_trial_id=False, matrix_seed=None)
+
+    def test_whole_app_kind_and_fixed_iterations_survive_matrix_and_schemas(self) -> None:
+        scenario = self.specification["arms"][0]["scenario"]
+        scenario.update(kind="whole_app", iterations=8)
+        self.write_sources()
+        plan = json.loads(matrix.plan_matrix(self.template_path, self.specification_path).read_text(encoding="utf-8"))
+        manifest = json.loads(Path(plan["launches"][0]["manifest_path"]).read_text(encoding="utf-8"))
+        from jsonschema import Draft202012Validator
+        for filename, document in (("manifest-v1.schema.json", manifest), ("matrix-v1.schema.json", self.specification)):
+            validator = Draft202012Validator(json.loads((SCHEMA_ROOT / filename).read_text(encoding="utf-8")))
+            validator.validate(document)
+            bad = copy.deepcopy(document)
+            target = bad["scenarios"][0] if "scenarios" in bad else bad["arms"][0]["scenario"]
+            target["iterations"] = 7
+            self.assertFalse(validator.is_valid(bad))
+        for count in (7, 9, True, 8.0):
+            scenario["iterations"] = count
+            with self.subTest(count=count), self.assertRaises(matrix.MatrixError):
+                matrix._validate_scenario(scenario, {"representative-h264"}, "whole", allow_trial_id=False, matrix_seed=None)
+
     def test_launch_root_isolation_requires_boolean(self) -> None:
         for value in (1, "true", None):
             self.specification["isolate_launch_roots"] = value

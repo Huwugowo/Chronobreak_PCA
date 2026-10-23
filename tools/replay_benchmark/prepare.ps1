@@ -35,6 +35,7 @@ $script:AllowedScenarioFields = @(
     "expected_audio_codec", "music_mode", "gain_mode", "built_in_music_filename"
 )
 $script:ScenarioKinds = @(
+    "library_search", "desktop_resize", "whole_app",
     "app_idle", "cold_open", "warm_open", "play_pause", "rate", "seek", "scrub",
     "layout", "lifecycle", "export"
 )
@@ -390,6 +391,15 @@ function Assert-Scenario {
     $kind = [string](Get-RequiredProperty $Scenario "kind" "scenario '$id'")
     if ($kind -notin $script:ScenarioKinds) {
         Stop-Benchmark "MANIFEST" "Scenario '$id' has unsupported kind '$kind'."
+    }
+    if ($kind -eq "whole_app" -and $Scenario.PSObject.Properties["iterations"] -and $Scenario.iterations -ne 8) {
+        Stop-Benchmark "MANIFEST" "whole_app iterations must be eight."
+    }
+    if ($kind -eq "library_search" -and $Scenario.PSObject.Properties["iterations"]) {
+        $count = $Scenario.iterations
+        if ($count -is [bool] -or $count -isnot [long] -and $count -isnot [int] -or $count -lt 1 -or $count -gt 100) {
+            Stop-Benchmark "MANIFEST" "library_search iterations must be an integer between 1 and 100."
+        }
     }
     $trialId = [string](Get-RequiredProperty $Scenario "trial_id" "scenario '$id'")
     if ($trialId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$') {

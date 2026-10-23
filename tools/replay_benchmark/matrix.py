@@ -32,6 +32,9 @@ MAX_JSON_BYTES = 16 * 1024 * 1024
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 SCENARIO_KINDS = {
+    "library_search",
+    "desktop_resize",
+    "whole_app",
     "app_idle",
     "cold_open",
     "warm_open",
@@ -334,7 +337,9 @@ def _validate_scenario(
         if field in scenario:
             _number(scenario[field], f"{label}.{field}", *limits)
     if "iterations" in scenario:
-        _integer(scenario["iterations"], f"{label}.iterations", 1, 10000)
+        _integer(scenario["iterations"], f"{label}.iterations", 1, 100 if kind == "library_search" else 10000)
+    if kind == "whole_app" and scenario.get("iterations", 8) != 8:
+        raise MatrixError(f"{label}.iterations must be eight for whole_app")
     for field in ("target_times_ms", "rates", "distance_classes", "export_presets"):
         if field in scenario:
             values = _array(scenario[field], f"{label}.{field}")

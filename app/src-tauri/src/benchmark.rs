@@ -749,7 +749,10 @@ fn validate_scenario(manifest: &BenchmarkManifest, fixture_ids: &BTreeSet<&str>)
         .context("benchmark scenario kind is missing")?;
     if !matches!(
         kind,
-        "app_idle"
+        "library_search"
+            | "desktop_resize"
+            | "whole_app"
+            | "app_idle"
             | "cold_open"
             | "warm_open"
             | "play_pause"
@@ -761,6 +764,22 @@ fn validate_scenario(manifest: &BenchmarkManifest, fixture_ids: &BTreeSet<&str>)
             | "export"
     ) {
         bail!("unsupported benchmark scenario kind: {kind}");
+    }
+    if kind == "whole_app"
+        && scenario
+            .get("iterations")
+            .is_some_and(|value| value.as_u64() != Some(8))
+    {
+        bail!("whole_app iterations must be eight");
+    }
+    if kind == "library_search"
+        && scenario.get("iterations").is_some_and(|value| {
+            !value
+                .as_u64()
+                .is_some_and(|count| (1..=100).contains(&count))
+        })
+    {
+        bail!("library_search iterations must be an integer between 1 and 100");
     }
     let declared = scenario
         .get("fixture_ids")
@@ -962,6 +981,57 @@ mod tests {
         fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
         let error = BenchmarkLaunch::load(&manifest_path).unwrap_err();
         assert!(error.to_string().contains("unknown fixture"));
+    }
+
+    #[test]
+    fn whole_app_freezes_eight_search_iterations() {
+        let (_temporary, manifest_path) = manifest_fixture();
+        let mut value: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        value["scenarios"][0]["kind"] = serde_json::json!("whole_app");
+        value["scenarios"][0]["iterations"] = serde_json::json!(8);
+        fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+        BenchmarkLaunch::load(&manifest_path).unwrap();
+        for count in [
+            serde_json::json!(7),
+            serde_json::json!(8.0),
+            serde_json::json!(true),
+        ] {
+            value["scenarios"][0]["iterations"] = count;
+            fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(
+                BenchmarkLaunch::load(&manifest_path)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("iterations")
+            );
+        }
+    }
+
+    #[test]
+    fn library_search_accepts_only_bounded_iterations() {
+        let (_temporary, manifest_path) = manifest_fixture();
+        let mut value: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        value["scenarios"][0]["kind"] = serde_json::json!("library_search");
+        for count in [serde_json::json!(1), serde_json::json!(100)] {
+            value["scenarios"][0]["iterations"] = count;
+            fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+            BenchmarkLaunch::load(&manifest_path).unwrap();
+        }
+        for count in [
+            serde_json::json!(0),
+            serde_json::json!(101),
+            serde_json::json!(1.5),
+            serde_json::json!(true),
+        ] {
+            value["scenarios"][0]["iterations"] = count;
+            fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(
+                BenchmarkLaunch::load(&manifest_path)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("iterations")
+            );
+        }
     }
 
     #[test]

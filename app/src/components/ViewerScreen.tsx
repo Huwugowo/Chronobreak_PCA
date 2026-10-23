@@ -56,13 +56,16 @@ import {
 import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot } from "../playbackController";
 import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
 import { createPlaybackDiagnostics } from "../playbackDiagnostics";
+import { createBenchmarkSeekEvidence } from "../benchmarkSeekEvidence";
+import { runBenchmarkDesktopResize } from "../benchmarkResize";
+import { waitForBenchmarkRenderedReplay } from "../benchmarkRender";
 import FullscreenOverlay from "./FullscreenOverlay";
 import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
 import { indexRecording, loadRecordingFacts, queryOverlayPage, queryReplayWindow, sourceScopes } from "../leagueIndex";
 import { ReplayOverlayController } from "../replayOverlayController";
 import { ReplayDataController } from "../replayDataController";
-import { sameSource, sourceKey } from "../leagueSource";
+import { participantKey, sameSource, sourceKey } from "../leagueSource";
 import { replayEvent, replayParticipants, recordedGameClock, overlayParticipantStates } from "../replayProjection";
 
 type Props = {
@@ -86,6 +89,9 @@ type SeekReason =
   | "clip-loop"
   | "recovery"
   | "event-jump"
+  | "render-preconditioning"
+  | "seek-preconditioning"
+  | "benchmark-scrub"
   | "benchmark";
 
 type EndpointHoldState = {
@@ -177,6 +183,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const replayEnd = mediaTimeline.video.replayEnd;
   const durationMs = replayTickToMilliseconds(replayEnd);
   let primaryVideo: HTMLVideoElement | undefined;
+  let benchmarkVideo: HTMLVideoElement | undefined;
   let controller!: PlaybackController;
   let decoderDiagnostics: ReturnType<typeof createPlaybackDiagnostics> | undefined;
   let metricsIntervalId: number | undefined;
@@ -191,6 +198,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   let benchmarkEndpointSequence = 0;
   const benchmarkAbortController = new AbortController();
   const dispatchObservers = new Map<string, () => void>();
+  const benchmarkSeekObservers = new Set<(event: PlaybackEvent) => void>();
   let admitDetails!: () => void;
   const admittedDetails = new Promise<void>(resolve => { admitDetails = resolve; });
 
@@ -408,6 +416,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     emitReplayBenchmarkEvent(event.kind, { ...event.payload,
       ...(props.opening ? openingPayload(props.opening) : {}),
     }, { generation: event.generation, actionId: event.actionId, required: true });
+    benchmarkSeekObservers.forEach(observe => observe(event));
     if (event.actionId && (event.kind === "seek_dispatched" || event.kind === "seek_deduped")) {
       dispatchObservers.get(event.actionId)?.(); dispatchObservers.delete(event.actionId);
     }
@@ -425,19 +434,27 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     } catch { /* Server diagnostics must not interrupt playback. */ }
   };
 
-  const seekTo = (target: ReplayTick, options: { reason?: SeekReason; playAfter?: boolean; onBenchmarkDispatch?: () => void } = {}): Promise<void> => {
+  const seekTo = (target: ReplayTick, options: { reason?: SeekReason; playAfter?: boolean; onBenchmarkDispatch?: () => void; awaitBenchmarkEvidence?: boolean } = {}): Promise<void> => {
     if (!controller) return Promise.resolve();
     controller.setLoopRange(clipRange());
     const observer = replayBenchmarkObserver();
     const actionId = observer?.nextActionId("seek");
+    const evidence = actionId && options.awaitBenchmarkEvidence
+      ? createBenchmarkSeekEvidence(mediaGeneration, actionId) : undefined;
+    if (evidence) benchmarkSeekObservers.add(evidence.observe);
     if (actionId && options.onBenchmarkDispatch) dispatchObservers.set(actionId, options.onBenchmarkDispatch);
     const operation = controller.seek(target, { reason: options.reason, playAfter: options.playAfter, actionId });
     const preview = controller.snapshot().seek.requestedPreview;
     if (preview !== null) setReplayPosition(preview);
-    return operation.then((result) => {
+    const settled = operation.then((result) => {
       if (actionId) dispatchObservers.delete(actionId);
       if (observer && (result.status === "failed" || result.status === "unavailable")) throw new Error(result.reason ?? result.status);
+      if (evidence && result.status === "superseded") throw new Error("benchmark final seek was superseded");
     });
+    if (!evidence) return settled;
+    return withBenchmarkTimeout(Promise.all([settled, evidence.complete]), "seek evidence")
+      .then(() => {})
+      .finally(() => benchmarkSeekObservers.delete(evidence.observe));
   };
 
   const playNativeVideo = async (propagateFailure = false) => {
@@ -879,7 +896,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       case "seek":
         {
           const reason: SeekReason =
-            action.reason === "endpoint-edit" || action.reason === "event-jump"
+            action.reason === "endpoint-edit" || action.reason === "event-jump" ||
+            action.reason === "render-preconditioning" || action.reason === "seek-preconditioning"
               ? action.reason
               : "benchmark";
           let target = millisecondsToReplayTick(action.targetMs, replayEnd);
@@ -926,7 +944,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
             );
           }
           await withBenchmarkTimeout(
-            seekTo(target, { reason }),
+            seekTo(target, { reason, awaitBenchmarkEvidence: true }),
             `seek to ${replayTickToMilliseconds(target)}`,
           );
           if (reason === "endpoint-edit") setEditingEndpoint(null);
@@ -940,9 +958,12 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
           { generation: mediaGeneration, required: true },
         );
         let settle = Promise.resolve();
-        for (const targetMs of action.targetsMs) {
-          settle = seekTo(millisecondsToReplayTick(targetMs, replayEnd), { reason: "benchmark" });
-          await waitForBenchmark(action.intervalMs);
+        for (const [index, targetMs] of action.targetsMs.entries()) {
+          settle = seekTo(millisecondsToReplayTick(targetMs, replayEnd), {
+            reason: replayBenchmarkObserver()?.scenario().kind === "whole_app" ? "benchmark-scrub" : "benchmark",
+            awaitBenchmarkEvidence: index === action.targetsMs.length - 1,
+          });
+          if (index < action.targetsMs.length - 1) await waitForBenchmark(action.intervalMs);
         }
         await withBenchmarkTimeout(settle, "scrub settle");
         emitReplayBenchmarkEvent(
@@ -950,6 +971,42 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
           { request_count: action.targetsMs.length, media_time_ms: controller.snapshot().media.browserSeconds * 1_000 },
           { generation: mediaGeneration, required: true },
         );
+        return;
+      }
+      case "desktop-resize":
+        if (!benchmarkVideo) throw new Error("resize video is unavailable");
+        await runBenchmarkDesktopResize(replayBenchmarkObserver()!, controller, benchmarkVideo,
+          benchmarkAbortController.signal, waitForBenchmark);
+        return;
+      case "render-ready": {
+        const video = benchmarkVideo;
+        const root = video?.closest("section")?.querySelector('[data-testid="fullscreen-overlay"]');
+        if (!video || !root || !props.ddragonAssetBaseUrl) throw new Error("render readiness surface/assets unavailable");
+        const initial = controller.snapshot();
+        const initialSource = activeScope()?.source;
+        if (!initialSource) throw new Error("render readiness source unavailable");
+        const base = props.ddragonAssetBaseUrl;
+        await waitForBenchmarkRenderedReplay(replayBenchmarkObserver()!, benchmarkAbortController.signal, () => {
+          const current = controller.snapshot();
+          if (!video.isConnected || current.generation !== initial.generation || current.sessionToken !== initial.sessionToken ||
+              current.sourceUrl !== initial.sourceUrl || current.recoveryCount !== initial.recoveryCount || !current.media.paused) {
+            throw new Error("render readiness changed media load/playback state");
+          }
+          const source = activeScope()?.source, overlaySource = overlay().scope?.source;
+          if (source && !sameSource(source, initialSource)) throw new Error("render readiness source changed");
+          const tick = presentedPosition(), sample = overlaySample();
+          if (!source || !overlaySource || !sameSource(source, overlaySource) || !activeWindow() ||
+              !sameSource(source, activeWindow()!.source) || !sample || sample.players.length !== 10 || tick === null ||
+              Math.abs(tick - 52.433 * REPLAY_TICKS_PER_SECOND) > REPLAY_TICKS_PER_SECOND / 60) return null;
+          const states = participantStates();
+          const players = participants().flatMap(player => {
+            const state = player.identity && states.get(participantKey(player.identity));
+            return state?.level === undefined ? [] : [{ name: player.summoner_name, level: state.level,
+              portraitUrl: `${base}/champion/${encodeURIComponent(player.champion)}`, spells: state.spells }];
+          });
+          return { generation: current.generation, mediaTick: tick, sourceEpoch: source.epoch,
+            sourceToken: sourceKey(source), eventCount: events().length, players };
+        }, root);
         return;
       }
       case "fullscreen":
@@ -963,8 +1020,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
             settle = seekTo(millisecondsToReplayTick(action.seekTargetMs, replayEnd), {
               reason: "benchmark",
               onBenchmarkDispatch: markDispatched,
+              awaitBenchmarkEvidence: true,
             });
-            await withBenchmarkTimeout(dispatched, "layout seek dispatch");
+            await withBenchmarkTimeout(Promise.race([dispatched, settle]), "layout seek dispatch");
           }
           if (action.enabled) enterFullscreen(true);
           else exitFullscreen(true);
@@ -1022,7 +1080,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       if (props.opening && (disposed || benchmarkScenarioFinished)) return;
       const quality = controller.sampleMetrics().quality;
       const completionKind =
-        scenario.kind === "warm_open" ||
+        scenario.kind === "whole_app" || scenario.kind === "warm_open" ||
         (scenario.kind === "lifecycle" && typeof scenario.duration_seconds !== "number")
           ? "viewer_cycle_completed"
           : "scenario_completed";
@@ -1044,7 +1102,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       });
       benchmarkScenarioFinished = true;
       if (
-        scenario.kind === "warm_open" ||
+        scenario.kind === "whole_app" || scenario.kind === "warm_open" ||
         (scenario.kind === "lifecycle" && typeof scenario.duration_seconds !== "number")
       ) {
         window.dispatchEvent(new CustomEvent(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT));
@@ -1109,6 +1167,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   onMount(() => {
     if (!primaryVideo) return;
     controller = createPlaybackController(createHtmlVideoPlaybackAdapter(primaryVideo), { generation: mediaGeneration, eventSink: onPlaybackEvent });
+    if (replayBenchmarkObserver()) benchmarkVideo = primaryVideo;
     primaryVideo = undefined;
     decoderDiagnostics = createPlaybackDiagnostics((value) => {
       emitReplayBenchmarkEvent("decoder_observation", { status: value.status, reason: value.reason,
@@ -1219,7 +1278,9 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         } else void observer.complete("failed", reason);
       }
       benchmarkAbortController.abort();
+      benchmarkVideo = undefined;
       dispatchObservers.clear();
+      benchmarkSeekObservers.clear();
       unsubscribe(); unsubscribeFrames(); controller.dispose();
       decoderDiagnostics?.dispose();
       window.removeEventListener("keydown", onKeyDown);

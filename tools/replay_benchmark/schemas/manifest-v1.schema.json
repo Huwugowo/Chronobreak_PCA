@@ -129,6 +129,14 @@
       "required": ["id", "kind", "fixture_ids", "trial_id"],
       "allOf": [
         {
+          "if": { "properties": { "kind": { "const": "whole_app" } }, "required": ["kind"] },
+          "then": { "properties": { "iterations": { "const": 8 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "library_search" } }, "required": ["kind"] },
+          "then": { "properties": { "iterations": { "maximum": 100 } } }
+        },
+        {
           "if": {
             "properties": { "kind": { "const": "export" } },
             "required": ["kind"]
@@ -159,6 +167,9 @@
         "kind": {
           "type": "string",
           "enum": [
+            "library_search",
+            "desktop_resize",
+            "whole_app",
             "app_idle",
             "cold_open",
             "warm_open",

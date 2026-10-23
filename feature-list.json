@@ -2020,7 +2020,7 @@
           "command": null
         }
       ],
-      "notes": "Keep one concrete HTMLVideoElement-backed boundary, distinct requested/dispatched/seeked/presented state, and selected/applied/observed rate; never fake 8x with seeks. General frame stepping remains QB-REPLAY-015. Do not migrate the clip editor's multi-element music preview, add recorded stems, or introduce alternate playback backends. The user-requested pre-implementation v2 revision explicitly clarifies unsupported-rate acceptance and replaces broad benchmark requirements; the initial plan remains immutable history. Stopping rule: once the functional contract is satisfied and targeted validation shows no material regression or unresolved architectural uncertainty, finish the applicable project checks and canonical documentation, then stop. Benchmark/verifier/evidence imperfections are non-blocking unless they could invalidate that conclusion; missing required observations are not passes. Broader verification or infrastructure work needs a recorded material finding and a decision it could change. The explicit 2026-09-09 user approval adopts the decoder-evidence clarification and v3 supersedes v2 only for that design; v1/v2 remain immutable history. Completed M1-M5 work and corrective r2 are not reopened without new evidence.",
+      "notes": "Keep one concrete HTMLVideoElement-backed boundary, distinct requested/dispatched/seeked/presented state, and selected/applied/observed rate; never fake 8x with seeks. General frame stepping remains QB-REPLAY-015. Do not migrate the clip editor's multi-element music preview, add recorded stems, or introduce alternate playback backends. The user-requested pre-implementation v2 revision explicitly clarifies unsupported-rate acceptance and replaces broad benchmark requirements; the initial plan remains immutable history. Stopping rule: once the functional contract is satisfied and targeted validation shows no material regression or unresolved architectural uncertainty, finish the applicable project checks and canonical documentation, then stop. Benchmark/verifier/evidence imperfections are non-blocking unless they could invalidate that conclusion; missing required observations are not passes. Broader verification or infrastructure work needs a recorded material finding and a decision it could change. The explicit 2026-09-09 user approval adopts the decoder-evidence clarification and v3 supersedes v2 only for that design; v1/v2 remain immutable history. Completed M1-M5 work and corrective r2 are not reopened without new evidence. Discovered 2026-10-23 by QB-PERF-005 memory-01: six immediate post-reopen 2s playback windows report 155/710 native dropped/total frames (individual 3-40 drops), versus a separate prior 30s moving workflow with 11/1800. Different windows/conditions do not establish a before/after regression; cause and persistence are unknown. This existing playback owner should triage that concrete startup question before claiming smooth startup playback. Completed M1-M5 are not reopened by inference; no broad campaign or speculative fix is authorized by this note. Evidence: docs/performance/evidence/qb-perf-005-replay-20261022/report.md and report.json.",
       "user_value": 5,
       "differentiation": 4,
       "difficulty": 4,
@@ -3439,7 +3439,7 @@
       ],
       "verification": [],
       "evidence": [],
-      "notes": "Discovered during QB-REPLAY-020: real Swiftplay later records Primal Smite / SummonerSmiteAvatarDefensive, absent from the cached official 16.20.1 summoner.json. Existing asset resolution reports it unavailable; the overlay retains the slot and recorded-name tooltip. All 20 normal spell icons load at replay 1:45. This asset coverage follow-up is separate from recorded overlay status."
+      "notes": "Discovered during QB-REPLAY-020: real Swiftplay later records Primal Smite / SummonerSmiteAvatarDefensive, absent from the cached official 16.20.1 summoner.json. Existing asset resolution reports it unavailable; the overlay retains the slot and recorded-name tooltip. All 20 normal spell icons load at replay 1:45. This asset coverage follow-up is separate from recorded overlay status. 2026-10-22 fixture preflight also finds recorded Unleashed Smite and Unleashed Teleport labels absent from selected 16.21.1 summoner manifest. Existing placeholders remain; recorded follow-up only, with Smite still deferred by user."
     },
     {
       "id": "QB-CLIP-008",
@@ -3907,12 +3907,12 @@
     {
       "id": "QB-PERF-005",
       "kind": "feature",
-      "stage": "draft",
-      "name": "Integrated app and recorder contention characterization",
-      "description": "Characterize realistic release-app playback, rapid seeks, search and resize responsiveness, memory/VRAM and concurrent recorder effects before choosing further optimizations.",
+      "stage": "ready",
+      "name": "Replay app performance characterization",
+      "description": "Characterize the release replay app's own playback, rapid seeks, search, resize responsiveness and resource use before choosing minimal, evidence-backed optimizations. Concurrent recording, recorder compatibility and League-based tests are out of scope.",
       "priority": "P2",
       "area": "performance",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-CAP-PERF",
       "dependencies": [
         "QB-REPLAY-008",
@@ -3920,16 +3920,49 @@
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-perf-005-replay-only-v2.md",
+        "progress": "docs/execution/qb-perf-005.md"
       },
       "acceptance_criteria": [
-        "Reuse existing replay/capture benchmark infrastructure and dedicated fixtures; distinguish synthetic UI observations from real League gameplay evidence.",
-        "Measure interaction-to-result/presentation tail latency, frame presentation/drops, memory/VRAM growth and resource contention under representative combined workflows. Compare real League FPS with and without the relevant recorder/application load under controlled conditions.",
-        "Record actionable bottlenecks and uncertainty before implementation. Profile indexing query dispatch/cancellation/input latency within realistic workload; investigate HUD timer work only if meaningful handler overhead is observed."
+        "Reuse existing release replay tools with frozen binary, source, process and cache identities. Use complete current preproduction telemetry and populated supported Data Dragon assets; prove selected-generation event/roster/overlay readiness and image delivery/decoding before timed actions. Preserve sources and sanitize identities. Concurrent recording, recorder compatibility, League tests and Smite fixes are excluded.",
+        "Measure production search input/debounce/backend admission/result-paint latency, native desktop resize while playing and paused, playback and rapid seek/scrub presentation, frame drops, app-process-tree CPU/private/working memory and retained growth during a frozen combined workflow. Preserve action/generation/timeouts and complete final-seek evidence; distinguish UI paint from authoritative video presentation.",
+        "Measure the replay app with the recorder inactive. State fixture and catalog limitations explicitly: static synthetic video does not establish representative moving-video decode cost. Report app GPU allocation evidence when available; disclose unavailable observations without substituting zero or making new recorder/GPU infrastructure a completion requirement. Keep process cleanup bounded and preserve source integrity.",
+        "Publish validated replay-app results with sample counts, uncertainty, invalid/excluded trials, source/asset conditions and actionable dispositions before choosing optimizations. Keep a separate at-most-120s cold-index search/query diagnostic with dispatch, coalescence, admission and superseded completions; do not call uncancellable running queries cancelled. Investigate HUD only if meaningful overhead appears; no arbitrary CPU target or unmeasured gameplay claim."
       ],
-      "verification": [],
-      "evidence": [],
-      "notes": "User prioritizes whole-application responsiveness and League FPS impact over endless isolated micro-optimization. Refine workload, capture protocol and environment before ready/planning; no current whole-app/League/power guarantee. Smite excluded. Existing shader experiment stays inactive until a materially different credible hypothesis exists."
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Replay schema, coordinator, observer settlement, resource helper and analyzer tests cover observation order, missing phases, stale origins, timeout/loss/malformed data, PID reuse and owned teardown.",
+          "command": "python -m unittest discover -s tools/replay_benchmark/tests -v"
+        },
+        {
+          "type": "automated",
+          "description": "Real search/HistoryController and benchmark action tests, frontend checks/build, applicable app Rust tests, fmt and clippy per VERIFICATION.md, including the replay-benchmark feature.",
+          "command": "npm run test --prefix app; npm run check --prefix app; npm run build --prefix app"
+        },
+        {
+          "type": "benchmark",
+          "description": "Freeze complete preprod fixtures, populated assets and release binaries; require current event/roster rendering, supported asset delivery/decoding and complete action/native resize/presentation evidence. Preserve failed launches.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "A bounded standalone replay workload and separate indexing diagnostic report app responsiveness, frame drops, CPU and memory with fixture limitations and uncertainty. Recorder remains inactive. GPU evidence may be unavailable if disclosed; no recorder pair campaign or new GPU collector is required. Preserve bounded cleanup and invalid-trial evidence.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "Sanitized report, protocol, applicable architecture and checkpoint/canonical state describe implemented behavior and every acceptance gate accurately.",
+          "command": "python build/validate_features.py"
+        }
+      ],
+      "evidence": [
+        "2026-10-22: Bounded moving-video combined workflow and fresh-index search pass strict analysis, clean owned teardown and source hashes. Sanitized results/identities/dispositions: docs/performance/evidence/qb-perf-005-replay-20261022/report.md and report.json. Moving run: 4.85% machine-normalized CPU mean, 563.75 MiB private peak, 11/1800 steady frame drops (0.61%); 160 seeks, five scrub bursts, 16 native resizes and 24 real search sequences completed. One synthetic-motion process/two-recording catalog is descriptive, not a gameplay or before/after claim.",
+        "2026-10-22: Initial diagnostic exposed a query before catalog-token admission. Minimal HistoryController fix queues/coalesces initial input and releases the latest action after catalog completion while recording imports continue. Fresh replacement completed in 8.677s with indexing overlap, 11 inputs/7 coalescences/4 completed queries, zero query errors; superseded work remains explicit. Frontend 344 tests/37 files, TypeScript/build, 125 replay-tool checks (one skipped), app Rust 136 ordinary/150 benchmark tests (four ignored each), fmt/Clippy and both release builds pass; focused review has no findings. Abandoned recorder/GPU work archived and removed.",
+        "2026-10-23: memory-01 passed strict analysis, source hashes and clean owned exit (126.067s, 124 process samples, 19 reconciled Job process notifications, zero final active processes/loss). Six populated moving-replay cycles plus seven equal settled library windows: post-first to final private 337.29 to 324.66 MiB (-12.63); working 572.76 to 566.75 MiB (-6.01). No continuing memory accumulation observed; bounded same-process characterization, not a soak or general leak proof. Full medians/ranges/receipts in the same sanitized report.",
+        "2026-10-23: final frontend 349 tests/37 files, TypeScript/build, replay tooling 127 passes/one skip, benchmark and ordinary release builds, phase-reader smoke, canonical validation and whitespace checks pass. Unchanged Rust passes remain valid. GPU remains unavailable. Short immediate post-reopen frame drops (155/710 over six 2s windows) are explicitly disposed to existing QB-REPLAY-009 for focused cause/persistence triage; no before/after regression or universal smooth-playback claim. Characterization complete; no speculative optimization or further campaign."
+      ],
+      "notes": "2026-10-22 explicit user scope: optimize replay app for its own use; concurrent recording, recorder compatibility, League tests/FPS comparisons and Smite excluded. Replay-only v2 supersedes historical recorder-coupled plan. Bounded moving workflow, cold-index diagnostic and minimal catalog-search fix completed; 2026-10-23 continuation closed missing retained-memory observation with one six-cycle settled-library run. No material memory accumulation observed after first playback. Short startup playback drops have a concrete existing owner QB-REPLAY-009; investigate cause before any optimization. Synthetic moving media cannot establish gameplay decode cost/event-picture alignment; optional GPU evidence unavailable. All accepted/excluded trials and limits are retained in report/checkpoint; no work remains active on this characterization."
     }
   ]
 }

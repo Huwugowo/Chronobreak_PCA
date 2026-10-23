@@ -54,6 +54,12 @@ FAILURE_KINDS = {
 }
 SCENARIO_START_KINDS = {"scenario_start", "scenario_started"}
 SCENARIO_END_KINDS = {"scenario_end", "scenario_complete", "scenario_completed"}
+SEARCH_ACTION_KINDS = {
+    "library_search_input", "library_search_scheduled", "library_search_coalesced",
+    "library_search_sequence", "library_search_painted", "library_search_paint_superseded",
+    "history_query_scheduled", "history_query_replaced", "history_query_dispatched",
+    "history_query_completed", "history_query_superseded", "history_query_admitted", "history_query_error",
+}
 ACTION_REQUEST_KINDS = {
     "action_requested",
     "seek_requested",
@@ -62,6 +68,7 @@ ACTION_REQUEST_KINDS = {
     "play_requested",
     "pause_requested",
     "open_requested",
+    "desktop_resize_requested",
 }
 ACTION_COMPLETE_KINDS = {
     "action_complete",
@@ -76,6 +83,7 @@ ACTION_COMPLETE_KINDS = {
     "pause_completed",
     "open_complete",
     "open_completed",
+    "desktop_resize_completed",
 }
 ACTION_SHORT_CIRCUIT_KINDS = {
     "seek_coalesced",
@@ -842,6 +850,216 @@ def opening_measurements(
     return {"library_request_to_games_usable_ms": delta(library, library_request), "cycles": cycles}
 
 
+def _validate_search_evidence(spec: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> None:
+    def one(records: Sequence[Mapping[str, Any]], kind: str) -> Mapping[str, Any]:
+        found = [event for event in records if _kind(event) == kind]
+        if len(found) != 1:
+            raise InvalidData(f"search requires exactly one {kind}")
+        return found[0]
+
+    def integer(value: Any, low: int, high: int) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+    iterations = spec.get("iterations", 8)
+    indexing_diagnostic = spec.get("scenario_id", spec.get("id")) == "cold-index-search"
+    if not integer(iterations, 1, 100):
+        raise InvalidData("search iterations must be between 1 and 100")
+    ready = one(events, "search_preconditioning_ready")
+    began = one(events, "search_preconditioning_started")
+    end = one(events, "scenario_completed")
+    if (_field(ready, "iterations") != iterations
+            or not integer(_field(ready, "catalog_count"), 1, 1_000_000)
+            or _field(end, "search_sequences") != iterations * 3
+            or float(began["monotonic_ms"]) > float(ready["monotonic_ms"])):
+        raise InvalidData("search preconditioning/counts do not match the manifest")
+    if indexing_diagnostic:
+        started = one(events, "indexing_diagnostic_started")
+        completed = one(events, "indexing_diagnostic_completed")
+        progress = [event for event in events if _kind(event) == "indexing_diagnostic_progress"]
+        elapsed = float(completed["monotonic_ms"]) - float(started["monotonic_ms"])
+        if (iterations != 1 or not progress or not 0 <= elapsed <= 120_000
+                or _field(completed, "import_completed") is not True
+                or not isinstance(_field(completed, "indexing_observed"), bool)
+                or _field(completed, "search_sequences") != 3
+                or any(event.get("source") != "frontend" for event in [started, completed, *progress])
+                or not float(began["monotonic_ms"]) <= float(started["monotonic_ms"]) <= float(ready["monotonic_ms"])
+                or not float(ready["monotonic_ms"]) <= float(completed["monotonic_ms"]) <= float(end["monotonic_ms"])
+                or any(not float(started["monotonic_ms"]) <= float(event["monotonic_ms"]) <= float(completed["monotonic_ms"]) for event in progress)
+                or _field(completed, "indexing_observed") != any(_field(event, "indexing") is True for event in progress)
+                or _field(progress[-1], "indexing") is not False):
+            raise InvalidData("indexing diagnostic lacks bounded truthful import-state evidence")
+    actions: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for event in events:
+        action_id = _field(event, "action_id")
+        if action_id is not None and _kind(event) in SEARCH_ACTION_KINDS:
+            actions[str(action_id)].append(event)
+            if (event.get("source") != "frontend"
+                    or not float(ready["monotonic_ms"]) <= float(event["monotonic_ms"]) <= float(end["monotonic_ms"])):
+                raise InvalidData("search evidence must use the frontend clock inside the ready workload")
+    sequences = [event for event in events if _kind(event) == "library_search_sequence"]
+    if [_field(event, "stratum") for event in sequences] != ["typing", "settled", "clear"] * iterations:
+        raise InvalidData("search sequence strata/count/order do not match the manifest")
+    pending_inputs: list[Mapping[str, Any]] = []
+    for event in events:
+        if _kind(event) == "library_search_input":
+            pending_inputs.append(event)
+        elif _kind(event) == "library_search_sequence":
+            if (not pending_inputs or _field(event, "input_count") != len(pending_inputs)
+                    or _field(event, "action_id") != _field(pending_inputs[-1], "action_id")):
+                raise InvalidData("search sequence does not reconcile its input actions")
+            lengths = [_field(record, "text_length") for record in pending_inputs]
+            stratum = _field(event, "stratum")
+            if ((stratum == "typing" and lengths != list(range(1, len(lengths) + 1)))
+                    or (stratum == "settled" and lengths != [6])
+                    or (stratum == "clear" and lengths != [0])):
+                raise InvalidData("search inputs do not match the declared sequence")
+            pending_inputs = []
+    if pending_inputs:
+        raise InvalidData("search has unaccounted input actions")
+    final_ids = {str(_field(event, "action_id")) for event in sequences}
+    if len(final_ids) != len(sequences):
+        raise InvalidData("search sequence reused a final action")
+    for action_id, records in actions.items():
+        kinds = [_kind(event) for event in records]
+        if len(kinds) != len(set(kinds)):
+            raise InvalidData("search action has duplicate evidence")
+        input_event = one(records, "library_search_input")
+        scheduled = one(records, "library_search_scheduled")
+        if (not integer(_field(input_event, "text_length"), 0, 64)
+                or records.index(input_event) > records.index(scheduled)):
+            raise InvalidData("search input/schedule evidence is invalid")
+        terminal = [kind for kind in ("library_search_coalesced", "history_query_replaced",
+                    "history_query_superseded", "library_search_painted", "library_search_paint_superseded") if kind in kinds]
+        if len(terminal) != 1 or "history_query_error" in kinds:
+            raise InvalidData("search action lacks one successful or superseded terminal")
+        if "library_search_coalesced" in kinds:
+            if any(kind.startswith("history_query_") for kind in kinds):
+                raise InvalidData("coalesced search incorrectly claims backend work")
+        else:
+            phases = ["history_query_scheduled"]
+            if "history_query_replaced" not in kinds:
+                phases += ["history_query_dispatched", "history_query_completed"]
+            if terminal[0].startswith("library_search_paint"):
+                phases += ["history_query_admitted"]
+            phases += terminal
+            ordered = [one(records, kind) for kind in phases]
+            if [records.index(record) for record in ordered] != sorted(records.index(record) for record in ordered):
+                raise InvalidData("search query phases are out of order")
+            generations = {_field(record, "query_generation") for record in ordered}
+            if len(generations) != 1 or not integer(next(iter(generations)), 1, 2**53 - 1):
+                raise InvalidData("search action crosses query generations")
+            if records.index(scheduled) > records.index(ordered[0]):
+                raise InvalidData("search query precedes input scheduling")
+        if action_id in final_ids:
+            if indexing_diagnostic and terminal[0] in {"history_query_replaced", "history_query_superseded", "library_search_paint_superseded"}:
+                continue
+            painted = one(records, "library_search_painted")
+            admitted = one(records, "history_query_admitted")
+            completed = one(records, "history_query_completed")
+            rows = _field(painted, "row_count")
+            if (_field(painted, "authority") != "two-animation-frame-paint-opportunity"
+                    or not integer(rows, 0, 50)
+                    or rows != _field(admitted, "row_count") or rows != _field(completed, "row_count")):
+                raise InvalidData("search paint lacks matching admitted result evidence")
+
+
+def _validate_whole_app_evidence(events: Sequence[Mapping[str, Any]]) -> None:
+    def one(kind: str) -> Mapping[str, Any]:
+        found = [event for event in events if _kind(event) == kind]
+        if len(found) != 1:
+            raise InvalidData(f"whole_app requires exactly one {kind}")
+        return found[0]
+
+    ready = one("search_preconditioning_ready")
+    searched = one("search_workload_completed")
+    requested = one("replay_requested")
+    admitted = one("replay_render_admitted")
+    rendered = one("replay_render_ready")
+    steady = one("steady_playback")
+    resize = one("desktop_resize_started")
+    restored = one("desktop_resize_restored")
+    closed = one("viewer_close_requested")
+    returned = one("library_return_ready")
+    cycle = one("viewer_cycle_completed")
+    end = one("scenario_completed")
+    if (_field(ready, "catalog_count") != 2 or _field(ready, "iterations") != 8
+            or _field(searched, "search_sequences") != 24 or _field(end, "viewer_cycles") != 1
+            or _field(returned, "catalog_count") != 2
+            or _field(returned, "authority") != "two-animation-frame-paint-opportunity"):
+        raise InvalidData("whole_app did not use its settled two-game/eight-iteration workflow")
+    if (rendered.get("source") != "frontend" or _field(rendered, "participant_count") != 10
+            or not isinstance(_field(rendered, "generation"), int) or isinstance(_field(rendered, "generation"), bool)
+            or _field(rendered, "generation") < 1
+            or _nonnegative_number(_field(rendered, "event_count"), "render event_count") < 1
+            or _nonnegative_number(_field(rendered, "rendered_marker_count"), "render marker count") < 1
+            or _nonnegative_number(_field(rendered, "decoded_image_count"), "decoded image count") < 10
+            or _nonnegative_number(_field(rendered, "decoded_url_count"), "decoded URL count") < 10
+            or _field(rendered, "authority") != "dom-and-image-decode-after-two-animation-frames"
+            or abs(_nonnegative_number(_field(rendered, "media_tick"), "render tick") / 48_000_000 - 52.433) > 1 / 60
+            or not isinstance(_field(rendered, "source_epoch"), int) or isinstance(_field(rendered, "source_epoch"), bool)
+            or _field(rendered, "source_epoch") < 0
+            or not isinstance(_field(rendered, "source_token"), str) or not _field(rendered, "source_token")
+            or any(_field(admitted, key) != _field(rendered, key) for key in
+                   ("generation", "source_epoch", "source_token", "media_tick", "participant_count", "event_count"))):
+        raise InvalidData("whole_app lacks populated rendered roster/timeline/image decode evidence")
+    if (_nonnegative_number(_field(steady, "duration_ms"), "steady duration") < 30_000
+            or _nonnegative_number(_field(steady, "media_advance_ms"), "steady advancement") < 29_000
+            or _field(cycle, "playback_rate") != 1):
+        raise InvalidData("whole_app lacks thirty seconds of steady 1x playback")
+    boundaries = [ready, searched, requested, admitted, rendered, steady, resize, restored, cycle, closed, returned, end]
+    if any(event.get("source") != "frontend" for event in boundaries):
+        raise InvalidData("whole_app boundaries must use the frontend clock")
+    if any(float(left["monotonic_ms"]) > float(right["monotonic_ms"]) for left, right in zip(boundaries, boundaries[1:])):
+        raise InvalidData("whole_app workflow boundaries are out of order")
+    sequences = [event for event in events if _kind(event) == "library_search_sequence"]
+    if any(float(event["monotonic_ms"]) > float(searched["monotonic_ms"]) for event in sequences):
+        raise InvalidData("whole_app search escaped its workload boundary")
+    starts = [event for event in events if _kind(event) == "scrub_started"]
+    settles = [event for event in events if _kind(event) == "scrub_settled"]
+    if len(starts) != 5 or len(settles) != 5:
+        raise InvalidData("whole_app requires five scrub bursts")
+    scrub_actions: set[str] = set()
+    previous = float(steady["monotonic_ms"])
+    positions = {id(event): index for index, event in enumerate(events)}
+    previous_end = -1
+    for start, settle in zip(starts, settles):
+        lo, hi = float(start["monotonic_ms"]), float(settle["monotonic_ms"])
+        begin_index, end_index = positions[id(start)], positions[id(settle)]
+        # Frontend timestamps have finite resolution: the previous final seek,
+        # settlement and next burst may share one timestamp. Stream order is
+        # authoritative for membership; timestamps still bound every request.
+        seeks = [event for event in events[begin_index + 1:end_index] if _kind(event) == "seek_requested"]
+        if (previous > lo or hi < lo or hi > float(resize["monotonic_ms"]) or len(seeks) != 8
+                or begin_index <= previous_end or end_index <= begin_index
+                or any(not lo <= float(event["monotonic_ms"]) <= hi for event in seeks)
+                or _field(start, "request_count") != 8 or _field(settle, "request_count") != 8):
+            raise InvalidData("whole_app scrub counts/settlement/order do not reconcile")
+        scrub_actions.update(str(_field(event, "action_id")) for event in seeks)
+        previous = hi
+        previous_end = end_index
+    seeks = [event for event in events if _kind(event) == "seek_requested"
+             and str(_field(event, "action_id")) not in scrub_actions]
+    if ([str(_field(event, "reason")) for event in seeks] != ["render-preconditioning", "seek-preconditioning"] + ["benchmark"] * 160
+            or abs(_field(seeks[0], "raw_requested_ms", 0) - 52_433) > 17
+            or _field(seeks[1], "raw_requested_ms") != 0
+            or float(seeks[0]["monotonic_ms"]) > float(rendered["monotonic_ms"])
+            or any(not float(steady["monotonic_ms"]) <= float(event["monotonic_ms"]) < float(starts[0]["monotonic_ms"])
+                   for event in seeks[1:])):
+        raise InvalidData("whole_app seek count/order does not match the declared workload")
+    dispatches = [event for event in events if _kind(event) == "seek_dispatched" and _field(event, "reason") == "benchmark"]
+    strata: dict[tuple[bool, bool], int] = defaultdict(int)
+    for event in dispatches:
+        distance = _field(event, "distance_ms")
+        if not isinstance(distance, (int, float)) or isinstance(distance, bool) or not math.isfinite(distance):
+            raise InvalidData("whole_app seek dispatch lacks distance evidence")
+        strata[(abs(distance) <= 10_000, distance >= 0)] += 1
+    if len(dispatches) != 160 or dict(strata) != {(near, forward): 40 for near in (False, True) for forward in (False, True)}:
+        raise InvalidData("whole_app lacks forty completed seeks in each near/far direction stratum")
+    generation = _field(rendered, "generation")
+    if any(_field(event, "generation") != generation for event in [steady, resize, restored, cycle, *seeks, *starts, *settles]):
+        raise InvalidData("whole_app changed media generation")
+
+
 def _validate_scenario_evidence(
     key: TrialKey,
     spec: Mapping[str, Any],
@@ -866,6 +1084,11 @@ def _validate_scenario_evidence(
         gates = [event for event in trial_events if _kind(event) == "opening_library_usable"]
         role = "candidate" if gates and _field(gates[0], "gate") == "snapshot" else "reference"
         opening_measurements(key.scenario_id, spec, trial_events, role)
+    elif scenario_kind == "library_search" and key.scenario_id == "cold-index-search":
+        # This diagnostic intentionally starts before settled-library readiness.
+        # Its validator below requires bounded import completion and every input
+        # terminal, including rejection of query errors.
+        require("library_requested", "indexing_diagnostic_started", "indexing_diagnostic_completed")
     else:
         require("library_requested", "library_useful")
     if key.scenario_id.startswith("qb010-library-v2-"):
@@ -901,6 +1124,12 @@ def _validate_scenario_evidence(
             raise InvalidData("games usable event precedes view admission")
     if scenario_kind == "app_idle":
         return
+    if scenario_kind == "library_search":
+        _validate_search_evidence(spec, trial_events)
+        return
+    if scenario_kind == "whole_app":
+        _validate_search_evidence(spec, trial_events)
+        _validate_whole_app_evidence(trial_events)
     if scenario_kind == "export":
         require("export_requested", "export_completed", "scenario_completed")
         completed = next(event for event in trial_events if _kind(event) == "export_completed")
@@ -999,6 +1228,69 @@ def _validate_scenario_evidence(
         layout_generations.discard(None)
         if len(layout_generations) != 1:
             raise InvalidData("layout evidence does not preserve one media generation")
+    if scenario_kind in {"desktop_resize", "whole_app"}:
+        started = [event for event in trial_events if _kind(event) == "desktop_resize_started"]
+        restored = [event for event in trial_events if _kind(event) == "desktop_resize_restored"]
+        if len(started) != 1 or len(restored) != 1:
+            raise InvalidData("native resize requires one start and restoration")
+        origin = started[0]
+        scale = _field(origin, "scale_factor")
+        if not isinstance(scale, (int, float)) or isinstance(scale, bool) or not math.isfinite(scale) or scale <= 0:
+            raise InvalidData("native resize has an invalid display scale")
+        targets = _field(origin, "target_sizes")
+        if (not isinstance(targets, list) or len(targets) != 2 or targets[0] == targets[1]
+                or any(not isinstance(size, dict) or any(not isinstance(size.get(axis), int)
+                   or isinstance(size.get(axis), bool) or size[axis] <= 0 for axis in ("width", "height")) for size in targets)):
+            raise InvalidData("native resize requires two distinct physical target sizes")
+        if (_field(restored[0], "width") != _field(origin, "original_width")
+                or _field(restored[0], "height") != _field(origin, "original_height")):
+            raise InvalidData("native resize did not restore its original size")
+        resize_events = [event for event in trial_events if _kind(event).startswith("desktop_resize_")]
+        generations = {_field(event, "generation") for event in resize_events}
+        if len(generations) != 1 or None in generations:
+            raise InvalidData("native resize changed media generation")
+        if any(event.get("source") != "frontend" or _field(event, "scale_factor") != scale for event in resize_events):
+            raise InvalidData("native resize changed display scale or clock")
+        requests = [event for event in resize_events if _kind(event) == "desktop_resize_requested"]
+        if [_field(event, "mode") for event in requests] != ["playing"] * 8 + ["paused"] * 8:
+            raise InvalidData("native resize does not cover eight playing and eight paused actions")
+        if any(not float(origin["monotonic_ms"]) <= float(event["monotonic_ms"]) <= float(restored[0]["monotonic_ms"]) for event in requests):
+            raise InvalidData("native resize request lies outside its start/restoration")
+        for previous, request in zip(requests, requests[1:]):
+            if float(request["monotonic_ms"]) - float(previous["monotonic_ms"]) < 250:
+                raise InvalidData("native resize requests violate minimum pacing")
+            if all(_field(previous, axis) == _field(request, axis) for axis in ("width", "height")):
+                raise InvalidData("native resize targets did not alternate")
+        ids = [_field(event, "action_id") for event in requests]
+        if None in ids or len(set(ids)) != 16:
+            raise InvalidData("native resize request identities are missing/reused")
+        if any(_field(event, "action_id") not in ids for event in resize_events
+               if _kind(event) in {"desktop_resize_geometry", "desktop_resize_completed"}):
+            raise InvalidData("native resize has unrequested geometry/completion")
+        previous_completion = float(origin["monotonic_ms"])
+        for request in requests:
+            records = [event for event in resize_events if _field(event, "action_id") == _field(request, "action_id")]
+            phases = [[event for event in records if _kind(event) == kind]
+                      for kind in ("desktop_resize_requested", "desktop_resize_geometry", "desktop_resize_completed")]
+            if any(len(phase) != 1 for phase in phases):
+                raise InvalidData("native resize has missing/duplicate action phases")
+            request, geometry, complete = [phase[0] for phase in phases]
+            if float(request["monotonic_ms"]) < previous_completion:
+                raise InvalidData("native resize started before the previous action settled")
+            previous_completion = float(complete["monotonic_ms"])
+            mode = _field(request, "mode")
+            expected_authority = "rvfc" if mode == "playing" else "two-animation-frame-paint-opportunity"
+            target = {axis: _field(request, axis) for axis in ("width", "height")}
+            if (target not in targets or _field(complete, "authority") != expected_authority
+                    or _field(complete, "same_load") is not True or _field(complete, "same_element") is not True
+                    or any(_field(event, "mode") != mode or any(_field(event, axis) != target[axis] for axis in target)
+                           for event in (geometry, complete))
+                    or not float(request["monotonic_ms"]) <= float(geometry["monotonic_ms"]) <= float(complete["monotonic_ms"]) <= float(restored[0]["monotonic_ms"])):
+                raise InvalidData("native resize geometry/presentation does not match its request")
+            if mode == "playing" and not isinstance(_field(complete, "media_tick"), (int, float)):
+                raise InvalidData("playing native resize lacks an authoritative media tick")
+            if mode == "paused" and _field(complete, "media_tick") is not None:
+                raise InvalidData("paused native resize falsely claims a new media tick")
     if scenario_kind == "warm_open":
         expected_cycles = int(spec.get("iterations", 6))
         if (
@@ -1058,6 +1350,8 @@ def _validate_events(
         action_events: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for event in trial_events:
             action_id = _field(event, "action_id")
+            if str(spec.get("kind", "")).lower() in {"library_search", "whole_app"} and _kind(event) in SEARCH_ACTION_KINDS:
+                continue
             if action_id is not None:
                 action_events[str(action_id)].append(event)
         requested = 0
@@ -2061,6 +2355,58 @@ def _event_pair_metrics(
             _add_metric(metrics, metric_name, float(event["monotonic_ms"]) - requested_at)
 
 
+def settled_memory_windows(
+    events: Sequence[Mapping[str, Any]], samples: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Runner-observed windows; never compare runner and frontend clock origins."""
+    starts = [event for event in events if _kind(event) == "memory_window_started"]
+    ends = [event for event in events if _kind(event) == "memory_window_completed"]
+    cycles = [event for event in events if _kind(event) == "viewer_cycle_completed"]
+    rendered = [event for event in events if _kind(event) == "replay_render_ready"]
+    steady = [event for event in events if _kind(event) == "steady_playback"]
+    if ([_field(event, "cycle") for event in starts] != list(range(7))
+            or [_field(event, "cycle") for event in ends] != list(range(7))
+            or len(cycles) != 6 or len(rendered) != 6 or len(steady) != 6):
+        raise InvalidData("settled memory requires seven windows and six populated playback cycles")
+    for index, (start, end) in enumerate(zip(starts, ends)):
+        if (start.get("source") != "frontend" or end.get("source") != "frontend"
+                or _field(start, "settle_ms") != 5000 or _field(start, "sample_ms") != 10000
+                or float(end["monotonic_ms"]) - float(start["monotonic_ms"]) < 10000):
+            raise InvalidData("settled memory quiet window is incomplete")
+        if index:
+            render, play, cycle = rendered[index - 1], steady[index - 1], cycles[index - 1]
+            boundaries = [ends[index - 1], render, play, cycle, start]
+            if (any(event.get("source") != "frontend" for event in boundaries)
+                    or any(float(a["monotonic_ms"]) > float(b["monotonic_ms"]) for a, b in zip(boundaries, boundaries[1:]))
+                    or _field(render, "participant_count") != 10
+                    or _nonnegative_number(_field(render, "rendered_marker_count"), "markers") < 1
+                    or _nonnegative_number(_field(render, "decoded_image_count"), "decoded images") < 10
+                    or _field(render, "authority") != "dom-and-image-decode-after-two-animation-frames"
+                    or _nonnegative_number(_field(play, "duration_ms"), "playback duration") < 2000
+                    or _nonnegative_number(_field(play, "media_advance_ms"), "playback advancement") < 1900
+                    or _field(cycle, "playback_rate") != 1):
+                raise InvalidData("settled memory playback boundaries/render evidence are invalid")
+    labelled = [sample for sample in samples if sample.get("memory_window_cycle") is not None]
+    labels = [sample["memory_window_cycle"] for sample in labelled]
+    if (any(type(value) is not int or value not in range(7) for value in labels)
+            or sorted(set(labels)) != list(range(7)) or labels != sorted(labels)):
+        raise InvalidData("settled memory runner window labels are missing or unordered")
+    windows = []
+    for cycle in range(7):
+        group = [sample for sample in labelled if sample["memory_window_cycle"] == cycle]
+        # Reading the flushed phase can straddle a sample boundary. Keep only
+        # interior samples, discarding two at each edge of every equal window.
+        interior = group[2:-2]
+        if len(interior) < 5:
+            raise InvalidData("settled memory window lacks five interior process samples")
+        values = {}
+        for name in ("process_tree_private_bytes", "working_set_bytes", "handles"):
+            numbers = [_nonnegative_number(sample.get(name), name) for sample in interior]
+            values[name] = {"median": statistics.median(numbers), "min": min(numbers), "max": max(numbers)}
+        windows.append({"cycle": cycle, "labelled_samples": len(group), "interior_samples": len(interior), **values})
+    return windows
+
+
 def _trial_metrics(
     key: TrialKey,
     events: Sequence[Mapping[str, Any]],
@@ -2068,6 +2414,10 @@ def _trial_metrics(
     samples: Sequence[Mapping[str, Any]],
 ) -> dict[str, list[float]]:
     metrics: dict[str, list[float]] = defaultdict(list)
+    if key.scenario_id == "settled-memory":
+        for window in settled_memory_windows(events, samples):
+            for name in ("process_tree_private_bytes", "working_set_bytes", "handles"):
+                _add_metric(metrics, f"memory_cycle_{window['cycle']}_{name}_median", window[name]["median"])
     action_events: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for event in events:
         _generic_metrics(event, metrics)
@@ -2076,6 +2426,24 @@ def _trial_metrics(
         if action_id is not None:
             action_events[str(action_id)].append(event)
     _event_pair_metrics(events, metrics)
+    search_counts = defaultdict(int)
+    for event in events:
+        if _kind(event) in SEARCH_ACTION_KINDS:
+            search_counts[_kind(event)] += 1
+    for kind, count in search_counts.items():
+        _add_metric(metrics, f"{kind}_count", count)
+    for sequence in (event for event in events if _kind(event) == "library_search_sequence"):
+        records = action_events[str(_field(sequence, "action_id"))]
+        by_kind = {_kind(record): record for record in records}
+        stratum = _field(sequence, "stratum")
+        for name, start, end in (
+            ("input_to_painted", "library_search_input", "library_search_painted"),
+            ("dispatch_to_completed", "history_query_dispatched", "history_query_completed"),
+            ("admitted_to_painted", "history_query_admitted", "library_search_painted"),
+        ):
+            if start in by_kind and end in by_kind:
+                _add_metric(metrics, f"library_search_{stratum}_{name}_ms",
+                            float(by_kind[end]["monotonic_ms"]) - float(by_kind[start]["monotonic_ms"]))
     action_counts = defaultdict(int)
     for records in action_events.values():
         kinds = [_kind(record) for record in records]
@@ -2084,6 +2452,12 @@ def _trial_metrics(
             continue
         action_counts["requested"] += 1
         request_time = float(requested["monotonic_ms"])
+        if _kind(requested) == "desktop_resize_requested":
+            mode = _field(requested, "mode")
+            for kind, suffix in (("desktop_resize_geometry", "geometry"), ("desktop_resize_completed", "presented" if mode == "playing" else "painted")):
+                phase = next((record for record in records if _kind(record) == kind), None)
+                if phase is not None:
+                    _add_metric(metrics, f"desktop_resize_{mode}_request_to_{suffix}_ms", float(phase["monotonic_ms"]) - request_time)
         dispatch = next((record for record in records if _kind(record) in SEEK_DISPATCH_KINDS), None)
         seeked = next((record for record in records if _kind(record) in SEEKED_KINDS), None)
         presented = next((record for record in records if _kind(record) in PRESENTED_KINDS), None)
@@ -2104,6 +2478,11 @@ def _trial_metrics(
                 "request_to_presented_ms",
                 float(presented["monotonic_ms"]) - request_time,
             )
+            if dispatch is not None and _field(requested, "reason") == "benchmark":
+                distance = _field(dispatch, "distance_ms")
+                if isinstance(distance, (int, float)) and not isinstance(distance, bool) and math.isfinite(distance):
+                    stratum = ("near" if abs(distance) <= 10_000 else "far") + ("_forward" if distance >= 0 else "_backward")
+                    _add_metric(metrics, f"seek_{stratum}_request_to_presented_ms", float(presented["monotonic_ms"]) - request_time)
             target = _field(requested, "target_ms")
             actual = _field(
                 presented,
@@ -2191,6 +2570,7 @@ def _trial_metrics(
                 "generation",
                 "action_id",
                 "payload",
+                "memory_window_cycle",
             }
         }
         if isinstance(payload, Mapping):

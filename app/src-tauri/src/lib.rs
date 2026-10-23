@@ -830,6 +830,24 @@ async fn complete_replay_benchmark(
 }
 
 #[cfg(feature = "replay-benchmark")]
+#[tauri::command]
+fn benchmark_resize_window(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    benchmark_session(&state)?;
+    if window.label() != "main" || !(64..=16384).contains(&width) || !(64..=16384).contains(&height)
+    {
+        return Err("invalid benchmark window/physical size".to_owned());
+    }
+    window
+        .set_size(tauri::PhysicalSize::new(width, height))
+        .map_err(error_string)
+}
+
+#[cfg(feature = "replay-benchmark")]
 fn benchmark_session(state: &AppState) -> Result<&Arc<BenchmarkSession>, String> {
     state
         .benchmark
@@ -1133,7 +1151,7 @@ pub fn run() {
                         )
                     })?;
                     let page_load_benchmark = benchmark.clone();
-                    tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                    let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
                         .data_directory(data_directory.clone())
                         .always_on_top(true)
                         .on_page_load(move |_window, payload| {
@@ -1153,11 +1171,30 @@ pub fn run() {
                             }
                         })
                         .build()?;
+                    // The owned-process launcher hides console startup. Explicitly show
+                    // the measured desktop window before its frontend starts work.
+                    window.show()?;
+                    window.unmaximize()?;
+                    if let Some(value) = std::env::var_os("QUEUEBACK_BENCHMARK_WINDOW_GEOMETRY") {
+                        #[derive(serde::Deserialize)]
+                        #[serde(deny_unknown_fields)]
+                        struct BenchmarkGeometry { x: i32, y: i32, width: u32, height: u32 }
+                        let geometry: BenchmarkGeometry = serde_json::from_str(&value.to_string_lossy())?;
+                        if !(64..=16384).contains(&geometry.width) || !(64..=16384).contains(&geometry.height) {
+                            return Err("invalid benchmark startup geometry".into());
+                        }
+                        window.set_position(tauri::PhysicalPosition::new(geometry.x, geometry.y))?;
+                        window.set_size(tauri::PhysicalSize::new(geometry.width, geometry.height))?;
+                    }
+                    window.set_focus()?;
                     if let Some(benchmark) = &benchmark {
                         benchmark.record_app_event(
                             "benchmark_webview_created",
                             serde_json::json!({
                                 "data_directory": data_directory,
+                                "initial_maximized": window.is_maximized()?,
+                                "initial_inner_size": window.inner_size()?,
+                                "initial_outer_position": window.outer_position()?,
                                 "window_label": window_config.label,
                             }),
                         )?;
@@ -1209,6 +1246,7 @@ pub fn run() {
         playback_diagnostics::bind_playback_diagnostics,
         playback_diagnostics::close_playback_diagnostics,
         get_replay_benchmark_session,
+        benchmark_resize_window,
         benchmark_delivery_probe,
         record_replay_benchmark_events,
         get_replay_benchmark_queue_stats,

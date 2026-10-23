@@ -320,6 +320,27 @@ describe("scenario scripts", () => {
 });
 
 describe("payload sanitization", () => {
+  it("uses populated rendering and short real playback for the named memory cycles", () => {
+    const actions = buildScenarioActions(scenario({ id: "settled-memory", kind: "lifecycle", iterations: 6 }), 600_000);
+    expect(actions).toContainEqual({ kind: "render-ready" });
+    expect(actions).toContainEqual({ kind: "stable-playback", durationMs: 2_000 });
+    expect(actions[actions.length - 1]).toEqual({ kind: "pause" });
+    expect(buildScenarioActions(scenario({ kind: "lifecycle", iterations: 6 }), 600_000)).toEqual([]);
+  });
+  it("freezes the combined workload and keeps scrub requests separate from 160 paced seeks", () => {
+    const actions = buildScenarioActions(scenario({ kind: "whole_app", seed: 7 }), 554_517);
+    expect(actions.slice(0, 6)).toEqual([
+      { kind: "seek", targetMs: 52_433, reason: "render-preconditioning" },
+      { kind: "fullscreen", enabled: true }, { kind: "render-ready" }, { kind: "fullscreen", enabled: false },
+      { kind: "play" }, { kind: "stable-playback", durationMs: 30_000 },
+    ]);
+    expect(actions.filter(action => action.kind === "seek" && action.reason === "benchmark")).toHaveLength(160);
+    expect(actions.filter(action => action.kind === "wait" && action.durationMs === 187)).toHaveLength(160);
+    const bursts = actions.filter(action => action.kind === "scrub");
+    expect(bursts).toHaveLength(5);
+    expect(bursts.every(action => action.targetsMs.length === 8 && action.intervalMs === 17)).toBe(true);
+    expect(actions.slice(-2)).toEqual([{ kind: "desktop-resize" }, { kind: "pause" }]);
+  });
   it("redacts paths and local player identities recursively", () => {
     expect(
       sanitizePayload({

@@ -47,6 +47,9 @@ $script:AllowedScenarioFields = @(
     "expected_audio_codec", "music_mode", "gain_mode", "built_in_music_filename"
 )
 $script:ScenarioKinds = @(
+    "library_search",
+    "desktop_resize",
+    "whole_app",
     "app_idle", "cold_open", "warm_open", "play_pause", "rate", "seek", "scrub",
     "layout", "lifecycle", "export"
 )
@@ -1395,6 +1398,15 @@ function Assert-Scenario {
     if ($id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$') { Stop-Benchmark "SCENARIO" "Unsafe scenario id '$id'." }
     $kind = [string](Get-RequiredProperty $Scenario "kind" "scenario '$id'")
     if ($kind -notin $script:ScenarioKinds) { Stop-Benchmark "SCENARIO" "Unsupported scenario kind '$kind'." }
+    if ($kind -eq "whole_app" -and $Scenario.PSObject.Properties["iterations"] -and $Scenario.iterations -ne 8) {
+        Stop-Benchmark "SCENARIO" "whole_app iterations must be eight."
+    }
+    if ($kind -eq "library_search" -and $Scenario.PSObject.Properties["iterations"]) {
+        $count = $Scenario.iterations
+        if ($count -isnot [int] -and $count -isnot [long] -or $count -lt 1 -or $count -gt 100) {
+            Stop-Benchmark "SCENARIO" "library_search iterations must be an integer between 1 and 100."
+        }
+    }
     $trialId = [string](Get-RequiredProperty $Scenario "trial_id" "scenario '$id'")
     if ($trialId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$') { Stop-Benchmark "SCENARIO" "Scenario '$id' has unsafe trial_id." }
     $references = @((Get-RequiredProperty $Scenario "fixture_ids" "scenario '$id'"))
@@ -2711,6 +2723,23 @@ function Get-ObserverContext {
     }
 }
 
+function Get-MemoryWindow {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    # Only used by the named quiet-window diagnostic. Receipt order labels the
+    # samples; frontend and runner monotonic clocks are never subtracted.
+    $marker = $null
+    foreach ($line in @(Get-Content -LiteralPath $Path -Tail 128 -Encoding UTF8)) {
+        if ($line -notmatch '"memory_window_(started|completed)"') { continue }
+        try {
+            $value = $line | ConvertFrom-Json
+            if ($value.kind -in @("memory_window_started", "memory_window_completed")) { $marker = $value }
+        } catch { return $null }
+    }
+    if ($null -ne $marker -and $marker.kind -eq "memory_window_started") { return [int]$marker.payload.cycle }
+    return $null
+}
+
 function Update-TerminalForObserver {
     param(
         [string]$Path,
@@ -2973,6 +3002,9 @@ try {
                     cadence_gap = [bool]$sample.cadence_gap
                     collection_duration_ms = [double]$sample.collection_duration_ms
                     gpu = $sample.gpu
+                }
+                if ([string]$context.scenario_id -eq "settled-memory") {
+                    $processRecord["memory_window_cycle"] = Get-MemoryWindow -Path $eventsPath
                 }
                 $processWriter.WriteLine(($processRecord | ConvertTo-Json -Depth 20 -Compress))
                 $processSampleCount++

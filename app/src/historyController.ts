@@ -4,12 +4,20 @@ import type { CatalogPage, HistoryPage, HistoryQuery, ImportProgress } from "./l
 import type { GameSummary } from "./types";
 
 export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; error: string | null; indexError: string | null; laterPage: boolean };
+export type HistoryQueryObservation = {
+  kind: "history_query_scheduled" | "history_query_replaced" | "history_query_dispatched" |
+    "history_query_completed" | "history_query_superseded" | "history_query_admitted" | "history_query_error";
+  generation: number;
+  actionId?: string;
+  rowCount?: number;
+};
 type Context = { origin: LibraryOrigin; games: GameSummary[] };
 type Dependencies = {
   current: (origin: LibraryOrigin) => boolean;
   catalog: (token: string, after: string | null) => Promise<CatalogPage>;
   recording: (token: string, game: string) => Promise<ImportProgress>;
   history: (token: string, query: HistoryQuery) => Promise<HistoryPage>;
+  observeQuery?: (event: HistoryQueryObservation) => void;
 };
 const key = (origin: LibraryOrigin) => JSON.stringify(origin);
 
@@ -20,6 +28,7 @@ export class HistoryController {
   private listeners = new Set<(state: HistoryState) => void>();
   private query: HistoryQuery = { limit: 50 };
   private queryGeneration = 0;
+  private queryActionId: string | undefined;
   private queryPending = false;
   private queryActive = false;
   private importActive = false;
@@ -37,19 +46,27 @@ export class HistoryController {
     for (const listener of this.listeners) listener(this.state);
   }
   private current(context: Context) { return !this.closed && this.context === context && this.api.current(context.origin); }
+  isQueryCurrent(generation: number) {
+    return !!this.context && this.current(this.context) && generation === this.queryGeneration;
+  }
+  private observeQuery(kind: HistoryQueryObservation["kind"], generation: number,
+    actionId: string | undefined, rowCount?: number) {
+    this.api.observeQuery?.({ kind, generation, actionId, rowCount });
+  }
   setContext(origin: LibraryOrigin | null, games: GameSummary[] = []) {
     if (this.closed) return;
     if (origin && this.context && key(origin) === key(this.context.origin)) return;
+    if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
     this.context = origin ? { origin, games } : null;
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
-    this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false;
+    this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined;
     this.publish({ page: null, loading: origin !== null, indexing: origin !== null, error: null, indexError: null, laterPage: false });
     this.schedule();
   }
-  setQuery(query: HistoryQuery) {
+  setQuery(query: HistoryQuery, actionId?: string) {
     this.query = { ...query, after: null, limit: 50 };
-    this.requestQuery();
+    this.requestQuery(actionId);
   }
   nextPage() {
     if (!this.state.page?.next || this.state.loading || this.state.error) return;
@@ -60,21 +77,31 @@ export class HistoryController {
     if (this.state.loading || this.state.error) return;
     this.query = { ...this.query, after: null }; this.requestQuery();
   }
-  private requestQuery() {
+  private requestQuery(actionId?: string) {
+    if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
+    this.queryActionId = actionId;
     this.queryGeneration++; this.queryPending = true;
+    this.observeQuery("history_query_scheduled", this.queryGeneration, this.queryActionId);
     this.publish({ loading: true, error: null }); this.pumpQuery();
   }
   private pumpQuery() {
     const context = this.context;
-    if (!context || !this.current(context) || this.queryActive || !this.queryPending) return;
+    if (!context || !this.current(context) || this.catalogPending || this.queryActive || !this.queryPending) return;
     this.queryPending = false; this.queryActive = true;
-    const generation = this.queryGeneration, query = this.query;
+    const generation = this.queryGeneration, query = this.query, actionId = this.queryActionId;
+    this.observeQuery("history_query_dispatched", generation, actionId);
     void this.api.history(context.origin.token, query).then(page => {
-      if (!this.current(context) || generation !== this.queryGeneration) return;
+      this.observeQuery("history_query_completed", generation, actionId, page.rows.length);
+      if (!this.current(context) || generation !== this.queryGeneration) {
+        this.observeQuery("history_query_superseded", generation, actionId);
+        return;
+      }
       // SQL results cannot admit new media or overwrite the accepted scan.
       for (const row of page.rows) if (!context.games.some(game => game.timestamp === row.game.timestamp && game.media_id === row.media_id)) throw new Error("History recording changed since the scan");
       this.publish({ page, laterPage: !!query.after, loading: false, error: null });
+      this.observeQuery("history_query_admitted", generation, actionId, page.rows.length);
     }).catch(error => {
+      this.observeQuery("history_query_error", generation, actionId);
       if (this.current(context) && generation === this.queryGeneration) this.publish({ loading: false, error: libraryError(error) });
     }).finally(() => { this.queryActive = false; this.pumpQuery(); });
   }
@@ -110,7 +137,10 @@ export class HistoryController {
         if (progress.status === "pending") this.pending.set(next[0], next[1]);
       }
       this.publish({ indexing: this.catalogPending || this.pending.size > 0 });
-      this.requestQuery();
+      // Preserve input queued before the catalog token existed. Recording
+      // imports can continue independently once catalog admission completes.
+      if (catalog && this.queryPending) this.pumpQuery();
+      else this.requestQuery();
     }).catch(error => {
       if (this.current(context)) {
         // Retry requires a new accepted refresh, avoiding an idle failure loop.
@@ -119,5 +149,8 @@ export class HistoryController {
       }
     }).finally(() => { this.importActive = false; this.schedule(); });
   }
-  close() { this.closed = true; this.context = null; clearTimeout(this.timer); this.pending.clear(); this.listeners.clear(); }
+  close() {
+    if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
+    this.closed = true; this.context = null; clearTimeout(this.timer); this.pending.clear(); this.listeners.clear();
+  }
 }

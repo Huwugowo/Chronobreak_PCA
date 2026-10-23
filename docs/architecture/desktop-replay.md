@@ -33,6 +33,10 @@ page's cursor cannot be combined with a failed query's filters. Page and paginat
 position publish together only after query-generation and snapshot admission.
 A new library origin clears retained history; pending text timers are cancelled on
 origin changes or disposal. Origin comparison uses its values, not object identity.
+History queries submitted before initial catalog admission remain queued, with
+only the latest input retained. The controller releases that input after the
+catalog token is committed, preserving its action identity; per-recording imports
+then continue independently of foreground queries.
 
 Opening a selected game first requests a token-bound `ReplayDescriptor`: snapshot
 token, game ID, protected loopback video URL and validated schema-v2 media timeline.

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { HistoryController } from "./historyController";
+import { HistoryController, type HistoryQueryObservation } from "./historyController";
 import type { LibraryOrigin } from "./libraryController";
 import type { CatalogPage, HistoryPage, ImportProgress } from "./leagueIndex";
 import type { GameSummary } from "./types";
@@ -10,6 +10,63 @@ const catalog = (token: string): CatalogPage => ({ snapshot_token: token, items:
 const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (error: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
+
+it("distinguishes queued replacements from completed superseded work without cancelling IPC", async () => {
+  vi.useFakeTimers();
+  const events: HistoryQueryObservation[] = [];
+  const active = deferred<HistoryPage>();
+  const api = { current: () => true, catalog: async (token: string) => catalog(token), recording: vi.fn(),
+    history: vi.fn().mockReturnValueOnce(active.promise).mockResolvedValue(page()), observeQuery: (event: HistoryQueryObservation) => events.push(event) };
+  const controller = new HistoryController(api);
+  controller.setContext(origin("A", 1), [game]);
+  controller.setQuery({ limit: 50, search: "first" }, "search-1");
+  await vi.advanceTimersByTimeAsync(4);
+  controller.setQuery({ limit: 50, search: "replaced" }, "search-2");
+  controller.setQuery({ limit: 50, search: "latest" }, "search-3");
+  expect(api.history).toHaveBeenCalledTimes(1);
+  active.resolve(page()); await flush();
+  expect(api.history).toHaveBeenCalledTimes(2);
+  expect(events.filter(event => event.actionId === "search-1").map(event => event.kind))
+    .toEqual(["history_query_scheduled", "history_query_dispatched", "history_query_completed", "history_query_superseded"]);
+  expect(events.filter(event => event.actionId === "search-2").map(event => event.kind))
+    .toEqual(["history_query_scheduled", "history_query_replaced"]);
+  expect(events.filter(event => event.actionId === "search-3").map(event => event.kind))
+    .toEqual(["history_query_scheduled", "history_query_dispatched", "history_query_completed", "history_query_admitted"]);
+  controller.close();
+});
+
+it("queues the latest input until catalog admission and preserves its action while recordings import", async () => {
+  vi.useFakeTimers();
+  const ready = deferred<CatalogPage>(), importing = deferred<ImportProgress>();
+  const events: HistoryQueryObservation[] = [];
+  const o = origin("A", 1);
+  const api = { current: () => true, catalog: vi.fn(() => ready.promise), recording: vi.fn(() => importing.promise),
+    history: vi.fn(async () => page()), observeQuery: (event: HistoryQueryObservation) => events.push(event) };
+  const controller = new HistoryController(api);
+  controller.setContext(o, [game]);
+  controller.setQuery({ search: "old", limit: 50 }, "old-input");
+  await vi.advanceTimersByTimeAsync(4);
+  controller.setQuery({ search: "latest", limit: 50 }, "latest-input");
+  expect(api.history).not.toHaveBeenCalled();
+  expect(controller.value.error).toBeNull();
+  ready.resolve({ ...catalog(o.token), items: [{ game_timestamp: game.timestamp, media_id: game.media_id!, error: null,
+    progress: { media_id: game.media_id!, status: "pending", batches: 4 } as ImportProgress }] });
+  await flush();
+  expect(api.history).toHaveBeenCalledExactlyOnceWith(o.token, expect.objectContaining({ search: "latest" }));
+  expect(events.filter(event => event.actionId === "old-input").map(event => event.kind))
+    .toEqual(["history_query_scheduled", "history_query_replaced"]);
+  expect(events.filter(event => event.actionId === "latest-input").map(event => event.kind))
+    .toEqual(["history_query_scheduled", "history_query_dispatched", "history_query_completed", "history_query_admitted"]);
+  await vi.advanceTimersByTimeAsync(4);
+  expect(api.recording).toHaveBeenCalledTimes(1);
+  controller.setQuery({ search: "during import", limit: 50 }, "import-input");
+  await flush();
+  expect(api.history).toHaveBeenCalledTimes(2);
+  expect(controller.value).toMatchObject({ indexing: true, loading: false, error: null });
+  controller.close();
+  importing.resolve({ media_id: game.media_id!, status: "ready" } as ImportProgress);
+  await flush();
+});
 
 it("yields between bounded imports while queries run independently and close cancels continuation", async () => {
   vi.useFakeTimers();

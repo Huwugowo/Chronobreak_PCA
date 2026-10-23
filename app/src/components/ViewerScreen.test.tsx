@@ -11,9 +11,11 @@ import { parseMediaId, type FrameBoundary, type ReplayTick } from "../replayTime
 import { buildScenarioActions, emitReplayBenchmarkEvent, replayBenchmarkObserver } from "../benchmark";
 import { STAT_KEYS, type FinalStats } from "../leagueResult";
 import { sourceKey } from "../leagueSource";
+import { runBenchmarkDesktopResize } from "../benchmarkResize";
 import timelineStyles from "./ReplayTimeline.module.css";
 
 const diagnosticHarness = vi.hoisted(() => ({ held: false }));
+vi.mock("../benchmarkResize", () => ({ runBenchmarkDesktopResize: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../api", async original => ({ ...await original<typeof import("../api")>(),
   loadReplayDescriptor: vi.fn(), loadServerMetrics: vi.fn() }));
 vi.mock("../leagueIndex", async original => ({ ...await original<typeof import("../leagueIndex")>(),
@@ -505,6 +507,126 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
     ["requestVideoFrameCallback", "cancelVideoFrameCallback"].forEach((name, index) => {
       const descriptor = originals[index];
       if (descriptor) Object.defineProperty(prototype, name, descriptor);
+      else Reflect.deleteProperty(prototype, name);
+    });
+  }
+});
+
+it.each(["presented-first", "seeked-first", "timeout", "disposed", "superseded", "layout-disposed"] as const)(
+  "retains the final scrub until complete native/presentation evidence (%s)", async outcome => {
+    const probe = replayProbe();
+    setFixture(probe);
+    vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
+      video_url: probe.video_url, media_timeline: probe.media_timeline });
+    vi.mocked(loadServerMetrics).mockResolvedValue({ requests: 0, range_requests: 0, response_bytes: 0,
+      completed_streams: 0, cancelled_streams: 0, active_connections: 0, peak_connections: 0,
+      rejected_connections: 0, rejected_requests: 0, active_streams: 0, peak_streams: 0 });
+    let action = 0;
+    const observer = { nextMediaGeneration: () => 1, nextActionId: () => `seek-${++action}`,
+      scenario: () => ({ kind: "scrub" }), emit: vi.fn(), complete: vi.fn() };
+    vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
+    vi.mocked(buildScenarioActions).mockReturnValue(outcome === "layout-disposed"
+      ? [{ kind: "fullscreen", enabled: true, seekTargetMs: 5000 }]
+      : [{ kind: "scrub", targetsMs: [5000], intervalMs: 0 }]);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    let timeout!: () => void;
+    const nativeTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation((handler, delay, ...args) => {
+      if (delay === 6000 && typeof handler === "function") timeout = handler as () => void;
+      return nativeTimeout(handler, delay, ...args);
+    });
+    const prototype = HTMLVideoElement.prototype;
+    const names = ["requestVideoFrameCallback", "cancelVideoFrameCallback"];
+    const originals = names.map(name => Object.getOwnPropertyDescriptor(prototype, name));
+    let frame!: VideoFrameRequestCallback;
+    Object.defineProperty(prototype, names[0], { configurable: true, value: (callback: VideoFrameRequestCallback) => { frame = callback; return 1; } });
+    Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+      readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    let disposed = false;
+    const seen = (kind: string) => vi.mocked(emitReplayBenchmarkEvent).mock.calls.some(call => call[0] === kind);
+    try {
+      await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
+      const primary = host.querySelector("video")!;
+      Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
+      primary.dispatchEvent(new Event("loadstart"));
+      primary.dispatchEvent(new Event("loadedmetadata"));
+      primary.dispatchEvent(new Event("canplay"));
+      frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
+      await vi.waitFor(() => expect(seen("seek_dispatched")).toBe(true));
+      // Reproduce the last scrub request whose RVFC can precede native seeked.
+      if (outcome === "seeked-first") primary.dispatchEvent(new Event("seeked"));
+      else frame(performance.now(), { mediaTime: 5 } as VideoFrameCallbackMetadata);
+      await Promise.resolve(); await Promise.resolve();
+      expect(seen("scrub_settled")).toBe(false);
+      expect(seen("viewer_disposed")).toBe(false);
+      expect(observer.complete).not.toHaveBeenCalled();
+      if (outcome === "disposed" || outcome === "layout-disposed") { dispose(); disposed = true; }
+      else if (outcome === "timeout") timeout();
+      else if (outcome === "superseded") window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+      else if (outcome === "seeked-first") frame(performance.now(), { mediaTime: 5 } as VideoFrameCallbackMetadata);
+      else primary.dispatchEvent(new Event("seeked"));
+      await vi.waitFor(() => expect(observer.complete).toHaveBeenCalled());
+      if (outcome === "presented-first" || outcome === "seeked-first") {
+        expect(seen("scrub_settled")).toBe(true);
+        expect(observer.complete).toHaveBeenCalledWith("complete", null, expect.anything());
+        const kinds = vi.mocked(emitReplayBenchmarkEvent).mock.calls.map(call => call[0]);
+        expect(kinds.indexOf("viewer_disposed")).toBeGreaterThan(kinds.indexOf("seeked"));
+        expect(kinds.indexOf("viewer_disposed")).toBeGreaterThan(kinds.indexOf("seek_presented"));
+      } else {
+        expect(seen("scrub_settled")).toBe(false);
+        expect(observer.complete).toHaveBeenCalledWith("failed", expect.any(String));
+      }
+    } finally {
+      if (!disposed) dispose();
+      names.forEach((name, index) => {
+        if (originals[index]) Object.defineProperty(prototype, name, originals[index]!);
+        else Reflect.deleteProperty(prototype, name);
+      });
+    }
+  },
+);
+
+it("passes the mounted primary video to native resize after playback takes ownership", async () => {
+  const probe = replayProbe();
+  setFixture(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
+    video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  const observer = { nextMediaGeneration: () => 1, scenario: () => ({ kind: "desktop_resize" }),
+    emit: vi.fn(), complete: vi.fn() };
+  vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
+  vi.mocked(buildScenarioActions).mockReturnValue([{ kind: "desktop-resize" }]);
+  vi.mocked(runBenchmarkDesktopResize).mockClear();
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const prototype = HTMLVideoElement.prototype;
+  const names = ["requestVideoFrameCallback", "cancelVideoFrameCallback"];
+  const originals = names.map(name => Object.getOwnPropertyDescriptor(prototype, name));
+  let frame!: VideoFrameRequestCallback;
+  Object.defineProperty(prototype, names[0], { configurable: true, value: (callback: VideoFrameRequestCallback) => { frame = callback; return 1; } });
+  Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
+    const primary = host.querySelector("video")!;
+    Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
+    primary.dispatchEvent(new Event("loadstart"));
+    primary.dispatchEvent(new Event("loadedmetadata"));
+    primary.dispatchEvent(new Event("canplay"));
+    frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
+    await vi.waitFor(() => expect(runBenchmarkDesktopResize).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(runBenchmarkDesktopResize).mock.calls[0][2]).toBe(primary);
+    expect(primary.isConnected).toBe(true);
+  } finally {
+    dispose();
+    names.forEach((name, index) => {
+      if (originals[index]) Object.defineProperty(prototype, name, originals[index]!);
       else Reflect.deleteProperty(prototype, name);
     });
   }

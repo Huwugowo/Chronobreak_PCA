@@ -4,6 +4,7 @@ import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHi
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
 import type { HistoryQuery, HistoryStats } from "../leagueIndex";
 import type { HistoryState } from "../historyController";
+import { recordBenchmarkSearchInput, recordBenchmarkSearchSchedule } from "../benchmarkSearch";
 import type { ActorRole } from "../leagueSource";
 import type { DurationDisplay } from "../libraryController";
 import type { LibraryOrigin } from "../libraryController";
@@ -30,7 +31,7 @@ type Props = {
   onRetryDuration?: (filename: string) => void;
   snapshotOrigin: LibraryOrigin | null;
   history?: HistoryState;
-  onHistoryQuery?: (query: HistoryQuery) => void;
+  onHistoryQuery?: (query: HistoryQuery, benchmarkActionId?: string) => void;
   onHistoryNext?: () => void;
   onHistoryFirst?: () => void;
 };
@@ -152,28 +153,40 @@ function GamesLibrary(props: Props) {
   const [stolenOnly, setStolenOnly] = createSignal(false);
   const [textPending, setTextPending] = createSignal(false);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchActionId: string | undefined;
+  let scheduledSearchActionId: string | undefined;
   createEffect(on(
     [searchQuery, championFilter, modeFilter, savedOnly, riotId, eventKind,
       actorRole, outcomeFilter, stolenOnly, () => JSON.stringify(props.snapshotOrigin)],
     (values, previous) => {
       clearTimeout(searchTimer);
+      recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId);
+      scheduledSearchActionId = undefined;
       const query: HistoryQuery = { limit: 50, search: searchQuery().trim() || null,
         champion: championFilter() || null, mode: modeFilter() || null, saved_only: savedOnly(),
         participant_riot_id: riotId().trim() || null, event_kind: eventKind() || null,
         role: actorRole() as ActorRole || null, outcome: outcomeFilter() as HistoryQuery["outcome"] || null,
         stolen: stolenOnly() ? true : null };
       const dispatch = () => {
+        scheduledSearchActionId = undefined;
         setTextPending(false);
-        props.onHistoryQuery?.(query);
+        if (searchActionId) props.onHistoryQuery?.(query, searchActionId);
+        else props.onHistoryQuery?.(query);
+        searchActionId = undefined;
       };
       // Discrete filters and context changes include the latest text immediately.
       if (previous && query.search && values.slice(1).every((value, index) => value === previous[index + 1])) {
         setTextPending(true);
+        scheduledSearchActionId = searchActionId;
+        recordBenchmarkSearchSchedule("scheduled", searchActionId, 180);
         searchTimer = setTimeout(dispatch, 180);
-      } else dispatch();
+      } else {
+        recordBenchmarkSearchSchedule("scheduled", searchActionId);
+        dispatch();
+      }
     },
   ));
-  onCleanup(() => clearTimeout(searchTimer));
+  onCleanup(() => { clearTimeout(searchTimer); recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId); });
   const updating = () => textPending() || !!props.history?.loading;
   const paginationDisabled = () => updating() || !!props.history?.error;
 
@@ -223,7 +236,10 @@ function GamesLibrary(props: Props) {
           class={matchStyles.searchField}
           type="search"
           value={searchQuery()}
-          onInput={(event) => setSearchQuery(event.currentTarget.value)}
+          onInput={(event) => {
+            searchActionId = recordBenchmarkSearchInput(event.currentTarget);
+            setSearchQuery(event.currentTarget.value);
+          }}
           placeholder="Search matches..."
           aria-label="Search matches"
         />
