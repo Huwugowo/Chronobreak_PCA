@@ -1,26 +1,115 @@
 # QB-REPLAY-009 execution checkpoint
 
 Feature: `QB-REPLAY-009`
-ExecPlan: `docs/exec-plans/qb-replay-009-playback-boundary-and-speed-ladder-v3.md`
-Updated: 2026-09-09
+ExecPlan: `docs/exec-plans/qb-replay-009-playback-boundary-and-speed-ladder-v4.md`
+Updated: 2026-10-23
 
 ## Current milestone
 
-M5 completion gates on `qb-replay-009-wip` over `78da82b`: controlled production
-hardware-decoder acceptance is satisfied under the user's approved v3 clarification.
-The ordinary production source is exactly restored and its fresh build passed.
-M1-M5 functional/resource evidence and corrective audit r2 remain settled.
-Only human audible/A-V observations remain. At the user's request, they are
-deferred / not performed because no suitable audio fixture is currently available.
-The requirement remains unchanged; feature stays ready / in-progress.
+2026-10-23: approved startup diagnosis and narrow correction; independently
+reviewed, self-contained immutable v4 is finalized and linked. It supersedes v3
+only for the eager 1/16x seek nudge. Review explicitly strengthened automatic
+resumption: both target RVFC and native seeked for the same intent must precede
+resumption, in either order; synchronous user play remains the exception.
+
+C1-C3 correction work is complete: 64 focused and 361 full frontend tests pass;
+two bounded production runs pass; temporary taps are detached and the ordinary
+release build passes. Independent final evidence review passed with no material findings. Unaffected
+M1-M5, corrective r2, controlled hardware-normal acceptance and runtime Unknown
+remain valid. Feature stays ready / in-progress solely for human audible/A-V
+observations, separately deferred / not performed.
 
 ## Active unit
 
-No implementation or automated measurement remains. The human listening/A-V gate
-is deferred as recorded below. No further decoder experiment or runtime mechanism
-is needed; normal current-load status remains Unknown without trustworthy provenance.
+None. The authorized startup correction and its focused verification are complete.
+Do not rerun campaigns or the explicitly deferred human audio checklist without a
+new material finding or user request.
 
 ## Completed
+
+- 2026-10-23 C2/C3: corrected normal production run `drop-corrected-normal-01`
+  passed six 12s windows with 0/4309 drops (0 early, 0 later), against retained
+  before 121/4302 (97 first-2s, 24 later-10s). All phases visible/focused, one
+  video, no media errors/recovery or callback misses. Five seeked-first and one
+  frame-first natural paused seeks completed in 36.2-216.3ms with unchanged
+  one-frame tolerance. No low-rate sample; largest media step 16.667ms and
+  submission gap 74.9ms, later maximum 18.1ms. This is scoped observed evidence,
+  not a universal zero-drop guarantee; before residual losses remain unattributed.
+- Bounded normal-viewer `drop-corrected-flow-01` passed 44 action steps: six paused
+  and six playing early/middle/late forward/back seeks; six-request scrub with
+  two native dispatches/five supersessions/one latest presentation; pending-seek
+  fullscreen transitions; selected 2x through seek and 2x -> 0.5x while `1 ACTIVE`;
+  two actual 47-60s clip-loop wraps at 2x. Twenty complete target presentations
+  took 2-176.5ms (17 seeked-first / three frame-first), with no Play before both
+  facts and no media error/recovery/timeout. Same video/generation/session stayed
+  current. DOM event delivery can straddle step boundaries; full seek ordering
+  and state assertions, not arbitrary per-step event counts, establish layout.
+- Both existing analyzers accepted, app exits 0, all prepared fixture hashes
+  matched, zero owned processes/unobserved descendants and zero lost records.
+  Disposal had zero owned timers/listeners. No failed/replacement production run.
+  First normal preflight rejected a relative manifest path before launch; the
+  absolute-path preflight passed. No source fixture or user recordings changed.
+- Temporary ViewerScreen/benchmark taps restored byte-for-byte. Final 64 focused
+  and 361 frontend tests / 37 files passed; TypeScript noEmit, Vite build, two
+  benchmark builds and detached ordinary Tauri release passed. Ordinary binary
+  SHA256 `d66b3f7d80aa0be36f0e4582c43e48dffe7cd709b795bc56e61cf844edda2e0e`.
+  Assets contain no probe markers. No Rust/adapter-interface/tooling change;
+  unaffected prior native/tool checks are reused rather than claimed as fresh.
+- Detailed correction methods, test failures/dispositions, raw identities,
+  per-window/seek witnesses, source hashes and remaining limits:
+  `docs/performance/evidence/qb-replay-009-correction-20261023/report.md` and
+  `report.json`. Baseline diagnosis report and immutable v1-v3 plans preserved;
+  architecture now describes natural presentation and current play ownership.
+
+- 2026-10-23 correction C1: finalized/reviewed immutable v4 and validated its
+  canonical linkage. Removed the eager 1/16x seek pulse, its token/timer/helper
+  and nudge-only branches. Existing native/presentation deadlines and recovery
+  remain unchanged. Natural target RVFC and seeked may arrive in either order;
+  automatic resume preserves current play/pause/rate intent.
+- Focused review found the directly affected pre-existing user-play ownership
+  edge: completion could call play again and supersede a user play begun during
+  the wait. Both order regressions reproduced it. Automatic resume now calls play
+  only when the native element is paused; synchronous public play keeps ownership.
+  Review found no other material issue in the controller/test diff.
+- New regressions first failed against the old nudge behavior (10 failures/58
+  controller tests), then passed after correction. Final focused result is 64/64
+  across controller, HTML adapter and seek state. Coverage includes both event
+  orders, current pause/rate, public play, supersession, two loop wraps, finite
+  missing-target recovery/exhaustion and disposal. A stale nudge expectation and
+  an incorrect test-only timer-count assumption were corrected, not product limits.
+  A preliminary full frontend suite passed 359/359 before the user-play guard;
+  rerun the final suite after detaching probes. Initial sandbox logging failure
+  ran no tests; subsequent checks used the repository's required log access.
+
+- 2026-10-23 startup diagnosis complete: six 12s normal-replay windows yielded
+  121/4302 drops, 97 in the first 2s per cycle and 24 over the following 60s total.
+  Plain isolated native video yielded 0/4306 (first four focused cycles 0/2869;
+  last two lost document focus). Isolated unchanged controller yielded 46/4296,
+  confined to the two nudge cycles; four naturally completed seek cycles had zero.
+  Native pulse contrast yielded 30/5/36 drops for three 1/16x pulses and 0/0/0
+  for three 1x controls, all pulse drops detected within the first second.
+  Consecutive presented-frame counts plus roughly half-second source-time jumps
+  and submission-to-compositor gaps establish transient presentation disruption.
+  Normal cycle 1's five early drops and the 24 later drops remain un-attributed;
+  the proposed correction must quantify residual normal-replay loss.
+- No replay UI initialization is required to reproduce the burst; no long task
+  overlaps the main bursts. Exact browser clock/queue/decoder internals remain
+  unproven. No decoder investigation or host tuning was needed to choose the
+  application-level correction. Normal cycles 2/6 contain direct low-rate frame /
+  canplay samples despite delayed ratechange handlers reading the restored 1x.
+- All four completed runs have six bounded windows, app exit 0, preserved fixture
+  hashes, zero owned processes left and no lost records. Normal analyzer passed;
+  the isolated analyzers intentionally reject missing normal-viewer events and
+  are direct diagnostic evidence, not standard benchmark passes. `drop-normal-01`
+  failed before frontend startup in the restricted environment and is retained.
+  Full methods, limitations, identities, receipts and raw roots are in the report.
+- Temporary product attachments restored to their original SHA256 values. Ordinary
+  release build passed: SHA256
+  `db2363dc13d00e1edb02593528f689e7d0b0871d61b2c04a24d4e0528b8ac1c9`.
+  Product code, benchmark tools and immutable ExecPlans have no diff. No fix or
+  permanent monitoring was added. Independent read-only evidence review found no
+  remaining material issue after clarifying residual losses and asynchronous
+  rate-event sampling. Completed QB-PERF-005 evidence remains unchanged.
 
 - 2026-09-09 approved decoder clarification: self-contained reviewed v3 linked;
   v1/v2 preserved. Canonical criteria 3/4 and decoder verification explicitly allow
@@ -129,12 +218,17 @@ is needed; normal current-load status remains Unknown without trustworthy proven
 
 ## In flight
 
-None. Temporary raw decoder/frontend/adapter taps are detached; all three files
-match their session-start bytes. The ordinary executable was rebuilt successfully.
-Ignored temporary patch, source snapshots and raw evidence are retained for review.
-No permanent product or benchmark code was added by this resumed unit.
+None. Fresh read-only final review found no material issue in the controller/test
+diff, the paused guard or evidence. It checked all twelve named raw receipt hashes,
+normal before/after counts and event orders, flow assertions and remaining limits.
+Ignored artifacts/logs remain in `build/perf/qb-replay-009-correction-20261023/`.
 
 ## Remaining
+
+**Startup correction complete under approved v4.** Natural paused presentation,
+current play/pause/rate intent, lifecycle bounds and affected shared flows passed.
+No replacement pulse, permanent monitoring, host tuning, decoder/initialization
+change or broad campaign was needed. Only the following human gate remains.
 
 **2026-09-09: deferred / not performed (`not run`), not PASS.** The user reports
 that no suitable audio fixture is currently available and explicitly requests
@@ -173,6 +267,43 @@ or not-assessable observations remain open. After the report, reconcile acceptan
 and canonical completion without rerunning unaffected technical checks.
 
 ## Verification
+
+2026-10-23 correction final: `npm.cmd run test --prefix app -- playbackController.test.ts
+htmlVideoPlaybackAdapter.test.ts viewerSeekState.test.ts` passed 64 tests/three files;
+`npm.cmd run test --prefix app` passed 361 tests/37 files. Both temporary
+`desktop:build:benchmark` builds and detached `npm.cmd run desktop:build --prefix app`
+passed; the latter runs TypeScript noEmit and production frontend build. A separate
+preliminary type check passed, but the preliminary 359-test pass was superseded by
+the final 361-test run after the user-play guard. Full logs and final receipts are
+under the ignored correction directory. No native/tooling source changes invalidated
+their earlier checks. The existing Vite dynamic-import advisory and linker output
+warning remain; neither caused a build failure.
+
+Both production preflights and completed runs passed. Independent raw assertions
+reconcile windows/counters, accepted target tolerance, both natural event orders,
+44 flow steps, latest-wins scrub, two loop wraps, selected rate during seek,
+fixture preservation, bounded observer retention and complete owned cleanup.
+Ordinary viewer/benchmark source hashes match baseline; generated assets contain
+no temporary marker. Canonical validation passed for 86 roadmap items and 15 plan/checkpoint pairs;
+scoped whitespace/new-document checks passed. Fresh final review found no material
+issue after independently cross-checking both raw result sets, retained before data,
+restoration and the corrected ownership paths. No unrun human observation is PASS.
+
+2026-10-23 diagnosis: two temporary benchmark production builds and the restored
+ordinary `npm.cmd run desktop:build --prefix app` passed. Four completed diagnostic
+runs and the initial environment failure are retained. Native/frame analysis checks
+passed for all 24 windows: bounded duration, media advancement, monotonic counters,
+agreement with existing steady-playback deltas, fixture preservation, complete
+owned-process cleanup and no lost records. Analyzer dispositions and focus limits
+are explicitly recorded in the report and JSON; isolated rejection is not PASS.
+Source hashes match the pre-investigation bytes; built frontend assets contain no
+probe markers. No permanent product, Rust, benchmark-tool or ExecPlan changes:
+unaffected full app/Rust suites were not rerun and their older results are not
+represented as new passes. Final canonical validation passed for 86 roadmap items
+and 15 plan/checkpoint pairs. Scoped whitespace and new-artifact checks passed;
+only QB-REPLAY-009 evidence/notes changed in the roadmap. Criteria, verification,
+lifecycle fields and all other features, including completed QB-PERF-005, remain
+unchanged. Independent evidence review is complete with no material issue left.
 
 2026-09-09 manual gate: **deferred / not performed (`not run`), not PASS**, at the
 user's request because no suitable audio fixture is currently available. This
@@ -319,10 +450,10 @@ Final clean comparison uses `results/qb-replay-009-m5-seek-20260909-r1` and
 `qb-replay-009-m5-scrub-20260909-r1`, with unchanged fixture/runtime and preserved
 source hashes. Concise numbers: `build/perf/qb-replay-009/m5-comparison.json`.
 Seek passed with analyzer acceptance: five requests/dispatches/presentations,
-69–99.2 ms request-to-presentation versus M1's 72.6–162.9 ms. Scrub completed all
+69â€“99.2 ms request-to-presentation versus M1's 72.6â€“162.9 ms. Scrub completed all
 five bursts at their latest target, with 40 requests / 14 native dispatches / 26
 pending replacements, matching M1's request/dispatch/replacement counts. Latest
-presentation latency was 89.3–236.8 ms versus M1's 16.6–492.4 ms. Supersession
+presentation latency was 89.3â€“236.8 ms versus M1's 16.6â€“492.4 ms. Supersession
 observations differ after extraction (35 explicit cancellations versus eight in
 M1); do not compare those counts as equivalent scheduler work. Neither final case
 had media errors or recoveries, and scrub terminal reported one dropped frame of
@@ -580,6 +711,20 @@ playback success or evidence of an actual corrupt-media/driver fault.
 
 ## Decisions
 
+### 2026-10-23 focused startup diagnosis
+
+The completed memory optimization is not reopened. The owner is QB-REPLAY-009's
+paused-seek presentation boundary: independent event ordering can trigger an eager
+1/16x play/pause/rate-restoration sequence before the natural callback arrives.
+Controlled isolated reproduction establishes this as a correction target on the
+observed fixture/runtime. It does not prove every normal dropped frame has the
+same cause or identify a specific decoder/clock implementation. Prefer natural
+paused presentation with existing bounded failure/recovery; any fallback needs
+separate design and validation. Preserve original counters and startup windows.
+Do not add warm-up sleeps, hidden accounting exclusions, monitoring, decoder
+switches, initialization refactors or machine-specific settings. Proposed design
+only; current v3 and product source remain unchanged.
+
 ### 2026-09-09 user-directed manual verification deferral
 
 Postpone only the remaining human audible/A-V observations because no suitable
@@ -755,18 +900,16 @@ adopted acceptance change or passing result**):
 
 ## Blockers
 
-Only required human audible output and viewer/export A/V observations remain,
-deferred / not performed because no suitable audio fixture is currently available.
-Hardware-normal evidence is obtained for the controlled canonical
-production load; arbitrary-load provenance is not required under approved v3.
-No unresolved product defect or technical acceptance blocker is established.
-Keep non-done until the remaining human evidence is reported and assessed.
+No technical blocker remains for the approved startup correction. Full feature
+completion still requires human audible output and viewer/export A/V observations,
+explicitly deferred because no suitable audio fixture is available. Hardware-normal
+evidence is already obtained for the controlled canonical load; runtime Unknown
+remains truthful, and arbitrary-load decoder provenance is not required by v4.
+Keep the feature non-done until the unchanged human gate is actually satisfied.
 
 ## Next action
 
-Stop engineering work here. Resume the deferred checklist under Remaining when
-a suitable audio fixture and human verification are available. If those checks
-pass, record the actual results and reconcile final completion/canonical validation.
-If they reveal a concrete defect, investigate only that dependency cone. Do not
-build generic fixture/import infrastructure or rerun controlled decoder capture,
-corrective r2 or completed M1-M5 work merely for confidence.
+Stop correction work: no additional code or production run is warranted.
+When the user later provides a suitable audio fixture and resumes the human gate,
+perform only the retained checklist above and reconcile full-feature completion.
+Keep completed QB-PERF-005 and unaffected engineering evidence unchanged.

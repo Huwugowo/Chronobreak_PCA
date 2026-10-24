@@ -217,30 +217,123 @@ describe("concrete playback controller", () => {
     media.metadata(); expect(media.seeks[media.seeks.length - 1]).toBe(tick(70));
   });
 
-  it("restores the newest selected rate when a paused nudge completes", async () => {
-    const { media, controller } = setup(); media.metadata();
-    const result = controller.seek(tick(10)); media.seeked();
-    expect(media.state.rate).toBe(1 / 16);
-    controller.setRate(4); controller.setVolume(0.3); controller.setMuted(true);
-    media.frame(tick(10));
+  it.each([false, true])("completes a paused seek without playing or changing rate (seeked first: %s)", async seekedFirst => {
+    const { media, controller } = setup(); media.metadata(); controller.setRate(2);
+    const rates = [...media.rates];
+    const result = controller.seek(tick(10));
+    if (seekedFirst) media.seeked(); else media.frame(tick(10));
+    expect(media.playCalls).toBe(0); expect(media.state.paused).toBe(true);
+    expect(media.rates).toEqual(rates);
+    vi.advanceTimersByTime(800);
+    if (seekedFirst) media.frame(tick(10)); else media.seeked();
+    expect(await result).toMatchObject({ status: "presented", presented: tick(10) });
+    expect(media.playCalls).toBe(0); expect(media.rates).toEqual(rates);
+    expect(media.state).toMatchObject({ paused: true, rate: 2 });
+    expect(controller.snapshot().queue).toBe("IDLE");
+  });
+
+  it.each([false, true])("resumes once at the selected rate after both seek facts (seeked first: %s)", async seekedFirst => {
+    const { media, controller } = setup(); media.metadata(); controller.setRate(2);
+    const result = controller.seek(tick(10), { playAfter: true });
+    if (seekedFirst) media.seeked(); else media.frame(tick(10));
+    expect(media.playCalls).toBe(0); expect(media.state.paused).toBe(true);
+    vi.advanceTimersByTime(800);
+    if (seekedFirst) media.frame(tick(10)); else media.seeked();
     expect(await result).toMatchObject({ status: "presented" });
-    expect(media.state).toMatchObject({ rate: 4, paused: true, volume: 0.3, muted: true });
+    expect(media.playCalls).toBe(1);
+    expect(media.state).toMatchObject({ paused: false, rate: 2 });
+    media.seeked(); media.frame(tick(10 + 1 / 60));
+    expect(media.playCalls).toBe(1);
+  });
+
+  it.each([false, true])("honors pause between the two seek facts (seeked first: %s)", async seekedFirst => {
+    const { media, controller } = setup(); media.metadata();
+    const result = controller.seek(tick(10), { playAfter: true });
+    if (seekedFirst) media.seeked(); else media.frame(tick(10));
+    controller.pause();
+    if (seekedFirst) media.frame(tick(10)); else media.seeked();
+    expect(await result).toMatchObject({ status: "presented" });
+    expect(media.playCalls).toBe(0); expect(media.state.paused).toBe(true);
     expect(controller.snapshot().desiredPlaying).toBe(false);
   });
 
-  it("limits nudge duration to 750ms even when native play never resolves", () => {
-    const { media, controller } = setup(); media.metadata(); media.playResult = () => new Promise(() => {});
-    void controller.seek(tick(10)); media.seeked();
-    vi.advanceTimersByTime(750);
-    expect(media.state).toMatchObject({ paused: true, rate: 1 });
+  it.each([false, true])("applies the newest selected rate while target presentation is pending (play after: %s)", async playAfter => {
+    const { media, controller } = setup(); media.metadata();
+    const result = controller.seek(tick(10), { playAfter }); media.seeked();
+    controller.setRate(4); controller.setVolume(0.3); controller.setMuted(true);
+    expect(media.state).toMatchObject({ rate: 4, paused: true });
+    expect(media.playCalls).toBe(0);
+    expect(controller.snapshot().rate).toMatchObject({ selected: 4, applied: 4, outcome: "suspended" });
+    media.frame(tick(10));
+    expect(await result).toMatchObject({ status: "presented" });
+    expect(media.state).toMatchObject({ rate: 4, paused: !playAfter, volume: 0.3, muted: true });
+    expect(media.playCalls).toBe(playAfter ? 1 : 0);
+    expect(controller.snapshot().desiredPlaying).toBe(playAfter);
   });
 
-  it("never starts a nudge when the temporary rate assignment is rejected", () => {
+  it("bounds missing target presentation even when nonqualifying frames keep arriving", async () => {
     const { media, controller } = setup(); media.metadata();
-    const setRate = media.setRate.bind(media);
-    media.setRate = (rate) => { if (rate === 1 / 16) throw new Error("rate rejected"); setRate(rate); };
-    void controller.seek(tick(10)); media.seeked(); vi.advanceTimersByTime(750);
-    expect(media.playCalls).toBe(0); expect(media.state.paused).toBe(true);
+    const result = controller.seek(tick(10));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      media.seeked(tick(10));
+      for (let sample = 0; sample < 3; sample++) {
+        vi.advanceTimersByTime(499); media.frame(tick(9));
+        expect(controller.snapshot().seek.presented).toBeNull();
+      }
+      expect(media.opens).toHaveLength(attempt + 1);
+      vi.advanceTimersByTime(3);
+      if (attempt < 2) { media.metadata(); expect(media.seeks[media.seeks.length - 1]).toBe(tick(10)); }
+    }
+    expect(await result).toMatchObject({ status: "failed", reason: "First presentation timed out after 1500 ms" });
+    expect(media.opens).toHaveLength(3); expect(media.playCalls).toBe(0);
+    expect(controller.snapshot().readiness).toBe("degraded");
+    expect(controller.snapshot().owned).toMatchObject({ timers: 0, listeners: 0, frames: 0 });
+    vi.advanceTimersByTime(60_000); expect(media.opens).toHaveLength(3);
+  });
+
+  it("supersedes a presentation waiter without allowing its old callback to resume playback", async () => {
+    const { media, controller } = setup(); media.metadata();
+    const first = controller.seek(tick(10), { playAfter: true }); media.seeked();
+    const old = media.allCallbacks[media.allCallbacks.length - 1]!;
+    const latest = controller.seek(tick(20), { playAfter: false });
+    expect(await first).toMatchObject({ status: "superseded" });
+    old(tick(10), performance.now());
+    expect(controller.snapshot().seek.presented).toBeNull(); expect(media.playCalls).toBe(0);
+    vi.advanceTimersByTime(100); media.seeked(tick(20)); media.frame(tick(20));
+    expect(await latest).toMatchObject({ status: "presented", target: tick(20) });
+    expect(media.state.paused).toBe(true); expect(media.playCalls).toBe(0);
+    vi.advanceTimersByTime(1_500); expect(media.opens).toHaveLength(1);
+  });
+
+  it("keeps user play synchronous during a presentation wait and honors a subsequent pause", async () => {
+    const { media, controller } = setup(); media.metadata();
+    const seeking = controller.seek(tick(10)); media.seeked();
+    const playing = controller.play();
+    expect(media.playCalls).toBe(1); expect(media.state.paused).toBe(false);
+    expect(await playing).toMatchObject({ status: "playing" });
+    controller.pause(); media.frame(tick(10));
+    expect(await seeking).toMatchObject({ status: "presented" });
+    expect(media.playCalls).toBe(1); expect(media.state.paused).toBe(true);
+  });
+
+  it.each([false, true])("preserves user play while the second seek fact arrives (seeked first: %s)", async seekedFirst => {
+    const { media, controller } = setup(); media.metadata();
+    const seeking = controller.seek(tick(10));
+    if (seekedFirst) media.seeked(); else media.frame(tick(10));
+    let resolve!: () => void;
+    media.playResult = () => {
+      media.update({ paused: false }); media.emit("play");
+      return new Promise<void>(done => { resolve = done; });
+    };
+    const playing = controller.play();
+    expect(media.playCalls).toBe(1);
+    if (seekedFirst) media.frame(tick(10)); else media.seeked();
+    expect(media.playCalls).toBe(1);
+    resolve();
+    expect(await playing).toMatchObject({ status: "playing" });
+    expect(await seeking).toMatchObject({ status: "presented" });
+    expect(controller.snapshot().desiredPlaying).toBe(true);
+    controller.dispose(); expect(vi.getTimerCount()).toBe(0);
   });
 
   it("reports native and synchronous open failures as failures rather than supersession", async () => {
@@ -352,6 +445,21 @@ describe("concrete playback controller", () => {
     expect(media.seeks).toEqual([tick(10), tick(11)]);
   });
 
+  it("resumes each loop at the selected rate after natural target presentation", async () => {
+    const { media, controller } = setup(); media.metadata(); controller.setRate(2);
+    controller.setLoopRange({ mediaId: timeline.mediaId, startFrame: 600 as FrameBoundary, endFrameExclusive: 720 as FrameBoundary });
+    await controller.play();
+    for (let wrap = 0; wrap < 2; wrap++) {
+      vi.advanceTimersByTime(100); media.frame(tick(12)); media.emit("ended");
+      media.seeked(tick(10));
+      expect(media.playCalls).toBe(wrap + 1); expect(media.state.paused).toBe(true);
+      media.frame(tick(10)); await Promise.resolve();
+      expect(media.playCalls).toBe(wrap + 2); expect(media.state).toMatchObject({ paused: false, rate: 2 });
+    }
+    expect(media.seeks).toEqual([tick(10), tick(10)]);
+    expect(media.rates).toEqual([1, 2]);
+  });
+
   it("recovers on the same adapter, rotates identity and restores latest target/preferences", async () => {
     const { media, controller } = setup(); media.metadata();
     controller.setRate(2); controller.setVolume(0.4); controller.setMuted(true);
@@ -375,6 +483,18 @@ describe("concrete playback controller", () => {
     expect([...media.handlers.values()].every((set) => set.size === 0)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
     expect(controller.snapshot().readiness).toBe("disposed");
+  });
+
+  it("disposes a presentation wait without late resumption or recovery", async () => {
+    const { media, controller } = setup(); media.metadata();
+    const seeking = controller.seek(tick(10), { playAfter: true }); media.seeked();
+    const old = media.allCallbacks[media.allCallbacks.length - 1]!;
+    controller.dispose(); old(tick(10), performance.now()); vi.advanceTimersByTime(60_000);
+    expect(await seeking).toMatchObject({ status: "superseded" });
+    expect(media.playCalls).toBe(0); expect(media.opens).toHaveLength(1);
+    expect(media.callbacks.size).toBe(0); expect(media.released).toBe(true);
+    expect(controller.snapshot().owned).toMatchObject({ timers: 0, listeners: 0, frames: 0 });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("retains a bounded diagnostics history", () => {
@@ -537,7 +657,7 @@ describe("presented rate capability and audio intent", () => {
     expect(media.opens).toHaveLength(2); controller.dispose();
   });
 
-  it("rejects rate samples owned by an obsolete selection and restores the latest nudge intent", async () => {
+  it("rejects obsolete rate samples and applies the latest selection through a paused seek", async () => {
     const { media, controller } = setup(); media.metadata(); await controller.play();
     controller.setRate(8);
     const obsolete = media.allCallbacks[media.allCallbacks.length - 1]!;
@@ -545,7 +665,7 @@ describe("presented rate capability and audio intent", () => {
     expect(controller.snapshot().rate.observed).toBeNull();
     const seek = controller.seek(tick(10), { playAfter: false }); media.seeked();
     controller.setRate(4); controller.setRate(0.5);
-    expect(media.read().rate).toBe(1 / 16);
+    expect(media.read().rate).toBe(0.5);
     media.frame(tick(10)); await seek;
     expect(controller.snapshot().rate).toMatchObject({ selected: 0.5, applied: 0.5, observed: null, outcome: "suspended" });
     await controller.play(); presentFor(media, 0.5);

@@ -142,10 +142,8 @@ export function createPlaybackController(
   let frameVersion = 0;
   let frameHandle: number | undefined;
   let playToken = 0;
-  let nudgeToken = 0;
   let finishPlay: ((value: PlaybackOutcome) => void) | undefined;
   let finishOpen: ((value: PlaybackOutcome) => void) | undefined;
-  let nudge: PendingSeek | undefined;
   let lastDispatchAt = -Infinity;
   let loadStarted = false;
   let metadataReady = false;
@@ -245,15 +243,6 @@ export function createPlaybackController(
     try { media.setVolume(volume); }
     catch (reason) { volumeAssignmentFailed = true; emit("audio_control_limited", { control: "volume", reason: failureText(reason) }); }
   };
-  const stopNudge = () => {
-    if (!nudge) return;
-    nudge = undefined;
-    clearTimer("nudge");
-    nudgeToken++;
-    if (!desiredPlaying) media.pause();
-    applyEffectiveRate();
-    resetRateObservation();
-  };
   const cancelPlay = (outcome: PlaybackOutcome = { status: "superseded" }) => {
     playToken++;
     clearTimer("play");
@@ -264,7 +253,6 @@ export function createPlaybackController(
   const cancelWork = (status: SeekOutcome["status"] = "superseded", reason = "Media generation ended") => {
     for (const name of [...timers.keys()]) clearTimer(name);
     cancelFrames();
-    stopNudge();
     listeners.splice(0).forEach((remove) => remove());
     settle(active, status, reason);
     settle(pending, status, reason);
@@ -326,7 +314,7 @@ export function createPlaybackController(
     const observed = media.read();
     if (!timeline || readiness !== "ready" || !metadataReady || !currentSource() || !desiredPlaying
       || activationRequired || observed.paused || observed.ended || observed.hidden || observed.seeking
-      || active || pending || waiter || nudge || waitingSince !== null || observed.readyState < 3) return false;
+      || active || pending || waiter || waitingSince !== null || observed.readyState < 3) return false;
     const end = loop ? frameBoundaryToReplayTick(loop.endFrameExclusive, timeline.video.frameRate) : timeline.video.replayEnd;
     // There must be room for a full window before an intentional discontinuity.
     return observed.tick !== null && end - observed.tick > rate.effective * 3 * REPLAY_TICKS_PER_SECOND + 2 * frameTicks();
@@ -403,8 +391,11 @@ export function createPlaybackController(
     publish();
   }
   const resumeDesired = () => {
-    if (desiredPlaying && readiness === "ready") void startPlay();
-    else if (!nudge) media.pause();
+    if (desiredPlaying && readiness === "ready") {
+      // A user play during the seek may already own native playback and its promise.
+      if (media.read().paused) void startPlay();
+    }
+    else media.pause();
   };
 
   function startPlay(actionId?: string): Promise<PlaybackOutcome> {
@@ -480,12 +471,11 @@ export function createPlaybackController(
               settle(request, "presented");
               if (waiter === request) waiter = undefined;
               clearTimer("presentation");
-              stopNudge();
               if (!active) resumeDesired();
               publish();
             }
             frameSubscribers.forEach((subscriber) => subscriber(tick, "rvfc"));
-            if (lastFrameTick !== null && tick > lastFrameTick && desiredPlaying && !active && !waiter && !nudge) {
+            if (lastFrameTick !== null && tick > lastFrameTick && desiredPlaying && !active && !waiter) {
               lastAdvancingAt = at;
               healthySince ??= at;
               if (at - healthySince >= 10_000) consecutiveFailures = 0;
@@ -566,7 +556,7 @@ export function createPlaybackController(
     settle(waiter, "superseded", "Newer seek intent");
     if (pending) emit("seek_pending_replaced", { target_ms: ms(pending.target), replacement_target_ms: ms(dispatched) }, pending);
     settle(pending, "superseded", "Newer seek intent");
-    stopNudge(); waiter = undefined;
+    waiter = undefined;
     clearTimer("presentation");
     cancelFrames();
     intent++;
@@ -599,30 +589,14 @@ export function createPlaybackController(
       state = { ...state, dispatched: null };
       resumeDesired(); publish(); return;
     }
+    // seeked and the target frame can arrive in either order. Keep the armed
+    // callback and paused media until natural presentation, then resume intent.
     waiter = request;
     later("presentation", 1_500, () => {
       if (waiter !== request) return;
       settle(request, "failed", "First presentation timed out after 1500 ms");
       recover("First presentation timed out after 1500 ms");
     });
-    nudge = request;
-    try { media.setRate(1 / 16); }
-    catch {
-      nudge = undefined;
-      media.pause();
-      emit("nudge_unavailable", { reason: "Native playback rejected the temporary nudge rate" });
-      publish(); return;
-    }
-    const version = ++nudgeToken;
-    const generation = state.generation;
-    later("nudge", 750, stopNudge);
-    try {
-      void media.play().catch((reason: unknown) => {
-        if (version !== nudgeToken || generation !== state.generation || waiter !== request) return;
-        if (reason instanceof Error && reason.name === "NotAllowedError") activationRequired = true;
-        stopNudge(); publish();
-      });
-    } catch { stopNudge(); }
     publish();
   }
 
@@ -644,7 +618,7 @@ export function createPlaybackController(
       const observed = media.read();
       if (metadataReady && desiredPlaying && !observed.hidden && !observed.paused && observed.readyState < 3) waitingSince ??= clock.now();
       if (waitingSince !== null && clock.now() - Math.max(waitingSince, lastAdvancingAt) >= 5_000
-        && desiredPlaying && !observed.hidden && !active && !pending && !waiter && !nudge) {
+        && desiredPlaying && !observed.hidden && !active && !pending && !waiter) {
         const reason = "Buffering did not recover within 5000 ms";
         if (rate.limitation) { failRate("limited", reason); return; }
         if (rate.selected !== 1 && rate.selected !== lastVerifiedRate) {
@@ -704,7 +678,7 @@ export function createPlaybackController(
           maybeLoop(observed.tick);
         }
         return;
-      case "ratechange": if (!nudge) rate = { ...rate, applied: observed.rate }; break;
+      case "ratechange": rate = { ...rate, applied: observed.rate }; break;
       case "visibilitychange": waitingSince = null; resetRateObservation(); break;
     }
     watchRate();
@@ -788,14 +762,14 @@ export function createPlaybackController(
     },
     play(actionId?: string) {
       if (!isLive()) return Promise.resolve<PlaybackOutcome>({ status: "unavailable" });
-      desiredPlaying = true; stopNudge();
+      desiredPlaying = true;
       lastAdvancingAt = clock.now();
       return startPlay(actionId);
     },
     pause(): PlaybackOutcome {
       if (!isLive()) return { status: "unavailable" };
       desiredPlaying = false; cancelPlay();
-      stopNudge(); media.pause(); publish(); return { status: "paused" };
+      media.pause(); publish(); return { status: "paused" };
     },
     seek,
     setRate(selected: PlaybackRate) {
@@ -803,7 +777,7 @@ export function createPlaybackController(
       if (!isLive()) return;
       resetRateObservation(); fallbackReloaded = false;
       rate = { selected, applied: rate.applied, effective: selected, observed: null, outcome: "pending", limitation: null };
-      if (!nudge) applyEffectiveRate();
+      applyEffectiveRate();
       cancelFrames(); armFrame(); watchRate();
       publish();
     },
