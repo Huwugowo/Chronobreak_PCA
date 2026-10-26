@@ -44,9 +44,9 @@
       "priority": "P2",
       "status": "not-started",
       "evidence": [],
-      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "notes": "2026-10-26 audit A-03 refinement: preserve validated published members; reclaim only owned unpublished staging. Legacy unowned .part files remain untouched. User authorized autonomous planning, implementation, verification and milestone commits on 2026-10-26.",
       "id": "QB-CLIP-013",
-      "stage": "draft",
+      "stage": "ready",
       "name": "Recover interrupted clip export publication",
       "description": "Define and prove recovery after process death during staged export and multi-preset publication.",
       "area": "export",
@@ -56,16 +56,19 @@
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-clip-013-interrupted-export-recovery.md",
+        "progress": "docs/execution/qb-clip-013.md"
       },
       "acceptance_criteria": [
-        "Define app-owned staging/batch identity and a safe restart reconciliation policy, including whether to preserve verified completed members and how to distinguish active work.",
-        "Forced termination at encode, probe, thumbnail and rename boundaries leaves an intelligible recovered library without deleting preexisting clips or source recordings."
+        "Every new export uses a strict bounded app-owned batch manifest and OS-held lease; normal recovery skips active owners and reclaims only valid abandoned staging without recursive deletion or arbitrary manifest paths.",
+        "Only fully validated MP4 members are published with atomic no-replace semantics. A process death or publication error may preserve a completed subset; recovery never deletes or overwrites final clips or source recordings.",
+        "Normal refresh/export recovery is idempotent, precedes snapshot storage/card calculation, respects the captured approved root and leaves benchmark background refresh read-only; explicit benchmark exports do not reclaim earlier staging. Malformed, foreign, unsafe or locked artifacts are retained with diagnostics.",
+        "Forced process termination during encode, validation/probe, thumbnail and every multi-preset publication boundary produces the defined recovered library; source and preexisting-output hashes remain unchanged."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Design a sentinel-owned temporary-library crash/restart matrix before implementation; include storage accounting and source/preexisting-output preservation."
+          "description": "Sentinel-owned temporary-library unit and packaged-runtime hard-kill matrix: live lease, strict/malformed ownership, collision, reparse/root mismatch, idempotence, decoded completed subset, source/preexisting SHA and exact cards/MP4 storage accounting. Run backend regression, fmt, normal/benchmark clippy and canonical validation."
         }
       ]
     },
