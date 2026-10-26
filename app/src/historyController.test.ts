@@ -11,6 +11,126 @@ const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (erro
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
 
+async function overlappingImports() {
+  vi.useFakeTimers();
+  const o = origin("A", 1), events: HistoryQueryObservation[] = [];
+  const pending = { media_id: game.media_id!, status: "pending", batches: 4 } as ImportProgress;
+  const imports: ReturnType<typeof deferred<ImportProgress>>[] = [];
+  const queries: ReturnType<typeof deferred<HistoryPage>>[] = [];
+  let activeImports = 0, activeQueries = 0, maximumImports = 0, maximumQueries = 0;
+  const api = {
+    current: () => true,
+    catalog: vi.fn(async (token: string) => ({ ...catalog(token), items: [{ game_timestamp: game.timestamp, media_id: game.media_id!, progress: pending }] } as CatalogPage)),
+    recording: vi.fn(() => {
+      maximumImports = Math.max(maximumImports, ++activeImports);
+      const result = deferred<ImportProgress>(); imports.push(result);
+      return result.promise.finally(() => activeImports--);
+    }),
+    history: vi.fn((_token: string, _query: unknown): Promise<HistoryPage> => {
+      maximumQueries = Math.max(maximumQueries, ++activeQueries);
+      if (api.history.mock.calls.length === 1) return Promise.resolve(page()).finally(() => activeQueries--);
+      const result = deferred<HistoryPage>(); queries.push(result);
+      return result.promise.finally(() => activeQueries--);
+    }),
+    observeQuery: (event: HistoryQueryObservation) => events.push(event),
+  };
+  const controller = new HistoryController(api);
+  controller.setContext(o, [game]);
+  await vi.advanceTimersByTimeAsync(8);
+  controller.setQuery({ limit: 50, search: "foreground" }, "foreground");
+  return { controller, api, events, pending, imports, queries,
+    bounds: () => ({ maximumImports, maximumQueries }),
+    finish: async () => {
+      controller.close();
+      for (const result of imports) result.resolve(pending);
+      for (const result of queries) result.resolve(page());
+      await flush();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  };
+}
+
+it("admits the held foreground query despite repeated imports and coalesces later refreshes", async () => {
+  const fixture = await overlappingImports();
+  const { controller, api, imports, queries, pending, events } = fixture;
+  try {
+    for (let n = 0; n < 3; n++) {
+      imports[n].resolve(pending); await flush();
+      await vi.advanceTimersByTimeAsync(4);
+    }
+    expect(api.history).toHaveBeenCalledTimes(2);
+    queries[0].resolve({ ...page(), indexed_recordings: 7 }); await flush();
+    expect(events.filter(event => event.actionId === "foreground").map(event => event.kind))
+      .toEqual(["history_query_scheduled", "history_query_dispatched", "history_query_completed", "history_query_admitted"]);
+    expect(controller.value.page?.indexed_recordings).toBe(7);
+    expect(api.history).toHaveBeenCalledTimes(3); // One refresh for all three imports.
+    imports[3].resolve(pending); await flush();
+    expect(api.history).toHaveBeenCalledTimes(3);
+    queries[1].resolve(page()); await flush();
+    expect(api.history).toHaveBeenCalledTimes(4); // Import during refresh was retained.
+    expect(fixture.bounds()).toEqual({ maximumImports: 1, maximumQueries: 1 });
+  } finally { await fixture.finish(); }
+});
+
+it("keeps foreground priority when an import completes after the foreground result", async () => {
+  const fixture = await overlappingImports();
+  try {
+    fixture.queries[0].resolve(page()); await flush();
+    expect(fixture.events.filter(event => event.actionId === "foreground" && event.kind === "history_query_admitted")).toHaveLength(1);
+    expect(fixture.api.history).toHaveBeenCalledTimes(2);
+    fixture.imports[0].resolve(fixture.pending); await flush();
+    expect(fixture.api.history).toHaveBeenCalledTimes(3);
+  } finally { await fixture.finish(); }
+});
+
+it("prioritizes newer user input over dirty refresh and consumes commits before dispatch", async () => {
+  const fixture = await overlappingImports();
+  try {
+    fixture.imports[0].resolve(fixture.pending); await flush();
+    fixture.controller.setQuery({ search: "latest", limit: 50 }, "latest");
+    fixture.queries[0].resolve(page()); await flush();
+    expect(fixture.api.history).toHaveBeenCalledTimes(3);
+    expect(fixture.api.history).toHaveBeenLastCalledWith("scan-1", expect.objectContaining({ search: "latest" }));
+    fixture.queries[1].resolve(page()); await flush();
+    expect(fixture.api.history).toHaveBeenCalledTimes(3);
+    expect(fixture.events.filter(event => event.actionId === "latest" && event.kind === "history_query_admitted")).toHaveLength(1);
+  } finally { await fixture.finish(); }
+});
+
+it("releases a stale context query into current-context work and discards its dirty bit", async () => {
+  for (const nextOrigin of [origin("B", 2), origin("A", 3)]) {
+    const fixture = await overlappingImports();
+    try {
+      fixture.imports[0].resolve(fixture.pending); await flush();
+      fixture.controller.setContext(null);
+      fixture.controller.setContext(nextOrigin, [game]);
+      fixture.controller.setQuery({ search: "new context", limit: 50 }, "new-context");
+      await vi.advanceTimersByTimeAsync(4);
+      fixture.queries[0].resolve(page()); await flush();
+      expect(fixture.api.history).toHaveBeenLastCalledWith(nextOrigin.token, expect.objectContaining({ search: "new context" }));
+      fixture.queries[1].resolve(page()); await flush();
+      expect(fixture.api.history).toHaveBeenCalledTimes(3);
+      expect(fixture.events.filter(event => event.actionId === "foreground" && event.kind === "history_query_admitted")).toHaveLength(0);
+      expect(fixture.events.filter(event => event.actionId === "new-context" && event.kind === "history_query_admitted")).toHaveLength(1);
+    } finally { await fixture.finish(); }
+  }
+});
+
+it("coalesces dirty error recovery once and close prevents any new refresh", async () => {
+  const fixture = await overlappingImports();
+  try {
+    fixture.imports[0].resolve(fixture.pending); await flush();
+    fixture.queries[0].reject(new Error("query failed")); await flush();
+    expect(fixture.api.history).toHaveBeenCalledTimes(3);
+    expect(fixture.controller.value).toMatchObject({ error: null, loading: true });
+    await vi.advanceTimersByTimeAsync(4);
+    fixture.imports[1].resolve(fixture.pending); await flush();
+    fixture.controller.close();
+    fixture.queries[1].resolve(page()); await flush();
+    expect(fixture.api.history).toHaveBeenCalledTimes(3);
+  } finally { await fixture.finish(); }
+});
+
 it("distinguishes queued replacements from completed superseded work without cancelling IPC", async () => {
   vi.useFakeTimers();
   const events: HistoryQueryObservation[] = [];

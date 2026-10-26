@@ -79,9 +79,12 @@
     {
       "kind": "feature",
       "priority": "P2",
-      "status": "not-started",
-      "evidence": [],
-      "notes": "2026-10-26 audit A-04: bounded exploration confirms import completion advances the active user-query generation. Promote to planned before lifecycle scheduling changes; deterministic pre-fix regression is the first implementation gate.",
+      "status": "done",
+      "evidence": [
+        "2026-10-26: deterministic held foreground query plus three pending import completions failed before correction (completed/superseded), then passed with one admitted foreground action and one coalesced refresh. Imports no longer advance an active admission generation; dispatch consumes the dirty bit and pending user input/pagination takes priority.",
+        "Five new deferred-ordering tests cover repeated/reversed completion, another import during auto refresh, latest input, A/B/A/current-context release, dirty error and close; one active query/import remains bounded. All 13 controller tests and full frontend 38 files / 375 tests passed; TypeScript/Vite build, canonical validation and whitespace checks passed. Fresh scheduling review: no actionable issues. Details and logs: docs/execution/qb-lib-019.md."
+      ],
+      "notes": "Audit A-04 scheduling violation reproduced and corrected. Generation-based explicit supersession and benchmark observations remain; retry cadence is handled separately by QB-LIB-020.",
       "id": "QB-LIB-019",
       "stage": "ready",
       "name": "Prove foreground search admission during imports",

@@ -6,11 +6,11 @@ Updated: 2026-10-26
 
 ## Current milestone
 
-Planning handoff.
+Complete.
 
 ## Active unit
 
-Add deterministic regression and demonstrate failure before changing scheduling.
+None.
 
 ## Completed
 
@@ -18,19 +18,28 @@ Read-only scout confirmed import completions advance foreground admission
 generation; existing tests do not exercise import-first ordering.
 Plan review approved the dirty-bit design after explicit pagination priority,
 current-context settlement, repeated-import and error-path verification clarifications.
+Controlled repeated-import regression failed before correction: foreground action
+completed as superseded instead of admitted. Implemented one coalesced dirty bit
+without advancing active generation. Five new cases cover repeated/reversed
+completion, latest input priority, A/B/A/current-context release, dirty error and
+close. All 13 controller tests and TypeScript/Vite build now pass.
 
 ## In flight
 
-No product changes at the atomic planning handoff.
+None.
 
 ## Remaining
 
-Failing characterization; coalesced scheduling; deferred ordering/context tests;
-frontend verification and completion evidence.
+None.
 
 ## Verification
 
-No dynamic characterization or implementation verification yet.
+Pre-fix failure: `.codex/logs/command-20261026-135105.log`.
+Post-fix 13/13 controller tests: `command-20261026-135138.log`.
+TypeScript/Vite build: `command-20261026-135143.log`.
+Full frontend: 38 files / 375 tests passed, `command-20261026-135216.log`.
+Focused implementation review found no actionable issues. Canonical linked-file
+validation and whitespace checks passed. No backend or IPC change.
 
 ## Deviations
 
@@ -49,5 +58,4 @@ None.
 
 ## Next action
 
-Finalize challenged plan, validate/link and commit the handoff, then read this
-checkpoint before the plan and run the regression before changing scheduling.
+No feature work remains. Continue separately under QB-LIB-020.

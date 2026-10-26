@@ -258,6 +258,14 @@ query, persisted data or final-result substitution is involved.
 It does not interpolate roster state across gaps or request SQL data every frame.
 Clip export obtains exact frame authority from the media descriptor.
 
+History queries and imports use independent single active lanes. Import completion
+marks an outstanding query dirty without changing its admission generation. On
+settlement, pending user input/pagination runs first; otherwise one coalesced
+automatic refresh incorporates completed imports. Dispatch consumes the dirty
+bit. Context replacement/disposal clears it, while a stale query releasing the
+global lane still permits current-context work. Explicit newer input keeps its
+existing generation-based supersession and benchmark observation semantics.
+
 Settings can rebuild searchable data. Reset exclusively acquires the index writer
 and both readers, quarantines only the generated SQLite/WAL/SHM files, and creates
 a fresh catalog. A corrupt cache can therefore recover without touching source

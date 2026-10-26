@@ -124,7 +124,8 @@ export const waitForBenchmarkMemoryWindow = async (observer: ReplayBenchmarkObse
 };
 
 // This named diagnostic deliberately keeps the normal importer running. Its
-// refresh queries may supersede input; that is measured, never called cancelled.
+// refresh queries coalesce behind active input; explicit replacements remain
+// measured as superseded, never called cancelled.
 export const runBenchmarkIndexSearch = async (observer: ReplayBenchmarkObserver,
   history: Pick<HistoryController, "value" | "subscribe">, term: string, catalogCount: number,
   parentSignal: AbortSignal) => {

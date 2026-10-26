@@ -31,6 +31,7 @@ export class HistoryController {
   private queryActionId: string | undefined;
   private queryPending = false;
   private queryActive = false;
+  private queryDirty = false;
   private importActive = false;
   private catalogPending = false;
   private catalogAfter: string | null = null;
@@ -60,7 +61,7 @@ export class HistoryController {
     this.context = origin ? { origin, games } : null;
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
-    this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined;
+    this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
     this.publish({ page: null, loading: origin !== null, indexing: origin !== null, error: null, indexError: null, laterPage: false });
     this.schedule();
   }
@@ -84,10 +85,18 @@ export class HistoryController {
     this.observeQuery("history_query_scheduled", this.queryGeneration, this.queryActionId);
     this.publish({ loading: true, error: null }); this.pumpQuery();
   }
+  private refreshQuery() {
+    if (!this.context || !this.current(this.context)) return;
+    // Imports invalidate the data, not an outstanding foreground intent. One
+    // coalesced refresh follows settlement; pending user input takes priority.
+    if (this.queryActive) { this.queryDirty = true; return; }
+    if (this.queryPending) this.pumpQuery();
+    else this.requestQuery();
+  }
   private pumpQuery() {
     const context = this.context;
     if (!context || !this.current(context) || this.catalogPending || this.queryActive || !this.queryPending) return;
-    this.queryPending = false; this.queryActive = true;
+    this.queryPending = false; this.queryActive = true; this.queryDirty = false;
     const generation = this.queryGeneration, query = this.query, actionId = this.queryActionId;
     this.observeQuery("history_query_dispatched", generation, actionId);
     void this.api.history(context.origin.token, query).then(page => {
@@ -103,7 +112,11 @@ export class HistoryController {
     }).catch(error => {
       this.observeQuery("history_query_error", generation, actionId);
       if (this.current(context) && generation === this.queryGeneration) this.publish({ loading: false, error: libraryError(error) });
-    }).finally(() => { this.queryActive = false; this.pumpQuery(); });
+    }).finally(() => {
+      this.queryActive = false;
+      if (this.queryPending) this.pumpQuery();
+      else if (this.queryDirty) this.refreshQuery();
+    });
   }
   private schedule() {
     if (this.closed || this.importActive || !this.context || (!this.catalogPending && !this.pending.size)) return;
@@ -139,8 +152,7 @@ export class HistoryController {
       this.publish({ indexing: this.catalogPending || this.pending.size > 0 });
       // Preserve input queued before the catalog token existed. Recording
       // imports can continue independently once catalog admission completes.
-      if (catalog && this.queryPending) this.pumpQuery();
-      else this.requestQuery();
+      this.refreshQuery();
     }).catch(error => {
       if (this.current(context)) {
         // Retry requires a new accepted refresh, avoiding an idle failure loop.
@@ -151,6 +163,6 @@ export class HistoryController {
   }
   close() {
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
-    this.closed = true; this.context = null; clearTimeout(this.timer); this.pending.clear(); this.listeners.clear();
+    this.closed = true; this.context = null; this.queryDirty = false; clearTimeout(this.timer); this.pending.clear(); this.listeners.clear();
   }
 }
