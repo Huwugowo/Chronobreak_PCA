@@ -184,6 +184,20 @@ renderer remain isolated research code, absent from the production import graph;
 their failed resource measurements and immutable plans are retained. Revisit only
 with a materially different credible performance hypothesis.
 
-`app/src-tauri/src/clip_export.rs` validates the source bundle and request, selects H.264 hardware encoders with software fallback, and invokes ffmpeg directly without a shell. It emits progress, stages all outputs, verifies Discord size with corrective retry, generates thumbnails, and atomically exposes the completed batch. Failure removes partial outputs while preserving source media. Successful MP4/JPEG pairs become visible on the next filesystem library scan; source association comes from the MP4 filename.
+`app/src-tauri/src/clip_export.rs` validates the source bundle and request, selects
+H.264 hardware encoders with software fallback, and invokes ffmpeg directly without
+a shell. It emits progress, stages outputs under an owned export lease, verifies
+Discord size with corrective retry, and generates thumbnails. Each validated MP4
+is published before its optional JPEG with a no-replace same-volume rename.
+Failure or process death preserves already published members; recovery removes
+only provably owned unpublished staging files. See the full recovery and root
+identity contract in [media-library.md](media-library.md). Published MP4s become
+visible on the next library scan; source association comes from the MP4 filename.
 
-Development builds currently discover ffmpeg from the environment. Bundled ffmpeg/ffprobe and a unified installed-tool path are future self-contained distribution work.
+The app resolves the locked packaged FFmpeg/ffprobe pair during setup. Production
+uses `resources/media-runtime`; a whole-directory development override must satisfy
+the same embedded lock. There is no PATH fallback. See
+[media-runtime.md](media-runtime.md) for identity and failure behavior. Tauri's
+Windows resource mapping includes this runtime; inclusion and supervision of the
+standalone recorder and clean-machine installer certification remain distribution
+work.
