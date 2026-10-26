@@ -81,9 +81,9 @@
       "priority": "P2",
       "status": "not-started",
       "evidence": [],
-      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "notes": "2026-10-26 audit A-04: bounded exploration confirms import completion advances the active user-query generation. Promote to planned before lifecycle scheduling changes; deterministic pre-fix regression is the first implementation gate.",
       "id": "QB-LIB-019",
-      "stage": "draft",
+      "stage": "ready",
       "name": "Prove foreground search admission during imports",
       "description": "Determine whether continuing catalog imports can indefinitely supersede the current user query, then correct only a demonstrated scheduling violation.",
       "area": "library-storage",
@@ -93,8 +93,9 @@
         "QB-LIB-016"
       ],
       "execution": {
-        "workflow": "adaptive",
-        "plan": null
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-lib-019-foreground-search-admission.md",
+        "progress": "docs/execution/qb-lib-019.md"
       },
       "acceptance_criteria": [
         "A deterministic test overlaps an outstanding user query with repeated import completions and establishes eventual admission of the current user intent.",
