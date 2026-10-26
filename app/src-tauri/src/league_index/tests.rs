@@ -3,6 +3,8 @@ use obs::{Endpoint, Evidence, ObservationId, Record};
 use std::io::{Cursor, Write};
 use tempfile::{TempDir, tempdir};
 
+#[path = "import_progress_tests.rs"]
+mod import_progress_tests;
 #[path = "preprod_tests.rs"]
 mod preprod_tests;
 #[cfg(windows)]

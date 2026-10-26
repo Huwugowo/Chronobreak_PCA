@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ReplayDataController, type ReplayWindow, type ReplayWindowRequest } from "./replayDataController";
 import type { MediaId, ReplayTick } from "./replayTime";
+import type { ImportProgress } from "./leagueIndex";
 
 const tick = (value: number) => value as ReplayTick;
 const media = "11111111-2222-4333-8444-555555555555" as MediaId;
@@ -26,6 +27,30 @@ function setup(overrides: Partial<ConstructorParameters<typeof ReplayDataControl
 }
 
 describe("ReplayDataController", () => {
+  it("finishes positive tail coverage without polling and explicit retry observes a new commit", async () => {
+    vi.useFakeTimers();
+    const tail: ImportProgress = { media_id: media, status: "ready", batches: 0,
+      position: { end_offset: 100, last_sequence: 7, checksum: Array(32).fill(1) }, tail_bytes: 512 };
+    const indexRecording = vi.fn().mockResolvedValueOnce({ ...tail, status: "pending", batches: 4, tail_bytes: 0 })
+      .mockResolvedValueOnce(tail).mockResolvedValue({ ...tail, batches: 1, tail_bytes: 0,
+        position: { end_offset: 900, last_sequence: 8, checksum: Array(32).fill(2) } });
+    const { api, controller } = setup({ indexRecording });
+    try {
+      const initialized = controller.initialize();
+      await vi.advanceTimersByTimeAsync(100);
+      await initialized;
+      expect(indexRecording).toHaveBeenCalledTimes(2);
+      expect(api.sourceScopes).toHaveBeenCalledTimes(1);
+      expect(controller.value).toMatchObject({ indexing: "ready", loading: { index: false }, error: null });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(indexRecording).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+      await controller.retry();
+      expect(indexRecording).toHaveBeenCalledTimes(3);
+      expect(api.sourceScopes).toHaveBeenCalledTimes(2);
+    } finally { controller.dispose(); vi.useRealTimers(); }
+  });
+
   it("calls browser timers with their global receiver while loading and disposing replay details", async () => {
     vi.useFakeTimers();
     const schedule = globalThis.setTimeout, cancel = globalThis.clearTimeout;

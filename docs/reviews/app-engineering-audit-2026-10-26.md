@@ -25,7 +25,7 @@ References below name current source symbols; the baseline commit fixes the audi
 | A-03: export crash recovery | Confirmed gap. `clip_export::publish_export_paths` renames members sequentially. `Drop` and ordinary rollback cannot run after process death. The library counts `.part.mp4` bytes but does not display them as valid clips. | `QB-CLIP-013`, planned recovery design. Recorder recovery `QB-CAP-003` does not cover exports. |
 | A-04: import supersedes foreground search | Code-supported risk. `historyController::pumpImport` requests refresh queries; `requestQuery` increments generation; an outstanding result is rejected after replacement. Existing tests do not prove eventual foreground admission under continuing imports. | `QB-LIB-019`; first construct the deterministic timing test. Existing `QB-LIB-014`/`016` do not establish this invariant. No starvation claim or scheduling change in this review. |
 | A-05: startup retention | Confirmed synchronous path in `lib.rs` setup through `library::run_auto_delete`; cost remains unmeasured. Explicit cleanup already has an owned coordinator mutation lane. | Existing `QB-REPLAY-010` opening measurements and `QB-LIB-009` retention safety. Measure before deferring cleanup; do not add an unmanaged worker. |
-| A-06: non-advancing pending | More precise source support than the report supplied. `league_index/import.rs::Index::import` can remain pending with zero new batches when a journal has a stable uncommitted suffix. `league-data` recovery also uses pending for productive bounded pagination. Frontend retries both at a short cadence. Work remains serialized and context invalidation stops retries. | `QB-LIB-020`; characterize unchanged-tail calls, productive calls and source changes before choosing retry semantics. This is not an unbounded-concurrency defect. |
+| A-06: non-advancing pending | Native characterization corrected the original source inference: stable torn lines and complete entries awaiting a commit return `ready/0` with positive `tail_bytes`, not `pending/0`. Both frontend consumers stop at `ready`. Productive four-commit pages and a source changing during import can still return pending. | `QB-LIB-020`; measured tail/growth/commit fixtures and frontend call-budget regressions retain the existing continuation policy. See the characterization below. |
 | A-07: offline spell manifest | Intentional core-cache fallback, with ambiguous readiness/completeness if interpreted as full spell coverage. See `ddragon::{initialize,newest_cached_status,summarize_cache,spell_icon_filename}` and the durable offline contract above. | Preserve `QB-REPLAY-007`/`QB-LIB-012` offline behavior. No blanket manifest-required fallback change. Missing/corrupt spell coverage can be tested if capability reporting is later refined. |
 | A-08: benchmark/screen coupling | Confirmed maintainability concern. `App.tsx` dispatches benchmark scenarios and completion policy; `ViewerScreen.tsx` includes the scenario-action interpreter and telemetry. This does not prove a runtime defect. | `QB-DEV-004`, a separate maintenance draft requiring behavior-equivalence evidence. Keep observation on real production paths. |
 | A-09: typed IPC errors | Confirmed design limitation. The backend's typed `LibraryRefreshError` becomes a string through `command_error`; frontend `libraryError` normalizes strings. No specific incorrect user recovery was demonstrated. | `QB-DEV-005`, incremental typed-error draft; no global error rewrite. |
@@ -61,6 +61,51 @@ performance. Audio checks establish silence/audibility rather than quantitative
 per-input gain ratios; the existing volume expressions and mix normalization are
 unchanged. No frontend/IPC schema or capture implementation changed, so unrelated
 frontend/recorder suites were not rerun for this bounded backend correction.
+
+## Non-advancing source characterization (QB-LIB-020)
+
+The initial A-06 inference was incorrect. `journal::recover_commits` reports
+`complete: false` at its bounded commit limit; at EOF it reports complete even
+when an unfinished line or valid entries without their final commit remain.
+Those bytes remain uncommitted coverage, never imported observations.
+`Index::import` therefore settles a stable, validated source as `ready` with
+positive `tail_bytes`. An exact four-commit boundary requires one final EOF read.
+A changed source stamp during an import can produce transient pending, which is
+different from a stable journal tail.
+
+On 2026-10-26, the explicit debug-profile fixture ran single-threaded on Windows
+with generated temporary libraries and warm indexed committed prefixes. Process
+CPU time and Windows process IO counters cover each native call group; they are
+coarse characterization, not hardware-independent budgets or physical disk IO.
+The 100 repeated ready calls are deliberately forced by the fixture; the UI does
+not issue them automatically. Each tail group performs one changed-source import
+followed by 99 retained-progress source-stamp fast-path calls. The numbers
+characterize repeated end-to-end `Index::recording` responses, not 100 journal
+recoveries. This distinction was caught by focused review and clarified here.
+
+| Native group | Calls | Wall ms | CPU ms | Read bytes | Write bytes | Observed progress |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 100 productive commits | 26 | 156.135 | 93.750 | 1,282,125 | 6,118,328 | 25 pending/4 pages, then ready/0 at EOF |
+| Stable torn line | 100 | 117.809 | 125.000 | 718,214 | 2,812,184 | ready/0, same position, tail 8 |
+| Torn tail grows | 1 | 7.221 | 0.000 | 11,870 | 32,960 | ready/0, same position, tail 9 |
+| Replaced by valid commit | 1 | 6.894 | 15.625 | 12,842 | 94,760 | ready/1, position advances, tail 0 |
+| Complete entry awaiting commit | 100 | 144.301 | 109.375 | 718,736 | 2,812,184 | ready/0, same position, positive tail |
+| Withheld commit arrives | 1 | 19.361 | 0.000 | 13,160 | 94,760 | ready/1, position advances, tail 0 |
+
+Command: `cargo test --manifest-path app/src-tauri/Cargo.toml import_progress_tests -- --include-ignored --nocapture --test-threads=1`.
+Two tests passed; raw log: `.codex/logs/command-20261026-141031.log`.
+The first characterization attempts failed because the fixture assumed ready at
+an exact page limit, then assumed an unfinished suffix meant pending. Correcting
+those expectations required no production change.
+
+The selected policy is the existing one: productive pending work continues after
+the current rendering yield (History 4 ms, Replay 100 ms); ready ends automatic
+imports regardless of unknown tail bytes. A fresh accepted History scan or an
+explicit Replay retry rechecks source changes. Controlled timer tests prove no
+further imports over 30 seconds after ready-with-tail, plus productive
+continuation and fresh observation/retry. Existing context/disposal and single
+active-call regressions remain applicable. No new timer policy or native status
+meaning is justified by this measured condition.
 
 ## Limits
 

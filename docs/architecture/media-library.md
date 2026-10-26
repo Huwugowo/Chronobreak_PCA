@@ -228,6 +228,15 @@ scalar remains unknown. Negative event queries require
 successful observations spanning the requested interval, without relevant gaps,
 uncommitted bytes or unresolved/missing mappings; otherwise coverage stays unknown.
 
+An EOF-complete optional journal can retain an uncommitted suffix. The importer
+returns `ready` with positive `tail_bytes`; those bytes remain unknown coverage,
+not committed observations. Both History and Replay stop automatic import calls
+at `ready`. Productive four-commit pages return `pending` and continue after their
+rendering yield; an exact page boundary needs one final EOF read. A fresh accepted
+History snapshot or explicit Replay retry observes later source changes. A source
+stamp changing during import can produce transient pending and does not establish
+a stable-tail retry loop.
+
 The Games screen imports incrementally while idle. The viewer mounts video from
 the media descriptor first, then loads small final facts and selected-source replay
 windows. It debounces viewport requests, keeps at most four event pages,

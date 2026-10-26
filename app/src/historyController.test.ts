@@ -11,6 +11,32 @@ const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (erro
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
 
+it.each([false, true])("settles positive tail coverage without retries (catalog ready: %s)", async catalogReady => {
+  vi.useFakeTimers();
+  const progress: ImportProgress = { media_id: game.media_id!, status: "ready", batches: 0,
+    position: { end_offset: 100, last_sequence: 7, checksum: Array(32).fill(1) }, tail_bytes: 512 };
+  const api = { current: () => true,
+    catalog: vi.fn(async (token: string): Promise<CatalogPage> => ({ ...catalog(token), items: [{
+      game_timestamp: game.timestamp, media_id: game.media_id!, error: null,
+      progress: catalogReady ? progress : { ...progress, status: "pending", batches: 4, tail_bytes: 0 },
+    }] })),
+    recording: vi.fn(async () => progress), history: vi.fn(async () => page()) };
+  const controller = new HistoryController(api);
+  try {
+    controller.setContext(origin("A", 1), [game]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.catalog).toHaveBeenCalledTimes(1);
+    expect(api.recording).toHaveBeenCalledTimes(catalogReady ? 0 : 1);
+    expect(controller.value).toMatchObject({ indexing: false, loading: false, indexError: null });
+    expect(vi.getTimerCount()).toBe(0);
+    // New accepted source observations remain the wake mechanism.
+    controller.setContext(origin("A", 2), [game]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.catalog).toHaveBeenCalledTimes(2);
+    expect(api.recording).toHaveBeenCalledTimes(catalogReady ? 0 : 2);
+  } finally { controller.close(); }
+});
+
 async function overlappingImports() {
   vi.useFakeTimers();
   const o = origin("A", 1), events: HistoryQueryObservation[] = [];

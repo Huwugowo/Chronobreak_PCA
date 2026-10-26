@@ -397,6 +397,20 @@ For the current `QB-PERF-002` proof, use `tools/capture_benchmark/run_qb_perf_00
 
 The complete live matrix remains an interactive Windows/League check; follow the durable protocol exactly. `QB-PERF-001` is complete by explicit product acceptance of its formally invalid single-monitor matrix as diagnostic pre-change characterization, not as a passing performance claim. Do not claim negligible performance impact until `QB-PERF-002` produces its own valid finalized post-change matrix and passes every unchanged frame/resource gate. If evidence is invalid or genuinely doubtful, preserve it and rerun a fresh complete pair rather than appending selective repetitions.
 
+## Native import progress characterization
+
+The normal backend suite covers torn and complete-but-uncommitted journal tails,
+ready-with-tail settlement, and resumption after a valid commit. The explicit
+Windows process CPU/IO characterization uses only generated temporary libraries:
+
+```powershell
+cargo test --manifest-path app/src-tauri/Cargo.toml import_progress_tests -- --include-ignored --nocapture --test-threads=1
+```
+
+Run single-threaded so other test cases do not contaminate the process counters.
+Counters describe the labeled build profile and fixture, not whole-application
+performance. Positive uncommitted coverage does not itself mean a pending import.
+
 ## Environment-blocked and manual results
 
 Record a check as:

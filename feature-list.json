@@ -114,30 +114,37 @@
     {
       "kind": "feature",
       "priority": "P2",
-      "status": "not-started",
-      "evidence": [],
-      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "status": "done",
+      "evidence": [
+        "2026-10-26 native generated-library characterization disproved stable-tail pending premise: torn lines and complete entries without their commit settle ready/0 with unchanged position and positive tail bytes; later commit advances ready/1 with tail zero. 100 forced end-to-end recording calls per tail shape measured CPU/IO (one changed-source import plus 99 source-stamp fast-path calls); 100 commits required 25 pending/4 pages plus final EOF read. Two focused tests passed; .codex/logs/command-20261026-141031.log. Detailed measurements/decision: docs/reviews/app-engineering-audit-2026-10-26.md.",
+        "History catalog/recording ready-with-tail tests and Replay pending-to-ready/explicit retry test prove no automatic imports over 30 seconds after ready. Existing productive continuation, single active lane, navigation/disposal and foreground admission tests retained. Focused 30 tests passed (command-20261026-141054.log); full frontend 38 files/378 tests passed (141123); type check and production build passed (141244).",
+        "Backend 148 passed/9 opt-in ignored (command-20261026-141153.log); new CPU/IO fixture explicitly passed separately. Strict backend all-target Clippy passed (141309), formatting and canonical linked-file validation passed. No production scheduler, native status contract or persistence change; existing ready termination is the measured retry decision.",
+        "Focused review confirmed the corrected native premise and frontend call-budget proof; its measurement-path wording finding was resolved by explicitly identifying first-call import versus cached source-stamp calls. Audit and durable media architecture now record the correct EOF/tail semantics."
+      ],
+      "notes": "2026-10-26: Before product implementation, characterization contradicted the audit premise: recover_after reaches EOF-complete even with an uncommitted suffix, so stable tails return ready/0, not pending/0. Requirements explicitly corrected to prove existing behavior and choose policy from evidence. Planned scheduling work rerouted to direct bounded characterization; no ExecPlan was finalized. Source-stamp changes during an active import can still cause transient pending and are distinct from a stable source.",
       "id": "QB-LIB-020",
-      "stage": "draft",
-      "name": "Bound retries for non-advancing index sources",
-      "description": "Characterize productive pending imports separately from stable uncommitted journal tails, and define progress-sensitive retry behavior.",
+      "stage": "ready",
+      "name": "Verify non-advancing index sources and retry policy",
+      "description": "Characterize native non-advancing index sources and establish the correct continuation policy from measured progress. Stable uncommitted tails already settle as ready with unknown tail coverage; retain existing scheduling unless evidence proves an automatic retry defect.",
       "area": "library-storage",
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
         "QB-LIB-016"
       ],
       "execution": {
-        "workflow": "adaptive",
+        "workflow": "direct",
         "plan": null
       },
       "acceptance_criteria": [
-        "Measure repeated unchanged-tail pending responses, productive bounded pagination and source growth/change using native progress evidence.",
-        "Choose an explicit bounded retry/wake policy only after the measurement; preserve fast productive import, one active call and cancellation on navigation/root change."
+        "Measure repeated torn-tail and complete-entry-without-commit responses, productive four-commit pagination, tail growth and subsequent commit using generated native fixtures; record CPU, IO, wall time and native progress.",
+        "Prove stable tails settle as ready with zero new batches and unchanged committed position while retaining uncommitted tail coverage; prove a later valid commit advances the projection.",
+        "Prove both frontend consumers stop automatic imports after a ready response with positive tail coverage, preserve productive pending continuation and cancel on context change/disposal.",
+        "Record the measured retry decision and correct the audit premise. Add a scheduler change only if the characterization demonstrates a defect; preserve foreground search admission and one active call."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Native repeated-tail and batch-progress fixtures plus controlled frontend scheduling tests; record CPU/IO/call budget before choosing retry semantics."
+          "description": "Native temporary-library tail regression and explicit Windows CPU/IO characterization, controlled History/Replay timer tests, full frontend tests/build, backend tests/clippy/fmt and canonical validation."
         }
       ]
     },
