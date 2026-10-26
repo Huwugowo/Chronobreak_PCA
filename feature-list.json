@@ -8,9 +8,13 @@
     {
       "kind": "feature",
       "priority": "P2",
-      "status": "not-started",
-      "evidence": [],
-      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "status": "done",
+      "evidence": [
+        "2026-10-26: HEVC probe requires requestVideoFrameCallback plus current video data; callback is armed before play with bounded settlement and complete callback/timer/listener/media cleanup. Clock-only, missing API, error, rejected/pending play and seek timeout fail closed.",
+        "Marker version 2 invalidates clock-only results; normal startup reconciles the shared recorder setting to current evidence before publishing app state. Missing/invalid/old markers clear stale positives; benchmark configuration remains untouched.",
+        "Controlled-video regression failed before the fix (6 failures), then all 9 probe tests passed. Frontend suite: 38 files / 370 tests; TypeScript/Vite build passed. Backend: 140 passed / 5 opt-in ignored; normal and replay-benchmark clippy with warnings denied passed; rustfmt and canonical validation passed. Fresh focused review found no remaining issues. Logs: .codex/logs/command-20261026-114544.log, command-20261026-114707.log, command-20261026-114629.log, command-20261026-115119.log, command-20261026-115143.log."
+      ],
+      "notes": "Audit A-02 follow-up; implementation and verification completed against controlled media/timers and backend cache/config fixtures. Hardware/browser capability still derives from the actual startup probe.",
       "id": "QB-REPLAY-025",
       "stage": "ready",
       "name": "Require presented-frame evidence for HEVC capability",

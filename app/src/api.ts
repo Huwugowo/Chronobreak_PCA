@@ -761,7 +761,6 @@ const probeHevcPlayback = async (source: string): Promise<boolean> => {
     const seeked = waitForMediaEvent(video, "seeked", undefined, 5_000);
     video.currentTime = Math.min(video.duration - 0.2, Math.max(0.5, video.duration * 0.6));
     await seeked;
-    await video.play();
     const framePresented = await waitForPresentedFrame(video, 2_000);
     video.pause();
     return framePresented && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
@@ -799,18 +798,30 @@ const waitForMediaEvent = (
 
 const waitForPresentedFrame = (video: HTMLVideoElement, timeoutMs: number): Promise<boolean> =>
   new Promise((resolve) => {
+    if (typeof video.requestVideoFrameCallback !== "function") {
+      resolve(false);
+      return;
+    }
     let settled = false;
+    let callbackId: number | undefined;
     const finish = (presented: boolean) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timeout);
+      video.removeEventListener("error", onError);
+      if (callbackId !== undefined) video.cancelVideoFrameCallback(callbackId);
       resolve(presented);
     };
-    const timeout = window.setTimeout(() => finish(video.currentTime > 0), timeoutMs);
-    if (typeof video.requestVideoFrameCallback === "function") {
-      video.requestVideoFrameCallback(() => finish(true));
-    } else {
-      video.addEventListener("timeupdate", () => finish(true), { once: true });
+    const onError = () => finish(false);
+    const timeout = window.setTimeout(() => finish(false), timeoutMs);
+    video.addEventListener("error", onError, { once: true });
+    try {
+      callbackId = video.requestVideoFrameCallback(() => finish(true));
+      // Observe before starting playback, and bound even a play() promise that
+      // never settles. Media-clock progress cannot establish presented video.
+      void video.play().catch(() => finish(false));
+    } catch {
+      finish(false);
     }
   });
 

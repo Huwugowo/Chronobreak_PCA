@@ -47,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
 
-const HEVC_PROBE_VERSION: u32 = 1;
+const HEVC_PROBE_VERSION: u32 = 2;
 
 struct AppState {
     config_path: PathBuf,
@@ -887,6 +887,21 @@ fn read_hevc_marker(path: &Path) -> Option<HevcProbeMarker> {
     (marker.version == HEVC_PROBE_VERSION).then_some(marker)
 }
 
+fn reconcile_hevc_capability(
+    config_path: &Path,
+    marker_path: &Path,
+    config: &mut Config,
+) -> Result<()> {
+    let supported = read_hevc_marker(marker_path).is_some_and(|marker| marker.supported);
+    if config.app.hevc_playback_supported != supported {
+        let mut next = config.clone();
+        next.app.hevc_playback_supported = supported;
+        config::save(config_path, &next).context("failed to reconcile HEVC playback capability")?;
+        *config = next;
+    }
+    Ok(())
+}
+
 fn error_string(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -1015,6 +1030,15 @@ pub fn run() {
                 (config_path, config, output_directory, app_data)
             };
 
+            let hevc_probe_path = app_data.join("hevc-probe-v1.json");
+            let mut config = config;
+            #[cfg(feature = "replay-benchmark")]
+            if launch.is_none() {
+                reconcile_hevc_capability(&config_path, &hevc_probe_path, &mut config)?;
+            }
+            #[cfg(not(feature = "replay-benchmark"))]
+            reconcile_hevc_capability(&config_path, &hevc_probe_path, &mut config)?;
+
             ensure_output_directories(&output_directory)?;
             if let Err(error) =
                 library::run_auto_delete(&output_directory, config.storage.auto_delete_days)
@@ -1088,8 +1112,6 @@ pub fn run() {
                 ddragon_cache.clone(),
                 true,
             ))?;
-
-            let hevc_probe_path = app_data.join("hevc-probe-v1.json");
 
             #[cfg(feature = "replay-benchmark")]
             let ddragon_status = Arc::new(RwLock::new(if benchmark.is_some() {
@@ -1312,6 +1334,75 @@ mod tests {
         let path = directory.path().join("probe.json");
         fs::write(&path, br#"{"version":99,"supported":true}"#).unwrap();
         assert_eq!(read_hevc_marker(&path), None);
+    }
+
+    #[test]
+    fn reprobes_clock_only_version_one_results_and_accepts_current_frame_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("probe.json");
+        fs::write(&path, br#"{"version":1,"supported":true}"#).unwrap();
+        assert_eq!(read_hevc_marker(&path), None);
+        for supported in [false, true] {
+            let marker = HevcProbeMarker {
+                version: HEVC_PROBE_VERSION,
+                supported,
+            };
+            fs::write(&path, serde_json::to_vec(&marker).unwrap()).unwrap();
+            assert_eq!(read_hevc_marker(&path), Some(marker));
+        }
+    }
+
+    #[test]
+    fn startup_persists_only_current_probe_evidence_in_shared_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        let marker_path = directory.path().join("probe.json");
+        for marker in [
+            None,
+            Some(br#"{"version":1,"supported":true}"#.as_slice()),
+            Some(b"invalid".as_slice()),
+        ] {
+            let mut config = Config::default();
+            config.app.hevc_playback_supported = true;
+            config::save(&config_path, &config).unwrap();
+            if let Some(bytes) = marker {
+                fs::write(&marker_path, bytes).unwrap();
+            }
+            reconcile_hevc_capability(&config_path, &marker_path, &mut config).unwrap();
+            assert!(!config.app.hevc_playback_supported);
+            assert_eq!(Config::load_or_create(&config_path).unwrap(), config);
+        }
+        for supported in [true, false] {
+            fs::write(
+                &marker_path,
+                serde_json::to_vec(&HevcProbeMarker {
+                    version: HEVC_PROBE_VERSION,
+                    supported,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            let mut config = Config::default();
+            config.app.hevc_playback_supported = !supported;
+            reconcile_hevc_capability(&config_path, &marker_path, &mut config).unwrap();
+            assert_eq!(config.app.hevc_playback_supported, supported);
+            assert_eq!(Config::load_or_create(&config_path).unwrap(), config);
+        }
+    }
+
+    #[test]
+    fn failed_capability_persistence_does_not_publish_in_memory_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.app.hevc_playback_supported = true;
+        let before = config.clone();
+        let result = reconcile_hevc_capability(
+            directory.path(),
+            &directory.path().join("missing-probe.json"),
+            &mut config,
+        );
+        assert!(result.is_err());
+        assert_eq!(config, before);
     }
 
     #[tokio::test]

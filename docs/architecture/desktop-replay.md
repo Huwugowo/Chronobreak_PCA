@@ -151,6 +151,18 @@ assignments do not prove audible output.
 
 `requestVideoFrameCallback` is the presented-frame authority. Requested, dispatched, seeked, and presented values retain distinct generation/epoch state. Timeline markers, seeks, event cards, champion filters, and recorded player state use mapped replay ticks from the same payload; unavailable/before/after-media observations are explicit. Only hot visual values subscribe to the frame clock. Missing snapshots remain missing and the UI is descriptive, not prescriptive.
 
+HEVC capability likewise requires a presented-frame callback and current video
+data. Its callback observation is armed before playback and has a two-second
+deadline even if `play()` never settles. Missing callbacks, media errors and
+media-clock progress alone cannot establish support. Settlement releases the
+callback, timer and error listener; the probe always unloads its video element.
+Marker version 2 invalidates earlier clock-only probe results once, then retains
+the existing startup cache behavior. Before normal app state is exposed, the
+shared recording setting is reconciled to the current marker; a missing, invalid
+or older marker clears an earlier positive setting until the new probe succeeds.
+Benchmark launches leave their isolated configuration unchanged. An unavailable
+presentation API fails closed.
+
 Timeline elapsed-anchor state uses the sorted visible events' inclusive upper
 bound, calculated by a binary-search memo. An index selector notifies elapsed
 bindings when that boundary changes; individual anchors do not subscribe directly
