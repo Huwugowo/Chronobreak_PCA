@@ -152,29 +152,51 @@
       "kind": "feature",
       "priority": "P2",
       "status": "not-started",
-      "evidence": [],
-      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "evidence": [
+        "2026-10-26 planning handoff: reviewed bounded App coordinator/cycle-callback design and initialized checkpoint. Pre-change automated baseline: 378 frontend tests, TypeScript/Vite build, replay analyzer suite (128 discovered, 1 skipped), benchmark-enabled Tauri tests (162 passed, 9 ignored) and Rust formatting passed. Default Tauri suite had an export-staging failure that passed alone; native workflows and performance equivalence remain unrun. No product refactor or completion claimed."
+      ],
+      "notes": "Origin: docs/reviews/app-engineering-audit-2026-10-26.md. First slice moves App scenario/readiness/cycle/export policy and lifecycle resources into a bounded harness-owned coordinator, replacing the global viewer-cycle event with an identity-checked callback. Viewer scenario execution, production observation/search seams, historical duration compatibility and frontend bundle isolation remain documented migration scope. Follow WORKFLOW.md planning handoff before implementation; native baseline must precede source/test edits. Detailed baseline limitations and next action are in the execution checkpoint.",
       "id": "QB-DEV-004",
-      "stage": "draft",
-      "name": "Separate benchmark scenario orchestration from screens",
-      "description": "Extract experiment-specific scenario policy when a bounded refactor can retain observation on the actual production replay paths.",
+      "stage": "ready",
+      "name": "Separate App benchmark coordination from production screens",
+      "description": "Establish a bounded App-to-harness ownership boundary for scenario interpretation, readiness, export workloads and viewer-cycle lifecycle while preserving real production controllers, navigation state and measurement semantics; retain the viewer executor for a later verified migration.",
       "area": "development",
       "parent_id": null,
       "dependencies": [
         "QB-REPLAY-008"
       ],
       "execution": {
-        "workflow": "adaptive",
-        "plan": null
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-dev-004-app-benchmark-boundary.md",
+        "progress": "docs/execution/qb-dev-004.md"
       },
       "acceptance_criteria": [
-        "Choose a bounded ownership seam with a concrete maintenance benefit; preserve production controller/player authority and benchmark observation identity.",
-        "Before/after functional and benchmark-action equivalence checks prove no product or measurement semantics change."
+        "A harness-owned App coordinator owns scenario selection/parameters, library readiness policy, export workload interpretation, viewer-cycle sequencing and benchmark-only cancellation/timers/frames. App retains production controller/navigation authority through a bounded explicit host; no parallel player, controller, data path or generic bus is introduced.",
+        "Replace the global viewer-cycle control event with an optional identity-checked synchronous callback, preserving media release, required completion-event, expected unmount and terminal ordering. Stale/disposed sessions cannot publish or navigate; active-session failures remain observable.",
+        "Preserve all existing scenarios, fixture identities, action counts/order/defaults, full/minimal observer filtering, opening/library milestone meanings, generation/action/RVFC seek evidence, failures and analyzer validity rules. Preserve the existing no-refresh benchmark Games transition explicitly without claiming user-click equivalence.",
+        "Before/after functional and benchmark-action equivalence checks prove no product or measurement semantics change. Capture immutable current-production baseline executables and native trials before source/test edits; verify normal app and benchmark navigation, replay opening, search, seeking, fullscreen and lifecycle through actual production paths and unchanged measured equivalence/control gates.",
+        "Applicable frontend/analyzer, default and benchmark-feature Tauri tests, formatting, Clippy, production/benchmark desktop builds and canonical validation pass. Update durable architecture with before/after ownership and justified remaining viewer/instrumentation/duration/bundle coupling; retain detailed actual results and limitations in the execution checkpoint."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Inventory only the chosen scenario seam, add equivalence checks and run affected frontend/benchmark tests before structural edits."
+          "description": "Freeze ordered App scenario/action/event traces before structural edits; cover no-session behavior, admission and async identity, normal/benchmark readiness, cycle callback wiring, export scope, failures, cancellation/replacement and terminal cleanup. Run the full frontend suite, TypeScript/Vite build and deterministic replay analyzer fixtures."
+        },
+        {
+          "type": "automated",
+          "description": "Run default and replay-benchmark Tauri tests, Rust formatting and Clippy in both feature configurations, both Tauri desktop builds, canonical schema/invariant/linked-artifact validation and diff checks as specified by the ExecPlan and VERIFICATION.md. Preserve failures; do not weaken checks."
+        },
+        {
+          "type": "benchmark",
+          "description": "Retain fresh identity-matched baseline/candidate production-WebView workflows on sentinel-owned generated fixtures, including cold/warm open, search, whole-app, fullscreen/layout, lifecycle/memory and backend export. Run unchanged observer controls and measured comparison gates; five trials per role are required for numerical before/after claims. Static tests and historical artifacts cannot establish performance equivalence."
+        },
+        {
+          "type": "manual",
+          "description": "Exercise the ordinary non-benchmark production desktop against a dedicated fixture library for browse/search/clear, open/back/reopen, seek, fullscreen, clip endpoints and settings return. Verify real element/controller continuity and visible errors; record actual procedure/results."
+        },
+        {
+          "type": "inspection",
+          "description": "Review the bounded host and coordinator dependency direction, typed callback identity and cleanup, preserved backend isolation and production-path observation authority. Confirm App no longer owns experiment policy/resources and document justified remaining migration scope."
         }
       ]
     },

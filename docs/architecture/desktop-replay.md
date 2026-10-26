@@ -6,6 +6,33 @@
 
 SolidJS `app/src/App.tsx` owns screen navigation, a single `LibraryController` snapshot for games/clips/storage, and independent settings/Data Dragon resources. The frontend does not receive raw multi-gigabyte video bytes through Tauri IPC.
 
+## Benchmark boundary
+
+The Rust replay harness is compiled only with the `replay-benchmark` Cargo feature
+and activated by an explicit validated manifest launch. Sentinel-owned roots
+isolate its configuration, library, results and WebView profile. Activated runs
+constrain retention, network work and user mutations while observing the same
+production playback server and export implementation. Normal builds return no
+benchmark session to the frontend.
+
+The frontend currently includes benchmark code in its normal bundle. Its nullable
+session observer owns bounded telemetry, clock/action/generation identities and
+required-event loss accounting. Production-path markers must retain their real
+library admission, controller event and authoritative video presentation sources;
+an animation-frame paint opportunity cannot replace RVFC presentation evidence.
+
+Application scenario selection, library readiness policy and viewer-cycle timing
+currently live in `App.tsx`; viewer action execution lives in `ViewerScreen.tsx`
+and uses its actual playback controller, layout and clip state. A global window
+event currently joins viewer-cycle completion to App navigation. Thus backend
+activation/data isolation does not imply frontend orchestration separation.
+Cycle returns render the actual Games screen without the additional refresh
+performed by the ordinary user `openTab` return. Export benchmark scenarios
+explicitly measure the production backend command, not the exporter UI workflow.
+Those distinctions are measurement contracts, not interchangeable navigation or
+UI-performance claims. The replay benchmark protocol owns workload validity and
+comparison rules; feature lifecycle remains in `feature-list.json`.
+
 ## Loopback playback server
 
 `app/src-tauri/src/playback_server.rs` binds an OS-assigned port on IPv4 loopback and serves:
