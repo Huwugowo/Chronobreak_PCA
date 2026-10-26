@@ -122,7 +122,7 @@ pub(crate) enum Selection<'a> {
 #[derive(Clone)]
 pub(crate) struct RootCapture {
     pub path: PathBuf,
-    root: ApprovedRoot,
+    pub(crate) root: ApprovedRoot,
     root_epoch: u64,
     token: String,
 }
@@ -170,14 +170,40 @@ impl LibraryCoordinator {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn refresh(
         &self,
         roots: &MediaRoots,
         origin: &str,
     ) -> Result<LibrarySnapshot, LibraryRefreshError> {
-        self.refresh_with(roots, origin, |capture| {
+        self.refresh_with_recovery(roots, origin, crate::export_staging::RecoveryMode::Normal)
+            .await
+    }
+
+    pub(crate) async fn refresh_with_recovery(
+        &self,
+        roots: &MediaRoots,
+        origin: &str,
+        recovery_mode: crate::export_staging::RecoveryMode,
+    ) -> Result<LibrarySnapshot, LibraryRefreshError> {
+        self.refresh_with(roots, origin, move |capture| {
+            // Keep the captured directory generation stable through recovery and
+            // the complete scan, including when its logical alias is retargeted.
+            let _root_guard = crate::export_staging::guard_root(&capture.root)?;
+            // Recovery errors retain staging, never hide healthy media. The
+            // captured approved root, not a later settings value, owns this work.
+            match crate::export_staging::recover(&capture.root, recovery_mode, || {
+                capture.check_current()
+            }) {
+                Ok(report) => report.log(),
+                Err(error) => eprintln!(
+                    "Chronobreak export recovery skipped: {}",
+                    error.to_string().chars().take(320).collect::<String>()
+                ),
+            }
+            capture.check_current()?;
             library::build_library_snapshot(
-                &capture.path,
+                capture.root.path(),
                 &capture.origin,
                 capture.token.clone(),
                 || capture.check_current(),
@@ -244,7 +270,7 @@ impl LibraryCoordinator {
                 || capture.cancelled.load(Ordering::Acquire)
                 || capture.revision != publication.revision
                 || path != capture.path
-                || root.path() != capture.root.path()
+                || root != capture.root
             {
                 return Err(LibraryRefreshError::Superseded);
             }
@@ -255,7 +281,7 @@ impl LibraryCoordinator {
                 retained_snapshot_token: publication
                     .current
                     .as_ref()
-                    .filter(|current| current.path == path && current.root.path() == root.path())
+                    .filter(|current| current.path == path && current.root == root)
                     .map(|current| current.snapshot.token.clone()),
             })?;
             let previous = publication.current.replace(PublishedSnapshot {
@@ -274,24 +300,25 @@ impl LibraryCoordinator {
     /// Called only after directory validation and settings persistence succeed.
     /// Fixed lock order: coordinator, then MediaRoots. No I/O under either guard.
     pub(crate) fn publish_output_directory(&self, roots: &MediaRoots, directory: OutputDirectory) {
-        let previous =
+        let previous = {
+            let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+            roots.set_output_directory(directory);
+            publication.root_epoch = publication
+                .root_epoch
+                .checked_add(1)
+                .expect("root epoch exhausted");
+            publication.invalidate();
+            let (path, root) = roots.output_pair();
+            if publication
+                .current
+                .as_ref()
+                .is_some_and(|current| current.path != path || current.root != root)
             {
-                let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
-                roots.set_output_directory(directory);
-                publication.root_epoch = publication
-                    .root_epoch
-                    .checked_add(1)
-                    .expect("root epoch exhausted");
-                publication.invalidate();
-                let (path, root) = roots.output_pair();
-                if publication.current.as_ref().is_some_and(|current| {
-                    current.path != path || current.root.path() != root.path()
-                }) {
-                    publication.current.take()
-                } else {
-                    None
-                }
-            };
+                publication.current.take()
+            } else {
+                None
+            }
+        };
         drop(previous);
     }
 
@@ -322,7 +349,7 @@ impl LibraryCoordinator {
             .as_ref()
             .ok_or(LibraryRefreshError::Superseded)?;
         let (path, root) = roots.output_pair();
-        if path != current.path || root.path() != current.root.path() {
+        if path != current.path || root != current.root {
             return Err(LibraryRefreshError::Superseded);
         }
         let valid = match selection {
@@ -381,7 +408,7 @@ impl LibraryCoordinator {
         let current = self.capture_selection(roots, token, Selection::Game(game))?;
         if current.root_epoch != capture.root_epoch
             || current.path != capture.path
-            || current.root.path() != capture.root.path()
+            || current.root != capture.root
         {
             return Err(LibraryRefreshError::Superseded);
         }
@@ -454,7 +481,7 @@ impl LibraryCoordinator {
                 anyhow::ensure!(
                     current.root_epoch == worker_capture.root_epoch
                         && current.path == worker_capture.path
-                        && current.root.path() == worker_capture.root.path(),
+                        && current.root == worker_capture.root,
                     "index query superseded"
                 );
                 Ok(())
@@ -469,7 +496,7 @@ impl LibraryCoordinator {
         let current = self.capture_selection(&roots, token, selection)?;
         if current.root_epoch != capture.root_epoch
             || current.path != capture.path
-            || current.root.path() != capture.root.path()
+            || current.root != capture.root
         {
             return Err(LibraryRefreshError::Superseded);
         }
@@ -530,7 +557,7 @@ impl LibraryCoordinator {
                 anyhow::ensure!(
                     current.root_epoch == worker_capture.root_epoch
                         && current.path == worker_capture.path
-                        && current.root.path() == worker_capture.root.path(),
+                        && current.root == worker_capture.root,
                     "index query superseded"
                 );
                 Ok(())
@@ -545,7 +572,7 @@ impl LibraryCoordinator {
         let current = self.capture_selection(&roots, token, Selection::Library)?;
         if current.root_epoch != capture.root_epoch
             || current.path != capture.path
-            || current.root.path() != capture.root.path()
+            || current.root != capture.root
         {
             return Err(LibraryRefreshError::Superseded);
         }
@@ -560,7 +587,7 @@ impl LibraryCoordinator {
         let (path, root) = roots.output_pair();
         // An export can finish after A/B/A or a same-root settings publication.
         // Its response is stale, but its files still changed A's current view.
-        if path == capture.path && root.path() == capture.root.path() {
+        if path == capture.path && root == capture.root {
             publication.invalidate();
         }
     }
@@ -1031,6 +1058,56 @@ mod tests {
         assert_ne!(rebuilt.token, original.token);
         assert_eq!(rebuilt.clips[0].filename, "100_200");
         assert_eq!(rebuilt.usage.clips_bytes, 8);
+    }
+
+    #[tokio::test]
+    async fn replaced_root_cannot_refresh_or_admit_the_old_snapshot_after_republication() {
+        let temporary = tempdir().unwrap();
+        let path = temporary.path().join("library");
+        fs::create_dir(&path).unwrap();
+        let roots = Arc::new(MediaRoots::new(path.clone()).unwrap());
+        let coordinator = LibraryCoordinator::new();
+        let original = coordinator.refresh(&roots, ORIGIN).await.unwrap();
+        fs::rename(&path, temporary.path().join("previous-library")).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::create_dir(path.join("clips")).unwrap();
+        fs::write(path.join("clips/100_200.mp4"), b"replacement media").unwrap();
+        assert!(matches!(
+            coordinator.refresh(&roots, ORIGIN).await,
+            Err(LibraryRefreshError::Failed { .. })
+        ));
+        assert_eq!(*current(&coordinator).unwrap(), original);
+        // Simulate a new validated same-path root publication before admission.
+        roots.set_output_directory(OutputDirectory::new(path.clone()).unwrap());
+        // Restore only the display token invalidated by the failed refresh so
+        // this assertion exercises root identity rather than token rejection.
+        coordinator.publication.lock().unwrap().selected_token = Some(original.token.clone());
+        assert!(matches!(
+            coordinator.capture_selection(&roots, &original.token, Selection::Library),
+            Err(LibraryRefreshError::Superseded)
+        ));
+        let snapshot = coordinator.refresh(&roots, ORIGIN).await.unwrap();
+        assert_eq!(snapshot.clips[0].filename, "100_200");
+    }
+
+    #[tokio::test]
+    async fn read_only_refresh_does_not_create_recovery_artifacts() {
+        let directory = tempdir().unwrap();
+        fs::write(directory.path().join("sentinel"), b"read-only fixture").unwrap();
+        let roots = MediaRoots::new(directory.path().into()).unwrap();
+        LibraryCoordinator::new()
+            .refresh_with_recovery(
+                &roots,
+                ORIGIN,
+                crate::export_staging::RecoveryMode::ReadOnly,
+            )
+            .await
+            .unwrap();
+        assert!(!directory.path().join("clips").exists());
+        assert_eq!(
+            fs::read(directory.path().join("sentinel")).unwrap(),
+            b"read-only fixture"
+        );
     }
 
     #[tokio::test]

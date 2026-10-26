@@ -158,7 +158,22 @@ pub(crate) async fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(all(test, windows))]
+    let crash_label = if command.as_std().get_args().last().is_some_and(|arg| {
+        std::path::Path::new(arg)
+            .extension()
+            .is_some_and(|ext| ext == "jpg")
+    }) {
+        "thumbnail"
+    } else {
+        "encoding"
+    };
     let mut child = command.spawn().context("failed to start export process")?;
+    #[cfg(all(test, windows))]
+    if std::env::var("CHRONOBREAK_EXPORT_CRASH_GATE").as_deref() == Ok(crash_label) {
+        assert!(child.try_wait()?.is_none(), "tool exited before crash gate");
+        crate::clip_export::crash_gate(crash_label, child.id());
+    }
     // These pipes are guaranteed by Command above; keep setup in the cleanup scope.
     let result: Result<()> = async {
         let mut stdout = child

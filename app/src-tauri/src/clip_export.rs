@@ -16,6 +16,8 @@ use tauri::ipc::Channel;
 use tokio::process::Command;
 
 use crate::export_process::{self, Cancellation, Interrupted, Limits};
+use crate::export_staging::{Batch, Lease, RecoveryMode};
+use crate::playback_file::ApprovedRoot;
 use crate::{library, music};
 
 #[cfg(test)]
@@ -156,12 +158,6 @@ struct ExportPaths {
     partial_thumbnail: PathBuf,
 }
 
-impl Drop for ExportPaths {
-    fn drop(&mut self) {
-        cleanup_export_paths(self, false);
-    }
-}
-
 struct EncodingContext<'a> {
     cancellation: &'a Cancellation,
     ffmpeg: &'a Path,
@@ -233,8 +229,13 @@ impl BatchProgress<'_> {
     }
 }
 
+pub(crate) struct ExportDestination<'a> {
+    pub root: &'a ApprovedRoot,
+    pub recovery_mode: RecoveryMode,
+}
+
 pub async fn export(
-    output_directory: &Path,
+    destination: ExportDestination<'_>,
     music_directory: &Path,
     ffmpeg: &Path,
     ffprobe: &Path,
@@ -242,9 +243,22 @@ pub async fn export(
     progress: Channel<ClipExportProgress>,
     cancellation: &Cancellation,
 ) -> Result<ClipExportResult> {
+    let ExportDestination {
+        root,
+        recovery_mode,
+    } = destination;
     cancellation.check()?;
     validate_request(&request)?;
     let started_at = Instant::now();
+    let lease = Lease::acquire(root, true)?
+        .context("another export or recovery is active for this library; retry when it finishes")?;
+    if recovery_mode == RecoveryMode::Normal {
+        lease
+            .recover(|| cancellation.check())
+            .context("failed to reconcile abandoned exports")?
+            .log();
+    }
+    let output_directory = root.path();
     let game_directory = output_directory.join("games").join(&request.game_timestamp);
     let source_video = game_directory.join("video.mp4");
     if !source_video.is_file() {
@@ -257,9 +271,7 @@ pub async fn export(
     let timing = validate_for_metadata(&request, &authority.media_timeline)?;
 
     let music_path = resolve_music(music_directory, &request.music)?;
-    let clips_directory = output_directory.join("clips");
-    fs::create_dir_all(&clips_directory)
-        .with_context(|| format!("failed to create {}", clips_directory.display()))?;
+    let clips_directory = lease.clips();
     let encoders = encoder_candidates(&authority.encoder_used);
     let encoding = EncodingContext {
         cancellation,
@@ -277,15 +289,23 @@ pub async fn export(
         .context("system clock is before the Unix epoch")?
         .as_secs();
     let mut staged = Vec::with_capacity(total_outputs);
-    let setup_elapsed_ms = elapsed_ms(started_at);
-
-    for (output_index, preset) in request.presets.iter().copied().enumerate() {
-        cancellation.check()?;
-        let paths = unique_paths(
-            &clips_directory,
+    let mut paths = Vec::with_capacity(total_outputs);
+    for _ in &request.presets {
+        paths.push(unique_paths(
+            clips_directory,
             &request.game_timestamp,
             &mut next_clip_timestamp,
-        )?;
+        )?);
+    }
+    let batch = lease.begin(paths.iter().map(|path| path.filename.clone()).collect())?;
+    for (index, path) in paths.iter_mut().enumerate() {
+        path.partial_video = batch.staged(index, "mp4");
+        path.partial_thumbnail = batch.staged(index, "jpg");
+    }
+    let setup_elapsed_ms = elapsed_ms(started_at);
+
+    for (output_index, (preset, paths)) in request.presets.iter().copied().zip(paths).enumerate() {
+        cancellation.check()?;
         let mut reporter = BatchProgress {
             channel: &progress,
             preset,
@@ -303,11 +323,7 @@ pub async fn export(
 
     let finalize_started = Instant::now();
     cancellation.check()?;
-    let staged_paths = staged
-        .iter()
-        .map(|(_, paths, _, _)| paths)
-        .collect::<Vec<_>>();
-    publish_export_paths(&staged_paths)?;
+    publish_export_paths(&batch, staged.len())?;
 
     let mut outputs = Vec::with_capacity(staged.len());
     let mut total_file_size_bytes = 0_u64;
@@ -395,6 +411,8 @@ async fn encode_output(
     progress.send(ExportStage::Validating, 96);
     encoding.cancellation.check()?;
     let validation_started = Instant::now();
+    #[cfg(all(test, windows))]
+    crash_gate("probe", None);
     let validation = validate_exported_media(
         encoding.ffprobe,
         &paths.partial_video,
@@ -415,7 +433,7 @@ async fn encode_output(
         encoding.cancellation,
     )
     .await?;
-    // Keep 100% reserved for the atomically published batch result.
+    // Keep 100% reserved for successful publication of every requested output.
     progress.send(ExportStage::Thumbnail, 99);
     Ok(OutputDiagnostics {
         encoder_used: outcome.encoder_used,
@@ -541,35 +559,50 @@ fn unique_paths(
                 thumbnail,
             });
         }
-        clip_timestamp = clip_timestamp.saturating_add(1);
+        clip_timestamp = clip_timestamp
+            .checked_add(1)
+            .context("clip timestamp space exhausted")?;
     }
 }
 
-fn cleanup_export_paths(paths: &ExportPaths, include_final: bool) {
-    fs::remove_file(&paths.partial_video).ok();
-    fs::remove_file(&paths.partial_thumbnail).ok();
-    if include_final {
-        fs::remove_file(&paths.video).ok();
-        fs::remove_file(&paths.thumbnail).ok();
-    }
-}
-
-fn publish_export_paths(all_paths: &[&ExportPaths]) -> Result<()> {
-    for paths in all_paths {
-        let finalized = fs::rename(&paths.partial_thumbnail, &paths.thumbnail)
-            .context("failed to finalize clip thumbnail")
-            .and_then(|()| {
-                fs::rename(&paths.partial_video, &paths.video)
-                    .context("failed to finalize exported clip")
-            });
-        if let Err(error) = finalized {
-            for cleanup in all_paths {
-                cleanup_export_paths(cleanup, true);
-            }
-            return Err(error);
-        }
+fn publish_export_paths(batch: &Batch<'_>, members: usize) -> Result<()> {
+    #[cfg(all(test, windows))]
+    crash_gate("before-publish", None);
+    for member in 0..members {
+        batch
+            .publish(member, "mp4")
+            .context("failed to finalize exported clip")?;
+        #[cfg(all(test, windows))]
+        crash_gate(&format!("publish-{member}-mp4"), None);
+        batch
+            .publish(member, "jpg")
+            .context("failed to finalize clip thumbnail")?;
+        #[cfg(all(test, windows))]
+        crash_gate(&format!("publish-{member}-jpg"), None);
     }
     Ok(())
+}
+
+/// Test child only: no environment-based interruption hooks exist in production.
+#[cfg(all(test, windows))]
+pub(crate) fn crash_gate(label: &str, pid: Option<u32>) {
+    if std::env::var("CHRONOBREAK_EXPORT_CRASH_GATE").as_deref() != Ok(label) {
+        return;
+    }
+    let marker = PathBuf::from(std::env::var_os("CHRONOBREAK_EXPORT_CRASH_MARKER").unwrap());
+    fs::write(
+        &marker,
+        serde_json::to_vec(&serde_json::json!({ "label": label, "pid": pid })).unwrap(),
+    )
+    .unwrap();
+    let started = Instant::now();
+    while !marker.with_extension("release").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "crash parent did not terminate/release fixture"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn export_profile(
@@ -1271,50 +1304,6 @@ mod tests {
         let mut stale = request(ClipExportPreset::Horizontal, 300);
         stale.media_id = MediaId::parse("aaaaaaaa-2222-4333-8444-555555555555").unwrap();
         assert!(validate_for_metadata(&stale, &metadata()).is_err());
-    }
-
-    #[test]
-    fn publication_failure_removes_every_staged_and_final_output() {
-        let temporary = tempfile::tempdir().unwrap();
-        let export_paths = |name: &str| ExportPaths {
-            filename: format!("{name}.mp4"),
-            video: temporary.path().join(format!("{name}.mp4")),
-            thumbnail: temporary.path().join(format!("{name}.jpg")),
-            partial_video: temporary.path().join(format!("{name}.part.mp4")),
-            partial_thumbnail: temporary.path().join(format!("{name}.part.jpg")),
-        };
-        let first = export_paths("first");
-        let second = export_paths("second");
-
-        for path in [
-            &first.partial_video,
-            &first.partial_thumbnail,
-            &second.partial_thumbnail,
-        ] {
-            fs::write(path, b"staged").unwrap();
-        }
-
-        let error = publish_export_paths(&[&first, &second]).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("failed to finalize exported clip"),
-            "{error:#}"
-        );
-        for paths in [&first, &second] {
-            for path in [
-                &paths.partial_video,
-                &paths.partial_thumbnail,
-                &paths.video,
-                &paths.thumbnail,
-            ] {
-                assert!(
-                    !path.exists(),
-                    "failed publication left an output at {}",
-                    path.display()
-                );
-            }
-        }
     }
 
     #[test]

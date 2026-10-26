@@ -301,6 +301,26 @@ Remove-Item Env:QUEUEBACK_TEST_MEDIA_RUNTIME
 This proves the production export pipeline with generated media, not interactive
 playback or clean-machine compatibility certification.
 
+Interrupted-export checks use sentinel-owned temporary libraries and a
+self-executing test child contained in a Windows kill-on-close Job Object. They
+force process death after encoder/thumbnail spawn, immediately before the
+read-only output probe and after each MP4/JPEG publication. The parent waits for
+tool termination before recovery and verifies decoded surviving members, source
+and preexisting bytes, exact visible MP4 counts/storage, lease exclusion and
+idempotence. Separate fixtures race publication collisions and verify benchmark
+exports preserve earlier staging. Never point these fixtures at a user library.
+
+```powershell
+cargo test --manifest-path app/src-tauri/Cargo.toml export_staging
+$env:QUEUEBACK_TEST_MEDIA_RUNTIME = (Resolve-Path 'build/media-runtime/windows-x86_64').Path
+cargo test --manifest-path app/src-tauri/Cargo.toml crash_tests::packaged_export -- --ignored --nocapture
+Remove-Item Env:QUEUEBACK_TEST_MEDIA_RUNTIME
+```
+
+The internal `export_crash_child` fixture is not a standalone validation command.
+Malformed ownership, foreign entries, locked files, junctions, same-path root
+replacement, bounded recovery and read-only refresh are ordinary backend tests.
+
 For the production native Windows graph, run the sentinel-owned exact-HWND fixture.
 These commands target only QueueBack's generated window and write under ignored
 `build/perf`:

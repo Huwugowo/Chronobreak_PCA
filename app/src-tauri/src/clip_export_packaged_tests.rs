@@ -5,6 +5,10 @@ use queueback_media_runtime::MediaTools;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+#[cfg(windows)]
+#[path = "clip_export_crash_tests.rs"]
+mod crash_tests;
+
 async fn fixture_command(executable: &Path, arguments: &[&str], output: Option<&Path>) -> Vec<u8> {
     let mut command = Command::new(executable);
     command.args(arguments);
@@ -212,7 +216,10 @@ async fn silent_source_packaged_export_matrix() {
             let request = export_request(&timeline, music);
             let timing = validate_for_metadata(&request, &timeline).unwrap();
             let result = export(
-                library.path(),
+                ExportDestination {
+                    root: &ApprovedRoot::new(library.path()).unwrap(),
+                    recovery_mode: RecoveryMode::Normal,
+                },
                 &music_directory,
                 tools.ffmpeg(),
                 tools.ffprobe(),
@@ -278,13 +285,16 @@ async fn silent_source_packaged_export_matrix() {
     let invalid_bytes = fs::read(&source).unwrap();
     assert!(
         export(
-            library.path(),
+            ExportDestination {
+                root: &ApprovedRoot::new(library.path()).unwrap(),
+                recovery_mode: RecoveryMode::Normal
+            },
             &music_directory,
             tools.ffmpeg(),
             tools.ffprobe(),
             request,
             Channel::new(|_| Ok(())),
-            &Cancellation::default()
+            &Cancellation::default(),
         )
         .await
         .is_err()
@@ -315,7 +325,10 @@ async fn silent_source_packaged_export_matrix() {
     let handle = tokio::runtime::Handle::current();
     let waiter = tokio::spawn(export_process::run_owned(move |cancellation| {
         let result = handle.block_on(export(
-            &root,
+            ExportDestination {
+                root: &ApprovedRoot::new(&root).unwrap(),
+                recovery_mode: RecoveryMode::Normal,
+            },
             &music_directory,
             &ffmpeg,
             &ffprobe,

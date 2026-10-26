@@ -5,6 +5,7 @@ mod clip_export;
 mod config;
 mod ddragon;
 mod export_process;
+mod export_staging;
 mod league_authored;
 mod league_index;
 mod league_index_commands;
@@ -113,9 +114,17 @@ struct HevcProbeMarker {
 async fn refresh_library(
     state: State<'_, AppState>,
 ) -> Result<library::LibrarySnapshot, LibraryRefreshError> {
+    #[cfg(feature = "replay-benchmark")]
+    let mode = if state.benchmark.is_some() {
+        export_staging::RecoveryMode::ReadOnly
+    } else {
+        export_staging::RecoveryMode::Normal
+    };
+    #[cfg(not(feature = "replay-benchmark"))]
+    let mode = export_staging::RecoveryMode::Normal;
     state
         .library
-        .refresh(&state.roots, &state.playback_origin)
+        .refresh_with_recovery(&state.roots, &state.playback_origin, mode)
         .await
 }
 
@@ -330,7 +339,15 @@ async fn export_clip(
         .library
         .admit_export(&state.roots, &snapshot_token, &request.game_timestamp)
         .map_err(command_error)?;
-    let output_directory = completion.capture.path.clone();
+    let output_root = completion.capture.root.clone();
+    #[cfg(feature = "replay-benchmark")]
+    let recovery_mode = if state.benchmark.is_some() {
+        export_staging::RecoveryMode::ReadOnly
+    } else {
+        export_staging::RecoveryMode::Normal
+    };
+    #[cfg(not(feature = "replay-benchmark"))]
+    let recovery_mode = export_staging::RecoveryMode::Normal;
     let music_directory = state.music_directory.clone();
     let media_tools = state.media_runtime.require()?;
     #[cfg(feature = "replay-benchmark")]
@@ -355,7 +372,10 @@ async fn export_clip(
     let runtime = tokio::runtime::Handle::current();
     let (result, current) = export_process::run_owned(move |cancellation| {
         let result = runtime.block_on(clip_export::export(
-            &output_directory,
+            clip_export::ExportDestination {
+                root: &output_root,
+                recovery_mode,
+            },
             &music_directory,
             &ffmpeg,
             &ffprobe,

@@ -3,8 +3,8 @@
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug)]
-pub(crate) struct ApprovedRoot(PathBuf);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ApprovedRoot(PathBuf, String);
 
 impl ApprovedRoot {
     pub fn new(path: &Path) -> Result<Self> {
@@ -12,11 +12,20 @@ impl ApprovedRoot {
         if !file.metadata()?.is_dir() {
             bail!("media root is not a directory")
         }
-        Ok(Self(final_path(&file)?))
+        Ok(Self(
+            final_path(&file)?,
+            file_facts(&file)?.generation_key(),
+        ))
     }
 
     pub fn path(&self) -> &Path {
         &self.0
+    }
+
+    pub(crate) fn matches_directory(&self, file: &std::fs::File) -> Result<bool> {
+        Ok(file.metadata()?.is_dir()
+            && file_facts(file)?.generation_key() == self.1
+            && final_path(file)? == self.0)
     }
 
     pub fn contains(&self, candidate: &Path) -> bool {
@@ -131,7 +140,7 @@ fn open_directory(path: &Path) -> Result<std::fs::File> {
 }
 
 #[cfg(windows)]
-fn final_path(file: &std::fs::File) -> Result<PathBuf> {
+pub(crate) fn final_path(file: &std::fs::File) -> Result<PathBuf> {
     use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
     use windows::Win32::{
         Foundation::HANDLE,
@@ -343,7 +352,7 @@ mod tests {
     fn resolved_location_comparison_is_component_aware_and_case_exact() {
         // No filesystem capability/privilege required: these are final-path shapes
         // that distinct entries in a case-sensitive directory can produce.
-        let root = ApprovedRoot(PathBuf::from(r"\\?\C:\Media\Library"));
+        let root = ApprovedRoot(PathBuf::from(r"\\?\C:\Media\Library"), "synthetic".into());
         assert!(root.contains(&root.path().join("games/video.mp4")));
         for outside in [
             r"\\?\C:\Media\Library-sibling\video.mp4",

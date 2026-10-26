@@ -42,8 +42,12 @@
     {
       "kind": "feature",
       "priority": "P2",
-      "status": "not-started",
-      "evidence": [],
+      "status": "done",
+      "evidence": [
+        "2026-10-26: strict app-owned staging, retained directory/root-generation guards and OS-held export/recovery lease; normal refresh/export reclaims only validated flat abandoned staging. Active, foreign, malformed, reparse and locked work is retained with bounded reports; benchmark background refresh is read-only and explicit benchmark exports preserve earlier staging.",
+        "Windows no-replace MP4-first publication never rolls back final files. Nine forced-process-death boundaries passed with expected validated surviving subsets, full decode/frame/audio checks, exact cards/MP4 storage, idempotence and source/preexisting-byte preservation. Publication collision and benchmark-isolation fixtures passed; 18-output audio/music/preset matrix and invalid-source/cancellation passed. Artifact: build/verification/qb-clip-013/crash-matrix.log.",
+        "Backend: normal 147 passed / 8 opt-in ignored; replay-benchmark 161 passed / 8 ignored. Normal and benchmark Clippy with warnings denied, Rustfmt, canonical linked-artifact validation and whitespace checks passed. Safety review root-identity and diagnostics findings corrected with regressions. Detailed evidence: docs/execution/qb-clip-013.md."
+      ],
       "notes": "2026-10-26 audit A-03 refinement: preserve validated published members; reclaim only owned unpublished staging. Legacy unowned .part files remain untouched. User authorized autonomous planning, implementation, verification and milestone commits on 2026-10-26.",
       "id": "QB-CLIP-013",
       "stage": "ready",

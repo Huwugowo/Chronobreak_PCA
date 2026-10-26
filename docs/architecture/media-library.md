@@ -20,7 +20,7 @@ The configured output directory is the library root:
     <source-timestamp>_<clip-timestamp>.jpg
 ```
 
-Game-directory allocation in `recorder/src/storage.rs` is collision-safe. Recorder metadata and the small telemetry manifest/checkpoint use atomic replacement. Telemetry file operations retain the allocated directory's Windows identity and use delete-shared, handle-relative creation/rename. Clip export stages `.partial` media/thumbnail files and renames them only after the requested batch succeeds.
+Game-directory allocation in `recorder/src/storage.rs` is collision-safe. Recorder metadata and the small telemetry manifest/checkpoint use atomic replacement. Telemetry file operations retain the allocated directory's Windows identity and use delete-shared, handle-relative creation/rename. Clip export stages media/thumbnail pairs in an owned batch directory and publishes only after all requested members pass validation.
 
 Game media/JSON and clip MP4 filenames are authoritative; clip JPEGs are optional presentation sidecars. `app/src-tauri/src/library.rs` reconstructs core game/clip summaries and usage by scanning the configured root. A local SQLite cache projects committed League observations for search and replay queries; it never authorizes media. Data Dragon assets, SQLite and frontend state are disposable caches. Authored bookmarks/recipes are stored separately in the library root's `league_authored_records.json` and survive cache rebuilds.
 
@@ -268,6 +268,34 @@ ordered frame ranges. Cache deletion/rebuild preserves those records.
 ## Clips
 
 The clip exporter never modifies source recordings. Each completed export normally has MP4 media and a JPEG thumbnail. The filename links the clip to its source game and creation timestamp; the selected source time range and in-range events are not currently persisted as clip metadata. The Clips tab is rebuilt from MP4 files and uses a JPEG when present. Deleting a clip removes only its recognized clip artifacts.
+
+`export_staging` owns `clips/.chronobreak-export/<32-hex-id>/`: one strict,
+versioned ownership record (8 KiB maximum, at most three destinations) and fixed
+numbered MP4/JPEG files. A persistent `.lease` holds a nonblocking OS lock through
+export/recovery. Process death releases that lock; active ownership makes recovery
+skip all batches. Retained Windows directory handles reject reparse points and
+deny deletion/renaming of the approved root and staging chain during work.
+The approved root includes its directory generation; coordinator admission compares
+that identity, and a refresh retains a root guard through recovery and scanning.
+
+Publication uses same-volume, atomic, no-replace Windows moves: validated MP4 first,
+then optional JPEG. Neither ordinary failure nor restart cleanup removes final
+files. A failed or interrupted multi-preset publication may leave a playable
+completed subset, including an MP4 without its JPEG. Normal refresh reclaims only
+strictly owned unpublished staging before calculating cards and MP4 usage;
+explicit export also reconciles while holding the lease. Cleanup validates the
+flat directory and removes only enumerated regular files, then the ownership
+record and empty directory. Unknown, malformed, foreign, reparse or locked entries
+are retained with bounded diagnostics; legacy unowned `.part` files are untouched.
+Recovery never reads source media or starts media tools. It streams directory
+names, processes at most 64 batches per attempt and rotates through retained IDs;
+the report retains at most four bounded diagnostics. This is process-interruption
+recovery, with no claim of power-loss durability.
+
+Benchmark background refresh performs no recovery mutation. Explicit benchmark
+exports keep their isolated-fixture write behavior but never reclaim earlier
+staging. Filesystem-derived clip storage counts final MP4 bytes only; staging and
+JPEGs are outside that metric.
 
 Every preset exports H.264/AAC, including a valid recording whose media timeline
 declares no source audio. The exporter derives audio presence from that validated
