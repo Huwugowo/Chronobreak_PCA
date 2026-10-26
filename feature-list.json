@@ -6,6 +6,275 @@
   },
   "features": [
     {
+      "kind": "feature",
+      "priority": "P2",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-REPLAY-025",
+      "stage": "ready",
+      "name": "Require presented-frame evidence for HEVC capability",
+      "description": "Prevent a progressing media clock from persisting an unproven HEVC playback capability.",
+      "area": "replay",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": [
+        "QB-REPLAY-006"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A successful HEVC capability probe requires positive presented-video evidence; clock advancement, metadata, seek completion and timeout alone cannot establish support.",
+        "Errors, unavailable presentation evidence and timeout fail closed; success/failure release callbacks, listeners and media resources, and persistence receives only the resulting supported verdict."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use controlled video/timers to cover authoritative callback, clock-only/no callback, media error, missing callback API, timeout and cleanup/persistence; run frontend suite, typecheck and build."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P2",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-CLIP-013",
+      "stage": "draft",
+      "name": "Recover interrupted clip export publication",
+      "description": "Define and prove recovery after process death during staged export and multi-preset publication.",
+      "area": "export",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-008"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Define app-owned staging/batch identity and a safe restart reconciliation policy, including whether to preserve verified completed members and how to distinguish active work.",
+        "Forced termination at encode, probe, thumbnail and rename boundaries leaves an intelligible recovered library without deleting preexisting clips or source recordings."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Design a sentinel-owned temporary-library crash/restart matrix before implementation; include storage accounting and source/preexisting-output preservation."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P2",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-LIB-019",
+      "stage": "draft",
+      "name": "Prove foreground search admission during imports",
+      "description": "Determine whether continuing catalog imports can indefinitely supersede the current user query, then correct only a demonstrated scheduling violation.",
+      "area": "library-storage",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-014",
+        "QB-LIB-016"
+      ],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "A deterministic test overlaps an outstanding user query with repeated import completions and establishes eventual admission of the current user intent.",
+        "Any necessary scheduling correction preserves explicit query supersession, independent bounded lanes, snapshot/root invalidation and disposal."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Control deferred queries/imports and both ordering directions; measure admission before changing scheduling. Promote meaningful lifecycle/concurrency redesign to planned."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P2",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-LIB-020",
+      "stage": "draft",
+      "name": "Bound retries for non-advancing index sources",
+      "description": "Characterize productive pending imports separately from stable uncommitted journal tails, and define progress-sensitive retry behavior.",
+      "area": "library-storage",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-016"
+      ],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Measure repeated unchanged-tail pending responses, productive bounded pagination and source growth/change using native progress evidence.",
+        "Choose an explicit bounded retry/wake policy only after the measurement; preserve fast productive import, one active call and cancellation on navigation/root change."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Native repeated-tail and batch-progress fixtures plus controlled frontend scheduling tests; record CPU/IO/call budget before choosing retry semantics."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P2",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-DEV-004",
+      "stage": "draft",
+      "name": "Separate benchmark scenario orchestration from screens",
+      "description": "Extract experiment-specific scenario policy when a bounded refactor can retain observation on the actual production replay paths.",
+      "area": "development",
+      "parent_id": null,
+      "dependencies": [
+        "QB-REPLAY-008"
+      ],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Choose a bounded ownership seam with a concrete maintenance benefit; preserve production controller/player authority and benchmark observation identity.",
+        "Before/after functional and benchmark-action equivalence checks prove no product or measurement semantics change."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Inventory only the chosen scenario seam, add equivalence checks and run affected frontend/benchmark tests before structural edits."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P3",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-DEV-005",
+      "stage": "draft",
+      "name": "Preserve typed IPC recovery causes",
+      "description": "Define incremental stable native-to-frontend error codes where recovery behavior needs the existing internal distinctions.",
+      "area": "development",
+      "parent_id": null,
+      "dependencies": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Select a bounded command surface and safe serialized codes/messages; preserve internal contextual diagnostics.",
+        "Busy, superseded, invalid-selection and failure recovery remain distinguishable without string parsing; unrelated commands require no global migration."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Contract/decode and consumer recovery tests for the chosen surface, including malformed payloads and stale operations."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P3",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-LIB-021",
+      "stage": "ready",
+      "name": "Clarify video storage accounting labels",
+      "description": "Describe existing game-video and clip-MP4 totals accurately without implying full recursive library disk usage.",
+      "area": "library-storage",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-009"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Storage labels/help identify video bytes and disclose that thumbnails, metadata and caches are excluded; partial/unrecognized clip MP4 bytes remain truthfully accounted.",
+        "No recursive disk scan is added to refresh or rendering, and existing deletion/retention behavior is preserved."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused storage presentation assertions and frontend typecheck/build; inspect snapshot accounting remains unchanged."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "priority": "P3",
+      "status": "not-started",
+      "evidence": [],
+      "notes": "2026-10-26 application audit reconciliation: docs/reviews/app-engineering-audit-2026-10-26.md. Separate follow-up; no implementation or passing verification claimed.",
+      "id": "QB-LIB-022",
+      "stage": "draft",
+      "name": "Define authored-data backup and recovery",
+      "description": "Extend the existing non-SQL authored store with explicit user-owned backup/export/recovery semantics before important editing work relies on it.",
+      "area": "library-storage",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-005"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Define versioning, atomic save, backup/export, restore and media-reference/relink behavior for authored work without making SQLite authoritative.",
+        "Temporary-library corruption/recovery and cache-rebuild checks preserve authored records and source media; future draft/montage scope is explicit."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Plan recovery fixtures and schema/reference compatibility checks against the existing bounded revision-checked authored store before implementation."
+        }
+      ]
+    },
+    {
+      "id": "QB-CLIP-012",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Export valid recordings without source audio",
+      "description": "Accept schema-v2 video-only recordings in the existing preset exporter while preserving its H.264/AAC output and music mix contract.",
+      "priority": "P2",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": ["QB-CLIP-007", "QB-AUDIO-002"],
+      "execution": { "workflow": "direct", "plan": null },
+      "acceptance_criteria": [
+        "Use the validated source timeline's audio presence to avoid referencing a nonexistent source audio stream. No-music video-only exports contain duration-bounded stereo 48 kHz silence encoded as AAC; selected bundled or imported music retains the existing independently controlled mix semantics.",
+        "Discord, horizontal and vertical exports retain exact frame-range validation, H.264/AAC compatibility, audio/video alignment, thumbnails, source preservation and the Discord byte limit. Ordinary source-audio exports retain their existing filter behavior.",
+        "Regressions demonstrate the original failure and all source-audio/music argument combinations. A real staged-runtime temporary-library matrix exercises all presets with absent/present source audio and no/bundled/imported music, verifies decoded audio content, full media decoding and unchanged source bytes; invalid source and cancellation remain explicit and publish no incomplete outputs.",
+        "Applicable backend tests, formatting, Clippy and canonical feature validation pass, with concrete results recorded before completion."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Run focused argument regressions before and after the fix, then the full app backend suite, formatting and Clippy." },
+        { "type": "automated", "description": "Run the opt-in packaged-runtime export matrix against generated temporary media, including media validation, decoded audio, full decode, source preservation and rejection/cleanup cases." },
+        { "type": "automated", "description": "Validate canonical schema/lifecycle/links and diff hygiene; retain the audit comparison as a dated review snapshot." }
+      ],
+      "evidence": [
+        "2026-10-26: Reproduced A-01 before the fix in argument regression and real staged-runtime video-only export (FFmpeg filtergraph binding failure). Validated metadata now selects finite stereo 48 kHz silence only when source audio is absent, preserving AAC output and the existing music/present-audio paths.",
+        "2026-10-26: Two focused tests pass, including 18 actual exports (absent/present source audio x no/bundled/imported music x all presets). Every output passes exact 150-frame/five-second H.264/AAC validation, alignment/full decode/thumbnail/Discord-limit checks; decoded silence or audible content is correct and source hashes stay unchanged. Invalid-source and in-flight cancellation cleanup pass.",
+        "2026-10-26: Full app backend suite 137 passed/5 opt-in ignored; new packaged matrix explicitly passed separately. Formatting, warning-free all-target Clippy, canonical validation (95 items/15 linked pairs), diff hygiene and fresh focused review pass. docs/reviews/app-engineering-audit-2026-10-26.md retains exact results, audit qualifications and limitations."
+      ],
+      "notes": "2026-10-26 audit A-01 reproduced in source at 39c948e. Bounded direct correction inside the existing exporter; no new media engine, output schema or publication/recovery protocol. Preserve the existing AAC requirement by generating silence only when validated source audio is absent. Remaining audit findings are separately triaged."
+    },
+    {
       "id": "EPIC-CAP-REL",
       "kind": "epic",
       "name": "Capture Reliability",

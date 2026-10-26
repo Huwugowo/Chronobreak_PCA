@@ -269,6 +269,13 @@ ordered frame ranges. Cache deletion/rebuild preserves those records.
 
 The clip exporter never modifies source recordings. Each completed export normally has MP4 media and a JPEG thumbnail. The filename links the clip to its source game and creation timestamp; the selected source time range and in-range events are not currently persisted as clip metadata. The Clips tab is rebuilt from MP4 files and uses a JPEG when present. Deleting a clip removes only its recognized clip artifacts.
 
+Every preset exports H.264/AAC, including a valid recording whose media timeline
+declares no source audio. The exporter derives audio presence from that validated
+timeline and supplies finite stereo 48 kHz silence only for absent source audio.
+Selected music uses the same two-input mix with that silent base, preserving the
+existing volume/normalization semantics. Silence is bounded by the selected clip
+duration; output frame and audio-alignment validation remain mandatory.
+
 ## Retention and deletion safety
 
 The app reports game-video and clip-MP4 bytes/counts and supports explicit game/clip deletion. Age-based `run_auto_delete` skips games whose metadata marks them saved. Settings changes update the app's media root; recorder use of the shared setting takes effect when its configuration is next loaded.

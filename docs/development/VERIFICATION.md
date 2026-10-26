@@ -287,6 +287,20 @@ ffmpeg -v error -i <media-file> -f null NUL
 
 For exported clips, also verify H.264/AAC compatibility and the requested duration/size constraints. Discord outputs must remain strictly below 10,000,000 bytes. Tests that deliberately truncate or corrupt media must copy fixtures into a temporary directory first.
 
+The opt-in exporter matrix generates its own temporary video-only and audible
+sources, exports every preset with no/bundled/imported music, checks decoded audio,
+full decoding, exact frame coverage, thumbnails, byte limits and source hashes,
+and exercises invalid input plus cancellation during encoding:
+
+```powershell
+$env:QUEUEBACK_TEST_MEDIA_RUNTIME = (Resolve-Path 'build/media-runtime/windows-x86_64').Path
+cargo test --manifest-path app/src-tauri/Cargo.toml silent_source -- --include-ignored --nocapture
+Remove-Item Env:QUEUEBACK_TEST_MEDIA_RUNTIME
+```
+
+This proves the production export pipeline with generated media, not interactive
+playback or clean-machine compatibility certification.
+
 For the production native Windows graph, run the sentinel-owned exact-HWND fixture.
 These commands target only QueueBack's generated window and write under ignored
 `build/perf`:

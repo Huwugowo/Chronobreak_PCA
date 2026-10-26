@@ -18,6 +18,10 @@ use tokio::process::Command;
 use crate::export_process::{self, Cancellation, Interrupted, Limits};
 use crate::{library, music};
 
+#[cfg(test)]
+#[path = "clip_export_packaged_tests.rs"]
+mod packaged_tests;
+
 const MINIMUM_CLIP_SECONDS: u64 = 5;
 const FFMPEG_TIMESTAMP_DECIMAL_PLACES: u32 = 12;
 const DISCORD_LIMIT_BYTES: u64 = 10_000_000;
@@ -121,6 +125,7 @@ struct ClipTiming {
     duration_replay_ticks: u64,
     source_frame_count: u64,
     source_frame_rate: Rational,
+    source_audio_present: bool,
     media_runtime_id: String,
 }
 
@@ -497,6 +502,7 @@ fn validate_for_metadata(
         duration_replay_ticks,
         source_frame_count: range.frame_count(),
         source_frame_rate: frame_rate,
+        source_audio_present: media_timeline.audio.present,
         media_runtime_id: media_timeline.producer.media_runtime_id.clone(),
     })
 }
@@ -780,16 +786,23 @@ fn ffmpeg_arguments(
         arguments.push(path.as_os_str().to_owned());
     }
 
+    // Every preset promises AAC, even when the validated source is video-only.
+    // Keep the silent base in music mixes to preserve the existing amix gain.
+    let game_audio = if timing.source_audio_present {
+        "[0:a]".to_owned()
+    } else {
+        format!("anullsrc=channel_layout=stereo:sample_rate=48000:duration={duration},")
+    };
     let audio_filter = if music_path.is_some() {
         format!(
-            "[0:a]atrim=start=0:end={duration},asetpts=PTS-STARTPTS,volume={:.3}[game];\
+            "{game_audio}atrim=start=0:end={duration},asetpts=PTS-STARTPTS,volume={:.3}[game];\
              [1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,volume={:.3}[music];\
              [game][music]amix=inputs=2:duration=first:dropout_transition=0[aout]",
             request.game_audio_volume, request.music_volume
         )
     } else {
         format!(
-            "[0:a]atrim=start=0:end={duration},asetpts=PTS-STARTPTS,volume={:.3}[aout]",
+            "{game_audio}atrim=start=0:end={duration},asetpts=PTS-STARTPTS,volume={:.3}[aout]",
             request.game_audio_volume
         )
     };
@@ -1359,6 +1372,58 @@ mod tests {
     }
 
     #[test]
+    fn silent_source_arguments_keep_bounded_aac_and_existing_music_mix_for_all_presets() {
+        let mut source = timeline();
+        source.audio = AudioTimelineV2 {
+            present: false,
+            codec: None,
+            sample_rate: None,
+            time_base: None,
+            first_pts: None,
+            replay_start: None,
+            replay_end: None,
+        };
+        source.validate().unwrap();
+
+        for preset in [
+            ClipExportPreset::Discord,
+            ClipExportPreset::Horizontal,
+            ClipExportPreset::Vertical,
+        ] {
+            for music in [None, Some(Path::new("music.wav"))] {
+                let request = request(preset, 300);
+                let timing = validate_for_metadata(&request, &source).unwrap();
+                let profile = export_profile(&request, &timing, preset, None).unwrap();
+                let arguments = ffmpeg_arguments(
+                    Path::new("video-only.mp4"),
+                    music,
+                    &request,
+                    &timing,
+                    &profile,
+                    H264Encoder::Software,
+                    Path::new("output.mp4"),
+                )
+                .unwrap();
+                let filter_index = arguments
+                    .iter()
+                    .position(|arg| arg == "-filter_complex")
+                    .unwrap();
+                let filter = arguments[filter_index + 1].to_str().unwrap();
+                assert!(!filter.contains("[0:a]"), "missing source stream: {filter}");
+                assert!(filter.contains("anullsrc=channel_layout=stereo:sample_rate=48000"));
+                assert!(filter.contains("atrim=start=0:end=5.000000000000"));
+                assert_eq!(filter.contains("[1:a]"), music.is_some());
+                assert_eq!(
+                    filter.contains("amix=inputs=2:duration=first:dropout_transition=0"),
+                    music.is_some()
+                );
+                assert!(arguments.windows(2).any(|pair| pair == ["-c:a", "aac"]));
+                assert!(arguments.windows(2).any(|pair| pair == ["-map", "[aout]"]));
+            }
+        }
+    }
+
+    #[test]
     fn accepts_collision_suffixed_game_ids_for_export() {
         let mut collision = request(ClipExportPreset::Horizontal, 600);
         collision.game_timestamp = "1786000000-1".to_owned();
@@ -1388,6 +1453,7 @@ mod tests {
                 duration_replay_ticks: 1_440_000_000,
                 source_frame_count: 1_800,
                 source_frame_rate: Rational::positive(60, 1, "frame rate").unwrap(),
+                source_audio_present: true,
                 media_runtime_id: timeline().producer.media_runtime_id,
             },
             ClipExportPreset::Discord,
@@ -1410,6 +1476,7 @@ mod tests {
                 duration_replay_ticks: 720_000_000,
                 source_frame_count: 900,
                 source_frame_rate: Rational::positive(60, 1, "frame rate").unwrap(),
+                source_audio_present: true,
                 media_runtime_id: timeline().producer.media_runtime_id,
             },
             ClipExportPreset::Horizontal,
