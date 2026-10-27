@@ -6,11 +6,11 @@ Updated: 2026-10-27
 
 ## Current milestone
 
-Complete — M1 baseline, M2 extraction and M3 behavioral/native verification are complete. The approved v2 statistical campaign was not required after focused evidence resolved the representative resource signals; no statistical performance-equivalence claim is made.
+Complete — both lifecycle gaps reproduced before fixes and now fail explicitly; stale/disposed callbacks remain harmless. The bounded follow-up's frontend/build/analyzer and canonical checks pass. Prior M1–M3 evidence remains historical evidence for the original extraction; no measurement or performance claim changes.
 
 ## Active unit
 
-None. Implementation is committed as `6af7465`; final verification/documentation is recorded here. Frozen executable inputs remain unchanged (326 candidate tracked-input hashes rechecked after native runs).
+None. The minimal coordinator failure fixes and 14 regression/control cases are verified. The prior extraction is committed as `6af7465`; its frozen native inputs and evidence remain historical evidence for that tree.
 
 ## Completed
 
@@ -21,16 +21,26 @@ None. Implementation is committed as `6af7465`; final verification/documentation
 - Documented the initial benchmark boundary in `docs/architecture/desktop-replay.md`, then updated it after M2 to describe the implemented extraction and retained coupling.
 - Existing frontend, replay analyzer and benchmark-enabled backend baselines captured before any product-code changes. Detailed results below.
 - User-directed verification refinement is recorded in the versioned v2 ExecPlan. The original immutable plan is preserved; architecture and implementation scope are unchanged. Behavioral/order/cancellation/cleanup checks and representative native before/after workflows remain mandatory; statistical campaigns follow explicit evidence-driven escalation.
+- Lifecycle follow-up: reproduced both silent-terminal gaps before product edits, added explicit guarded failure paths, and verified active failure versus stale/disposed behavior with focused/full frontend and analyzer checks. No ownership/design change.
 
 ## In flight
 
-None. All owned normal/benchmark app processes exited. No source or test edit remains unverified.
+None. All follow-up edits are verified; working tree was clean at follow-up start.
 
 ## Remaining
 
-No work remains in this approved first slice. Viewer executor extraction, production observation/search seams, historical duration compatibility and frontend bundle isolation remain documented future migration scope. The independent preexisting first-use export validator/staging mismatch is draft `QB-DEV-006`; this feature preserves its failures and does not claim to fix it.
+No work remains in the lifecycle follow-up. Viewer executor extraction, production observation/search seams, historical duration compatibility and frontend bundle isolation remain future scope; `QB-DEV-006` remains independent.
 
 ## Verification
+
+Lifecycle follow-up, 2026-10-27:
+
+- Before product-code edits, `npm run test --prefix app -- benchmarkApplication.test.ts` reproduced both reported gaps: 11 failed / 54 passed (65 total). Eight active context-loss variants silently stopped at `replay_requested`; refused initial, ordinary reopen and settled-memory reopen stopped without a terminal. The added stale/disposed callback and disposal-during-refusal controls passed. Raw red evidence: `.codex/logs/command-20261027-113357.log`.
+- Two initial launches could not write the automatic launcher's `.codex/logs` file and did not reach Vitest; a permitted retry produced the red result above. No test failure was hidden or relabeled.
+- Minimal fix: matching active viewer callbacks now use the existing `check(context, "viewer_cycle")` failure path after stale/disposed/navigation-identity guards; refused viewer opens use guarded `failContext("replay_open", "Benchmark replay could not be opened")`. Both produce one required scenario failure and failed terminal. No success-path action, timing, payload, filtering, player/controller, production host or analyzer change.
+- Focused frontend command from the ExecPlan passed: 7 files / 161 tests (`.codex/logs/command-20261027-113454.log`). Full `npm run test --prefix app` passed: 39 files / 456 tests (`command-20261027-113530.log`). `npm run build --prefix app` passed TypeScript and Vite (`command-20261027-113531.log`), with the preexisting ineffective dynamic-import warning. Stale callbacks after a later viewer opens, disposed callbacks, duplicate callbacks/updates, and disposal during a refused host open remain harmless; initial, ordinary reopen and settled-memory refusal each terminate once.
+- `python -m unittest discover -s tools/replay_benchmark/tests -v` passed: 128 discovered, one preexisting packaged-runtime-dependent skip, 55.200 seconds. Analyzer contracts/thresholds are unchanged. Canonical schema/invariant/linked-artifact validation passed for 96 roadmap items / 18 plan-checkpoint pairs; `git diff --check` passed.
+- Follow-up verification cone: only previously silent failure branches changed; success-path production host, actions, measurement producers/boundaries, observer filtering and backend are unchanged. Prior Rust/native/desktop evidence is retained for its original tree, not relabeled as a fresh pass. Rust suites, Tauri desktop builds, ordinary desktop workflows and native/statistical campaigns were not rerun for this bounded correction; there is no new runtime/performance claim. Existing behavioral/ordering/cleanup tests and analyzer checks cover the affected paths.
 
 Actual 2026-10-26 results; raw logs are ignored under `build/perf/qb-dev-004/baseline-20261026/`.
 
@@ -79,7 +89,7 @@ Actual 2026-10-26 results; raw logs are ignored under `build/perf/qb-dev-004/bas
 
 ## Deviations
 
-No architecture or implementation-scope deviation. Focused settled-memory evidence was added under the approved v2 escalation process; workload/analyzer contracts remain unchanged. The user requested proportional verification in v2, then explicitly approved the plan and authorized implementation. The original and v2 immutable plans remain unchanged.
+No architecture or implementation-scope deviation. The lifecycle follow-up corrects two confirmed failures within the existing active-failure contract and uses the forward-engineering skill's smallest dependency cone for verification, retaining original native evidence as historical. Focused settled-memory evidence was added under the approved v2 escalation process; workload/analyzer contracts remain unchanged. The user requested proportional verification in v2, then explicitly approved the plan and authorized implementation. The original and v2 immutable plans remain unchanged.
 
 ## Decisions
 
@@ -96,4 +106,4 @@ None for this completed slice. Preserved failed evidence includes the stale fixt
 
 ## Next action
 
-No further implementation or verification is required for QB-DEV-004. Retain the immutable v2 ExecPlan at its current path and all ignored baseline/candidate executables, inputs, failed runs and comparison receipts. Subsequent viewer-executor/bundle migrations or QB-DEV-006 require their own approved scope.
+No further implementation or verification is required for this follow-up. Preserve the immutable plans, original baseline/candidate native evidence and new red/green test receipts. Subsequent viewer-executor/bundle migrations or QB-DEV-006 require their own scope.

@@ -242,6 +242,65 @@ it("clamps the maximum cycle count and rejects obsolete reopen context", async (
   expect(h.host.openViewer).toHaveBeenCalledTimes(1); expect(h.observer.complete).toHaveBeenCalledOnce(); h.app.dispose();
 });
 
+it.each(["root", "rootEpoch", "request", "token", "navigation", "screen", "refresh", "missing_origin"] as const)(
+  "fails an active viewer cycle explicitly after %s context loss", async field => {
+    const h = setup({ kind: "warm_open" }); await h.start();
+    const context = h.host.captureContext();
+    if (field === "screen") h.change({ navigation: { screen: "library", tab: "clips" } });
+    else if (field === "refresh") h.change({ library: { ...h.state().library, refreshing: true } });
+    else if (field === "missing_origin") h.change({ origin: null });
+    else h.change({ origin: { ...h.state().origin!, [field]: typeof h.state().origin![field] === "number" ? 9 : "changed" } });
+    h.app.viewerCycleCompleted(context); h.app.viewerCycleCompleted(context); h.app.update();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.records.slice(-1)).toEqual([{ kind: "scenario_failed", payload: {
+      phase: "viewer_cycle", reason: "Benchmark application context changed",
+    }, meta: { required: true } }]);
+    expect(h.observer.complete).toHaveBeenCalledExactlyOnceWith("failed", "Benchmark application context changed", { phase: "viewer_cycle" });
+    expect(h.kinds().filter(kind => kind === "scenario_failed")).toHaveLength(1);
+    expect(h.host.publishBenchmarkGamesReturn).not.toHaveBeenCalled();
+    expect(h.host.openViewer).toHaveBeenCalledTimes(1); h.app.dispose();
+  },
+);
+
+it.each(["stale", "disposed"] as const)("ignores %s viewer callbacks even after context loss", async callback => {
+  const h = setup({ kind: "warm_open" }); await h.start();
+  const context = h.host.captureContext();
+  if (callback === "stale") {
+    h.app.viewerCycleCompleted(context); await vi.advanceTimersByTimeAsync(100);
+  } else { h.app.dispose(); h.app.dispose(); }
+  h.change({ origin: { ...h.state().origin!, root: "B" } });
+  const before = [...h.records], trace = [...h.trace];
+  h.app.viewerCycleCompleted(context);
+  expect(h.records).toEqual(before); expect(h.trace).toEqual(trace);
+  expect(h.observer.complete).not.toHaveBeenCalled(); h.app.dispose();
+});
+
+it.each(["initial", "reopen", "memory_reopen"] as const)("fails a refused %s viewer open explicitly", async stage => {
+  const h = setup(stage === "memory_reopen"
+    ? { kind: "lifecycle", id: "settled-memory", iterations: 6 } : { kind: "warm_open" });
+  if (stage === "initial") vi.mocked(h.host.openViewer).mockReturnValue(false);
+  await h.start();
+  if (stage !== "initial") {
+    vi.mocked(h.host.openViewer).mockReturnValue(false);
+    h.app.viewerCycleCompleted(h.host.captureContext());
+    await vi.advanceTimersByTimeAsync(stage === "memory_reopen" ? 0 : 100);
+  }
+  h.app.update(); h.app.viewerCycleCompleted(h.host.captureContext()); await vi.advanceTimersByTimeAsync(1000);
+  expect(h.records.slice(-1)).toEqual([{ kind: "scenario_failed", payload: {
+    phase: "replay_open", reason: "Benchmark replay could not be opened",
+  }, meta: { required: true } }]);
+  expect(h.observer.complete).toHaveBeenCalledExactlyOnceWith("failed", "Benchmark replay could not be opened", { phase: "replay_open" });
+  expect(h.kinds().filter(kind => kind === "scenario_failed")).toHaveLength(1);
+  expect(h.host.openViewer).toHaveBeenCalledTimes(stage === "initial" ? 1 : 2); h.app.dispose();
+});
+
+it("suppresses failure when a refused viewer open disposes its coordinator", async () => {
+  const h = setup({ kind: "warm_open" });
+  vi.mocked(h.host.openViewer).mockImplementation(() => { h.app.dispose(); return false; });
+  await h.start(); h.app.update();
+  expect(h.kinds()).not.toContain("scenario_failed"); expect(h.observer.complete).not.toHaveBeenCalled();
+});
+
 it("preserves all seven settled-memory windows and six actual viewer cycles", async () => {
   const h = setup({ kind: "lifecycle", id: "settled-memory", iterations: 6 }); await h.start();
   for (let cycle = 1; cycle <= 6; cycle++) { h.app.viewerCycleCompleted(h.host.captureContext()); await vi.advanceTimersByTimeAsync(0); }

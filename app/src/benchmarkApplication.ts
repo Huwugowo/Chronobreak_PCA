@@ -77,6 +77,7 @@ export function createBenchmarkApplication(observer: ReplayBenchmarkObserver, ho
     if (!check(context, "replay_open")) return;
     pending = undefined;
     if (host.openViewer(timestamp, context)) expectedViewer = host.captureContext();
+    else failContext("replay_open", "Benchmark replay could not be opened");
   };
   const returnToGames = (context: BenchmarkApplicationContext) => {
     if (!check(context, "viewer_cycle")) return null;
@@ -578,8 +579,8 @@ export function createBenchmarkApplication(observer: ReplayBenchmarkObserver, ho
   };
 
   const viewerCycleCompleted = (context: BenchmarkApplicationContext) => {
-    if (!active() || !expectedViewer || context.navigation !== expectedViewer.navigation ||
-        !host.isContextCurrent(context)) return;
+    if (!active() || !expectedViewer || context.navigation !== expectedViewer.navigation) return;
+    if (!check(context, "viewer_cycle")) return;
     expectedViewer = undefined;
     const scenario = observer.scenario();
     benchmarkViewerCycles += 1;
