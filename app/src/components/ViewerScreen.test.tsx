@@ -13,6 +13,9 @@ import { STAT_KEYS, type FinalStats } from "../leagueResult";
 import { sourceKey } from "../leagueSource";
 import { runBenchmarkDesktopResize } from "../benchmarkResize";
 import timelineStyles from "./ReplayTimeline.module.css";
+import * as playbackModule from "../playbackController";
+import * as renderBenchmark from "../benchmarkRender";
+import type { PlaybackMediaAdapter } from "../htmlVideoPlaybackAdapter";
 
 const diagnosticHarness = vi.hoisted(() => ({ held: false }));
 vi.mock("../benchmarkResize", () => ({ runBenchmarkDesktopResize: vi.fn().mockResolvedValue(undefined) }));
@@ -792,3 +795,131 @@ it.each(["media-first", "details-first", "details-fail", "details-timeout", "dis
     }
   },
 );
+
+
+// Frozen before QB-DEV-007 extraction. These traces exercise the actual Viewer
+// entry point and real action builder; transport evidence is delivered inside
+// seek(), before its promise returns. Real controller/media integration remains
+// covered above, and native render/resize behavior has separate helper tests.
+it.each([
+  { id: "whole_app", kind: "whole_app" },
+  { id: "layout", kind: "layout" },
+  { id: "lifecycle", kind: "lifecycle" },
+  { id: "timed-life", kind: "lifecycle", duration_seconds: 30 },
+  { id: "settled-memory", kind: "lifecycle" },
+  { id: "rate", kind: "rate" },
+  { id: "event", kind: "seek", target_times_ms: [10000, 30000, 90000], seek_reason: "event-jump" },
+  { id: "endpoint", kind: "seek", target_times_ms: [10000, 30000, 90000], seek_reason: "endpoint-edit" },
+  { id: "paused-seek", kind: "seek", target_times_ms: [10000, 30000, 90000], seek_playback_mode: "paused" },
+  { id: "qb010-opening-v1-cold-open", kind: "cold_open" },
+  { id: "qb010-opening-v1-warm-open", kind: "warm_open", iterations: 6 },
+  { id: "resize", kind: "desktop_resize" },
+  { id: "scrub", kind: "scrub" },
+  { id: "play-pause", kind: "play_pause" },
+])("freezes the ordered Viewer executor contract ($id)", async selected => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => window.setTimeout(() => callback(performance.now()), 16));
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => window.clearTimeout(id));
+  const actualBenchmark = await vi.importActual<typeof import("../benchmark")>("../benchmark");
+  vi.mocked(buildScenarioActions).mockImplementation(actualBenchmark.buildScenarioActions);
+  const probe = replayProbe();
+  probe.events = [10, 30, 90].map(seconds => ({ event_type: "ChampionKill", replay_tick: seconds * 48_000_000 as ReplayTick,
+    game_tick: String(seconds * 1_000_000), killer: "player1", victim: "enemy2", assisters: [], dragon_type: null,
+    stolen: null, recipient: null, kill_streak: null, acer: null, acing_team: null, turret: null, inhibitor: null,
+    result: null, relation: "ally" }));
+  setFixture(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
+    video_url: probe.video_url, media_timeline: probe.media_timeline });
+  const trace: string[] = [];
+  const record = (kind: string, value?: unknown) => trace.push(value === undefined ? kind : `${kind} ${JSON.stringify(value)}`);
+  let done = false, sequence = 0;
+  const scenario = { trial_id: "frozen", seed: 20261027, ...selected };
+  const opening = { cycle: 0, fixture_id: "S", gameTimestamp: "1" };
+  const emit = (kind: string, payload: Record<string, unknown> = {}, meta: unknown = {}) => {
+    record(`event:${kind}`, { payload, meta });
+    if (kind === "viewer_cycle_completed" || kind === "scenario_completed") done = true;
+    return true;
+  };
+  const observer = { nextMediaGeneration: () => 1, nextActionId: (kind: string) => `${kind}-${++sequence}`,
+    scenario: () => scenario, openingCycle: () => opening,
+    emitOpening: (kind: string, value: typeof opening, meta = {}) => emit(kind, actualBenchmark.openingPayload(value), meta),
+    emit, complete: vi.fn(async (...args: unknown[]) => { record("terminal", args); done = true; }) };
+  vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
+  vi.mocked(emitReplayBenchmarkEvent).mockImplementation(emit);
+  const metrics = { requests: 1, range_requests: 1, response_bytes: 1, completed_streams: 1, cancelled_streams: 0,
+    active_connections: 0, peak_connections: 1, rejected_connections: 0, rejected_requests: 0, active_streams: 0, peak_streams: 1 };
+  vi.mocked(loadServerMetrics).mockImplementation(async () => { record("server-metrics"); return metrics; });
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  const realCreate = playbackModule.createPlaybackController;
+  const { createHtmlVideoPlaybackAdapter } = await import("../htmlVideoPlaybackAdapter");
+  const baseController = realCreate(createHtmlVideoPlaybackAdapter(document.createElement("video")));
+  const base = baseController.snapshot(); baseController.dispose();
+  vi.spyOn(playbackModule, "createPlaybackController").mockImplementation((adapter: PlaybackMediaAdapter, options = {}) => {
+    let paused = true, seconds = 0, at = performance.now(), rate = 1;
+    let readiness: playbackModule.PlaybackSnapshot["readiness"] = "closed", generation = options.generation ?? 0;
+    let sourceUrl: string | null = null, preview: ReplayTick | null = null;
+    const subscribers = new Set<(state: playbackModule.PlaybackSnapshot) => void>();
+    const frames = new Set<(tick: ReplayTick, authority: "rvfc" | "media-clock-approximate") => void>();
+    const sync = () => { const now = performance.now(); if (!paused) seconds += (now - at) * rate / 1000; at = now; };
+    const snapshot = (): playbackModule.PlaybackSnapshot => {
+      sync();
+      return { ...base, readiness, generation, mediaId: probe.media_timeline.mediaId, sourceUrl, sessionToken: "load",
+        authority: "rvfc", queue: "IDLE", desiredPlaying: !paused,
+        seek: { ...base.seek, generation, requestedPreview: preview, presented: preview },
+        media: { ...base.media, source: sourceUrl ?? "", readyState: 4, networkState: 1, paused, ended: false,
+          browserSeconds: seconds, tick: Math.round(seconds * 48_000_000) as ReplayTick },
+        rate: { ...base.rate, selected: rate as playbackModule.PlaybackRate, applied: rate },
+        quality: { totalFrames: 100, droppedFrames: 0, heapBytes: null } };
+    };
+    const publish = () => subscribers.forEach(callback => callback(snapshot()));
+    const event = (kind: string, payload: Record<string, unknown> = {}, actionId?: string) =>
+      options.eventSink?.({ kind, payload, actionId, generation, atMs: performance.now() });
+    return {
+      snapshot, sampleMetrics: () => { record("sample"); return snapshot(); },
+      open: async input => {
+        sourceUrl = input.url; generation++; readiness = "ready";
+        adapter.open(input.url, input.timeline); publish();
+        event("media_canplay"); event("first_presented_frame");
+        frames.forEach(callback => callback(0 as ReplayTick, "rvfc"));
+        return { status: "ready" };
+      },
+      play: async () => { sync(); paused = false; record("play"); publish(); return { status: "playing" }; },
+      pause: () => { sync(); paused = true; record("pause"); publish(); return { status: "paused" }; },
+      setRate: value => { sync(); rate = value; record("rate", value); publish(); },
+      setLoopRange: range => record("loop", range),
+      seek: (target, request = {}) => {
+        record("seek", { target, ...request }); preview = target; seconds = target / 48_000_000; at = performance.now();
+        event("seek_requested", { target_ms: target / 48_000 }, request.actionId);
+        event("seek_dispatched", { target_ms: target / 48_000 }, request.actionId);
+        event("seek_presented", { target_ms: target / 48_000, authoritative: true }, request.actionId);
+        event("seeked", { target_ms: target / 48_000 }, request.actionId);
+        frames.forEach(callback => callback(target, "rvfc")); publish();
+        return Promise.resolve({ status: "presented", target, presented: target });
+      },
+      subscribe: callback => { subscribers.add(callback); callback(snapshot()); return () => subscribers.delete(callback); },
+      subscribeFrames: callback => { frames.add(callback); return () => frames.delete(callback); },
+      dispose: () => {
+        if (readiness === "disposed") return;
+        record("release"); readiness = "disposed"; event("viewer_disposed"); publish(); adapter.release();
+      },
+      retry: vi.fn(), setMuted: vi.fn(), setVolume: vi.fn(),
+    } as playbackModule.PlaybackController;
+  });
+  vi.mocked(runBenchmarkDesktopResize).mockImplementation(async () => { record("native-resize"); });
+  vi.spyOn(renderBenchmark, "waitForBenchmarkRenderedReplay").mockImplementation(async () => { record("render-ready"); });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}}
+    onBenchmarkViewerCycleCompleted={() => record("cycle-callback")} />, host);
+  try {
+    for (let step = 0; step < 3000 && !done; step++) {
+      for (let micro = 0; micro < 30; micro++) await Promise.resolve();
+      if (!done) await vi.advanceTimersToNextTimerAsync();
+    }
+    for (let micro = 0; micro < 30; micro++) await Promise.resolve();
+    expect(done).toBe(true);
+    expect(trace.some(value => value.startsWith("event:scenario_failed"))).toBe(false);
+    expect(trace).toMatchSnapshot();
+  } finally { dispose(); vi.useRealTimers(); }
+});

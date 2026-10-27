@@ -6,11 +6,11 @@ Updated: 2026-10-27
 
 ## Current milestone
 
-Planning handoff complete. Implementation has not started.
+M1 complete; M2 — implement the bounded Viewer runner and shared production operations.
 
 ## Active unit
 
-None. User requested a plan only for this feature.
+Extract benchmark action/evidence/lifetime policy into `benchmarkViewer.ts`; bind live production capabilities and narrow render/resize subjects. Preserve the 14 frozen Viewer traces unchanged.
 
 ## Completed
 
@@ -21,19 +21,25 @@ None. User requested a plan only for this feature.
 
 ## In flight
 
-None.
+None. M2 source edits are next.
 
 ## Remaining
 
-M1 current-production baseline builds/native workflows before source or test edits, then frozen contract coverage; M2 runner extraction; M3 automated/native/ordinary UI verification, boundary review, architecture and completion evidence.
+M2 runner extraction; M3 automated/native/ordinary UI verification, boundary review, architecture and completion evidence.
 
 ## Verification
 
-Planning-only canonical schema/invariant/linked-artifact validation and `git diff --check` passed. No QB-DEV-007 source/test edits, builds, product tests or native baseline/candidate runs were performed. QB-DEV-006's tool/native results prove its validator correction only; they are not a Viewer baseline or extraction acceptance.
+- M1 baseline before source/test edits: all eight required native runs passed runner, analyzer and matrix verification (`qbd7b/.../plans/b7`); idle conditioning passed, both index rows `ready,facts_current=1`. Added settled-memory passed with exactly six Viewer cycles and seven quiet library windows (`plans/b7mem`). All runs have preserved source hashes, zero required loss, clean finite shutdown. Logs retained under `build/verification/qb-dev-007/m1-*.log`; immutable raw results under the corresponding sentinel `results/`. A representative run supports exercised behavior, not statistical performance equivalence.
+- Pre-extraction real-builder Viewer contracts: 14 frozen snapshots (every action branch, 334-action whole-app, default five-cycle layout/rate ladder, explicit event/endpoint/paused seeks, opening/lifecycle variants); synchronous evidence is emitted inside the test controller seek. Existing real controller/media integration remains. Focused seven-file suite passed 166 tests and TypeScript passed. Snapshots generated against the unmodified executor, then independently rerun without update. Initial test mock type errors were corrected; no production changes.
+
+- Current normal and benchmark Tauri CLI builds passed; archived executable/resources and SHA-256 manifests are at `build/perf/qbd7-freeze/baseline-{normal,benchmark}`. Benchmark executable SHA-256 is `1faba12d5c81c3c5b4759fb75b309f281580ab63be14585fe5159d3172beee51`. Input hashes (307 tracked executable/tool inputs), revision/dirty paths and tool versions are beside them. Build logs: `build/verification/qb-dev-007/m1-build-{normal,benchmark}.log`. Existing Vite dynamic-import and native linker warnings retained.
+- Existing focused seven-file frontend gate passed: 152 tests (`m1-focused-before.log`). An initial npm hook was denied writing `.codex/logs`; direct `npm.cmd` with no profile ran successfully.
+- Fresh baseline preparation fully decoded both checked-in generated preproduction bundles, verified all source hashes and offline cache; receipt `qbd7b/.../manifests/base.preparation.json`, log `m1-prepare.log`. Native idle preflight passed.
+- Frozen real builder action lists/hashes are at `build/perf/qbd7-freeze/action-contracts.json`: whole-app 334 actions, layout 75, default rate 19, all declared seek/control/opening/lifecycle variants. No source/test edits or candidate checks yet. QB-DEV-006 results remain separate evidence.
 
 ## Deviations
 
-None.
+- Added the plan's conditional settled-memory native workflow because ordinary lifecycle startup-to-peak growth did not establish retained resources. Both roles must keep this added workflow. No source/test/measurement change.
 
 ## Decisions
 
@@ -44,8 +50,8 @@ None.
 
 ## Blockers
 
-None for the planning handoff. Implementation is outside the current user request.
+None. Full approved M1–M3 implementation authorized on 2026-10-27.
 
 ## Next action
 
-When implementation is authorized, read this checkpoint before the immutable plan, set M1 as the active unit, and build/archive current normal and benchmark desktop baselines with input/fixture/runtime/tool hashes before changing any source or tests. Then collect the plan's native baseline workflows.
+Implement M2 from the immutable design. First factor the shared production seek/clip operations, then runner policy and owner binding/narrow helper subjects; run the frozen focused gate without snapshot updates.
