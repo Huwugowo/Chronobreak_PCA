@@ -45,10 +45,36 @@ continuations recheck captured origin/navigation authority; active-context failu
 remain explicit. An attempted export always invalidates its captured source root,
 even when its session can no longer publish results.
 
-Viewer scenario execution remains in `ViewerScreen.tsx`, using its actual playback
-controller, layout, clip state and data admission. Moving that executor is a separate
-lifecycle migration. Bounded production telemetry and real search-field/history
-observations also remain at their authoritative sources. Backend feature/session
+`benchmarkViewer.ts` owns Viewer workload construction/execution, eligibility,
+readiness deadlines, action/evidence waiters, cancellation and completion. One
+runner is created for the captured active session after the real controller exists
+and before it opens media; an ordinary mount creates no runner or experiment
+resources. Viewer retains controller/media/data/layout/clip ownership and emits
+authoritative descriptor, details, controller, presentation, decoder and fullscreen
+observations before forwarding the original evidence to the runner.
+
+Its typed live host exposes focused playback/clip/layout/metrics operations and
+read-only render/resize subjects, without transferring a controller or video.
+Ordinary and workload seeks share one production operation: apply the current
+clip loop, call the actual controller and update the requested preview. Event
+selection and frame-aligned endpoint changes also share production helpers;
+action IDs, endpoint alternation and evidence/timeout policy belong to the runner.
+The resize helper reads opaque primary-element/load identity and subscribes to
+real frames; it drains issued native work, restores geometry and unlistens even
+after publication is cancelled. The render helper checks live source/element/load
+identity, real projected participants and the actual overlay DOM, decodes its
+images and waits for two paint opportunities. Fixed workload preconditions stay
+in the harness, never synthesized by the screen.
+
+Completion captures real metrics before releasing media, waits the existing
+100 ms, emits the required event, marks finished and then synchronously notifies
+App or completes the observer. Intentional release remains eligible; unexpected
+active disposal fails once, while replaced mounts/sessions cannot publish late
+work. A failure claimed before release retains its original reason through
+disposal. Viewer separately cleans up its production resources.
+
+Bounded production telemetry and real search-field/history observations remain
+at their authoritative sources. Backend feature/session
 isolation and frontend orchestration ownership are distinct from bundle isolation;
 the frontend harness still ships in the normal bundle to preserve loading timing.
 Cycle returns render the actual Games screen without the additional refresh
@@ -153,8 +179,10 @@ origin. An invalidated viewer selection unmounts. Exporter details use the same
 owner; export's existing source/frame and mutation contracts remain unchanged.
 
 `playback_payload_ready` still means the full semantic probe, now potentially after
-mount; it never means descriptor readiness. Benchmark scenarios require both full
-details and presented media, regardless of arrival order. Historical library
+mount; it never means descriptor readiness. Ordinary benchmark scenarios require
+both full details and presented media, regardless of arrival order. Versioned
+opening starts media actions independently and gates completion on admitted
+details, retaining its opening deadline and phase markers. Historical library
 milestone meanings are unchanged. Paint and subsequent duration-drain admission
 check root/request/token/navigation identity; a stale Games view fails instead of
 emitting library_useful. Old payload-before-mount attribution is not a descriptor

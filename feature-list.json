@@ -66,8 +66,8 @@
         "QB-DEV-006"
       ],
       "evidence": [
-        "2026-10-27 planning only: reviewed immutable Viewer runner/host design finalized with initialized checkpoint. No Viewer implementation or acceptance verification performed. Exact ownership/interfaces, lifecycle/evidence ordering, bounded milestones and before/after verification: docs/exec-plans/qb-dev-007-viewer-benchmark-boundary.md.",
-        "2026-10-27 M1: archived current normal/benchmark Tauri builds and input identities, eight mandatory native workflows plus conditional six-cycle settled-memory passed before source/test edits; 14 pre-extraction Viewer trace snapshots and 166 focused tests/typecheck passed. Detailed immutable result paths and limits: docs/execution/qb-dev-007.md."
+        "2026-10-27 M1: archived current normal/benchmark Tauri builds and input identities, eight mandatory native workflows plus conditional six-cycle settled-memory passed before source/test edits; 14 pre-extraction Viewer trace snapshots and 166 focused tests/typecheck passed. Detailed immutable result paths and limits: docs/execution/qb-dev-007.md.",
+        "2026-10-27 M2: shared production seek/clip operations and typed live Viewer runner implemented in incremental commits; 14 frozen Viewer traces unchanged, final focused suite 223 passed, frontend suite/typecheck/build passed. Native candidate and observer controls remain in progress; status remains non-done. Details: docs/execution/qb-dev-007.md."
       ],
       "notes": "Full approved M1-M3 implementation authorized on 2026-10-27. App coordination, real-source instrumentation/search, historical duration/no-refresh compatibility and frontend bundle isolation remain distinct seams; no full frontend-separation claim. Current cursor and detailed evidence are in the execution checkpoint.",
       "execution": {
