@@ -205,7 +205,22 @@ The external collector creates the production app suspended, associates an I/O c
 
 GPU engine/memory evidence is optional. Windows' in-process GPU performance-counter CIM provider has no runner-enforced finite deadline and has demonstrated multi-second stalls after a fast prelaunch query, so it is disabled in the core one-second sampler and every sample carries that explicit limitation. Missing GPU data is never emitted as zero. A future GPU collector must be independently bounded before it can join accepted full-observer evidence.
 
-Matched processes must begin with identical application state. Set `isolate_launch_roots: true` in a matrix specification to derive separate app-data and scratch children for every process; prepare each child with the same fingerprinted offline `ddragon` cache before preflight. Start other app-data empty, including the capability marker and WebView profile, and reject unexpected prelaunch contents. The planner only declares these paths; preparation and the launch wrapper enforce their initial contents. All six warm cycles within one process retain that process's state. A shared app-data root lets the first control populate the HEVC capability cache and changes later controls' request classes; this correctly fails semantic equality. The omitted/default option preserves existing matrix expansion.
+Matched processes must begin with identical application state. Set `isolate_launch_roots: true` in a matrix specification to derive separate app-data and scratch children for every process; prepare each child with the same fingerprinted offline `ddragon` cache before preflight. Start other app-data empty, including the capability marker and WebView profile, and reject unexpected prelaunch contents. The planner only declares these paths; the launch procedure must verify and retain the initial-state receipt rather than infer empty state from the option. All six warm cycles within one process retain that process's state. A shared app-data root lets the first control populate the HEVC capability cache and changes later controls' request classes; this correctly fails semantic equality. The omitted/default option preserves existing matrix expansion.
+
+When an approved comparison explicitly requires a normally settled index, declare
+that condition for both roles before collecting controls. After normal indexing
+finishes, use SQLite's backup API to freeze one complete, library-root-bound
+snapshot per role; never copy a live database/WAL pair or share a mutable database
+between processes. Seed identical copies into each isolated launch, retaining the
+database hash, catalog/root identity, integrity check and every recording's
+`ready,facts_current=1` admission in an initial-state receipt. Verify the exact
+prelaunch tree and hashes against that receipt immediately before preflight;
+allow only the declared offline assets and index snapshot, with empty scratch,
+capability and WebView state. The two roles must match fixture, schema and admitted
+index facts; root-only database/config differences remain explicit. This is a
+declared settled-index condition, not empty-cache opening evidence or permission
+to extend readiness deadlines. Unexpected or partially imported state invalidates
+the launch. A cache-only failure remains retained separately.
 
 Before full-instrumentation baseline runs, collect four interleaved 60-second minimal/full observer pairs against the same representative fixture and deterministic actions. Warm normal playback first, then stay paused between repeated control seeks so continuous decoder read-ahead does not dominate observer CPU/byte repeatability. Each seek briefly resumes playback until its authoritative presented frame arrives and pauses again; playing-seek behavior remains covered by the baseline matrix itself. The observer-control analyzer gate requires:
 
