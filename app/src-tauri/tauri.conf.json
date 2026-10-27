@@ -15,7 +15,7 @@
         "title": "League Replay",
         "width": 1440,
         "height": 900,
-        "minWidth": 1080,
+        "minWidth": 1200,
         "minHeight": 680,
         "center": true
       }

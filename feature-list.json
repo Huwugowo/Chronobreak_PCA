@@ -72,7 +72,7 @@
         "2026-10-27 M3 native: all nine required workflow types have valid candidate replacements with matching scenario/action/request/error/recovery contracts, zero required loss, preserved fixtures, exit 0/owned Job empty. Native/frame event order differs only in documented allowed pairs. Original maximized/input-contaminated runs retained; whole-app/layout replacements pass on user-requested second screen. Six-cycle settled-memory shows no continuing post-first-playback accumulation; no statistical equivalence claim.",
         "2026-10-27 acceptance remains open: all eight candidate observer controls pass individually, but unchanged full aggregate rejects allowed native/RVFC arrival-order digests (draft QB-DEV-008). Baseline aggregate separately rejected source revision/dirty changes caused by checkpoint commits during collection. Affected startup/resource/latency signals lack required statistical disposition; ordinary native interaction unavailable due capture/input geometry failures. No gates, thresholds, raw evidence or criteria were weakened; status remains non-done. Exact resume cursor: docs/execution/qb-dev-007.md."
       ],
-      "notes": "Full approved M1-M3 implementation authorized on 2026-10-27. M1/M2 implementation complete in incremental commits; M3 automated/representative-native evidence collected, mandatory control/statistical/ordinary UI acceptance remains open. Separate QB-DEV-008 owns the discovered analyzer comparison mismatch; no analyzer contract change belongs to this extraction. App coordination, real-source instrumentation/search, historical duration/no-refresh compatibility and frontend bundle isolation remain distinct seams; no full frontend-separation claim. Detailed execution and next action: docs/execution/qb-dev-007.md.",
+      "notes": "Full approved M1-M3 implementation authorized on 2026-10-27. M1/M2 implementation complete in incremental commits; M3 automated/representative-native evidence collected, mandatory control/statistical/ordinary UI acceptance remains open. Separate QB-DEV-008 owns the discovered analyzer comparison mismatch; no analyzer contract change belongs to this extraction. App coordination, real-source instrumentation/search, historical duration/no-refresh compatibility and frontend bundle isolation remain distinct seams; no full frontend-separation claim. Detailed execution and next action: docs/execution/qb-dev-007.md. Later QB-UI-002 intentionally changes the product window/card minimum and native small resize width; prior archives are historical identities, not a current performance baseline. See its checkpoint for the focused invalidation.",
       "execution": {
         "workflow": "planned",
         "plan": "docs/exec-plans/qb-dev-007-viewer-benchmark-boundary.md",
@@ -111,16 +111,16 @@
     {
       "kind": "feature",
       "id": "QB-DEV-008",
-      "stage": "draft",
+      "stage": "ready",
       "name": "Align observer-control outcome digests with allowed seek evidence ordering",
       "description": "Investigate the strict observer-control digest rejecting identical per-action outcomes when authoritative native seek completion and presented-frame events arrive in either allowed order.",
       "priority": "P2",
       "area": "development",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": null,
       "dependencies": [],
       "execution": {
-        "workflow": "adaptive",
+        "workflow": "direct",
         "plan": null
       },
       "acceptance_criteria": [
@@ -143,7 +143,7 @@
         "2026-10-27: Candidate c7cs first pair reproduces the mismatch with identical subject/control fingerprints and all other digest components equal; 28 native/presented pairs reverse order. Baseline aggregate separately rejected correctly because root checkpoint commits changed source revision/dirty metadata mid-campaign; original reports are retained as ineligible controls. Candidate campaign holds repository identity fixed. Details and diagnostic paths: docs/execution/qb-dev-007.md.",
         "2026-10-27: All eight candidate controls and matrix verification pass individually with fixed subject/control provenance. Existing minimal aggregate passes; unchanged full aggregate exits 2 with observer-control semantic action/seek/request/error/recovery outcomes differ. Later overhead gates are unaccepted. Original logs/reports and digest diagnosis retained in the QB-DEV-007 checkpoint."
       ],
-      "notes": "Separate follow-up discovered during the approved Viewer extraction. No analyzer, raw digest, threshold or measurement-contract change is authorized by QB-DEV-007; its unchanged strict control gate remains mandatory and unresolved."
+      "notes": "2026-10-27 explicit user authorization to resolve this bounded analyzer defect separately from QB-DEV-007. Direct route: retain the raw outcome digest; version the semantic comparator and allow only attributed native/RVFC completion transpositions. Add positive/negative regression coverage and reanalyze retained raw controls into new reports. All overhead thresholds remain mandatory; fresh fixed-provenance controls and QB-DEV-007 performance/native acceptance remain separate gates."
     },
     {
       "kind": "feature",
@@ -4241,6 +4241,47 @@
         "2026-10-21: Frontend Vitest 33 files / 295 tests passed; TypeScript check and Vite production build passed. Canonical schema/lifecycle validation and git diff --check passed. No backend or media behavior changes."
       ],
       "notes": "User requested minimal sufficient fixes and explicitly excluded evolved Smite (QB-LIB-013). No component ownership refactor or CPU optimization."
+    },
+    {
+      "kind": "feature",
+      "id": "QB-UI-002",
+      "stage": "ready",
+      "name": "Keep match cards at a stable desktop size",
+      "description": "Keep the match-history card contents and team rosters on one stable row, with a fixed card width and a desktop minimum sized around the card plus surrounding spacing.",
+      "priority": "P2",
+      "area": "desktop-ui",
+      "status": "done",
+      "parent_id": null,
+      "dependencies": [
+        "QB-UI-001",
+        "QB-REPLAY-019"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Match-history cards retain one stable width and row layout, including both team rosters, at every supported desktop window width; no narrow-window roster second row is introduced.",
+        "The desktop minimum width fits the complete card, library horizontal padding/borders and any reserved vertical scrollbar space. Larger windows add surrounding space while retaining usable card actions and search/header alignment.",
+        "Keep existing metadata, long-name truncation, missing/partial rosters, save/open/menu behavior and other screens intact. Remove the superseded narrow match-card wrap behavior without unrelated UI refactoring."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Frontend tests, typecheck and production build; validate Tauri configuration/build and canonical state/diff appropriate to changed files."
+        },
+        {
+          "type": "manual",
+          "description": "Render representative complete/partial/long-name match cards at the chosen desktop minimum and larger viewport widths, checking stable card/roster geometry and absence of horizontal clipping/overflow. Verify native minimum if native automation is available; report unavailable checks truthfully."
+        }
+      ],
+      "evidence": [
+        "2026-10-27: Removed the <=1200px second-row roster override and fixed the existing centered Match History rail at 1120px. Complete cards stay 1120x109; minimum native desktop width is 1200 logical px, covering the actual responsive shell padding and Windows scrollbar reserve. Larger windows add space around the same card width.",
+        "2026-10-27: Isolated headless Edge layout check rendered the real LibraryScreen fixture with actual App shell padding at 1200/1280/1440/1920 CSS px and an explicit 17px classic-scrollbar reserve. Full ten-player, long-name ellipsis and partial-roster stress variants kept card dimensions, same-row roster geometry and no clipping/horizontal overflow. Screenshot visually inspected. Raw script/report/image: build/verification/qb-ui-002/layout-check.cjs, layout-report.json, minimum-full-rosters.png. No user browser or library was used.",
+        "2026-10-27: Focused LibraryScreen/native-resize tests 11 passed; full frontend 527 tests/40 files, TypeScript/Vite and normal production Tauri CLI build passed. Existing Vite/linker warnings retained. Native drag/minimum interaction was not rerun: native capture/input geometry automation was unavailable in this session; configured minimum was accepted by the desktop build, and browser layout was exercised at that minimum. Logs: build/verification/qb-ui-002/{frontend-tests,desktop-build}.log.",
+        "2026-10-27: Resize helper small target now follows the new 1200x680 desktop minimum; existing scaled-size test and new config-consistency assertions pass at 1x/1.25x while preserving eight playing/eight paused resizes/restoration. No raw benchmark results/analyzers/thresholds changed. Prior QB-DEV-007 geometry/build evidence is explicitly retained as historical in its checkpoint; fresh affected-role identities are required for later current-product comparisons."
+      ],
+      "notes": "2026-10-27 explicit user correction to the narrow two-row layout introduced by QB-UI-001: keep cards at a stable size and determine minimum window width from the card plus spacing. The supported desktop minimum changes from 1080 to 1200 logical px; the existing native resize benchmark must use that real minimum. Its action counts, evidence authority, timeouts and analyzer thresholds are unchanged. Prior QB-DEV-007 archives remain evidence of their original product/geometry identities, not a current performance baseline. No playback or benchmark ownership refactor."
     },
     {
       "id": "QB-CLIP-011",

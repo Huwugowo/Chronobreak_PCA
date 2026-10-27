@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { desktopResizeTargets, runBenchmarkDesktopResize, type ResizeGeometry, type ResizeWindow, type BenchmarkResizeSubject } from "./benchmarkResize";
 import type { ReplayBenchmarkObserver } from "./benchmark";
+import desktopConfig from "../src-tauri/tauri.conf.json";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 const setup = () => {
@@ -51,7 +52,12 @@ it("uses physical sizes, eight RVFC and eight paused paint actions, then restore
   expect(f.frames.size).toBe(0); expect(f.listener()).toBeUndefined(); expect(vi.getTimerCount()).toBe(0);
   const scaled = { ...f.original, scale: 1.25, position: { x: 0, y: 0 },
     workArea: { position: { x: 0, y: 0 }, size: { width: 2560, height: 1440 } } };
-  expect(desktopResizeTargets(scaled)[0]).toEqual({ width: 1350, height: 850 });
+  expect(desktopResizeTargets(scaled)[0]).toEqual({ width: 1500, height: 850 });
+  for (const geometry of [f.original, scaled]) {
+    const [small] = desktopResizeTargets(geometry);
+    expect(small.width).toBe(Math.ceil(desktopConfig.app.windows[0].minWidth * geometry.scale));
+    expect(small.height).toBe(Math.ceil(desktopConfig.app.windows[0].minHeight * geometry.scale));
+  }
 });
 
 it.each(["geometry", "listener"])("cancels during native %s admission before playback or resize", async phase => {

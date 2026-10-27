@@ -50,7 +50,8 @@ export const desktopResizeTargets = (geometry: ResizeGeometry): [Size, Size] => 
   }
   const width = Math.floor(workArea.position.x + workArea.size.width - position.x - (outer.width - inner.width));
   const height = Math.floor(workArea.position.y + workArea.size.height - position.y - (outer.height - inner.height));
-  const small = { width: Math.ceil(1080 * scale), height: Math.ceil(680 * scale) };
+  // Match the supported desktop minimum in src-tauri/tauri.conf.json.
+  const small = { width: Math.ceil(1200 * scale), height: Math.ceil(680 * scale) };
   const large = { width: Math.min(Math.floor(1440 * scale), width), height: Math.min(Math.floor(900 * scale), height) };
   if (large.width < small.width + 100 * scale || large.height < small.height + 50 * scale) {
     throw new Error("monitor work area cannot fit two supported resize sizes");

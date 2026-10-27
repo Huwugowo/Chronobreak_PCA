@@ -1,5 +1,7 @@
 .matchHistory {
-  width: 100%;
+  /* The desktop minimum leaves room for this rail, shell padding and scrollbar. */
+  width: 1120px;
+  margin-inline: auto;
 }
 
 .toolbar {
@@ -639,13 +641,6 @@
   }
 }
 
-/* Match History bounded content rail */
-.matchHistory {
-  width: 100%;
-  max-width: 1120px;
-  margin-inline: auto;
-}
-
 .matchItem[data-outcome="victory"] {
   --match-accent: var(--accent-blue);
 }
@@ -657,21 +652,4 @@
 .matchItem[data-outcome="remake"],
 .matchItem[data-outcome="terminated"] {
   --match-accent: var(--accent-neutral);
-}
-
-/* Keep the full match summary when the desktop content rail narrows. */
-@media (max-width: 1200px) {
-  .matchOpen {
-    min-width: 0;
-    grid-template-columns: 100px minmax(296px, 1fr) 76px 74px;
-    grid-template-areas:
-      "context player farming recording"
-      "rosters rosters rosters rosters";
-    padding-block: 12px;
-  }
-  .matchContext { grid-area: context; }
-  .playerSummary { grid-area: player; }
-  .farming { grid-area: farming; }
-  .recordingMeta { grid-area: recording; }
-  .teamRosters { grid-area: rosters; max-width: none; }
 }
