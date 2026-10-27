@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { desktopResizeTargets, runBenchmarkDesktopResize, type ResizeGeometry, type ResizeWindow } from "./benchmarkResize";
+import { desktopResizeTargets, runBenchmarkDesktopResize, type ResizeGeometry, type ResizeWindow, type BenchmarkResizeSubject } from "./benchmarkResize";
 import type { ReplayBenchmarkObserver } from "./benchmark";
-import type { PlaybackController } from "./playbackController";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 const setup = () => {
@@ -17,12 +16,13 @@ const setup = () => {
   let nextId = 0;
   const observer = { nextActionId: () => `resize-${++nextId}`, now: () => Date.now(),
     emit: (kind: string, payload: Record<string, unknown>, meta?: Record<string, unknown>) => events.push({ kind, payload, meta }) } as unknown as ReplayBenchmarkObserver;
-  const controller = { snapshot: () => ({ generation, sessionToken: "load", sourceUrl: "fixture", mediaId: "media", readiness: "ready",
+  const elementToken = {};
+  const controller = { readMediaIdentity: () => ({ elementToken, connected: true, currentSrc: "fixture" }), snapshot: () => ({ generation, sessionToken: "load", sourceUrl: "fixture", mediaId: "media", readiness: "ready",
       recoveryCount: 0, media: { paused } }),
     subscribeFrames: (callback: (tick: number, authority: "rvfc" | "media-clock-approximate") => void) => {
       frames.add(callback); return () => frames.delete(callback);
     }, play: async () => { paused = false; return { status: "playing" }; }, pause: () => { paused = true; },
-  } as unknown as PlaybackController;
+  } as unknown as BenchmarkResizeSubject;
   let deliverFrame = true, deliverNative = true;
   const window: ResizeWindow = { geometry: vi.fn(async () => current),
     listen: async callback => { native = callback; return () => { native = undefined; }; },
@@ -32,8 +32,7 @@ const setup = () => {
       if (!paused && deliverFrame) setTimeout(() => { for (const callback of frames) callback(10, "rvfc"); }, 0);
     }) };
   const abort = new AbortController();
-  const run = () => runBenchmarkDesktopResize(observer, controller, { isConnected: true, currentSrc: "fixture" } as HTMLVideoElement,
-    abort.signal, ms => new Promise(resolve => setTimeout(resolve, ms)), window);
+  const run = () => runBenchmarkDesktopResize(observer, controller, abort.signal, ms => new Promise(resolve => setTimeout(resolve, ms)), window);
   return { run, original, events, frames, window, abort, current: () => current,
     listener: () => native, setGeneration: () => { generation++; },
     omitFrame: () => { deliverFrame = false; }, omitNative: () => { deliverNative = false; } };

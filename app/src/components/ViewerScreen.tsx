@@ -52,7 +52,7 @@ import {
   wholeTimelineViewport,
   type TimelineViewport,
 } from "../replayTimelineGeometry";
-import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot } from "../playbackController";
+import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot, type SeekOutcome } from "../playbackController";
 import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
 import { createPlaybackDiagnostics } from "../playbackDiagnostics";
 import { createBenchmarkSeekEvidence } from "../benchmarkSeekEvidence";
@@ -184,6 +184,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const durationMs = replayTickToMilliseconds(replayEnd);
   let primaryVideo: HTMLVideoElement | undefined;
   let benchmarkVideo: HTMLVideoElement | undefined;
+  const benchmarkElementToken = {};
   let controller!: PlaybackController;
   let decoderDiagnostics: ReturnType<typeof createPlaybackDiagnostics> | undefined;
   let metricsIntervalId: number | undefined;
@@ -434,18 +435,25 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     } catch { /* Server diagnostics must not interrupt playback. */ }
   };
 
+  // Shared production operation: current clip loop and requested preview are
+  // applied identically for user and harness seeks. Evidence policy stays outside.
+  const requestSeek = (target: ReplayTick, options: { reason?: string; playAfter?: boolean; actionId?: string } = {}): Promise<SeekOutcome> => {
+    controller.setLoopRange(clipRange());
+    const operation = controller.seek(target, options);
+    const preview = controller.snapshot().seek.requestedPreview;
+    if (preview !== null) setReplayPosition(preview);
+    return operation;
+  };
+
   const seekTo = (target: ReplayTick, options: { reason?: SeekReason; playAfter?: boolean; onBenchmarkDispatch?: () => void; awaitBenchmarkEvidence?: boolean } = {}): Promise<void> => {
     if (!controller) return Promise.resolve();
-    controller.setLoopRange(clipRange());
     const observer = replayBenchmarkObserver();
     const actionId = observer?.nextActionId("seek");
     const evidence = actionId && options.awaitBenchmarkEvidence
       ? createBenchmarkSeekEvidence(mediaGeneration, actionId) : undefined;
     if (evidence) benchmarkSeekObservers.add(evidence.observe);
     if (actionId && options.onBenchmarkDispatch) dispatchObservers.set(actionId, options.onBenchmarkDispatch);
-    const operation = controller.seek(target, { reason: options.reason, playAfter: options.playAfter, actionId });
-    const preview = controller.snapshot().seek.requestedPreview;
-    if (preview !== null) setReplayPosition(preview);
+    const operation = requestSeek(target, { reason: options.reason, playAfter: options.playAfter, actionId });
     const settled = operation.then((result) => {
       if (actionId) dispatchObservers.delete(actionId);
       if (observer && (result.status === "failed" || result.status === "unavailable")) throw new Error(result.reason ?? result.status);
@@ -975,8 +983,10 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       }
       case "desktop-resize":
         if (!benchmarkVideo) throw new Error("resize video is unavailable");
-        await runBenchmarkDesktopResize(replayBenchmarkObserver()!, controller, benchmarkVideo,
-          benchmarkAbortController.signal, waitForBenchmark);
+        await runBenchmarkDesktopResize(replayBenchmarkObserver()!, {
+          snapshot: controller.snapshot, play: controller.play, pause: controller.pause, subscribeFrames: controller.subscribeFrames,
+          readMediaIdentity: () => ({ elementToken: benchmarkElementToken, connected: benchmarkVideo!.isConnected, currentSrc: benchmarkVideo!.currentSrc }),
+        }, benchmarkAbortController.signal, waitForBenchmark);
         return;
       case "render-ready": {
         const video = benchmarkVideo;

@@ -58,21 +58,28 @@ export const desktopResizeTargets = (geometry: ResizeGeometry): [Size, Size] => 
   return [small, large];
 };
 
-export const runBenchmarkDesktopResize = async (observer: ReplayBenchmarkObserver, controller: PlaybackController,
-  video: HTMLVideoElement, signal: AbortSignal, wait: (ms: number) => Promise<void>, window: ResizeWindow = nativeWindow) => {
+export type BenchmarkResizeSubject = Pick<PlaybackController, "snapshot" | "play" | "pause" | "subscribeFrames"> & {
+  readMediaIdentity(): Readonly<{ elementToken: object; connected: boolean; currentSrc: string }>;
+};
+type ResizeObserver = Pick<ReplayBenchmarkObserver, "emit" | "now" | "nextActionId">;
+
+export const runBenchmarkDesktopResize = async (observer: ResizeObserver, controller: BenchmarkResizeSubject,
+  signal: AbortSignal, wait: (ms: number) => Promise<void>, window: ResizeWindow = nativeWindow) => {
   const readGeometry = () => bounded(window.geometry(), "native geometry read");
   const original = await readGeometry();
   const targets = desktopResizeTargets(original);
   const identity = controller.snapshot();
-  const source = video.currentSrc;
+  const media = controller.readMediaIdentity();
+  const source = media.currentSrc;
   const generation = identity.generation;
   observer.emit("desktop_resize_started", { original_width: original.inner.width, original_height: original.inner.height,
     scale_factor: original.scale, target_sizes: targets }, { generation, required: true });
   const assertIdentity = () => {
     const state = controller.snapshot();
-    if (signal.aborted || !video.isConnected || state.generation !== generation ||
+    const currentMedia = controller.readMediaIdentity();
+    if (signal.aborted || !currentMedia.connected || currentMedia.elementToken !== media.elementToken || state.generation !== generation ||
         state.sessionToken !== identity.sessionToken || state.sourceUrl !== identity.sourceUrl ||
-        state.mediaId !== identity.mediaId || video.currentSrc !== source || state.readiness !== "ready" ||
+        state.mediaId !== identity.mediaId || currentMedia.currentSrc !== source || state.readiness !== "ready" ||
         state.recoveryCount !== identity.recoveryCount) throw new Error("resize changed or disposed the media load");
     return state;
   };

@@ -682,7 +682,10 @@ it("passes the mounted primary video to native resize after playback takes owner
     primary.dispatchEvent(new Event("canplay"));
     frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
     await vi.waitFor(() => expect(runBenchmarkDesktopResize).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(runBenchmarkDesktopResize).mock.calls[0][2]).toBe(primary);
+    const subject = vi.mocked(runBenchmarkDesktopResize).mock.calls[0][1];
+    expect(subject.readMediaIdentity()).toEqual({ elementToken: expect.any(Object), connected: true, currentSrc: primary.currentSrc });
+    expect(subject).not.toHaveProperty("dispose");
+    expect(subject).not.toHaveProperty("seek");
     expect(primary.isConnected).toBe(true);
   } finally {
     dispose();
