@@ -8,27 +8,101 @@
     {
       "kind": "feature",
       "id": "QB-DEV-006",
-      "stage": "draft",
+      "stage": "ready",
       "name": "Validate first-use benchmark export staging without masking foreign outputs",
       "description": "Reconcile the replay benchmark runner new-output validation with the production-owned persistent export staging directory and lease, preserving ownership and integrity checks.",
       "priority": "P2",
       "area": "development",
-      "status": "not-started",
+      "status": "done",
       "parent_id": null,
       "dependencies": [
         "QB-CLIP-013",
         "QB-REPLAY-008"
       ],
       "evidence": [
-        "2026-10-27 QB-DEV-004 baseline: the first production backend export created a valid fully decoded 5-second H264/AAC MP4 and retained the intended .chronobreak-export/.lease, but run.ps1 rejected the new directory. A subsequent export with the same genuine staging state passed unchanged validation. Preserved failure: build/perf/qbd4-b2/.chronobreak-replay-benchmark/results/base-current-r2-006-export-representative-01-full/export-validation.json."
+        "2026-10-27: runner recognizes only new case-exact idle .chronobreak-export/.lease residue after reparse, exact-child, empty-file and exclusive-access validation; separate runner diagnostics preserve the unchanged analyzer exact media-entry contract. Production staging/recovery is unchanged.",
+        "First-use regression reproduced the original two rejections before the fix; 4 executable PowerShell test groups / 24 scenarios pass, including foreign/held/reparse/malformed staging and media failures. Full replay tool suite: 132 discovered / 1 existing skip; 6 backend staging tests and the packaged collision/benchmark-preservation fixture pass. Fresh review, canonical validation and diff checks pass.",
+        "Fresh native first-use and subsequent production backend exports pass runner/analyzer and matrix verification: full 5000 ms H.264/AAC decode, exact outputs, source/first-output hashes unchanged, zero required loss and finite exit with no remaining Job processes. Failed restricted-desktop startup retained; successful results under build/perf/qbd6/.chronobreak-replay-benchmark/results/{d6-first-r2,d6-next}-001-export-representative-01-full. Details/commands/limits: docs/execution/qb-dev-006.md."
       ],
-      "notes": "Discovered during QB-DEV-004 baseline; outside the approved orchestration refactor. Investigate ownership-aware validation rather than allowing arbitrary directories or changing production recovery. No runner/threshold/staging behavior changed in QB-DEV-004.",
+      "notes": "Bounded runner-only correction of the QB-DEV-004 first-use mismatch. Recognize exact idle staging shape within the validated sentinel, not durable parent provenance; preserve production and preexisting staging semantics. Viewer separation is a later independent feature.",
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-dev-006-first-use-export-validation.md",
+        "progress": "docs/execution/qb-dev-006.md"
       },
-      "acceptance_criteria": [],
-      "verification": []
+      "acceptance_criteria": [
+        "First-use and subsequent production backend benchmark exports pass unchanged event, exact output, H.264/AAC, duration, full-decode, source-integrity and finite-shutdown gates when outputs are valid; first use requires no fabricated or deleted staging.",
+        "Only a newly created case-exact .chronobreak-export directory containing exactly one regular reparse-free zero-byte case-exact .lease with exclusive access is recognized as idle staging. Foreign directories/files, extra or retained batches, malformed/held lease and reparse paths still fail; analyzer exact output-entry semantics and thresholds are unchanged.",
+        "Production export staging, leases, no-replace publication and recovery are unchanged. Validation is read-only, preserves preexisting outputs/staging and records the recognized residue separately from media output entries.",
+        "Executable red/green regressions, complete replay tooling/analyzer suite, focused unchanged backend staging tests, fresh native first/subsequent export evidence and canonical linked-artifact checks pass; durable documentation and checkpoint record results and limits."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run actual PowerShell validator regressions for first/subsequent use, strict negative staging shapes and output failures; run full replay tooling/analyzer suite and cargo test --manifest-path app/src-tauri/Cargo.toml export_staging; canonical validation and git diff --check."
+        },
+        {
+          "type": "benchmark",
+          "description": "Fresh sentinel-owned generated-fixture first-use and subsequent native production backend exports using the locked packaged runtime: runner/analyzer/matrix pass, source and preexisting hashes preserved, MP4 fully decoded and finite process-tree shutdown. No new performance claim."
+        },
+        {
+          "type": "inspection",
+          "description": "Review exact bounded classification, exclusive lease access, read-only behavior and unchanged production staging/recovery/analyzer contracts."
+        }
+      ]
+    },
+    {
+      "kind": "feature",
+      "id": "QB-DEV-007",
+      "stage": "ready",
+      "name": "Separate Viewer benchmark execution from the production screen",
+      "description": "Move remaining Viewer experiment orchestration and action execution behind a bounded harness-owned adapter while retaining real production playback/layout/clip paths and unchanged measurement contracts.",
+      "priority": "P2",
+      "area": "development",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [
+        "QB-DEV-004",
+        "QB-DEV-006"
+      ],
+      "evidence": [
+        "2026-10-27 planning only: reviewed immutable Viewer runner/host design finalized with initialized checkpoint. No Viewer implementation or acceptance verification performed. Exact ownership/interfaces, lifecycle/evidence ordering, bounded milestones and before/after verification: docs/exec-plans/qb-dev-007-viewer-benchmark-boundary.md."
+      ],
+      "notes": "User-requested separately bounded continuation of QB-DEV-004; this session prepares the plan only. Implement only on a later instruction. App coordination, real-source instrumentation/search, historical duration/no-refresh compatibility and frontend bundle isolation remain distinct seams; no full frontend-separation claim.",
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-dev-007-viewer-benchmark-boundary.md",
+        "progress": "docs/execution/qb-dev-007.md"
+      },
+      "acceptance_criteria": [
+        "A session-owned harness Viewer runner owns scenario eligibility/action execution, completion/failure policy and benchmark-only cancellation/timer/frame/evidence resources. Viewer retains real primary controller/media, data, clip and layout ownership through a bounded typed host and shared production seek primitive; no generic bus, second player or full controller/video exposure is introduced.",
+        "Preserve every existing workload/default/count/order, full/minimal filtering, action/generation/opening/source identity, native plus RVFC seek evidence, real render/resize authority, readiness/details split, failure phases and release-to-cycle/terminal ordering. Stale/disposed work cannot publish or mutate later sessions; active failures and unexpected disposal remain observable; native resize work drains/restores with bounded cleanup.",
+        "Production-source descriptor/data/controller/frame/decoder/fullscreen observations remain authoritative. Viewer contains no benchmark action switch, scenario builder or benchmark-owned timer/RAF/abort/evidence maps after extraction; remaining observation, search, App compatibility and bundle seams are documented honestly.",
+        "Before source/test edits, freeze current-production normal/benchmark binaries and representative native traces; deterministic before/after integration traces, full frontend/analyzer checks, applicable backend/static/build checks, fresh identity-matched native workflows and ordinary non-benchmark Viewer checks pass. Preserve analyzer thresholds; unresolved regression/measurement/coverage triggers require the existing affected-path statistical/control campaign, and numerical claims require its unchanged sampling/eligibility standards.",
+        "Update durable architecture after implementation and retain detailed actual evidence/limitations in the checkpoint; completion requires all mandatory gates and no unresolved issue contradicting the boundary or measurement claims."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Freeze every Viewer action branch and terminal/readiness contract at existing entry points before extraction; retain actual Viewer/App integration plus runner trace/evidence/cancellation tests, full frontend/typecheck/Vite and replay analyzer suite."
+        },
+        {
+          "type": "automated",
+          "description": "Run default/benchmark Tauri tests, formatting, both Clippy configurations, normal/benchmark desktop builds, canonical linked-artifact validation and diff checks as specified by the ExecPlan and VERIFICATION.md."
+        },
+        {
+          "type": "benchmark",
+          "description": "Current-production baseline before source/test edits and fresh candidate: versioned cold/six-cycle warm open, five-cycle layout, 20-cycle lifecycle, frozen whole-app, focused rate/event-jump/endpoint-edit; add settled-memory or other focused native evidence where gaps/signals require it. Inspect identities/action/event outcomes, zero required loss, source integrity and finite shutdown. Apply unchanged statistical/control escalation rules; representative runs alone do not establish performance equivalence."
+        },
+        {
+          "type": "manual",
+          "description": "New ordinary production desktop on dedicated fixtures: open/back/reopen, play/pause/rates, event jump/rapid seek, fullscreen, clip endpoint keyboard/pointer edits and Settings return, persistent primary element and visible errors."
+        },
+        {
+          "type": "inspection",
+          "description": "Review minimal live host, synchronous event/evidence registration, explicit owner-bound lifecycle, real production operation reuse, render/load/source and resize restoration contracts, unchanged App callback and justified remaining seams."
+        }
+      ]
     },
     {
       "kind": "feature",

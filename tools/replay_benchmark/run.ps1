@@ -2382,6 +2382,45 @@ function Get-ClipDirectorySnapshot {
     return [pscustomobject][ordered]@{ clips_root = $clipsRoot; entries = $entries }
 }
 
+function Get-NewExportStagingResidue {
+    param([string]$ClipsRoot, [object]$Entry)
+    # Successful production cleanup retains only this parent and empty lease.
+    # This checks the post-export shape, not durable parent provenance. Never
+    # recover/delete staging here; preexisting batches have separate semantics.
+    $path = [string]$Entry.absolute_path
+    if (-not $Entry.is_directory -or [string]$Entry.name -cne ".chronobreak-export") {
+        throw "New export staging has an unexpected name or type."
+    }
+    Assert-StrictDescendant -Root $ClipsRoot -Path $path -Label "new export staging"
+    [void](Assert-ReparseFree -Path $path -Label "new export staging")
+    $children = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop)
+    if ($children.Count -ne 1) { throw "New export staging must contain only its idle lease." }
+    $lease = $children[0]
+    if (
+        [string]$lease.Name -cne ".lease" -or
+        $lease -isnot [System.IO.FileInfo] -or
+        ($lease.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    ) { throw "New export staging lease is not a regular canonical file." }
+    Assert-StrictDescendant -Root $path -Path $lease.FullName -Label "new export staging lease"
+    [void](Assert-ReparseFree -Path $lease.FullName -Label "new export staging lease")
+    # Open, never create. Exclusive sharing fails immediately for an active
+    # production lease or other open writer; no file bytes are changed.
+    $stream = [System.IO.File]::Open(
+        $lease.FullName, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::None
+    )
+    try {
+        if ($stream.Length -ne 0) { throw "New export staging lease is not empty." }
+        return [ordered]@{
+            relative_path = "clips\.chronobreak-export"
+            lease_relative_path = "clips\.chronobreak-export\.lease"
+            lease_size_bytes = 0
+            exclusive_access = $true
+        }
+    }
+    finally { $stream.Dispose() }
+}
+
 function Get-ExportCompletionPayload {
     param([string]$EventsPath, [string]$RunId, [string]$ScenarioId, [string]$TrialId)
     $matches = New-Object 'System.Collections.Generic.List[object]'
@@ -2453,6 +2492,7 @@ function Invoke-ExportValidation {
         discord_limit_bytes_exclusive = 10000000
         validation_elapsed_ms = 0.0
         preexisting_entry_count = [int]$BeforeSnapshot.entries.Count
+        staging_residue = $null
         newly_created_entries = @()
         outputs = @()
         errors = @()
@@ -2470,6 +2510,13 @@ function Invoke-ExportValidation {
             -not $BeforeSnapshot.entries.ContainsKey([string]$_.name)
         })
         foreach ($entry in @($newEntries | Sort-Object name)) {
+            if ($entry.is_directory -and [string]$entry.name -ceq ".chronobreak-export") {
+                try {
+                    $report.staging_residue = Get-NewExportStagingResidue -ClipsRoot $afterSnapshot.clips_root -Entry $entry
+                    continue
+                }
+                catch { $errors.Add("Invalid new export staging: $($_.Exception.Message)") }
+            }
             $newEntryEvidence.Add([ordered]@{
                 relative_path = "clips\$([string]$entry.name)"
                 kind = $(if ($entry.is_directory) { "directory" } else { "file" })
@@ -2495,6 +2542,7 @@ function Invoke-ExportValidation {
         if ($null -eq $fixture) { throw "The export fixture identity is absent from the manifest." }
         $expectedFilenamePrefix = ([string]$fixture.game_timestamp) + "_"
         $allowedNewNames = @{}
+        if ($null -ne $report.staging_residue) { $allowedNewNames[".chronobreak-export"] = $true }
         $seenPresets = New-Object 'System.Collections.Generic.List[string]'
         $seenFilenames = @{}
         foreach ($eventOutput in $eventOutputs) {

@@ -54,6 +54,13 @@ the frontend harness still ships in the normal bundle to preserve loading timing
 Cycle returns render the actual Games screen without the additional refresh
 performed by the ordinary user `openTab` return. Export benchmark scenarios
 explicitly measure the production backend command, not the exporter UI workflow.
+After shutdown, the runner recognizes a newly created export staging parent only
+when its case-exact `.chronobreak-export` directory contains solely a regular,
+reparse-free, empty `.lease` that can be opened with exclusive sharing. This is a
+sentinel-scoped idle postcondition, not durable proof of parent provenance. The
+runner records it separately from the exact MP4/JPEG output-entry set; every
+media, source-integrity and shutdown gate still applies. Preexisting staging
+keeps its existing preservation semantics, and validation never runs recovery.
 Legacy `library_useful` still drains clip durations through the existing bounded
 queue, while versioned opening uses snapshot/paint admission. These retained
 compatibility seams preserve measurement contracts; they do not imply user-click
