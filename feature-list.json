@@ -107,6 +107,41 @@
     },
     {
       "kind": "feature",
+      "id": "QB-DEV-008",
+      "stage": "draft",
+      "name": "Align observer-control outcome digests with allowed seek evidence ordering",
+      "description": "Investigate the strict observer-control digest rejecting identical per-action outcomes when authoritative native seek completion and presented-frame events arrive in either allowed order.",
+      "priority": "P2",
+      "area": "development",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [],
+      "execution": {
+        "workflow": "adaptive",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Define an explicit behavioral comparison contract that preserves action/generation/source attribution and all error, recovery, request, loss and observer-overhead gates while accepting the documented native/RVFC seek evidence arrival orders.",
+        "Retain raw event order and original digests as evidence; any revised semantic digest must reject missing, duplicate, stale, misattributed or differently settled seek evidence. Do not reorder authoritative production events to satisfy a comparison.",
+        "Reproduce the current rejection on immutable archived-binary controls and add focused positive/negative analyzer coverage before changing the strict comparison contract; record protocol compatibility and affected evidence eligibility."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Regression fixtures cover both allowed arrival orders with identical outcomes plus genuinely changed outcomes, attribution, missing evidence, recovery, request and loss failures."
+        },
+        {
+          "type": "benchmark",
+          "description": "Apply the approved comparison contract to retained strict-failure controls, preserve original reports, and obtain required fresh control evidence without weakening observer-overhead thresholds."
+        }
+      ],
+      "evidence": [
+        "2026-10-27 discovery during QB-DEV-007 M3: archived baseline b7cs minimal/full controls individually pass, but their outcome SHA differs solely because 14 seeks reverse native seeked/presented arrival order. All 482 ordered action records, request classes and 1285 behavior-event records agree apart from those allowed pair orders; errors/recoveries are empty. Raw reports remain in build/perf/qbd7b/.chronobreak-replay-benchmark/results; detailed diagnosis in docs/execution/qb-dev-007.md."
+      ],
+      "notes": "Separate follow-up discovered during the approved Viewer extraction. No analyzer, raw digest, threshold or measurement-contract change is authorized by QB-DEV-007; its unchanged strict control gate remains mandatory and unresolved."
+    },
+    {
+      "kind": "feature",
       "priority": "P2",
       "status": "done",
       "evidence": [
