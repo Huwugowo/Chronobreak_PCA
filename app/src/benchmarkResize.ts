@@ -67,6 +67,7 @@ export const runBenchmarkDesktopResize = async (observer: ResizeObserver, contro
   signal: AbortSignal, wait: (ms: number) => Promise<void>, window: ResizeWindow = nativeWindow) => {
   const readGeometry = () => bounded(window.geometry(), "native geometry read");
   const original = await readGeometry();
+  if (signal.aborted) throw new Error("desktop resize disposed");
   const targets = desktopResizeTargets(original);
   const identity = controller.snapshot();
   const media = controller.readMediaIdentity();
@@ -161,13 +162,16 @@ export const runBenchmarkDesktopResize = async (observer: ResizeObserver, contro
   };
   try {
     for (const mode of ["playing", "paused"] as const) {
+      assertIdentity();
       if (mode === "playing") {
         const outcome = await controller.play();
+        assertIdentity();
         if (outcome.status !== "playing") throw new Error("resize playback could not start");
       } else controller.pause();
       for (let index = 0; index < 8; index++) {
         assertIdentity();
         const current = await readGeometry();
+        assertIdentity();
         const target = equalSize(current.inner, targets[0]) ? targets[1] : targets[0];
         await resize(target, mode);
         await wait(250);

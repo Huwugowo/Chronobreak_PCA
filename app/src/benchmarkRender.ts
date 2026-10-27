@@ -1,4 +1,6 @@
 import type { ReplayBenchmarkObserver } from "./benchmark";
+import { sameSource, type SourceEpoch } from "./leagueSource";
+import { REPLAY_TICKS_PER_SECOND, type ReplayTick } from "./replayTime";
 
 export type BenchmarkRenderedState = {
   generation: number;
@@ -6,7 +8,48 @@ export type BenchmarkRenderedState = {
   sourceEpoch: number;
   sourceToken: string;
   eventCount: number;
+  samplePlayerCount: number;
   players: { name: string; level: number; portraitUrl: string; spells: readonly (string | null)[] }[];
+};
+export type RenderSubjectState = Readonly<{
+  elementToken: object;
+  connected: boolean;
+  assetsAvailable: boolean;
+  generation: number;
+  sessionToken: string | null;
+  sourceUrl: string | null;
+  recoveryCount: number;
+  paused: boolean;
+  activeSource: Readonly<SourceEpoch> | null;
+  overlaySource: Readonly<SourceEpoch> | null;
+  windowSource: Readonly<SourceEpoch> | null;
+  presentedTick: ReplayTick | null;
+  rendered: BenchmarkRenderedState | null;
+}>;
+export type BenchmarkRenderSubject = { root(): Element | null; read(): RenderSubjectState };
+
+/** Experiment preconditions over live production observations, never ready-state synthesis. */
+export const benchmarkRenderObservation = (subject: BenchmarkRenderSubject) => {
+  const root = subject.root(), initial = subject.read();
+  if (!root || !initial.connected || !initial.assetsAvailable) throw new Error("render readiness surface/assets unavailable");
+  const initialSource = initial.activeSource;
+  if (!initialSource) throw new Error("render readiness source unavailable");
+  const read = (): BenchmarkRenderedState | null => {
+    const current = subject.read();
+    if (!current.connected || current.elementToken !== initial.elementToken || subject.root() !== root || !root.isConnected ||
+        current.generation !== initial.generation || current.sessionToken !== initial.sessionToken ||
+        current.sourceUrl !== initial.sourceUrl || current.recoveryCount !== initial.recoveryCount || !current.paused) {
+      throw new Error("render readiness changed media load/playback state");
+    }
+    const source = current.activeSource;
+    if (source && !sameSource(source, initialSource)) throw new Error("render readiness source changed");
+    if (!current.assetsAvailable || !source || !current.overlaySource || !current.windowSource ||
+        !sameSource(source, current.overlaySource) || !sameSource(source, current.windowSource) || !current.rendered ||
+        current.rendered.samplePlayerCount !== 10 || current.presentedTick === null ||
+        Math.abs(current.presentedTick - 52.433 * REPLAY_TICKS_PER_SECOND) > REPLAY_TICKS_PER_SECOND / 60) return null;
+    return current.rendered;
+  };
+  return { root, read };
 };
 const unsupportedSpells = new Set(["Primal Smite", "Unleashed Smite", "Unleashed Teleport"]);
 const unsupported = (image: HTMLImageElement) => {
@@ -36,7 +79,7 @@ export const renderedReplayImages = (root: Element, state: BenchmarkRenderedStat
   return [...roster!.querySelectorAll<HTMLImageElement>("img")].filter(image => !unsupported(image));
 };
 
-export const waitForBenchmarkRenderedReplay = async (observer: ReplayBenchmarkObserver, signal: AbortSignal,
+export const waitForBenchmarkRenderedReplay = async (observer: Pick<ReplayBenchmarkObserver, "emit">, signal: AbortSignal,
   read: () => BenchmarkRenderedState | null, root: Element) => {
   let frame: number | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -64,6 +107,7 @@ export const waitForBenchmarkRenderedReplay = async (observer: ReplayBenchmarkOb
           throw new Error("render readiness image did not decode");
         }
       }));
+      if (ended) return;
       await paint();
       if (ended) return;
       const current = read();

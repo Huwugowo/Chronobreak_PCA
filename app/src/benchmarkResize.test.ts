@@ -33,7 +33,7 @@ const setup = () => {
     }) };
   const abort = new AbortController();
   const run = () => runBenchmarkDesktopResize(observer, controller, abort.signal, ms => new Promise(resolve => setTimeout(resolve, ms)), window);
-  return { run, original, events, frames, window, abort, current: () => current,
+  return { run, original, events, frames, window, abort, controller, current: () => current,
     listener: () => native, setGeneration: () => { generation++; },
     omitFrame: () => { deliverFrame = false; }, omitNative: () => { deliverNative = false; } };
 };
@@ -52,6 +52,27 @@ it("uses physical sizes, eight RVFC and eight paused paint actions, then restore
   const scaled = { ...f.original, scale: 1.25, position: { x: 0, y: 0 },
     workArea: { position: { x: 0, y: 0 }, size: { width: 2560, height: 1440 } } };
   expect(desktopResizeTargets(scaled)[0]).toEqual({ width: 1350, height: 850 });
+});
+
+it.each(["geometry", "listener"])("cancels during native %s admission before playback or resize", async phase => {
+  const f = setup();
+  let resume!: () => void;
+  if (phase === "geometry") {
+    vi.mocked(f.window.geometry).mockImplementationOnce(() => new Promise(resolve => { resume = () => resolve(f.original); }));
+  } else {
+    const listen = f.window.listen;
+    f.window.listen = callback => new Promise(resolve => { resume = () => { void listen(callback).then(resolve); }; });
+  }
+  const play = vi.spyOn(f.controller, "play"), pause = vi.spyOn(f.controller, "pause");
+  const outcome = f.run().catch(error => error as Error);
+  await vi.advanceTimersByTimeAsync(0);
+  f.abort.abort(); resume();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await outcome).toBeInstanceOf(Error);
+  expect(play).not.toHaveBeenCalled(); expect(pause).not.toHaveBeenCalled();
+  expect(f.window.resize).not.toHaveBeenCalled();
+  if (phase === "geometry") expect(f.events).toEqual([]);
+  expect(f.frames.size).toBe(0); expect(f.listener()).toBeUndefined(); expect(vi.getTimerCount()).toBe(0);
 });
 
 it.each(["frame", "native", "generation", "abort"])("rejects incomplete evidence and restores ownership (%s)", async failure => {

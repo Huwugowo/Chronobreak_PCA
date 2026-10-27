@@ -6,11 +6,11 @@ Updated: 2026-10-27
 
 ## Current milestone
 
-M1 complete; M2 — implement the bounded Viewer runner and shared production operations.
+M1 and M2 complete; M3 — verify the completed tree and fresh native candidate.
 
 ## Active unit
 
-Extract benchmark action/evidence/lifetime policy into `benchmarkViewer.ts`; bind live production capabilities and narrow render/resize subjects. Preserve the 14 frozen Viewer traces unchanged.
+Run automated gates, build/archive the candidate, then repeat the frozen native workflows and ordinary desktop procedure. The 14 frozen Viewer traces remain unchanged.
 
 ## Completed
 
@@ -21,13 +21,21 @@ Extract benchmark action/evidence/lifetime policy into `benchmarkViewer.ts`; bin
 
 ## In flight
 
-None. M2 source edits are next.
+- Frontend full suite/typecheck/build and Python harness tests passed; native/Rust checks are running. Candidate builds are next.
+- M2 implementation and final focused gate are validated; native candidate results remain outstanding.
 
 ## Remaining
 
-M2 runner extraction; M3 automated/native/ordinary UI verification, boundary review, architecture and completion evidence.
+M3 native/Rust checks and desktop builds; candidate workflow/ordinary UI evidence; architecture and canonical completion evidence.
 
 ## Verification
+
+- M2: runner owns action/scenario/readiness/evidence/timer/RAF/abort/terminal policy; Viewer binds live typed capabilities and narrow render/resize facts before controller open. Ordinary and harness seek paths share the same current-loop/controller/requested-preview primitive. Final focused eight-file gate passed 223 tests, all 14 M1 snapshots unchanged; TypeScript passed. Direct shared-seek integration subsequently verified identical loop-before-seek and live preview with one UI ID allocation (initial test counted the mount's initial clip seek; counter reset at the operation boundary).
+- New cancellation regression reproduced playback starting after abort during native geometry/listener admission (two failing tests). Added boundary/identity checks; both pass while native drain/restoration stays intact. Runner tests cover pending failure claim/original reason during release disposal, stale observer/mount, all async action boundaries, intentional disposed readiness, helper publication suppression, finite timer/RAF cleanup. Render tests cover real identity/source/participant/fixed-tick admission and cancellation during decode without late RAF allocation.
+- Read-only boundary review accepted failure/cancellation fixes and flagged a possible partial-roster acceptance. Root checked the complete helper path: `renderedReplayImages` already rejects `players.length !== 10` before admitted/ready emission. Added an explicit sample-count=10/projected-count=9 regression instead of duplicating that existing condition or weakening it. No source change required.
+- M3 Python harness suite passed 132 tests with one environment-dependent skip (`m3-python-tests.log`); no analyzer/threshold changes.
+- M3 frontend full suite passed 526 tests (40 files), typecheck and production build passed (`m3-frontend-*.log`); subsequent one-case render regression is included in the final focused gate. Existing Vite dynamic-import warning retained.
+
 
 - M1 baseline before source/test edits: all eight required native runs passed runner, analyzer and matrix verification (`qbd7b/.../plans/b7`); idle conditioning passed, both index rows `ready,facts_current=1`. Added settled-memory passed with exactly six Viewer cycles and seven quiet library windows (`plans/b7mem`). All runs have preserved source hashes, zero required loss, clean finite shutdown. Logs retained under `build/verification/qb-dev-007/m1-*.log`; immutable raw results under the corresponding sentinel `results/`. A representative run supports exercised behavior, not statistical performance equivalence.
 - Pre-extraction real-builder Viewer contracts: 14 frozen snapshots (every action branch, 334-action whole-app, default five-cycle layout/rate ladder, explicit event/endpoint/paused seeks, opening/lifecycle variants); synchronous evidence is emitted inside the test controller seek. Existing real controller/media integration remains. Focused seven-file suite passed 166 tests and TypeScript passed. Snapshots generated against the unmodified executor, then independently rerun without update. Initial test mock type errors were corrected; no production changes.
@@ -54,4 +62,4 @@ None. Full approved M1–M3 implementation authorized on 2026-10-27.
 
 ## Next action
 
-Implement M2 from the immutable design. First factor the shared production seek/clip operations, then runner policy and owner binding/narrow helper subjects; run the frozen focused gate without snapshot updates.
+Commit M2 after its final focused check, finish automated native gates/builds, archive candidate binaries, and prepare a new identity-matched sentinel root for native comparison. Do not overwrite baseline results.

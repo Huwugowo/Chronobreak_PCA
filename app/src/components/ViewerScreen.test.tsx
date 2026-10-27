@@ -15,6 +15,7 @@ import { runBenchmarkDesktopResize } from "../benchmarkResize";
 import timelineStyles from "./ReplayTimeline.module.css";
 import * as playbackModule from "../playbackController";
 import * as renderBenchmark from "../benchmarkRender";
+import * as viewerBenchmark from "../benchmarkViewer";
 import type { PlaybackMediaAdapter } from "../htmlVideoPlaybackAdapter";
 
 const diagnosticHarness = vi.hoisted(() => ({ held: false }));
@@ -92,6 +93,7 @@ const setFixture = (probe: ReplayFixture, epochs = [0]) => {
 };
 
 it("shows opening spell icons without a video or timeline interaction and omits overlay team headings", async () => {
+  const runner = vi.spyOn(viewerBenchmark, "createBenchmarkViewer");
   const probe = replayProbe();
   setFixture(probe);
   const overlay = overlayFor(resolvedWindow(probe));
@@ -113,6 +115,8 @@ it("shows opening spell icons without a video or timeline interaction and omits 
   try {
     await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2));
     await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
+    expect(host.querySelector('video[data-qb-primary-playback="true"]')).not.toBeNull();
+    expect(runner).not.toHaveBeenCalled();
     const rails = host.querySelector('[data-testid="champion-filter-fullscreen"]')!;
     expect(rails.querySelectorAll("h3")).toHaveLength(0);
     expect(rails.querySelector('[aria-label="ALLIES"]')).not.toBeNull();
@@ -386,6 +390,45 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
   } finally { dispose(); }
 });
 
+it("shares current loop and requested preview updates between UI and runner seeks", async () => {
+  const probe = replayProbe(); setFixture(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const observer = { nextMediaGeneration: () => 1, nextActionId: vi.fn(() => "ui-seek"), scenario: () => ({ kind: "cold_open" }), emit: vi.fn(), complete: vi.fn() };
+  vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
+  const runner = vi.spyOn(viewerBenchmark, "createBenchmarkViewer"), create = playbackModule.createPlaybackController;
+  const calls: unknown[] = [];
+  vi.spyOn(playbackModule, "createPlaybackController").mockImplementation((...args) => {
+    const controller = create(...args), seek = controller.seek, loop = controller.setLoopRange;
+    vi.spyOn(controller, "setLoopRange").mockImplementation(range => { calls.push(["loop", range]); loop(range); });
+    vi.spyOn(controller, "seek").mockImplementation((target, options) => { calls.push(["seek", target, options]); return seek(target, options); });
+    return controller;
+  });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")}
+    initialClipDraft={{ gameTimestamp: "1", mediaId: probe.media_timeline.mediaId, startFrame: 0 as FrameBoundary, endFrameExclusive: 600 as FrameBoundary }}
+    onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
+    const primary = host.querySelector("video")!;
+    Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
+    for (const kind of ["loadstart", "loadedmetadata", "canplay"]) primary.dispatchEvent(new Event(kind));
+    calls.length = 0; observer.nextActionId.mockClear();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    const ui = calls.slice(-2), target = (ui[1] as unknown[])[1] as ReplayTick;
+    expect(ui[0]).toEqual(["loop", expect.objectContaining({ startFrame: 0, endFrameExclusive: 600 })]);
+    expect(ui[1]).toEqual(["seek", 5 * 48_000_000, { reason: undefined, playAfter: undefined, actionId: "ui-seek" }]);
+    expect(host.querySelector('[role="slider"]')?.getAttribute("aria-valuenow")).toBe("5");
+    calls.length = 0;
+    void runner.mock.calls[0][1].requestSeek(target, { reason: "benchmark", actionId: "runner-seek" });
+    expect(calls).toEqual([ui[0], ["seek", target, { reason: "benchmark", actionId: "runner-seek" }]]);
+    expect(host.querySelector('[role="slider"]')?.getAttribute("aria-valuenow")).toBe("5");
+    expect(observer.nextActionId).toHaveBeenCalledOnce();
+  } finally { dispose(); }
+});
+
 it("keeps descriptor errors local and retries without requesting details first", async () => {
   const probe = replayProbe();
   setFixture(probe);
@@ -608,7 +651,8 @@ it.each(["presented-first", "seeked-first", "timeout", "disposed", "superseded",
     const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
       readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
     let disposed = false;
-    const seen = (kind: string) => vi.mocked(emitReplayBenchmarkEvent).mock.calls.some(call => call[0] === kind);
+    const seen = (kind: string) => [...vi.mocked(emitReplayBenchmarkEvent).mock.calls, ...observer.emit.mock.calls]
+      .some(call => call[0] === kind);
     try {
       await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
       const primary = host.querySelector("video")!;
@@ -759,7 +803,7 @@ it.each(["media-first", "details-first", "details-fail", "details-timeout", "dis
       ]);
       const load = vi.mocked(emitReplayBenchmarkEvent).mock.calls.find(([kind]) => kind === "media_loadstart")!;
       expect(observer.emitOpening).toHaveBeenCalledWith("opening_media_open_bound", opening, { generation: load[2]!.generation });
-      expect(emitReplayBenchmarkEvent).toHaveBeenCalledWith("play_requested", expect.objectContaining({
+      expect(observer.emit).toHaveBeenCalledWith("play_requested", expect.objectContaining({
         measurement_contract: "replay-opening-v1", cycle: 0, fixture_id: "S",
       }), expect.objectContaining({ generation: load[2]!.generation }));
       if (outcome !== "details-first") {
