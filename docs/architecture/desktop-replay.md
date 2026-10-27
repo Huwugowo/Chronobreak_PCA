@@ -21,17 +21,44 @@ required-event loss accounting. Production-path markers must retain their real
 library admission, controller event and authoritative video presentation sources;
 an animation-frame paint opportunity cannot replace RVFC presentation evidence.
 
-Application scenario selection, library readiness policy and viewer-cycle timing
-currently live in `App.tsx`; viewer action execution lives in `ViewerScreen.tsx`
-and uses its actual playback controller, layout and clip state. A global window
-event currently joins viewer-cycle completion to App navigation. Thus backend
-activation/data isolation does not imply frontend orchestration separation.
+Previously `App.tsx` interpreted scenarios and owned benchmark readiness,
+export workloads, repetitions, cancellation, timers and animation frames. A global
+window event joined viewer-cycle completion to App navigation.
+
+`benchmarkApplication.ts` now owns that experiment policy and its resources. App
+retains its production `LibraryController`, `HistoryController`, navigation,
+settings, capability probing and asset initialization. A bounded typed host exposes
+live state, existing origin/admission checks, guarded replay opening, token-bound
+descriptor reads, the existing duration drain, production export and source-root
+invalidation. It exposes neither controller ownership nor media/player internals.
+The coordinator is created when the nullable observer resolves, before library
+admission. Its Solid creation effect tracks observer identity only; a separate
+effect forwards live state. With no session there is no coordinator or associated
+benchmark cancellation/timer/frame work.
+
+An optional synchronous Viewer callback captures the coordinator and outgoing
+viewer context at mount. It replaces the global control event at the same boundary:
+release media (including the existing delay), emit required cycle completion,
+mark the viewer finished, then notify App. The coordinator admits each viewer once
+and rejects stale/disposed sessions and viewer contexts. Asynchronous experiment
+continuations recheck captured origin/navigation authority; active-context failures
+remain explicit. An attempted export always invalidates its captured source root,
+even when its session can no longer publish results.
+
+Viewer scenario execution remains in `ViewerScreen.tsx`, using its actual playback
+controller, layout, clip state and data admission. Moving that executor is a separate
+lifecycle migration. Bounded production telemetry and real search-field/history
+observations also remain at their authoritative sources. Backend feature/session
+isolation and frontend orchestration ownership are distinct from bundle isolation;
+the frontend harness still ships in the normal bundle to preserve loading timing.
 Cycle returns render the actual Games screen without the additional refresh
 performed by the ordinary user `openTab` return. Export benchmark scenarios
 explicitly measure the production backend command, not the exporter UI workflow.
-Those distinctions are measurement contracts, not interchangeable navigation or
-UI-performance claims. The replay benchmark protocol owns workload validity and
-comparison rules; feature lifecycle remains in `feature-list.json`.
+Legacy `library_useful` still drains clip durations through the existing bounded
+queue, while versioned opening uses snapshot/paint admission. These retained
+compatibility seams preserve measurement contracts; they do not imply user-click
+or exporter-UI equivalence. The replay benchmark protocol owns workload validity
+and comparison rules; feature lifecycle remains in `feature-list.json`.
 
 ## Loopback playback server
 

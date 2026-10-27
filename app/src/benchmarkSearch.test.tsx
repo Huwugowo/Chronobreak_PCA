@@ -109,6 +109,26 @@ it.each([true, false])("runs bounded real search and truthfully reports indexing
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("does not publish sequence orchestration after synchronous input cancellation", async () => {
+  const f = await setup(); const control = new AbortController();
+  f.input.addEventListener("input", () => control.abort(), { once: true });
+  try {
+    await expect(runBenchmarkSearchSequence(f.observer, f.input, ["Ahri"], "settled", control.signal)).rejects.toThrow(/disposed/);
+    expect(f.events.some(event => event.kind === "library_search_sequence")).toBe(false);
+  } finally { control.abort(); f.dispose(); f.history.close(); }
+});
+
+it("stops indexing progress immediately when its owning session is cancelled", async () => {
+  const f = await setup("cold-index-search"); const control = new AbortController();
+  try {
+    const run = runBenchmarkIndexSearch(f.observer, f.history, "Ahri", 1, control.signal);
+    const rejected = expect(run).rejects.toThrow(/disposed/);
+    const count = f.events.filter(event => event.kind === "indexing_diagnostic_progress").length;
+    control.abort(); f.history.setContext(null); await rejected;
+    expect(f.events.filter(event => event.kind === "indexing_diagnostic_progress")).toHaveLength(count);
+  } finally { control.abort(); f.dispose(); f.history.close(); }
+});
+
 it.each(["settled", "changed-page", "aborted", "timeout"])("checks the mounted library and stable admitted page before return (%s)", async outcome => {
   vi.useFakeTimers();
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 16));

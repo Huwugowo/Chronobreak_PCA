@@ -8,6 +8,8 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  on,
+  untrack,
 } from "solid-js";
 import {
   chooseOutputFolder,
@@ -26,19 +28,9 @@ import {
   resolveItemName,
   setGameSaved,
 } from "./api";
-import { REPLAY_TICKS_PER_SECOND, parseReplayTick, projectReplayIntervalToClipRange } from "./replayTime";
-import {
-  initializeReplayBenchmark,
-  REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
-  type BenchmarkFixture,
-  type BenchmarkScenario,
-  type ReplayBenchmarkObserver,
-  GAMES_LIBRARY_USABLE_CONTRACT,
-  OPENING_CONTRACT,
-  isOpeningScenario,
-} from "./benchmark";
+import { initializeReplayBenchmark } from "./benchmark";
+import { createBenchmarkApplication, type BenchmarkApplication, type BenchmarkApplicationContext, type BenchmarkApplicationHost } from "./benchmarkApplication";
 import AppHeader from "./components/AppHeader";
-import { runDeliveryRouteProbe } from "./deliveryRouteProbe";
 import ClipExporterScreen from "./components/ClipExporterScreen";
 import ClipModal from "./components/ClipModal";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -55,11 +47,10 @@ import type {
   LibraryTab,
   NavigationState,
   ReturnNavigationState,
-  ClipExportPreset,
 } from "./types";
 import { LibraryController, type LibraryOrigin } from "./libraryController";
 import { HistoryController } from "./historyController";
-import { observeBenchmarkHistory, runBenchmarkIndexSearch, runBenchmarkSearchSequence, waitForBenchmarkLibraryReturn, waitForBenchmarkMemoryWindow, waitForBenchmarkSearchReady } from "./benchmarkSearch";
+import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 import styles from "./App.module.css";
@@ -102,8 +93,7 @@ function App() {
   });
   const [historyState, setHistoryState] = createSignal(history.value);
   const unsubscribeHistory = history.subscribe(setHistoryState);
-  const benchmarkActionsAbort = new AbortController();
-  onCleanup(() => { benchmarkActionsAbort.abort(); unsubscribeHistory(); history.close(); });
+  onCleanup(() => { unsubscribeHistory(); history.close(); });
   const [viewerSelection, setViewerSelection] = createSignal<{ game: GameSummary; origin: LibraryOrigin }>();
   const currentViewer = createMemo(() => {
     libraryState();
@@ -138,7 +128,7 @@ function App() {
   const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
   const [ddragon, { refetch: refetchDdragon }] = createResource(loadDdragonStatus);
   const [benchmarkObserver] = createResource(initializeReplayBenchmark);
-  const [benchmarkHevcCapability, setBenchmarkHevcCapability] =
+  const [hevcCapability, setHevcCapability] =
     createSignal<HevcProbeStatus | null>(null);
   const [busyId, setBusyId] = createSignal<string | null>(null);
 
@@ -152,18 +142,6 @@ function App() {
   });
   const [notice, setNotice] = createSignal<string | null>(null);
   let noticeTimer: number | undefined;
-  let benchmarkNavigationStarted = false;
-  let benchmarkLibraryReadinessStarted = false;
-  let benchmarkLibraryUsefulEmitted = false;
-  let benchmarkGamesLibraryUsableEmitted = false;
-  let benchmarkViewerCycles = 0;
-  let benchmarkFailureStarted = false;
-  let benchmarkHevcCapabilityEmitted = false;
-  let benchmarkReopenTimer: number | undefined;
-  let benchmarkScenarioTimer: number | undefined;
-  let benchmarkUsefulFrame: number | undefined;
-  let benchmarkUsefulPaintFrame: number | undefined;
-
   const showNotice = (message: string) => {
     setNotice(message);
     if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
@@ -351,277 +329,6 @@ function App() {
   );
   const loadError = createMemo(() => libraryState().error ?? settings.error);
 
-  const runBenchmarkExport = async (
-    observer: ReplayBenchmarkObserver,
-    scenario: BenchmarkScenario,
-    fixture: BenchmarkFixture,
-  ) => {
-    const actionId = "export-1";
-    const exportOrigin = controller.origin();
-    const exportToken = exportOrigin?.token ?? "";
-    let backendAttempted = false;
-    try {
-      if (!exportOrigin) throw new Error("export fixture requires a current library snapshot");
-      const game = games()?.find((candidate) => candidate.timestamp === fixture.game_timestamp);
-      if (!game) throw new Error("export fixture is absent from the benchmark library");
-      const probe = await controller.readReplay(exportOrigin, fixture.game_timestamp,
-        token => loadReplayDescriptor(fixture.game_timestamp, token));
-      const timeline = probe.media_timeline;
-      const rawStart = typeof scenario.clip_start_ms === "number" ? scenario.clip_start_ms : 10_000;
-      const rawEnd =
-        typeof scenario.clip_end_ms === "number"
-          ? scenario.clip_end_ms
-          : Math.min(game.duration_ms, rawStart + 20_000);
-      const ticksPerMillisecond = REPLAY_TICKS_PER_SECOND / 1_000;
-      const duration = timeline.video.replayEnd;
-      const minimumDuration = 5_000 * ticksPerMillisecond;
-      const start = Math.max(0, Math.min(rawStart * ticksPerMillisecond, duration - minimumDuration));
-      const end = Math.max(start + minimumDuration, Math.min(rawEnd * ticksPerMillisecond, duration));
-      const clipRange = projectReplayIntervalToClipRange(
-        timeline,
-        parseReplayTick(String(Math.round(start))),
-        parseReplayTick(String(Math.round(end))),
-      );
-      const allowedPresets = new Set<ClipExportPreset>(["horizontal", "vertical", "discord"]);
-      const requestedPresets = Array.isArray(scenario.export_presets)
-        ? scenario.export_presets.filter(
-            (preset): preset is ClipExportPreset =>
-              typeof preset === "string" && allowedPresets.has(preset as ClipExportPreset),
-          )
-        : ["horizontal" as const];
-      const presets = requestedPresets.length > 0 ? requestedPresets : ["horizontal" as const];
-      const requestedMusicMode =
-        typeof scenario.music_mode === "string"
-          ? scenario.music_mode
-          : Array.isArray(scenario.music_modes)
-            ? scenario.music_modes[0]
-            : undefined;
-      const requestedGainMode =
-        typeof scenario.gain_mode === "string"
-          ? scenario.gain_mode
-          : Array.isArray(scenario.gain_modes)
-            ? scenario.gain_modes[0]
-            : undefined;
-      const useBuiltInMusic = requestedMusicMode === "built_in";
-      const gameAudioVolume = requestedGainMode === "non_unity" ? 0.8 : 1;
-      const builtInFilename =
-        typeof scenario.built_in_music_filename === "string"
-          ? scenario.built_in_music_filename
-          : "momentum.mp3";
-      observer.emit(
-        "export_requested",
-        {
-          fixture_alias: fixture.alias,
-          start_frame: clipRange.startFrame,
-          end_frame_exclusive: clipRange.endFrameExclusive,
-          presets,
-          music_mode: useBuiltInMusic ? "built_in" : "none",
-          game_audio_volume: gameAudioVolume,
-          benchmark_scope: "backend_command",
-          ui_workflow_included: false,
-        },
-        { actionId, required: true },
-      );
-      backendAttempted = true;
-      const result = await exportClip(
-        {
-          game_timestamp: fixture.game_timestamp,
-          media_id: clipRange.mediaId,
-          start_frame: String(clipRange.startFrame),
-          end_frame_exclusive: String(clipRange.endFrameExclusive),
-          presets,
-          vertical_focus: 0.72,
-          vertical_position: 0.5,
-          music: useBuiltInMusic
-            ? { kind: "builtin", filename: builtInFilename }
-            : { kind: "none" },
-          game_audio_volume: gameAudioVolume,
-          music_volume: 1,
-        },
-        (progress) =>
-          observer.emit(
-            "export_progress",
-            {
-              stage: progress.stage,
-              percent: progress.percent,
-              preset: progress.preset,
-              completed_outputs: progress.completed_outputs,
-              total_outputs: progress.total_outputs,
-            },
-            { actionId },
-          ),
-        exportToken,
-      );
-      observer.emit(
-        "export_completed",
-        {
-          elapsed_ms: result.elapsed_ms,
-          setup_elapsed_ms: result.setup_elapsed_ms,
-          source_probe_elapsed_ms: result.source_probe_elapsed_ms,
-          source_probe_strategy: result.source_probe_strategy,
-          finalize_elapsed_ms: result.finalize_elapsed_ms,
-          total_file_size_bytes: result.total_file_size_bytes,
-          throughput_bytes_per_second:
-            result.elapsed_ms > 0
-              ? (result.total_file_size_bytes * 1_000) / result.elapsed_ms
-              : null,
-          outputs: result.outputs,
-          strategy: "full_reencode",
-          copy_strategy: "not_implemented",
-          hybrid_strategy: "not_implemented",
-          benchmark_scope: "backend_command",
-          ui_workflow_included: false,
-        },
-        { actionId, required: true },
-      );
-      observer.emit("scenario_completed", { kind: scenario.kind }, { required: true });
-      await observer.complete("complete", null, { output_count: result.outputs.length });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      observer.emit(
-        "action_failed",
-        { action_kind: "export", benchmark_scope: "backend_command", reason },
-        { actionId, required: true },
-      );
-      observer.emit("scenario_failed", { reason }, { required: true });
-      await observer.complete("failed", reason);
-    }
-    if (backendAttempted && exportOrigin) controller.invalidateRoot(exportOrigin.root);
-  };
-
-  const beginBenchmarkScenario = async (
-    observer: ReplayBenchmarkObserver,
-    scenario: BenchmarkScenario,
-  ) => {
-    if (benchmarkNavigationStarted || benchmarkFailureStarted) return;
-    benchmarkNavigationStarted = true;
-    observer.emit("scenario_started", { kind: scenario.kind }, { required: true });
-    if (scenario.kind === "library_search" && scenario.id === "cold-index-search") {
-      try {
-        if (scenario.iterations !== 1) throw new Error("indexing diagnostic requires one search iteration");
-        const fixture = observer.fixtureForScenario();
-        const term = games()?.find(game => game.timestamp === fixture?.game_timestamp)?.champion;
-        if (!term || term.length > 32) throw new Error("indexing search fixture unavailable");
-        const result = await runBenchmarkIndexSearch(observer, history, term, games()?.length ?? 0, benchmarkActionsAbort.signal);
-        observer.emit("scenario_completed", { kind: scenario.kind, ...result }, { required: true });
-        await observer.complete("complete", null, result);
-      } catch (error) {
-        if (benchmarkActionsAbort.signal.aborted) return;
-        const reason = error instanceof Error ? error.message : String(error);
-        observer.emit("scenario_failed", { phase: "indexing_search", reason }, { required: true });
-        await observer.complete("failed", reason);
-      }
-      return;
-    }
-    if (scenario.kind === "library_search" || scenario.kind === "whole_app") {
-      const signal = benchmarkActionsAbort.signal;
-      try {
-        observer.emit("search_preconditioning_started", {}, { required: true });
-        await waitForBenchmarkSearchReady(history, signal);
-        const fixture = observer.fixtureForScenario();
-        const selected = games()?.find(game => game.timestamp === fixture?.game_timestamp);
-        const term = selected?.champion;
-        const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
-        if (!input || !term || term.length > 32) throw new Error("search workload fixture/input unavailable");
-        const requested = scenario.iterations ?? 8;
-        if (typeof requested !== "number" || !Number.isSafeInteger(requested) || requested < 1 || requested > 100) {
-          throw new Error("search iterations must be between 1 and 100");
-        }
-        observer.emit("search_preconditioning_ready", { catalog_count: games()?.length, iterations: requested }, { required: true });
-        if (scenario.kind === "whole_app" && (requested !== 8 || games()?.length !== 2)) {
-          throw new Error("whole-app workload requires eight search iterations and the settled two-game library");
-        }
-        for (let iteration = 0; iteration < requested; iteration++) {
-          await runBenchmarkSearchSequence(observer, input, Array.from(term, (_, index) => term.slice(0, index + 1)), "typing", signal);
-          await runBenchmarkSearchSequence(observer, input, ["zzzzzz"], "settled", signal);
-          await runBenchmarkSearchSequence(observer, input, [""], "clear", signal);
-        }
-        observer.emit("search_workload_completed", { search_sequences: requested * 3 }, { required: true });
-        if (scenario.kind === "library_search") {
-          observer.emit("scenario_completed", { kind: scenario.kind, search_sequences: requested * 3 }, { required: true });
-          await observer.complete("complete", null, { search_sequences: requested * 3 });
-          return;
-        }
-      } catch (error) {
-        if (signal.aborted) return;
-        const reason = error instanceof Error ? error.message : String(error);
-        observer.emit("scenario_failed", { phase: "library_search", reason }, { required: true });
-        await observer.complete("failed", reason);
-        return;
-      }
-    }
-    if (scenario.kind === "app_idle") {
-      const requested =
-        scenario.parameters?.duration_ms ??
-        (typeof scenario.idle_seconds === "number" ? scenario.idle_seconds * 1_000 : undefined);
-      const durationMs =
-        typeof requested === "number" && Number.isFinite(requested)
-          ? Math.min(600_000, Math.max(1_000, requested))
-          : 60_000;
-      benchmarkScenarioTimer = window.setTimeout(() => {
-        benchmarkScenarioTimer = undefined;
-        observer.emit("scenario_completed", { kind: scenario.kind }, { required: true });
-        void observer.complete("complete", null, { duration_ms: durationMs });
-      }, durationMs);
-      return;
-    }
-    const fixture = observer.fixtureForScenario();
-    if (!fixture) {
-      observer.emit("scenario_failed", { reason: "fixture_not_found" }, { required: true });
-      void observer.complete("failed", "scenario fixture was not declared");
-      return;
-    }
-    if (
-      String(fixture.codec ?? "").toLowerCase() === "hevc" &&
-      benchmarkHevcCapability()?.supported !== true
-    ) {
-      const reason = "HEVC playback is unsupported by the benchmark WebView environment";
-      benchmarkFailureStarted = true;
-      observer.emit(
-        "scenario_failed",
-        { phase: "media_capability", reason },
-        { required: true },
-      );
-      void observer.complete("failed", reason, { phase: "media_capability" });
-      return;
-    }
-    if (scenario.kind === "export") {
-      void runBenchmarkExport(observer, scenario, fixture);
-      return;
-    }
-    if (scenario.id === "delivery-route-probe") {
-      try {
-        const routes = await runDeliveryRouteProbe();
-        observer.emit("delivery_route_probe", { routes, origin: location.origin }, { required: true });
-      } catch {
-        benchmarkFailureStarted = true;
-        observer.emit("scenario_failed", { reason: "delivery_route_probe_failed" }, { required: true });
-        await observer.complete("failed", "delivery route probe failed");
-        return;
-      }
-    }
-    if (scenario.kind === "lifecycle" && scenario.id === "settled-memory") {
-      try {
-        if (scenario.iterations !== 6) throw new Error("memory check requires six viewer cycles");
-        await waitForBenchmarkSearchReady(history, benchmarkActionsAbort.signal);
-        await waitForBenchmarkMemoryWindow(observer, history, 0, benchmarkActionsAbort.signal);
-      } catch (error) {
-        if (benchmarkActionsAbort.signal.aborted) return;
-        const reason = error instanceof Error ? error.message : String(error);
-        observer.emit("scenario_failed", { phase: "memory_baseline", reason }, { required: true });
-        await observer.complete("failed", reason);
-        return;
-      }
-    }
-    if (isOpeningScenario(scenario)) observer.beginOpeningCycle(fixture, 0);
-    observer.emit(
-      "replay_requested",
-      { fixture_alias: fixture.alias },
-      { required: true },
-    );
-    openViewer(fixture.game_timestamp);
-  };
-
   createEffect(() => {
     const current = navigation();
     if (current.screen !== "library") return;
@@ -653,199 +360,46 @@ function App() {
     }
   });
 
-  createEffect(() => {
-    const observer = benchmarkObserver();
-    const capability = benchmarkHevcCapability();
-    if (observer && isOpeningScenario(observer.scenario()) && capability && !benchmarkHevcCapabilityEmitted) {
-      benchmarkHevcCapabilityEmitted = true;
-      observer.emit("hevc_capability", { tested: capability.tested, supported: capability.supported }, { required: true });
-    }
-  });
-
-  createEffect(() => {
-    const observer = benchmarkObserver();
-    if (!observer) return;
-    const error = loadError();
-    if (error) {
-      if (!benchmarkFailureStarted) {
-        benchmarkFailureStarted = true;
-        const reason = error instanceof Error ? error.message : String(error);
-        observer.emit("scenario_failed", { phase: "library_load", reason }, { required: true });
-        void observer.complete("failed", reason, { phase: "library_load" });
-      }
-      return;
-    }
-    if (loading() || libraryState().refreshing || !libraryState().actionable) return;
-    if (observer.scenario().kind === "library_search" && observer.scenario().id === "cold-index-search") {
-      // Start as soon as the normal scanned library is admitted, before import
-      // completion, capability probing or the settled-search precondition.
-      void beginBenchmarkScenario(observer, observer.scenario());
-      return;
-    }
-    if (isOpeningScenario(observer.scenario())) {
-      if (benchmarkLibraryReadinessStarted) return;
-      benchmarkLibraryReadinessStarted = true;
-      const origin = controller.origin();
-      benchmarkUsefulFrame = requestAnimationFrame(() => {
-        benchmarkUsefulFrame = undefined;
-        benchmarkUsefulPaintFrame = requestAnimationFrame(() => {
-          benchmarkUsefulPaintFrame = undefined;
-          const current = controller.origin();
-          const view = navigation();
-          const snapshot = libraryState().snapshot;
-          const fixture = observer.fixtureForScenario();
-          const selected = snapshot?.games.find(game => game.timestamp === fixture?.game_timestamp);
-          if (!origin || !current || !snapshot ||
-              current.root !== origin.root || current.rootEpoch !== origin.rootEpoch ||
-              current.request !== origin.request || current.token !== origin.token ||
-              current.navigation !== origin.navigation || view.screen !== "library" ||
-              view.tab !== "games" || !libraryState().actionable || libraryState().refreshing || !selected?.video_available) {
-            benchmarkFailureStarted = true;
-            observer.emit("scenario_failed", { phase: "library_paint", reason: "Opening Games view changed before paint" }, { required: true });
-            void observer.complete("failed", "Opening Games view changed before paint");
-            return;
-          }
-          observer.emit("opening_library_usable", {
-            measurement_contract: OPENING_CONTRACT, gate: "snapshot", after_library_paint: true,
-            fixture_id: fixture!.id,
-            game_count: snapshot.games.length, clip_count: snapshot.clips.length,
-          }, { required: true });
-          // Measure the normal Games path. Legacy scenarios retain the duration drain below.
-          void beginBenchmarkScenario(observer, observer.scenario());
-        });
-      });
-      return;
-    }
-    const hevcCapability = benchmarkHevcCapability();
-    if (!hevcCapability) return;
-    if (!benchmarkHevcCapabilityEmitted) {
-      benchmarkHevcCapabilityEmitted = true;
-      observer.emit(
-        "hevc_capability",
-        { tested: hevcCapability.tested, supported: hevcCapability.supported },
-        { required: true },
-      );
-    }
-    if (!hevcCapability.tested) {
-      if (!benchmarkFailureStarted) {
-        benchmarkFailureStarted = true;
-        const reason = "HEVC capability probe did not produce an authoritative result";
-        observer.emit(
-          "scenario_failed",
-          { phase: "hevc_capability", reason },
-          { required: true },
-        );
-        void observer.complete("failed", reason, { phase: "hevc_capability" });
-      }
-      return;
-    }
-    if (!benchmarkLibraryReadinessStarted) {
-      benchmarkLibraryReadinessStarted = true;
-      const scenario = observer.scenario();
-      const snapshot = libraryState().snapshot;
-      const currentNavigation = navigation();
-      const gamesViewAtAdmission =
-        currentNavigation.screen === "library" && currentNavigation.tab === "games";
-      let gamesUsablePayload: Record<string, unknown> | null = null;
-      const gamesUsableOrigin =
-        snapshot && gamesViewAtAdmission
-          ? controller.origin()
-          : null;
-      if (!benchmarkGamesLibraryUsableEmitted && snapshot && gamesViewAtAdmission && scenario.id.startsWith("qb010-library-v2-")) {
-        const payload = {
-          measurement_contract: GAMES_LIBRARY_USABLE_CONTRACT,
-          refresh_request_token: String(libraryState().request),
-          snapshot_token: snapshot.token,
-          view_token: snapshot.token,
-          game_count: snapshot.games.length,
-          clip_count: snapshot.clips.length,
-          storage_game_count: snapshot.usage.game_count,
-          storage_clip_count: snapshot.usage.clip_count,
-        };
-        gamesUsablePayload = payload;
-        observer.emit("library_view_admitted", payload, { required: true });
-      }
-      benchmarkUsefulFrame = window.requestAnimationFrame(() => {
-        benchmarkUsefulFrame = undefined;
-        benchmarkUsefulPaintFrame = window.requestAnimationFrame(() => {
-          benchmarkUsefulPaintFrame = undefined;
-          const currentOrigin = controller.origin();
-          const currentNavigation = navigation();
-          const gamesViewStillCurrent =
-            gamesUsableOrigin !== null &&
-            currentOrigin !== null &&
-            currentOrigin.root === gamesUsableOrigin.root &&
-            currentOrigin.rootEpoch === gamesUsableOrigin.rootEpoch &&
-            currentOrigin.request === gamesUsableOrigin.request &&
-            currentOrigin.token === gamesUsableOrigin.token &&
-            currentOrigin.navigation === gamesUsableOrigin.navigation &&
-            currentNavigation.screen === "library" &&
-            currentNavigation.tab === "games" &&
-            libraryState().actionable &&
-            !libraryState().refreshing;
-          if (gamesUsablePayload && gamesViewStillCurrent) {
-            benchmarkGamesLibraryUsableEmitted = true;
-            observer.emit("games_library_usable", { ...gamesUsablePayload, after_library_paint: true }, { required: true });
-          }
-          const emitHistoricalUseful = () => {
-            benchmarkLibraryUsefulEmitted = true;
-            observer.emit(
-              "library_useful",
-              {
-                game_count: games()?.length ?? 0,
-                clip_count: clips()?.length ?? 0,
-                after_library_paint: true,
-              },
-              { required: true },
-            );
-            beginBenchmarkScenario(observer, observer.scenario());
-          };
-          if (gamesViewStillCurrent && snapshot) {
-            // The old library_useful milestone means full clip details are
-            // ready. Keep that meaning in benchmark mode by draining through
-            // the bounded duration API after games_library_usable.
-            void controller.drainDurations(snapshot.clips.map(clip => clip.filename)).then((drained) => {
-              const afterDrainOrigin = controller.origin();
-              const afterDrainNavigation = navigation();
-              const stillCurrent = afterDrainOrigin !== null && gamesUsableOrigin !== null &&
-                afterDrainOrigin.root === gamesUsableOrigin.root &&
-                afterDrainOrigin.rootEpoch === gamesUsableOrigin.rootEpoch &&
-                afterDrainOrigin.request === gamesUsableOrigin.request &&
-                afterDrainOrigin.token === gamesUsableOrigin.token &&
-                afterDrainOrigin.navigation === gamesUsableOrigin.navigation &&
-                afterDrainNavigation.screen === "library" && afterDrainNavigation.tab === "games" &&
-                libraryState().actionable && !libraryState().refreshing;
-              if (drained && stillCurrent) emitHistoricalUseful();
-              else if (!benchmarkFailureStarted) {
-                benchmarkFailureStarted = true;
-                const reason = "Historical library details did not complete for the admitted view";
-                observer.emit("scenario_failed", { phase: "library_details", reason }, { required: true });
-                void observer.complete("failed", reason, { phase: "library_details" });
-              }
-            });
-          } else if (!benchmarkFailureStarted) {
-            benchmarkFailureStarted = true;
-            const reason = "Games view changed before its paint milestone";
-            observer.emit("scenario_failed", { phase: "library_paint", reason }, { required: true });
-            void observer.complete("failed", reason, { phase: "library_paint" });
-          }
-        });
-      });
-      return;
-    }
-    if (benchmarkLibraryUsefulEmitted) beginBenchmarkScenario(observer, observer.scenario());
-  });
+  const host: BenchmarkApplicationHost = {
+    readState: () => ({ library: libraryState(), history: historyState(), origin: controller.origin(),
+      navigation: navigation(), capability: hevcCapability(), loading: loading(), error: loadError() }),
+    captureContext: () => ({ origin: controller.origin(), navigation: navigation() }),
+    isContextCurrent: context => !!context.origin && controller.mayPublish(context.origin) && navigation() === context.navigation,
+    history,
+    openViewer: (timestamp, context) => {
+      if (!host.isContextCurrent(context)) return false;
+      openViewer(timestamp);
+      return navigation().screen === "viewer";
+    },
+    publishBenchmarkGamesReturn: context => {
+      if (!host.isContextCurrent(context)) return false;
+      setNavigation({ screen: "library", tab: "games" });
+      return true;
+    },
+    readReplayDescriptor: (origin, timestamp) => controller.readReplay(origin, timestamp, token => loadReplayDescriptor(timestamp, token)),
+    drainDurations: (ids, context) => host.isContextCurrent(context) ? controller.drainDurations(ids) : Promise.resolve(false),
+    exportClip,
+    invalidateRoot: root => { void controller.invalidateRoot(root); },
+  };
+  const [benchmarkApplication, setBenchmarkApplication] = createSignal<BenchmarkApplication>();
+  createEffect(on(benchmarkObserver, observer => {
+    if (!observer) { setBenchmarkApplication(undefined); return; }
+    const application = untrack(() => createBenchmarkApplication(observer, host));
+    setBenchmarkApplication(application);
+    onCleanup(() => { application.dispose(); setBenchmarkApplication(undefined); });
+  }));
+  createEffect(() => benchmarkApplication()?.update());
 
   onMount(() => {
     const unsubscribe = controller.subscribe(setLibraryState);
     setLibraryState(controller.value);
     void ensureHevcCapability()
       .then((status) => {
-        setBenchmarkHevcCapability(status);
+        setHevcCapability(status);
         return refetchSettings();
       })
       .catch((error) => {
-        setBenchmarkHevcCapability({ tested: false, supported: false, probe_url: "" });
+        setHevcCapability({ tested: false, supported: false, probe_url: "" });
         showError(error);
       });
 
@@ -860,130 +414,15 @@ function App() {
       }
     }, 700);
 
-    const onBenchmarkViewerCycle = () => {
-      const observer = benchmarkObserver();
-      if (!observer) return;
-      const scenario = observer.scenario();
-      benchmarkViewerCycles += 1;
-      if (scenario.kind === "lifecycle" && scenario.id === "settled-memory") {
-        const cycle = benchmarkViewerCycles;
-        observer.emit(cycle === 6 ? "viewer_close_requested" : "viewer_reopen_requested",
-          { completed_cycles: cycle, expected_cycles: 6 }, { required: true });
-        setNavigation({ screen: "library", tab: "games" });
-        benchmarkReopenTimer = window.setTimeout(async () => {
-          benchmarkReopenTimer = undefined;
-          try {
-            await waitForBenchmarkMemoryWindow(observer, history, cycle, benchmarkActionsAbort.signal);
-            if (cycle === 6) {
-              observer.emit("scenario_completed", { kind: scenario.kind, viewer_cycles: cycle }, { required: true });
-              await observer.complete("complete", null, { viewer_cycles: cycle });
-            } else {
-              const fixture = observer.fixtureForScenario();
-              if (!fixture) throw new Error("memory cycle fixture unavailable");
-              openViewer(fixture.game_timestamp);
-            }
-          } catch (error) {
-            if (benchmarkActionsAbort.signal.aborted) return;
-            const reason = error instanceof Error ? error.message : String(error);
-            observer.emit("scenario_failed", { phase: "memory_return", reason }, { required: true });
-            await observer.complete("failed", reason);
-          }
-        }, 0);
-        return;
-      }
-      const requestedIterations = scenario.iterations;
-      const iterations =
-        scenario.kind === "whole_app" ? 1 : typeof requestedIterations === "number" && Number.isSafeInteger(requestedIterations)
-          ? Math.min(10_000, Math.max(1, requestedIterations))
-          : scenario.kind === "warm_open"
-            ? 6
-            : 20;
-      if (benchmarkViewerCycles >= iterations) {
-        const completeCycles = () => {
-          observer.emit(
-            "scenario_completed",
-            { kind: scenario.kind, viewer_cycles: benchmarkViewerCycles,
-              ...(scenario.kind === "whole_app" ? { search_sequences: 24 } : {}) },
-            { required: true },
-          );
-          void observer.complete("complete", null, { viewer_cycles: benchmarkViewerCycles });
-        };
-        if (scenario.kind === "lifecycle" || scenario.kind === "whole_app") {
-          observer.emit(
-            "viewer_close_requested",
-            { completed_cycles: benchmarkViewerCycles },
-            { required: true },
-          );
-          setNavigation({ screen: "library", tab: "games" });
-          benchmarkReopenTimer = window.setTimeout(async () => {
-            benchmarkReopenTimer = undefined;
-            if (scenario.kind === "whole_app") {
-              try {
-                const count = await waitForBenchmarkLibraryReturn(history, benchmarkActionsAbort.signal);
-                observer.emit("library_return_ready", { catalog_count: count, authority: "two-animation-frame-paint-opportunity" }, { required: true });
-              } catch (error) {
-                if (benchmarkActionsAbort.signal.aborted) return;
-                const reason = error instanceof Error ? error.message : String(error);
-                observer.emit("scenario_failed", { phase: "library_return", reason }, { required: true });
-                await observer.complete("failed", reason);
-                return;
-              }
-            }
-            completeCycles();
-          }, 0);
-        } else {
-          completeCycles();
-        }
-        return;
-      }
-      const nextFixture = observer.fixtureForScenario(benchmarkViewerCycles);
-      if (!nextFixture) {
-        void observer.complete("failed", "viewer cycle fixture is unavailable");
-        return;
-      }
-      if (
-        String(nextFixture.codec ?? "").toLowerCase() === "hevc" &&
-        benchmarkHevcCapability()?.supported !== true
-      ) {
-        const reason = "HEVC playback is unsupported by the benchmark WebView environment";
-        observer.emit(
-          "scenario_failed",
-          { phase: "media_capability", reason },
-          { required: true },
-        );
-        void observer.complete("failed", reason, { phase: "media_capability" });
-        return;
-      }
-      observer.emit(
-        "viewer_reopen_requested",
-        { completed_cycles: benchmarkViewerCycles, expected_cycles: iterations },
-        { required: true },
-      );
-      if (isOpeningScenario(scenario)) observer.beginOpeningCycle(nextFixture, benchmarkViewerCycles);
-      setNavigation({ screen: "library", tab: "games" });
-      benchmarkReopenTimer = window.setTimeout(() => {
-        benchmarkReopenTimer = undefined;
-        openViewer(nextFixture.game_timestamp);
-      }, 100);
-    };
-    window.addEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
-
     onCleanup(() => {
       unsubscribe();
       controller.dispose();
       window.clearInterval(pollAssets);
-      window.removeEventListener(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT, onBenchmarkViewerCycle);
     });
   });
 
   onCleanup(() => {
     if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
-    if (benchmarkReopenTimer !== undefined) window.clearTimeout(benchmarkReopenTimer);
-    if (benchmarkScenarioTimer !== undefined) window.clearTimeout(benchmarkScenarioTimer);
-    if (benchmarkUsefulFrame !== undefined) window.cancelAnimationFrame(benchmarkUsefulFrame);
-    if (benchmarkUsefulPaintFrame !== undefined) {
-      window.cancelAnimationFrame(benchmarkUsefulPaintFrame);
-    }
   });
 
   const returnState = (state: NavigationState): ReturnNavigationState =>
@@ -1052,8 +491,13 @@ function App() {
           <Match when={navigation().screen === "viewer"}>
             <Show when={currentViewer()} keyed fallback={
               <section role="status">The library changed. <button type="button" onClick={() => openTab("games")}>Return to games</button></section>
-            }>{selected => (
-            <ViewerScreen
+            }>{selected => {
+              const application = untrack(benchmarkApplication);
+              const context: BenchmarkApplicationContext = untrack(host.captureContext);
+              const onBenchmarkViewerCycleCompleted = application
+                ? () => application.viewerCycleCompleted(context) : undefined;
+              return <ViewerScreen
+              onBenchmarkViewerCycleCompleted={onBenchmarkViewerCycleCompleted}
               game={selected.game}
               readReplay={(work, lane) => controller.readReplay(selected.origin, selected.game.timestamp, work, lane)}
               ddragonAssetBaseUrl={ddragon()?.asset_base_url ?? null}
@@ -1070,7 +514,7 @@ function App() {
                 if (snapshotOrigin && controller.mayPublish(snapshotOrigin)) setNavigation({ screen: "clip-export", draft, snapshotOrigin });
               }}
             />
-            )}</Show>
+            }}</Show>
           </Match>
           <Match when={navigation().screen === "clip-export"}>
             <ClipExporterScreen

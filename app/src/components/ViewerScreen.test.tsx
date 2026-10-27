@@ -512,6 +512,64 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
   }
 });
 
+it.each(["warm_open", "whole_app", "lifecycle"])("notifies %s synchronously after release and required cycle telemetry", async kind => {
+  const probe = replayProbe(); setFixture(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
+    video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockResolvedValue({ requests: 1, range_requests: 1, response_bytes: 1,
+    completed_streams: 1, cancelled_streams: 0, active_connections: 0, peak_connections: 1,
+    rejected_connections: 0, rejected_requests: 0, active_streams: 0, peak_streams: 1 });
+  const trace: string[] = [];
+  const observer = { nextMediaGeneration: () => 1, nextActionId: () => "play-1", scenario: () => ({ kind }),
+    emit: vi.fn((event: string) => { if (event === "viewer_cycle_completed") trace.push("cycle"); }), complete: vi.fn() };
+  vi.mocked(replayBenchmarkObserver).mockReturnValue(observer as unknown as NonNullable<ReturnType<typeof replayBenchmarkObserver>>);
+  vi.mocked(buildScenarioActions).mockReturnValue([]);
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(function(this: HTMLMediaElement) {
+    if (!this.getAttribute("src")) trace.push("released");
+  });
+  let releaseDelay: (() => void) | undefined;
+  const nativeTimeout = window.setTimeout.bind(window);
+  vi.spyOn(window, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number) => {
+    if (ms === 100 && vi.mocked(buildScenarioActions).mock.calls.length) { releaseDelay = callback as () => void; return 999; }
+    return nativeTimeout(callback, ms);
+  }) as typeof window.setTimeout);
+  const prototype = HTMLVideoElement.prototype;
+  const names = ["requestVideoFrameCallback", "cancelVideoFrameCallback"];
+  const originals = names.map(name => Object.getOwnPropertyDescriptor(prototype, name));
+  let frame!: VideoFrameRequestCallback;
+  Object.defineProperty(prototype, names[0], { configurable: true, value: (callback: VideoFrameRequestCallback) => { frame = callback; return 1; } });
+  Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
+  const host = document.createElement("div"); document.body.append(host);
+  let dispose = () => {};
+  const completed = vi.fn(() => { trace.push("callback"); dispose(); trace.push("unmounted"); });
+  dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}}
+    onBenchmarkViewerCycleCompleted={completed} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
+    const primary = host.querySelector("video")!;
+    Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
+    primary.dispatchEvent(new Event("loadstart")); primary.dispatchEvent(new Event("loadedmetadata")); primary.dispatchEvent(new Event("canplay"));
+    frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
+    await vi.waitFor(() => expect(releaseDelay).toBeTypeOf("function"));
+    expect(trace).toEqual(["released"]); expect(completed).not.toHaveBeenCalled();
+    releaseDelay!();
+    await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
+    expect(trace.slice(0, 4)).toEqual(["released", "cycle", "callback", "unmounted"]);
+    expect(observer.emit).toHaveBeenCalledWith("viewer_cycle_completed", expect.objectContaining({ kind }), { generation: expect.any(Number), required: true });
+    expect(observer.complete).not.toHaveBeenCalled();
+    expect(host.querySelector("video")).toBeNull();
+  } finally {
+    dispose();
+    names.forEach((name, index) => {
+      if (originals[index]) Object.defineProperty(prototype, name, originals[index]!);
+      else Reflect.deleteProperty(prototype, name);
+    });
+  }
+});
+
 it.each(["presented-first", "seeked-first", "timeout", "disposed", "superseded", "layout-disposed"] as const)(
   "retains the final scrub until complete native/presentation evidence (%s)", async outcome => {
     const probe = replayProbe();

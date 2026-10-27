@@ -7,6 +7,31 @@
   "features": [
     {
       "kind": "feature",
+      "id": "QB-DEV-006",
+      "stage": "draft",
+      "name": "Validate first-use benchmark export staging without masking foreign outputs",
+      "description": "Reconcile the replay benchmark runner new-output validation with the production-owned persistent export staging directory and lease, preserving ownership and integrity checks.",
+      "priority": "P2",
+      "area": "development",
+      "status": "not-started",
+      "parent_id": null,
+      "dependencies": [
+        "QB-CLIP-013",
+        "QB-REPLAY-008"
+      ],
+      "evidence": [
+        "2026-10-27 QB-DEV-004 baseline: the first production backend export created a valid fully decoded 5-second H264/AAC MP4 and retained the intended .chronobreak-export/.lease, but run.ps1 rejected the new directory. A subsequent export with the same genuine staging state passed unchanged validation. Preserved failure: build/perf/qbd4-b2/.chronobreak-replay-benchmark/results/base-current-r2-006-export-representative-01-full/export-validation.json."
+      ],
+      "notes": "Discovered during QB-DEV-004 baseline; outside the approved orchestration refactor. Investigate ownership-aware validation rather than allowing arbitrary directories or changing production recovery. No runner/threshold/staging behavior changed in QB-DEV-004.",
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [],
+      "verification": []
+    },
+    {
+      "kind": "feature",
       "priority": "P2",
       "status": "done",
       "evidence": [
@@ -151,11 +176,11 @@
     {
       "kind": "feature",
       "priority": "P2",
-      "status": "not-started",
+      "status": "in-progress",
       "evidence": [
         "2026-10-26 planning handoff: reviewed bounded App coordinator/cycle-callback design and initialized checkpoint. Pre-change automated baseline: 378 frontend tests, TypeScript/Vite build, replay analyzer suite (128 discovered, 1 skipped), benchmark-enabled Tauri tests (162 passed, 9 ignored) and Rust formatting passed. Default Tauri suite had an export-staging failure that passed alone; native workflows and performance equivalence remain unrun. No product refactor or completion claimed."
       ],
-      "notes": "Origin: docs/reviews/app-engineering-audit-2026-10-26.md. First slice moves App scenario/readiness/cycle/export policy and lifecycle resources into a bounded harness-owned coordinator, replacing the global viewer-cycle event with an identity-checked callback. Viewer scenario execution, production observation/search seams, historical duration compatibility and frontend bundle isolation remain documented migration scope. Follow WORKFLOW.md planning handoff before implementation; native baseline must precede source/test edits. Detailed baseline limitations and next action are in the execution checkpoint.",
+      "notes": "Origin: docs/reviews/app-engineering-audit-2026-10-26.md. First slice moves App scenario/readiness/cycle/export policy and lifecycle resources into a bounded harness-owned coordinator, replacing the global viewer-cycle event with an identity-checked callback. Viewer scenario execution, production observation/search seams, historical duration compatibility and frontend bundle isolation remain documented migration scope. User-directed v2 changes verification proportionality only: behavioral/order/cancellation/cleanup checks and representative native before/after runs remain mandatory; statistical campaigns are conditional on observed regression, changed measurement semantics or insufficient representative evidence, with existing analyzer thresholds/contracts preserved. Native baseline must precede source/test edits. M1 representative native baseline and ordinary operator checks are complete; M2 coordinator/callback implementation and focused tests are in progress. Detailed actual results, preserved failures and next action are in the checkpoint.",
       "id": "QB-DEV-004",
       "stage": "ready",
       "name": "Separate App benchmark coordination from production screens",
@@ -167,14 +192,14 @@
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-dev-004-app-benchmark-boundary.md",
+        "plan": "docs/exec-plans/qb-dev-004-app-benchmark-boundary-v2.md",
         "progress": "docs/execution/qb-dev-004.md"
       },
       "acceptance_criteria": [
         "A harness-owned App coordinator owns scenario selection/parameters, library readiness policy, export workload interpretation, viewer-cycle sequencing and benchmark-only cancellation/timers/frames. App retains production controller/navigation authority through a bounded explicit host; no parallel player, controller, data path or generic bus is introduced.",
         "Replace the global viewer-cycle control event with an optional identity-checked synchronous callback, preserving media release, required completion-event, expected unmount and terminal ordering. Stale/disposed sessions cannot publish or navigate; active-session failures remain observable.",
         "Preserve all existing scenarios, fixture identities, action counts/order/defaults, full/minimal observer filtering, opening/library milestone meanings, generation/action/RVFC seek evidence, failures and analyzer validity rules. Preserve the existing no-refresh benchmark Games transition explicitly without claiming user-click equivalence.",
-        "Before/after functional and benchmark-action equivalence checks prove no product or measurement semantics change. Capture immutable current-production baseline executables and native trials before source/test edits; verify normal app and benchmark navigation, replay opening, search, seeking, fullscreen and lifecycle through actual production paths and unchanged measured equivalence/control gates.",
+        "Before/after functional and benchmark-action equivalence checks prove no product or measurement semantics change. Capture immutable current-production baseline executables and representative native trials before source/test edits; verify normal app and benchmark navigation, replay opening, search, seeking, fullscreen and lifecycle through actual production paths. Behavioral, event/action ordering, cancellation and cleanup checks remain mandatory. A full statistical/control campaign is required for observed regressions, changed measurement semantics or insufficient representative evidence; preserve existing analyzer thresholds/contracts and require the unchanged statistical procedure for numerical performance claims.",
         "Applicable frontend/analyzer, default and benchmark-feature Tauri tests, formatting, Clippy, production/benchmark desktop builds and canonical validation pass. Update durable architecture with before/after ownership and justified remaining viewer/instrumentation/duration/bundle coupling; retain detailed actual results and limitations in the execution checkpoint."
       ],
       "verification": [
@@ -188,7 +213,7 @@
         },
         {
           "type": "benchmark",
-          "description": "Retain fresh identity-matched baseline/candidate production-WebView workflows on sentinel-owned generated fixtures, including cold/warm open, search, whole-app, fullscreen/layout, lifecycle/memory and backend export. Run unchanged observer controls and measured comparison gates; five trials per role are required for numerical before/after claims. Static tests and historical artifacts cannot establish performance equivalence."
+          "description": "Mandatory: fresh identity-matched representative baseline/candidate production-WebView workflows on sentinel-owned generated fixtures, including cold/warm open, whole-app search/seek/return, fullscreen/layout, lifecycle and backend export, plus focused native runs where affected branches remain uncovered. Escalate to the full statistical/control procedure for observed regressions, changed measurement semantics or insufficient representative evidence, recording the trigger or evidence-based non-escalation rationale. Preserve all analyzer thresholds/contracts; numerical before/after claims still require at least five trials per role and existing eligibility/control rules. Representative runs and static tests alone cannot establish statistical performance equivalence."
         },
         {
           "type": "manual",
@@ -298,8 +323,14 @@
       "area": "export",
       "status": "done",
       "parent_id": "EPIC-CLIP",
-      "dependencies": ["QB-CLIP-007", "QB-AUDIO-002"],
-      "execution": { "workflow": "direct", "plan": null },
+      "dependencies": [
+        "QB-CLIP-007",
+        "QB-AUDIO-002"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
       "acceptance_criteria": [
         "Use the validated source timeline's audio presence to avoid referencing a nonexistent source audio stream. No-music video-only exports contain duration-bounded stereo 48 kHz silence encoded as AAC; selected bundled or imported music retains the existing independently controlled mix semantics.",
         "Discord, horizontal and vertical exports retain exact frame-range validation, H.264/AAC compatibility, audio/video alignment, thumbnails, source preservation and the Discord byte limit. Ordinary source-audio exports retain their existing filter behavior.",
@@ -307,9 +338,18 @@
         "Applicable backend tests, formatting, Clippy and canonical feature validation pass, with concrete results recorded before completion."
       ],
       "verification": [
-        { "type": "automated", "description": "Run focused argument regressions before and after the fix, then the full app backend suite, formatting and Clippy." },
-        { "type": "automated", "description": "Run the opt-in packaged-runtime export matrix against generated temporary media, including media validation, decoded audio, full decode, source preservation and rejection/cleanup cases." },
-        { "type": "automated", "description": "Validate canonical schema/lifecycle/links and diff hygiene; retain the audit comparison as a dated review snapshot." }
+        {
+          "type": "automated",
+          "description": "Run focused argument regressions before and after the fix, then the full app backend suite, formatting and Clippy."
+        },
+        {
+          "type": "automated",
+          "description": "Run the opt-in packaged-runtime export matrix against generated temporary media, including media validation, decoded audio, full decode, source preservation and rejection/cleanup cases."
+        },
+        {
+          "type": "automated",
+          "description": "Validate canonical schema/lifecycle/links and diff hygiene; retain the audit comparison as a dated review snapshot."
+        }
       ],
       "evidence": [
         "2026-10-26: Reproduced A-01 before the fix in argument regression and real staged-runtime video-only export (FFmpeg filtergraph binding failure). Validated metadata now selects finite stereo 48 kHz silence only when source audio is absent, preserving AAC output and the existing music/present-audio paths.",

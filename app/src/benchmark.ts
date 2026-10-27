@@ -79,7 +79,6 @@ export type LocalBufferStats = {
 const LOCAL_EVENT_CAPACITY = 1024;
 const FLUSH_BATCH_SIZE = 128;
 const SERVER_FLUSH_INTERVAL_MS = 1_000;
-export const REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT = "chronobreak:replay-benchmark-viewer-cycle";
 export const GAMES_LIBRARY_USABLE_CONTRACT = "games-library-usable-v1" as const;
 export const OPENING_CONTRACT = "replay-opening-v1" as const;
 

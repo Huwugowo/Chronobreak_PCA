@@ -17,7 +17,6 @@ import {
 import {
   buildScenarioActions,
   emitReplayBenchmarkEvent,
-  REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT,
   replayBenchmarkObserver,
   isOpeningScenario,
   openingPayload,
@@ -74,6 +73,7 @@ type Props = {
   game: GameSummary;
   readReplay: ReplayRead;
   onBack: () => void;
+  onBenchmarkViewerCycleCompleted?: () => void;
   initialClipDraft?: ClipDraft;
   onExportClip: (draft: ClipDraft) => void;
 };
@@ -1105,7 +1105,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         scenario.kind === "whole_app" || scenario.kind === "warm_open" ||
         (scenario.kind === "lifecycle" && typeof scenario.duration_seconds !== "number")
       ) {
-        window.dispatchEvent(new CustomEvent(REPLAY_BENCHMARK_VIEWER_CYCLE_EVENT));
+        props.onBenchmarkViewerCycleCompleted?.();
         return;
       }
       await observer.complete("complete", null, { action_count: actions.length });

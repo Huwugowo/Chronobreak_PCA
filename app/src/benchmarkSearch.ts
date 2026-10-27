@@ -106,6 +106,7 @@ export const waitForBenchmarkMemoryWindow = async (observer: ReplayBenchmarkObse
   await waitForBenchmarkLibraryReturn(history, signal);
   const page = history.value.page;
   const check = () => {
+    if (signal.aborted) throw new Error("library search disposed");
     const state = history.value;
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
     if (state.page !== page || state.loading || state.indexing || state.error || state.indexError ||
@@ -137,6 +138,7 @@ export const runBenchmarkIndexSearch = async (observer: ReplayBenchmarkObserver,
   const started = performance.now();
   let indexingObserved = false, lastProgress = "";
   const progress = () => {
+    if (control.signal.aborted) return;
     const state = history.value;
     indexingObserved ||= state.indexing;
     const payload = { indexing: state.indexing,
@@ -151,6 +153,7 @@ export const runBenchmarkIndexSearch = async (observer: ReplayBenchmarkObserver,
   };
   const unsubscribe = history.subscribe(progress);
   try {
+    if (control.signal.aborted) throw new Error("library search disposed");
     observer.emit("search_preconditioning_started", {}, { required: true });
     observer.emit("indexing_diagnostic_started", { indexing: history.value.indexing }, { required: true });
     progress();
@@ -159,12 +162,14 @@ export const runBenchmarkIndexSearch = async (observer: ReplayBenchmarkObserver,
       if (performance.now() - started > 10_000) throw new Error("indexing search input unavailable");
       await delay(16, control.signal);
     }
+    if (control.signal.aborted) throw new Error("library search disposed");
     observer.emit("search_preconditioning_ready", { catalog_count: catalogCount, iterations: 1,
       indexing: history.value.indexing }, { required: true });
     await runBenchmarkSearchSequence(observer, input, Array.from(term, (_, i) => term.slice(0, i + 1)), "typing", control.signal);
     await runBenchmarkSearchSequence(observer, input, ["zzzzzz"], "settled", control.signal);
     await runBenchmarkSearchSequence(observer, input, [""], "clear", control.signal);
     await waitForBenchmarkSearchReady(history, control.signal);
+    if (control.signal.aborted) throw new Error("library search disposed");
     progress();
     const result = { indexing_observed: indexingObserved, import_completed: !history.value.indexing,
       elapsed_ms: performance.now() - started, indexed_recordings: history.value.page?.indexed_recordings ?? 0,
@@ -200,9 +205,11 @@ export const runBenchmarkSearchSequence = async (observer: ReplayBenchmarkObserv
   try {
     if (signal.aborted) throw new Error("library search disposed");
     for (const [index, value] of values.entries()) {
+      if (signal.aborted) throw new Error("library search disposed");
       if (!input.isConnected) throw new Error("search input was unmounted");
       input.value = value;
       input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      if (signal.aborted) throw new Error("library search disposed");
       const actionId = inputActions.get(input);
       if (!actionId) throw new Error("production search input did not record its action");
       if (index === values.length - 1) {
@@ -211,6 +218,7 @@ export const runBenchmarkSearchSequence = async (observer: ReplayBenchmarkObserv
       } else await delay(60, signal);
     }
     const error = await outcome;
+    if (signal.aborted) throw new Error("library search disposed");
     if (error) throw error;
   } finally {
     clearTimeout(timer);
