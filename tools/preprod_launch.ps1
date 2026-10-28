@@ -1,6 +1,10 @@
 [CmdletBinding()]
 param([switch]$Dev, [switch]$Reset, [switch]$PrepareOnly)
 $ErrorActionPreference = 'Stop'
+# Current preprod may contain restored originals, added games, saves and clips.
+# The old fixture reset must never replace that working library.
+if ($Reset) { throw '-Reset is disabled: preprod recordings and clips are persistent. Use Settings to rebuild the disposable index.' }
+
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $owned = [IO.Path]::GetFullPath((Join-Path $repo 'build/preprod'))
 $source = Join-Path $repo 'fixtures/preprod-library/library'
@@ -37,7 +41,6 @@ if (Test-Path -LiteralPath $owned) {
 } else {
     New-Item -ItemType Directory -Path $owned -Force | Out-Null
     @{format_version=1;root=$owned} | ConvertTo-Json | Set-Content -LiteralPath $sentinel -Encoding UTF8
-    $Reset = $true
 }
 
 # Keep one launcher alive for the entire app session. FileShare.None also blocks reset.
@@ -46,18 +49,12 @@ $oldEnvironment = @{}
 try {
     $session = [IO.File]::Open((Join-Path $owned '.session.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     if (Get-Process -Name 'league-replay-app' -ErrorAction SilentlyContinue) { throw 'Close the desktop app before launching or resetting preprod.' }
-    if ($Reset) {
-        # Conservatively refuse reset even if a previous launcher was interrupted.
+    if (!(Test-Path -LiteralPath (Join-Path $owned 'library'))) {
+        # Seed only a brand-new library. Existing media is never reset or replaced.
         if (Get-Process -Name 'league-replay-app' -ErrorAction SilentlyContinue) { throw 'Close the desktop app before resetting preprod.' }
-        foreach ($name in @('library','app-data','webview2')) {
-            $target = [IO.Path]::GetFullPath((Join-Path $owned $name))
-            if (![string]::Equals([IO.Path]::GetDirectoryName($target), $owned, [StringComparison]::OrdinalIgnoreCase)) { throw 'Reset target escaped owned root.' }
-            Assert-Tree $target
-            if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-        }
         Copy-Item -LiteralPath $source -Destination (Join-Path $owned 'library') -Recurse
         $seed = Join-Path $repo 'fixtures/preprod-library/app-data'
-        if (Test-Path -LiteralPath $seed) { Assert-Tree $seed; Copy-Item -LiteralPath $seed -Destination (Join-Path $owned 'app-data') -Recurse }
+        if ((Test-Path -LiteralPath $seed) -and !(Test-Path -LiteralPath (Join-Path $owned 'app-data'))) { Assert-Tree $seed; Copy-Item -LiteralPath $seed -Destination (Join-Path $owned 'app-data') -Recurse }
         $output = (Join-Path $owned 'library').Replace('\','/')
         $configText = @"
 [recording]
@@ -76,9 +73,9 @@ hevc_playback_supported = false
     $config = Get-Content -LiteralPath $configPath -Raw
     $expectedOutput = (Join-Path $owned 'library').Replace('\','/')
     if ($config -notmatch ('(?m)^output_path = "' + [regex]::Escape($expectedOutput) + '"\r?$') -or $config -notmatch '(?m)^auto_delete_days = 0\r?$') {
-        throw 'Preprod config changed its output/retention; use -Reset to restore the owned configuration.'
+        throw 'Preprod config must point to build/preprod/library with retention disabled; fix config.toml without resetting recordings.'
     }
-    if ($PrepareOnly) { Write-Host "Prepared preprod: $owned"; return }
+    if ($PrepareOnly) { Write-Host "Prepared current preprod library: $(Join-Path $owned 'library')"; return }
     Push-Location $repo
     try {
         if ((& git branch --show-current) -ne 'main') { throw 'Launch preprod from the integrated main checkout.' }
@@ -89,6 +86,12 @@ hevc_playback_supported = false
             WEBVIEW2_USER_DATA_FOLDER=(Join-Path $owned 'webview2')
             QUEUEBACK_MEDIA_RUNTIME_DIR=(Join-Path $repo 'build/media-runtime/windows-x86_64')
             VITE_UI_MOCKS=$null
+        }
+        # An ordinary preprod launch must not inherit a benchmark session.
+        foreach ($entry in Get-ChildItem Env:) {
+            if ($entry.Name -like 'LEAGUE_REPLAY_BENCHMARK*' -or $entry.Name -like 'QUEUEBACK_BENCHMARK*') {
+                $values[$entry.Name] = $null
+            }
         }
         foreach ($key in $values.Keys) {
             $oldEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')

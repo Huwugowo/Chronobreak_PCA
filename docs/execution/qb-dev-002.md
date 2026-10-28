@@ -2,15 +2,15 @@
 
 Feature: `QB-DEV-002`
 ExecPlan: `docs/exec-plans/qb-dev-002-production-path-preprod-library-v3.md`
-Updated: 2026-10-20
+Updated: 2026-10-28
 
 ## Current milestone
 
-Complete: all four milestones and required feature checks passed on 2026-10-20.
+Complete historical implementation: all four milestones and required feature checks passed on 2026-10-20. Current library routing/restored-media follow-up is QB-DEV-009; the original immutable design below is historical, not a claim that recovered videos are still unavailable.
 
 ## Active unit
 
-None. Current `main` is 42a1467 and matches origin/main (checked 2026-10-20); current working changes are included in both release and dev. Unrelated preview edits are preserved.
+No implementation unit for QB-DEV-002. QB-DEV-009 owns the 2026-10-28 current-library consolidation after restored originals/newer recordings were found in the normal library; do not rebuild this completed feature or reset the current preprod from its old seed.
 
 ## Completed
 
@@ -64,8 +64,8 @@ The clip-duration wire-tag defect was fixed within milestone 4 because actual ex
 
 ## Blockers
 
-No implementation blocker. Original video cannot be obtained; synthetic media is user-authorized. Visual gameplay/event synchronization and original capture-quality validation remain unavailable by design.
+No implementation blocker for the completed historical seed. The original Master Yi MP4 was subsequently recovered with newer games on October 26; the earlier unavailable-original statement is superseded for current working data. The checked-in seed remains synthetic historical evidence, and Akali still uses a substitute.
 
 ## Next action
 
-Use `tools/preprod_launch.ps1 -Dev` after closing the open release app for UI work; add `-Reset` only when a pristine working library is wanted. No implementation follow-up is required for QB-DEV-002. Preserve unrelated preview edits.
+Use the current `tools/preprod_launch.ps1` release/dev workflow documented in `fixtures/preprod-library/README.md`. QB-DEV-009 retains restored media and added games in the working library; `-Reset` is disabled and must not restore old synthetic files over current data. QB-DEV-002's original implementation/verification remains historical evidence.
