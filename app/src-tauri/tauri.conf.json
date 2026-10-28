@@ -17,6 +17,7 @@
         "height": 900,
         "minWidth": 1200,
         "minHeight": 680,
+        "backgroundColor": "#0d0c10",
         "center": true
       }
     ],

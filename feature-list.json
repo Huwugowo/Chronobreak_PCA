@@ -6,6 +6,46 @@
   },
   "features": [
     {
+      "id": "QB-UI-003",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Remove white desktop startup and resize flashes",
+      "description": "Investigate the white startup window and bottom-edge flash near the desktop minimum, then align native, WebView and first-document painting with the existing dark application surface.",
+      "priority": "P2",
+      "area": "desktop-ui",
+      "status": "done",
+      "dependencies": [
+        "QB-UI-002"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Identify the paint layers responsible for the startup blank surface and the reported bottom-edge resize flash, distinguishing observed evidence from inference.",
+        "The native window, embedded browser and initial document use the application dark background before frontend mounting; preserve normal launch visibility, window controls, minimum size and card layout.",
+        "Correct any demonstrated document overflow or exposed default-white surface without masking content or changing playback and benchmark measurement behavior."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Check initial-document painting before application scripts, resize/overflow geometry around the supported minimum, frontend typecheck/build and the production Tauri build; validate canonical state and diff."
+        },
+        {
+          "type": "manual",
+          "description": "Attempt isolated native startup/resize observation using generated fixtures on the second screen. Record unavailable native capture separately and retain truthful non-done status if the reported flash cannot be resolved or verified."
+        }
+      ],
+      "evidence": [
+        "2026-10-28: Startup cause reproduced with the real initial document while application modules/CSS are withheld: transparent html/body yield 816000 white pixels at 1200x680. Tauri configuration lacked backgroundColor; installed Tauri 2.11/Wry 0.55 Windows code applies it to both native WM_ERASEBKGND painting and WebView2's controller/default background. The bottom-edge report is consistent with a resize repaint gap; the operator-confirmed fix supports this diagnosis, but the specific native repaint stage was not captured.",
+        "2026-10-28: Set the sole native window backgroundColor to the existing #0d0c10 surface and inline the same html/body background before application loading; declare the initial dark color scheme. After change, all 816000 early-document pixels are (13,12,16) with an empty/unmounted application root. No launch visibility/timing, dimensions, overflow suppression, playback logic or analyzer/measurement changes.",
+        "2026-10-28: Real LibraryScreen fixture with actual shell padding and a 17px classic-scrollbar reserve passed 27 resize samples (1200/1201/1204/1280/1440 widths and 680/681/900 heights, including repeated minimum crossings) both before and after. Fixed 1120x109 cards, no horizontal document overflow or card clipping; no demonstrated CSS overflow to patch. Ignored raw before/after paint reports, screenshots and reproducible script: build/verification/qb-ui-003/.",
+        "2026-10-28: Full frontend 527 tests/40 files, TypeScript/Vite and normal production Tauri build passed; second-screen build differs only in title, initial position and dimensions. Known Vite/linker warnings retained. Native capture timed out twice after refreshed selection/activation; no automated native first-frame/resize capture pass is claimed. The isolated two-match process was closed and all 14 original generated fixture files remained byte-identical. Logs, reproducible paint check and build hashes under build/verification/qb-ui-003/.",
+        "2026-10-28: At the user's request, opened the same updated UI with the existing full preprod library/settings/profile on the second screen, with automatic deletion disabled and no benchmark session or destructive test. Operator answered Yes, it's gone to the explicit near-minimum bottom-line resize check. This establishes the reported native resize fix; early-document startup painting is independently verified above, while native startup's first milliseconds were not captured. The ordinary full-library window is left open for the user. Canonical validation and git diff --check pass."
+      ],
+      "notes": "2026-10-28 user follow-up after QB-UI-002. Bounded paint/background correction; no splash screen, startup delay, playback change, overflow suppression or benchmark refactor. Native production executable restored byte-identically after the test-only placement build. Full-library near-minimum resize passed operator validation; no automated native startup-capture claim. Other working-tree changes preserved. No remaining active unit."
+    },
+    {
       "kind": "feature",
       "id": "QB-DEV-006",
       "stage": "ready",
