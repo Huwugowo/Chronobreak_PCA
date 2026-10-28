@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { ReplayDataController, type ReplayWindow, type ReplayWindowRequest } from "./replayDataController";
+import { ReplayDataController, replayDetailsStatus, type ReplayWindow, type ReplayWindowRequest } from "./replayDataController";
+import type { OverlayState } from "./replayOverlayController";
 import type { MediaId, ReplayTick } from "./replayTime";
 import type { ImportProgress } from "./leagueIndex";
 
@@ -27,6 +28,39 @@ function setup(overrides: Partial<ConstructorParameters<typeof ReplayDataControl
 }
 
 describe("ReplayDataController", () => {
+  it("presents pending, useful partial, unavailable and ready details independently of coverage gaps", () => {
+    const { controller } = setup();
+    const idle: OverlayState = { scope: null, status: "idle", error: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0 };
+    const data = { ...controller.value, indexing: "ready" as const };
+    expect(replayDetailsStatus(data, idle, undefined, null, true)).toBe("loading");
+    expect(replayDetailsStatus(data, idle, undefined, null)).toBe("unavailable");
+    const useful = { ...data, facts: { media_id: media, local_player_name: "Me", league_match: null, league_result: null } };
+    expect(replayDetailsStatus(useful, idle, undefined, null)).toBe("ready");
+    const failed = { ...useful, factsError: "private raw failure" };
+    const overlay = { ...idle, scope, status: "loading" as const };
+    expect(replayDetailsStatus(failed, overlay, scope, null)).toBe("loading");
+    expect(replayDetailsStatus(failed, { ...overlay, status: "error", error: "raw" }, scope, null)).toBe("limited");
+    expect(replayDetailsStatus({ ...data, indexing: "unavailable" }, idle, undefined, null)).toBe("unavailable");
+    const window = { ...page(1), coverage: { ...page(1).coverage, gap_attempts: 4, unresolved_actors: 2 } };
+    expect(replayDetailsStatus(data, idle, scope, window)).toBe("ready");
+    expect(replayDetailsStatus({ ...data, windowError: "failed" }, idle, scope, window)).toBe("limited");
+    expect(replayDetailsStatus({ ...failed, initializing: true }, idle, undefined, null)).toBe("loading");
+    expect(replayDetailsStatus({ ...data, error: "failed", loading: { ...data.loading, window: true } }, idle, scope, null)).toBe("loading");
+    controller.dispose();
+  });
+  it("counts a scheduled viewport as loading and preserves its last valid page", async () => {
+    vi.useFakeTimers();
+    const { controller } = setup();
+    try {
+      await controller.initialize(); controller.requestWindow(query());
+      expect(controller.value.loading.window).toBe(true);
+      await vi.advanceTimersByTimeAsync(120);
+      const prior = controller.value.activeWindow;
+      controller.requestWindow({ ...query(), at: tick(700) });
+      expect(controller.value.loading.window).toBe(true);
+      expect(controller.value.activeWindow).toBe(prior);
+    } finally { controller.dispose(); vi.useRealTimers(); }
+  });
   it("finishes positive tail coverage without polling and explicit retry observes a new commit", async () => {
     vi.useFakeTimers();
     const tail: ImportProgress = { media_id: media, status: "ready", batches: 0,

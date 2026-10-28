@@ -24,6 +24,70 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 describe("LibraryController", () => {
+  it("bounds pending writers by purpose, replaces old intents, and prioritizes maintenance then replay", async () => {
+    const held = deferred<string>(), calls: string[] = [];
+    const controller = new LibraryController({ refresh: async () => snapshot("token", "1"),
+      durations: async () => ({ snapshot_token: "token", clips: [] }) });
+    controller.setRoot("A"); await flush();
+    const origin = controller.origin()!;
+    const active = controller.writeIndex(origin, "history", () => { calls.push("active"); return held.promise; });
+    const old = controller.writeIndex(origin, "history", async () => { calls.push("replaced"); return "old"; });
+    const replaced = expect(old).rejects.toThrow("stale");
+    const history = controller.writeIndex(origin, "history", async () => { calls.push("history"); return "history"; });
+    const replay = controller.writeIndex(origin, "replay", async () => { calls.push("replay"); return "replay"; });
+    const maintenance = controller.writeIndex(origin, "maintenance", async () => { calls.push("reset"); return "reset"; });
+    await replaced; expect(calls).toEqual(["active"]);
+    held.resolve("done"); await Promise.all([active, history, replay, maintenance]);
+    expect(calls).toEqual(["active", "reset", "replay", "history"]);
+    controller.dispose();
+  });
+
+  it.each(["refresh", "root ABA", "navigation", "dispose"])(
+    "settles queued and active writer promises after %s without releasing a running owner", async invalidation => {
+      for (const failure of [false, true]) {
+        const held = deferred<string>(), calls: string[] = [];
+        let scan = 0;
+        const controller = new LibraryController({ refresh: async () => snapshot(`scan-${++scan}`, "1"),
+          durations: async () => ({ snapshot_token: "", clips: [] }) });
+        controller.setRoot("A"); await flush();
+        const old = controller.origin()!;
+        const active = controller.writeIndex(old, "history", () => held.promise);
+        const pending = controller.writeIndex(old, "replay", async () => { calls.push("stale"); return "stale"; });
+        const settled = [expect(active).rejects.toThrow("stale"), expect(pending).rejects.toThrow("stale")];
+        if (invalidation === "refresh") void controller.refresh();
+        else if (invalidation === "root ABA") { controller.setRoot("B"); controller.setRoot("A"); }
+        else if (invalidation === "navigation") controller.navigate(false);
+        else controller.dispose();
+        await flush(); await flush();
+        let latest: Promise<string> | undefined;
+        if (invalidation !== "dispose") latest = controller.writeIndex(controller.origin()!, "history", async () => { calls.push("latest"); return "latest"; });
+        expect(calls).toEqual([]);
+        if (failure) held.reject(new Error("late failure")); else held.resolve("late success");
+        await Promise.all(settled);
+        if (latest) await expect(latest).resolves.toBe("latest");
+        expect(calls).toEqual(invalidation === "dispose" ? [] : ["latest"]);
+        controller.dispose();
+      }
+    });
+
+  it("settles a thrown writer and runs root-bound reset through mutation even after navigation", async () => {
+    const held = deferred<string>(); let scans = 0;
+    const controller = new LibraryController({ refresh: async () => { scans++; return snapshot(`scan-${scans}`, "1"); },
+      durations: async () => ({ snapshot_token: "", clips: [] }) });
+    controller.setRoot("A"); await flush();
+    const origin = controller.origin()!;
+    await expect(controller.writeIndex(origin, "replay", () => { throw new Error("synchronous failure"); })).rejects.toThrow("synchronous failure");
+    const active = controller.writeIndex(origin, "history", () => held.promise);
+    const activeSettled = expect(active).rejects.toThrow("stale");
+    let resets = 0;
+    const mutation = controller.mutate(origin, "league-index", () => controller.writeIndex(origin, "maintenance", async () => { resets++; return "reset"; }));
+    expect(controller.value.busy).toBe("league-index");
+    controller.navigate(false); expect(resets).toBe(0);
+    held.resolve("late"); await activeSettled; await mutation; await flush();
+    expect(resets).toBe(1); expect(controller.value.busy).toBeNull(); expect(scans).toBe(2);
+    await expect(controller.writeIndex(controller.origin()!, "history", async () => "next")).resolves.toBe("next");
+    controller.dispose();
+  });
   it("retains independent overlay and event reads in one bounded worker", async () => {
     const held = deferred<string>();
     const calls: string[] = [];

@@ -27,6 +27,7 @@ type Dependencies = {
 type DurationIntent = { origin: LibraryOrigin; epoch: number; ids: string[]; retry: boolean };
 export type ReplayReadLane = "details" | "overlay";
 export type ReplayRead = <T>(work: (token: string) => Promise<T>, lane?: ReplayReadLane) => Promise<T>;
+export type IndexWritePurpose = "history" | "replay" | "maintenance";
 type ReplayIntent = { run: () => Promise<void>; cancel: () => void };
 export type OperationResult<T> =
   | { admitted: true; value: T }
@@ -67,6 +68,8 @@ export class LibraryController {
   private replayActive = false;
   private replayPending = new Map<ReplayReadLane, ReplayIntent>();
   private replayRequest: Record<ReplayReadLane, number> = { details: 0, overlay: 0 };
+  private indexActive = false;
+  private indexPending = new Map<IndexWritePurpose, ReplayIntent>();
 
   constructor(private readonly api: Dependencies) {}
   get value(): LibraryState { return this.state; }
@@ -96,6 +99,7 @@ export class LibraryController {
   setRoot(root: string) {
     if (this.closed || root === this.state.root) return;
     this.rootEpoch++;
+    this.supersedeIndexWrites();
     this.supersedeReplay();
     this.navigation++;
     this.supersedeDurations();
@@ -108,6 +112,7 @@ export class LibraryController {
     this.refreshCompletion?.(null);
     const completion = new Promise<LibraryOrigin | null>(resolve => { this.refreshCompletion = resolve; });
     this.scanPending = true;
+    this.supersedeIndexWrites();
     this.supersedeReplay();
     this.supersedeDurations();
     this.publish({ request: this.state.request + 1, refreshing: true,
@@ -154,6 +159,7 @@ export class LibraryController {
   }
   navigate(clipsVisible: boolean) {
     this.navigation++;
+    this.supersedeIndexWrites(false);
     this.supersedeReplay();
     this.clipsVisible = clipsVisible;
     this.supersedeDurations();
@@ -175,6 +181,45 @@ export class LibraryController {
     if (origin && this.mayStart(origin) && exists) this.publish({ deletion: { kind, id, origin } });
   }
   clearDeletion() { this.publish({ deletion: null }); }
+
+  /** Native writes cannot be cancelled by leaving a screen. Keep their owner
+   * until settlement, with at most one latest queued intent per purpose. */
+  writeIndex<T>(origin: LibraryOrigin, purpose: IndexWritePurpose, work: (token: string) => Promise<T>): Promise<T> {
+    const current = () => purpose === "maintenance" ? this.mayStart(origin) : this.mayPublish(origin);
+    const staleError = () => new Error("Library index request became stale. Refresh the library.");
+    if (!current()) return Promise.reject(staleError());
+    this.indexPending.get(purpose)?.cancel();
+    return new Promise<T>((resolve, reject) => {
+      const stale = () => reject(staleError());
+      this.indexPending.set(purpose, {
+        cancel: stale,
+        run: async () => {
+          if (!current()) { stale(); return; }
+          try {
+            const result = await work(origin.token);
+            if (current()) resolve(result); else stale();
+          } catch (error) {
+            if (current()) reject(error); else stale();
+          }
+        },
+      });
+      this.pumpIndex();
+    });
+  }
+  private pumpIndex() {
+    if (this.closed || this.indexActive) return;
+    const purpose = (["maintenance", "replay", "history"] as const).find(p => this.indexPending.has(p));
+    if (!purpose) return;
+    const intent = this.indexPending.get(purpose)!;
+    this.indexPending.delete(purpose);
+    this.indexActive = true;
+    void intent.run().finally(() => { this.indexActive = false; this.pumpIndex(); });
+  }
+  private supersedeIndexWrites(maintenance = true) {
+    for (const [purpose, intent] of this.indexPending) {
+      if (maintenance || purpose !== "maintenance") { intent.cancel(); this.indexPending.delete(purpose); }
+    }
+  }
 
   /** One active read across lifetimes, latest pending intent per independent purpose. */
   readReplay<T>(origin: LibraryOrigin, game: string, work: (token: string) => Promise<T>, lane: ReplayReadLane = "details"): Promise<T> {
@@ -354,6 +399,7 @@ export class LibraryController {
   }
   dispose() {
     this.closed = true;
+    this.supersedeIndexWrites();
     this.refreshCompletion?.(null);
     this.refreshCompletion = null;
     this.supersedeReplay();

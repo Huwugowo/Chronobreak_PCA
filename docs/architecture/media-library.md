@@ -202,6 +202,20 @@ Event revisions retain evidence and exact `(media_id, run_id, epoch)` scope; act
 joins require stored participant references. Replay ticks are calculated from each
 observation's own calibration. A timing change invalidates the projection.
 
+The scan retains a private missing-metadata classification separately from its
+broad incomplete display flag. Catalog pages preserve unfinished bundles in
+membership, counts and cursors with null media identity/progress/error. Present
+invalid or unreadable metadata, invalid finalized video, duplicate media identity
+and corrupt/unsupported telemetry still fail strict admission/import.
+
+`LibraryController` owns one active frontend index write across screen lifetimes,
+with one latest pending intent each for history, replay and maintenance. Maintenance
+then replay take priority over background history. Superseded queued promises
+reject; running invokes retain ownership until settlement. Navigation invalidates
+history/replay intents, while reset retains its captured root/request/token inside
+the existing mutation lifecycle. Refresh, root changes and disposal invalidate all
+queued intents. Native writer, reader and exclusive-reset admission remain intact.
+
 Whole-source coverage totals and observation bounds are materialized per endpoint
 once a projection reaches its validated end. The totals, committed position and
 ready status publish in the same SQLite transaction. Replay and roster queries
@@ -233,7 +247,7 @@ returns `ready` with positive `tail_bytes`; those bytes remain unknown coverage,
 not committed observations. Both History and Replay stop automatic import calls
 at `ready`. Productive four-commit pages return `pending` and continue after their
 rendering yield; an exact page boundary needs one final EOF read. A fresh accepted
-History snapshot or explicit Replay retry observes later source changes. A source
+History snapshot or fresh Replay opening observes later source changes. A source
 stamp changing during import can produce transient pending and does not establish
 a stable-tail retry loop.
 
@@ -257,8 +271,10 @@ including equal-tick samples split between pages. Event paging cannot evict this
 timeline. Source change/disposal releases it. The shared library reader retains
 one active read overall and one latest pending intent in each of two explicit
 lanes, details and overlay; navigation/root/refresh invalidates both.
-Replay details remain loading until the selected overlay timeline is complete;
-video playback stays available during loading or an optional-data failure.
+Replay details remain loading while the selected overlay timeline has pending
+work, including after a partial failure in another lane. Once idle, surviving
+useful details yield a limited status; no useful payload yields unavailable.
+Video playback stays available throughout, independently of this presentation.
 Only after completion, the frontend derives distinct first-recorded spell-loadout
 context from the earliest mapped sample. Before that sample, it supplies two
 nullable spell labels per recorded participant, without any temporal status.

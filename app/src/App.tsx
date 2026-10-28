@@ -87,7 +87,9 @@ function App() {
     durations: (token, ids, retry) => import("./api").then(api => api.resolveClipDurations(token, ids, retry)),
   });
   const [libraryState, setLibraryState] = createSignal(controller.value);
-  const history = new HistoryController({ current: origin => controller.mayPublish(origin), catalog: indexCatalog, recording: indexRecording, history: queryHistory,
+  const history = new HistoryController({ current: origin => controller.mayPublish(origin),
+    catalog: (_token, after, origin) => controller.writeIndex(origin, "history", token => indexCatalog(token, after)),
+    recording: (_token, game, origin) => controller.writeIndex(origin, "history", token => indexRecording(token, game)), history: queryHistory,
     observeQuery: event => observeBenchmarkHistory(event, generation => history.isQueryCurrent(generation) &&
       navigation().screen === "library" && (navigation() as Extract<NavigationState, { screen: "library" }>).tab === "games"),
   });
@@ -310,7 +312,7 @@ function App() {
     if (!origin) { showError("Rebuilding requires a current library snapshot."); return; }
     setBusyId("settings");
     try {
-      const operation = await controller.mutate(origin, "league-index", resetLeagueIndex);
+      const operation = await controller.mutate(origin, "league-index", () => controller.writeIndex(origin, "maintenance", resetLeagueIndex));
       if (!operation.admitted) {
         if (operation.error) showError(operation.error);
         return;
@@ -499,6 +501,7 @@ function App() {
               return <ViewerScreen
               onBenchmarkViewerCycleCompleted={onBenchmarkViewerCycleCompleted}
               game={selected.game}
+              indexRecording={(_token, game) => controller.writeIndex(selected.origin, "replay", token => indexRecording(token, game))}
               readReplay={(work, lane) => controller.readReplay(selected.origin, selected.game.timestamp, work, lane)}
               ddragonAssetBaseUrl={ddragon()?.asset_base_url ?? null}
               gameTimestamp={

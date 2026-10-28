@@ -35,6 +35,9 @@ pub struct GameSummary {
     pub participants: Vec<ReplayParticipant>,
     pub saved: bool,
     pub incomplete: bool,
+    /// Scan-only classification: `incomplete` also covers invalid metadata.
+    #[serde(skip)]
+    pub(crate) metadata_missing: bool,
     pub video_size_bytes: u64,
     pub video_available: bool,
     pub league_result: Option<chronobreak_league_data::Summary>,
@@ -593,8 +596,13 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let video_size_bytes = fs::metadata(directory.join(VIDEO_MP4))
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let Ok(metadata) = read_metadata(&directory.join(METADATA_JSON)) else {
-        return incomplete_summary(timestamp, video_size_bytes);
+    let metadata_path = directory.join(METADATA_JSON);
+    let Ok(metadata) = read_metadata(&metadata_path) else {
+        let mut game = incomplete_summary(timestamp, video_size_bytes);
+        game.metadata_missing = matches!(fs::symlink_metadata(metadata_path), Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound)
+            && directory.is_dir();
+        return game;
     };
     let mut game = game_summary_from_bundle(video_size_bytes, timestamp, &metadata);
     if game.video_available {
@@ -644,6 +652,7 @@ fn game_summary_from_bundle(
         participants: Vec::new(),
         saved: metadata.saved,
         incomplete: false,
+        metadata_missing: false,
         video_size_bytes,
         video_available: video_size_bytes > 0,
         league_result: None,
@@ -667,6 +676,7 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
         participants: Vec::new(),
         saved: false,
         incomplete: true,
+        metadata_missing: false,
         video_size_bytes,
         video_available: video_size_bytes > 0,
         league_result: None,

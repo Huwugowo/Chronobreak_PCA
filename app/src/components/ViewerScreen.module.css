@@ -51,6 +51,29 @@
   margin-bottom: 10px;
 }
 
+.detailsHeader {
+  display: flex;
+  min-height: 26px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-muted-bright);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.detailsHeader label {
+  margin-left: auto;
+}
+
+.detailsHeader select {
+  margin-left: 8px;
+  border: 1px solid var(--color-line);
+  color: var(--color-text);
+  background: var(--color-panel);
+}
+
 .gameIdentity p {
   color: var(--color-muted);
   font-family: var(--font-mono);

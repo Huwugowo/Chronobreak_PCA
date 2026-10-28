@@ -125,6 +125,13 @@ only the latest input retained. The controller releases that input after the
 catalog token is committed, preserving its action identity; per-recording imports
 then continue independently of foreground queries.
 
+History initialization spans current catalog/import work and a final query that
+observes its latest completed import revision. A current foreground query can
+satisfy that barrier; stale results cannot. Success and terminal failures both
+settle it. The library shows one stable Loading match data status throughout this
+session. Settled limited/unavailable coverage is described only for relevant
+League-data filters; ordinary browsing retains incomplete recording cards.
+
 Opening a selected game first requests a token-bound `ReplayDescriptor`: snapshot
 token, game ID, protected loopback video URL and validated schema-v2 media timeline.
 Rust uses the strict bundle reader and requires a nonempty regular video, but does
@@ -134,13 +141,19 @@ Data Dragon, optional clip durations and full replay details do not gate that mo
 A single persistent video element is shared between windowed and fullscreen layouts;
 changing layout does not remount the decoder.
 
-After two animation frames provide a paint opportunity, the viewer requests the
-unchanged full playback probe. Its game, URL and decoded media timeline must match
-the descriptor before semantic arrays are admitted. Existing event/player/KDA
-views update reactively without reopening media or resetting rate, clip range,
-seek state or fullscreen. Pending/failed details are explicit, with a local retry;
-missing stats and game-time calibration stay unavailable. Strict JSON is read for each request;
-there is no persistent cache or claim that aggregate I/O is reduced.
+After two animation frames provide a paint opportunity, the viewer loads optional
+recording facts, resumes bounded index work, then requests source scopes and bounded
+event/overlay pages. Pending work includes scheduled viewport reads. Useful
+same-source facts and pages remain visible while replacement work runs. A compact
+header outside the picture shows loading, limited details or unavailable details;
+stopped work never remains labelled loading. Source choices use segment labels.
+The replay loading notice appears only after 500 ms of continuous pending work,
+then clears as soon as work settles. Controller/benchmark loading is immediate;
+limited/unavailable notices are immediate and the display timer cancels on exit.
+Raw exceptions and optional-data retry controls are absent from the product UI;
+return/refresh/rebuild provide deliberate recovery. Core recording-open failures
+retain actionable safe copy. Media, rate, clip range, seek state and fullscreen
+remain independent. Benchmark readiness still requires its complete-data contract.
 
 Optional match context arrives with full details and displays its provisional status
 and game/queue IDs in the viewer header. It never gates media or supplies final

@@ -27,7 +27,7 @@ const games = Array.from({ length: 50 }, (_, index) => ({
   keystone_id: source[0].keystone_id,
 }));
 const history: HistoryState = {
-  loading: false, indexing: false, error: null, indexError: null, laterPage: false,
+  loading: false, indexing: false, initializing: false, error: null, indexError: null, laterPage: false,
   page: {
     next: null, indexed_recordings: 50, catalog_recordings: 50, unknown_recordings: 0,
     rows: games.map(game => ({

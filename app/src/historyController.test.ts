@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { HistoryController, type HistoryQueryObservation } from "./historyController";
-import type { LibraryOrigin } from "./libraryController";
+import { LibraryController, type LibraryOrigin } from "./libraryController";
+import type { LibrarySnapshot } from "./types";
 import type { CatalogPage, HistoryPage, ImportProgress } from "./leagueIndex";
 import type { GameSummary } from "./types";
 const origin = (root: string, rootEpoch: number): LibraryOrigin => ({ root, rootEpoch, request: rootEpoch, token: `scan-${rootEpoch}`, navigation: rootEpoch });
@@ -10,6 +11,98 @@ const catalog = (token: string): CatalogPage => ({ snapshot_token: token, items:
 const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (error: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
+
+it.each([false, true])("keeps one initialization through productive imports and final query settlement (query fails: %s)", async failure => {
+  vi.useFakeTimers();
+  const importResult = deferred<ImportProgress>(), finalQuery = deferred<HistoryPage>();
+  const ready = { media_id: game.media_id!, status: "ready", batches: 0 } as ImportProgress;
+  const history = vi.fn().mockResolvedValueOnce(page()).mockReturnValue(finalQuery.promise);
+  const controller = new HistoryController({ current: () => true,
+    catalog: async token => ({ ...catalog(token), items: [{ game_timestamp: game.timestamp, media_id: game.media_id!, error: null,
+      progress: { ...ready, status: "pending" } }] }), recording: () => importResult.promise, history });
+  const sessions: boolean[] = [];
+  controller.subscribe(state => sessions.push(state.initializing));
+  try {
+    controller.setContext(origin("A", 1), [game]); await vi.advanceTimersByTimeAsync(8);
+    expect(controller.value).toMatchObject({ initializing: true, loading: false, indexing: true });
+    importResult.resolve(ready); await flush(); await flush();
+    expect(controller.value).toMatchObject({ initializing: true, indexing: false, loading: true });
+    expect(sessions.every(Boolean)).toBe(true);
+    if (failure) finalQuery.reject(new Error("final query failed")); else finalQuery.resolve(page());
+    await flush(); await flush();
+    expect(controller.value).toMatchObject({ initializing: false, loading: false, indexing: false });
+    expect(controller.value.error).toBe(failure ? "final query failed" : null);
+    expect(history).toHaveBeenCalledTimes(2);
+  } finally { controller.close(); }
+});
+
+it("settles permanent synchronous import/query failures without retry or endless loading", async () => {
+  vi.useFakeTimers();
+  const catalog = vi.fn(() => { throw new Error("bad source"); });
+  const query = vi.fn(() => { throw new Error("query unavailable"); });
+  const controller = new HistoryController({ current: () => true, catalog, recording: vi.fn(), history: query });
+  try {
+    controller.setContext(origin("A", 1)); await vi.advanceTimersByTimeAsync(30_000);
+    expect(controller.value).toMatchObject({ initializing: false, loading: false, indexing: false,
+      indexError: "bad source", error: "query unavailable" });
+    expect(catalog).toHaveBeenCalledOnce(); expect(query).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+  } finally { controller.close(); }
+});
+
+it("lets the newest foreground query satisfy the final initialization barrier", async () => {
+  vi.useFakeTimers();
+  const first = deferred<HistoryPage>(), foreground = deferred<HistoryPage>();
+  const api = { current: () => true, catalog: async (token: string) => catalog(token), recording: vi.fn(),
+    history: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(foreground.promise) };
+  const controller = new HistoryController(api);
+  try {
+    controller.setContext(origin("A", 1)); await vi.advanceTimersByTimeAsync(4);
+    controller.setQuery({ limit: 50, search: "latest" });
+    first.resolve(page()); await flush(); await flush();
+    expect(controller.value.initializing).toBe(true);
+    expect(api.history).toHaveBeenLastCalledWith("scan-1", expect.objectContaining({ search: "latest" }));
+    foreground.resolve(page()); await flush(); await flush();
+    expect(controller.value.initializing).toBe(false); expect(api.history).toHaveBeenCalledTimes(2);
+  } finally { controller.close(); }
+});
+
+it.each(["history", "replay"] as const)("waits for the %s writer when navigating to the other consumer", async first => {
+  vi.useFakeTimers();
+  const held = deferred<ImportProgress>();
+  const ready = { media_id: game.media_id!, status: "ready", batches: 0 } as ImportProgress;
+  let active = false, busy = 0;
+  const write = async (hold: boolean) => {
+    if (active) { busy++; throw new Error("Busy"); }
+    active = true;
+    try { return hold ? await held.promise : ready; } finally { active = false; }
+  };
+  const library = new LibraryController({ refresh: async () => ({ token: "scan", games: [game], clips: [],
+    usage: { games_bytes: 1, clips_bytes: 0, game_count: 1, clip_count: 0 } } as LibrarySnapshot),
+    durations: async () => ({ snapshot_token: "scan", clips: [] }) });
+  library.setRoot("A"); await flush();
+  const history = new HistoryController({ current: o => library.mayPublish(o),
+    catalog: (token, _after, o) => library.writeIndex(o, "history", async () => ({ ...catalog(token), items: [{ game_timestamp: game.timestamp, media_id: game.media_id!, error: null,
+      progress: await write(first === "history") }] })),
+    recording: async () => ready, history: async () => page() });
+  const old = library.origin()!;
+  let replay: Promise<ImportProgress>;
+  if (first === "history") {
+    history.setContext(old, [game]); await vi.advanceTimersByTimeAsync(4);
+    history.setContext(null); library.navigate(false);
+    replay = library.readReplay(library.origin()!, game.timestamp, () => library.writeIndex(library.origin()!, "replay", () => write(false)));
+  } else {
+    replay = library.readReplay(old, game.timestamp, () => library.writeIndex(old, "replay", () => write(true)));
+    library.navigate(false); history.setContext(library.origin(), [game]);
+    await vi.advanceTimersByTimeAsync(4);
+  }
+  const replaySettled = replay.catch(error => error);
+  try {
+    expect(busy).toBe(0);
+  } finally {
+    held.resolve(ready); await replaySettled; await vi.advanceTimersByTimeAsync(20);
+    history.close(); library.dispose();
+  }
+});
 
 it.each([false, true])("settles positive tail coverage without retries (catalog ready: %s)", async catalogReady => {
   vi.useFakeTimers();

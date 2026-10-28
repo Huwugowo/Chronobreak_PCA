@@ -92,6 +92,101 @@ const setFixture = (probe: ReplayFixture, epochs = [0]) => {
   return { scopes, facts };
 };
 
+it.each(["quick", "slow", "unavailable", "disposed"] as const)("delays only the loading notice and cancels it when details settle (%s)", async scenario => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => window.setTimeout(() => callback(performance.now()), 16));
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => window.clearTimeout(id));
+  const probe = replayProbe(); setFixture(probe);
+  let resolveWindow!: (value: ReplayWindow) => void;
+  let rejectWindow!: (reason: Error) => void;
+  vi.mocked(queryReplayWindow).mockReturnValue(new Promise((resolve, reject) => { resolveWindow = resolve; rejectWindow = reject; }));
+  if (scenario === "unavailable") {
+    vi.mocked(loadRecordingFacts).mockRejectedValue(new Error("private facts failure"));
+    vi.mocked(queryOverlayPage).mockRejectedValue(new Error("private overlay failure"));
+  }
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  let disposed = false;
+  try {
+    await vi.advanceTimersByTimeAsync(200);
+    expect(queryReplayWindow).toHaveBeenCalledOnce();
+    const primary = host.querySelector("video");
+    expect(primary).not.toBeNull();
+    expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull();
+    if (scenario === "slow") {
+      await vi.advanceTimersByTimeAsync(299);
+      expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toBe("Loading replay details...");
+    }
+    if (scenario === "disposed") { dispose(); disposed = true; }
+    else if (scenario === "unavailable") {
+      rejectWindow(new Error("private window failure"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toBe("Match details unavailable.");
+    } else resolveWindow(resolvedWindow(probe));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.textContent).not.toContain("Loading replay details");
+    await vi.advanceTimersByTimeAsync(400);
+    expect(host.textContent).not.toContain("Loading replay details");
+    if (!disposed) expect(host.querySelector("video")).toBe(primary);
+  } finally { if (!disposed) dispose(); vi.useRealTimers(); }
+});
+
+it.each([false, true])("settles unavailable details without raw text, retry controls or blocking video (throw: %s)", async failure => {
+  const probe = replayProbe(); setFixture(probe);
+  vi.mocked(loadRecordingFacts).mockRejectedValue(new Error("private metadata path"));
+  if (failure) vi.mocked(indexRecording).mockRejectedValue(new Error("private import error"));
+  else vi.mocked(indexRecording).mockResolvedValue({ media_id: probe.media_timeline.mediaId, status: "unavailable", batches: 0, position: null, tail_bytes: 0 });
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector("video")).not.toBeNull());
+    const primary = host.querySelector("video");
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toBe("Match details unavailable."));
+    const status = host.querySelector('[data-testid="replay-details-state"]')!;
+    expect(status.textContent).not.toMatch(/private|null|Retry/);
+    expect(status.querySelector("button")).toBeNull();
+    expect(host.querySelector("video")).toBe(primary);
+    expect(host.querySelector('[aria-label="Replay speed"]')).not.toBeNull();
+    expect(sourceScopes).not.toHaveBeenCalled(); expect(indexRecording).toHaveBeenCalledOnce();
+  } finally { dispose(); }
+});
+
+it("keeps loading after partial failure until another optional lane settles and retains useful details", async () => {
+  const probe = replayProbe(); setFixture(probe);
+  let release!: (page: OverlayPage) => void;
+  vi.mocked(loadRecordingFacts).mockRejectedValue(new Error("private facts failure"));
+  vi.mocked(queryOverlayPage).mockReturnValue(new Promise(resolve => { release = resolve; }));
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(queryReplayWindow).toHaveBeenCalled());
+    const primary = host.querySelector("video");
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toBe("Loading replay details..."));
+    expect(host.textContent).not.toContain("private facts failure");
+    release(overlayFor(resolvedWindow(probe)));
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toBe("Some match details are unavailable."));
+    expect(host.querySelector("video")).toBe(primary);
+    expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2);
+  } finally { dispose(); }
+});
+
 it("shows opening spell icons without a video or timeline interaction and omits overlay team headings", async () => {
   const runner = vi.spyOn(viewerBenchmark, "createBenchmarkViewer");
   const probe = replayProbe();
@@ -297,7 +392,8 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     const primary = host.querySelector("video")!;
     const source = primary.src;
     const loadCount = loads.mock.calls.length;
-    expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toContain("Loading replay details");
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')?.textContent).toContain("Loading replay details"));
+    expect(host.querySelector("header")?.contains(host.querySelector('[data-testid="replay-details-state"]'))).toBe(true);
     expect(host.querySelectorAll('[aria-label^="Seek to"]')).toHaveLength(0);
     expect(host.querySelector('[data-testid="fullscreen-hud"]')).not.toBeNull();
     // Source identities are ready independently of the held event page.
@@ -333,14 +429,18 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     await vi.waitFor(() => expect(queryReplayWindow).toHaveBeenCalledTimes(1));
     if (failure) {
       rejectDetails(new Error("fixture details failed"));
-      await vi.waitFor(() => expect(host.textContent).toContain("Replay details unavailable. Playback remains available."));
+      await vi.waitFor(() => expect(host.textContent).toContain("Some match details are unavailable."));
       expect(host.querySelector("video")).toBe(primary);
+      expect(host.textContent).not.toContain("fixture details failed");
+      expect(host.textContent).not.toContain("Retry replay details");
+      // A deliberate new viewport can recover details without touching media.
       vi.mocked(queryReplayWindow).mockResolvedValue(resolvedWindow(probe));
-      [...host.querySelectorAll("button")].find(button => button.textContent === "Retry replay details")!.click();
+      rail().querySelector<HTMLElement>('[role="slider"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
+      rail().querySelector<HTMLElement>('[role="slider"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "-", bubbles: true }));
     } else resolveDetails(resolvedWindow(probe));
-    await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
-    expect(host.querySelectorAll('[aria-label^="Seek to"]')).toHaveLength(1);
-    expect(vi.mocked(emitReplayBenchmarkEvent).mock.calls.filter(([kind]) => kind === "playback_payload_ready")).toHaveLength(1);
+    await vi.waitFor(() => expect(host.querySelectorAll('[aria-label^="Seek to"]')).toHaveLength(1));
+    await vi.waitFor(() => expect(vi.mocked(emitReplayBenchmarkEvent).mock.calls.filter(([kind]) => kind === "playback_payload_ready")).toHaveLength(1));
+    expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull();
     expect(host.querySelector("video")).toBe(primary);
     expect(primary.src).toBe(source);
     expect(loads).toHaveBeenCalledTimes(loadCount);

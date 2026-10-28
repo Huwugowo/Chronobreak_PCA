@@ -2,6 +2,7 @@ import type { ReplayRead } from "./libraryController";
 import type { SourceScope, RecordingFacts, ReplayWindow, ReplayWindowQuery } from "./leagueIndex";
 import type { MediaId } from "./replayTime";
 import { sameSource, sourceKey } from "./leagueSource";
+import type { OverlayState } from "./replayOverlayController";
 
 /** The bounded replay projection returned by the M3 IPC contract. */
 export type { RecordingFacts, ReplayCursor, ReplayRoster, ReplayWindow } from "./leagueIndex";
@@ -26,11 +27,25 @@ export type ReplayDataState = {
   windows: ReplayWindow[];
   activeWindow: ReplayWindow | null;
   indexing: "idle" | "pending" | "ready" | "unavailable";
+  initializing: boolean;
   loading: { facts: boolean; index: boolean; scopes: boolean; window: boolean };
   error: string | null;
   factsError: string | null;
   windowError: string | null;
 };
+
+/** Presentation settlement is independent of the stricter benchmark readiness. */
+export function replayDetailsStatus(data: ReplayDataState, overlay: OverlayState,
+  scope: SourceScope | undefined, window: ReplayWindow | null, scheduled = false): "loading" | "ready" | "limited" | "unavailable" {
+  const currentOverlay = scope && overlay.scope && sameSource(scope.source, overlay.scope.source) ? overlay : null;
+  if (scheduled || data.initializing || Object.values(data.loading).some(Boolean) || currentOverlay?.status === "loading") return "loading";
+  const facts = data.facts;
+  const useful = !!(facts && (facts.local_player_name || facts.league_match || facts.league_result)) || !!window
+    || !!(currentOverlay && (currentOverlay.sampleCount || currentOverlay.identities.length));
+  const failed = data.factsError || data.windowError || data.error || data.indexing === "unavailable" || currentOverlay?.status === "error";
+  if (failed) return useful ? "limited" : "unavailable";
+  return useful ? "ready" : "unavailable";
+}
 
 type WindowIntent = { id: number; query: ReplayWindowRequest };
 const PAGE_SIZE = 512;
@@ -50,7 +65,7 @@ const windowKey = (query: ReplayWindowRequest) =>
  */
 export class ReplayDataController {
   private state: ReplayDataState = {
-    facts: null, scopes: [], windows: [], activeWindow: null, indexing: "idle",
+    facts: null, scopes: [], windows: [], activeWindow: null, indexing: "idle", initializing: false,
     loading: { facts: false, index: false, scopes: false, window: false },
     error: null, factsError: null, windowError: null,
   };
@@ -98,8 +113,9 @@ export class ReplayDataController {
     if (this.closed) return Promise.resolve();
     if (this.initPromise) return this.initPromise;
     const generation = ++this.initGeneration;
+    this.publish({ initializing: true });
     this.initPromise = this.runInitialization(generation).finally(() => {
-      if (this.currentInit(generation)) this.initPromise = null;
+      if (this.currentInit(generation)) { this.initPromise = null; this.publish({ initializing: false }); }
     });
     return this.initPromise;
   }
@@ -157,7 +173,7 @@ export class ReplayDataController {
       this.publish({ scopes, indexing: "ready", error: null });
       this.armDeferredWindow();
     } catch (error) {
-      if (this.currentInit(generation)) this.publish({ error: errorText(error) });
+      if (this.currentInit(generation)) this.publish({ indexing: "unavailable", error: errorText(error) });
     } finally {
       if (this.currentInit(generation)) this.setLoading("scopes", false);
     }
@@ -178,7 +194,9 @@ export class ReplayDataController {
     if (this.debounce !== null) this.cancelSchedule(this.debounce);
     this.debounce = null;
     this.deferredWindow = intent;
-    if (!this.state.scopes.some(scope => sourceKey(scope.source) === sourceKey(query.scope))) return;
+    if (!this.state.scopes.some(scope => sourceKey(scope.source) === sourceKey(query.scope))) {
+      this.setLoading("window", false); return;
+    }
     const cached = this.state.windows.find(window => this.cachedWindowKeys.get(window) === windowKey(intent.query))
       ?? this.state.windows.find(window => {
         const prior = this.cachedWindowQueries.get(window);
@@ -216,6 +234,7 @@ export class ReplayDataController {
     if (this.closed || !this.deferredWindow || !this.state.scopes.some(scope =>
       sourceKey(scope.source) === sourceKey(this.deferredWindow!.query.scope))) return;
     if (this.debounce !== null) this.cancelSchedule(this.debounce);
+    this.setLoading("window", true);
     this.debounce = this.schedule(() => {
       this.debounce = null;
       const intent = this.deferredWindow;
@@ -249,7 +268,7 @@ export class ReplayDataController {
         }
       } finally {
         this.windowActive = false;
-        if (!this.closed && !this.windowPending) this.setLoading("window", false);
+        if (!this.closed && !this.windowPending && !this.deferredWindow) this.setLoading("window", false);
         this.pumpWindow();
       }
     })();

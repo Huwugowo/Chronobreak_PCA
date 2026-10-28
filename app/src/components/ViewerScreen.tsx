@@ -60,7 +60,7 @@ import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
 import { indexRecording, loadRecordingFacts, queryOverlayPage, queryReplayWindow, sourceScopes } from "../leagueIndex";
 import { ReplayOverlayController } from "../replayOverlayController";
-import { ReplayDataController } from "../replayDataController";
+import { ReplayDataController, replayDetailsStatus } from "../replayDataController";
 import { participantKey, sameSource, sourceKey } from "../leagueSource";
 import { replayEvent, replayParticipants, recordedGameClock, overlayParticipantStates } from "../replayProjection";
 
@@ -69,6 +69,7 @@ type Props = {
   gameTimestamp: string;
   game: GameSummary;
   readReplay: ReplayRead;
+  indexRecording?: typeof indexRecording;
   onBack: () => void;
   onBenchmarkViewerCycleCompleted?: () => void;
   initialClipDraft?: ClipDraft;
@@ -101,6 +102,7 @@ type EndpointHoldState = {
 };
 
 const ENDPOINT_HOLD_THRESHOLD_MS = 200;
+const REPLAY_DETAILS_NOTICE_DELAY_MS = 500;
 
 type MappedViewerEvent = ViewerEvent & { replay_tick: ReplayTick };
 
@@ -145,7 +147,7 @@ function ViewerScreen(props: Props) {
         <Match when={descriptor.error}>
           <section class={styles.viewerState} role="alert">
             <strong>Recording could not be opened.</strong>
-            <span>{libraryError(descriptor.error)}</span>
+            <span>Return to games and refresh the library, or try opening this recording again.</span>
             <button type="button" onClick={() => void refetch()}>Retry recording</button>
             <button type="button" onClick={props.onBack}>
               Return to games
@@ -184,7 +186,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   let endpointHold: EndpointHoldState | undefined;
   const replayData = new ReplayDataController({ gameTimestamp: props.gameTimestamp,
     mediaId: mediaTimeline.mediaId, readReplay: props.readReplay,
-    loadRecordingFacts, indexRecording, sourceScopes, queryReplayWindow });
+    loadRecordingFacts, indexRecording: props.indexRecording ?? indexRecording, sourceScopes, queryReplayWindow });
   const [data, setData] = createSignal(replayData.value);
   const unsubscribeData = replayData.subscribe(setData);
   const overlayData = new ReplayOverlayController({ gameTimestamp: props.gameTimestamp, replayEnd: replayEnd as ReplayTick,
@@ -206,13 +208,23 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     || (data().indexing === "ready" && !data().loading.scopes && data().scopes.length === 0))
     && (!activeScope() || (overlay().scope && sameSource(overlay().scope!.source, activeScope()!.source)
       && overlay().status === "ready")));
-  const retryDetails = () => { overlayData.retry(); return replayData.retry(); };
+  const [detailsScheduled, setDetailsScheduled] = createSignal(true);
+  const detailsStatus = () => replayDetailsStatus(data(), overlay(), activeScope(), activeWindow(), detailsScheduled());
+  const detailsLoading = createMemo(() => detailsStatus() === "loading");
+  const [showDetailsLoading, setShowDetailsLoading] = createSignal(false);
+  createEffect(() => {
+    if (!detailsLoading()) { setShowDetailsLoading(false); return; }
+    const noticeTimer = window.setTimeout(() => setShowDetailsLoading(true), REPLAY_DETAILS_NOTICE_DELAY_MS);
+    onCleanup(() => window.clearTimeout(noticeTimer));
+  });
   let detailsPaint: number | undefined;
   let payloadReported = false;
   let detailsFailureReported = false;
   onMount(() => {
     detailsPaint = requestAnimationFrame(() => {
-      detailsPaint = requestAnimationFrame(() => { if (!disposed) void replayData.initialize(); });
+      detailsPaint = requestAnimationFrame(() => {
+        if (!disposed) { void replayData.initialize(); setDetailsScheduled(false); }
+      });
     });
   });
   onCleanup(() => {
@@ -804,6 +816,25 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
 
   return (
     <section class={styles.playbackSurface} data-testid="viewer-surface">
+      <header class={styles.detailsHeader}>
+        <Show when={detailsStatus() !== "ready" && (!detailsLoading() || showDetailsLoading())}>
+          <span role="status" data-testid="replay-details-state">
+            {detailsStatus() === "loading" ? "Loading replay details..."
+              : detailsStatus() === "limited" ? "Some match details are unavailable."
+              : "Match details unavailable."}
+          </span>
+        </Show>
+        <Show when={data().scopes.length > 1}>
+          <label>Recorded segment
+            <select aria-label="Recorded source" value={activeScope() ? sourceKey(activeScope()!.source) : ""}
+              onChange={event => setSelectedSource(event.currentTarget.value)}>
+              <For each={data().scopes}>{(scope, index) => <option value={sourceKey(scope.source)}>
+                Segment {index() + 1}
+              </option>}</For>
+            </select>
+          </label>
+        </Show>
+      </header>
       <header class={styles.gameHeader}>
         <div class={styles.gameIdentity}>
           <p>LOCAL RECORDING / {props.game.game_mode}</p>
@@ -847,26 +878,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         </dl>
       </header>
 
-      <Show when={!detailsReady() || detailsError() || data().indexing === "unavailable"}>
-        <section role="status" data-testid="replay-details-state">
-          {detailsError() || data().indexing === "unavailable" ? "Replay details unavailable. Playback remains available." : "Loading replay details..."}
-          <Show when={detailsError() || data().indexing === "unavailable"}>
-            <span>{libraryError(detailsError())}</span>
-            <button type="button" onClick={() => void retryDetails()}>Retry replay details</button>
-          </Show>
-        </section>
-      </Show>
-
-      <Show when={data().scopes.length > 1}>
-        <label>Recorded source
-          <select aria-label="Recorded source" value={activeScope() ? sourceKey(activeScope()!.source) : ""}
-            onChange={event => setSelectedSource(event.currentTarget.value)}>
-            <For each={data().scopes}>{(scope, index) => <option value={sourceKey(scope.source)}>
-              Source {index() + 1} · epoch {scope.source.epoch} · {scope.source.run_id.slice(0, 8)}
-            </option>}</For>
-          </select>
-        </label>
-      </Show>
       <div class={styles.replayView} aria-label="Replay" data-testid="replay-panel">
         <div class={styles.windowedGrid}>
           <div

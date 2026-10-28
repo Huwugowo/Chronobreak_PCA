@@ -3,7 +3,7 @@ import { libraryError } from "./libraryController";
 import type { CatalogPage, HistoryPage, HistoryQuery, ImportProgress } from "./leagueIndex";
 import type { GameSummary } from "./types";
 
-export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; error: string | null; indexError: string | null; laterPage: boolean };
+export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; initializing: boolean; error: string | null; indexError: string | null; laterPage: boolean };
 export type HistoryQueryObservation = {
   kind: "history_query_scheduled" | "history_query_replaced" | "history_query_dispatched" |
     "history_query_completed" | "history_query_superseded" | "history_query_admitted" | "history_query_error";
@@ -11,11 +11,11 @@ export type HistoryQueryObservation = {
   actionId?: string;
   rowCount?: number;
 };
-type Context = { origin: LibraryOrigin; games: GameSummary[] };
+type Context = { origin: LibraryOrigin; games: GameSummary[]; revision: number; queriedRevision: number };
 type Dependencies = {
   current: (origin: LibraryOrigin) => boolean;
-  catalog: (token: string, after: string | null) => Promise<CatalogPage>;
-  recording: (token: string, game: string) => Promise<ImportProgress>;
+  catalog: (token: string, after: string | null, origin: LibraryOrigin) => Promise<CatalogPage>;
+  recording: (token: string, game: string, origin: LibraryOrigin) => Promise<ImportProgress>;
   history: (token: string, query: HistoryQuery) => Promise<HistoryPage>;
   observeQuery?: (event: HistoryQueryObservation) => void;
 };
@@ -24,7 +24,7 @@ const key = (origin: LibraryOrigin) => JSON.stringify(origin);
 /** One idle import and one short query at a time, independent of media reads. */
 export class HistoryController {
   private context: Context | null = null;
-  private state: HistoryState = { page: null, loading: false, indexing: false, error: null, indexError: null, laterPage: false };
+  private state: HistoryState = { page: null, loading: false, indexing: false, initializing: false, error: null, indexError: null, laterPage: false };
   private listeners = new Set<(state: HistoryState) => void>();
   private query: HistoryQuery = { limit: 50 };
   private queryGeneration = 0;
@@ -58,11 +58,11 @@ export class HistoryController {
     if (this.closed) return;
     if (origin && this.context && key(origin) === key(this.context.origin)) return;
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
-    this.context = origin ? { origin, games } : null;
+    this.context = origin ? { origin, games, revision: 0, queriedRevision: -1 } : null;
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
     this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
-    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, error: null, indexError: null, laterPage: false });
+    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexError: null, laterPage: false });
     this.schedule();
   }
   setQuery(query: HistoryQuery, actionId?: string) {
@@ -97,9 +97,9 @@ export class HistoryController {
     const context = this.context;
     if (!context || !this.current(context) || this.catalogPending || this.queryActive || !this.queryPending) return;
     this.queryPending = false; this.queryActive = true; this.queryDirty = false;
-    const generation = this.queryGeneration, query = this.query, actionId = this.queryActionId;
+    const generation = this.queryGeneration, query = this.query, actionId = this.queryActionId, revision = context.revision;
     this.observeQuery("history_query_dispatched", generation, actionId);
-    void this.api.history(context.origin.token, query).then(page => {
+    void (async () => this.api.history(context.origin.token, query))().then(page => {
       this.observeQuery("history_query_completed", generation, actionId, page.rows.length);
       if (!this.current(context) || generation !== this.queryGeneration) {
         this.observeQuery("history_query_superseded", generation, actionId);
@@ -107,16 +107,26 @@ export class HistoryController {
       }
       // SQL results cannot admit new media or overwrite the accepted scan.
       for (const row of page.rows) if (!context.games.some(game => game.timestamp === row.game.timestamp && game.media_id === row.media_id)) throw new Error("History recording changed since the scan");
+      context.queriedRevision = revision;
       this.publish({ page, laterPage: !!query.after, loading: false, error: null });
       this.observeQuery("history_query_admitted", generation, actionId, page.rows.length);
     }).catch(error => {
       this.observeQuery("history_query_error", generation, actionId);
-      if (this.current(context) && generation === this.queryGeneration) this.publish({ loading: false, error: libraryError(error) });
+      if (this.current(context) && generation === this.queryGeneration) {
+        context.queriedRevision = revision;
+        this.publish({ loading: false, error: libraryError(error) });
+      }
     }).finally(() => {
       this.queryActive = false;
       if (this.queryPending) this.pumpQuery();
       else if (this.queryDirty) this.refreshQuery();
+      this.finishInitialization(context);
     });
+  }
+  private finishInitialization(context: Context) {
+    if (this.current(context) && this.state.initializing && !this.importActive && !this.catalogPending && !this.pending.size
+      && !this.queryActive && !this.queryPending && context.queriedRevision === context.revision)
+      this.publish({ initializing: false });
   }
   private schedule() {
     if (this.closed || this.importActive || !this.context || (!this.catalogPending && !this.pending.size)) return;
@@ -131,16 +141,18 @@ export class HistoryController {
     this.importActive = true;
     const catalog = this.catalogPending;
     const next = this.pending.entries().next().value as [string, string] | undefined;
-    const work = catalog ? this.api.catalog(context.origin.token, this.catalogAfter) : next ? this.api.recording(context.origin.token, next[0]) : null;
-    if (!work) { this.importActive = false; return; }
-    void work.then(result => {
+    if (!catalog && !next) { this.importActive = false; return; }
+    // Include synchronous adapter failure in the same settlement path.
+    void (async (): Promise<CatalogPage | ImportProgress> => catalog ? this.api.catalog(context.origin.token, this.catalogAfter, context.origin)
+      : this.api.recording(context.origin.token, next![0], context.origin))().then(result => {
       if (!this.current(context)) return;
+      context.revision++;
       if (catalog) {
         const page = result as CatalogPage;
         if (page.snapshot_token !== context.origin.token) throw new Error("Stale index page");
         this.catalogAfter = page.next; this.catalogPending = page.next !== null;
         for (const item of page.items) {
-          if (item.error) this.publish({ indexError: "Some recordings have unavailable League data." });
+          if (item.error || item.progress?.status === "unavailable") this.publish({ indexError: "Some recordings have unavailable League data." });
           if (item.progress?.status === "pending" && item.media_id) this.pending.set(item.game_timestamp, item.media_id);
         }
       } else if (next) {
@@ -148,6 +160,7 @@ export class HistoryController {
         const progress = result as ImportProgress;
         if (progress.media_id !== next[1]) throw new Error("Index recording identity changed");
         if (progress.status === "pending") this.pending.set(next[0], next[1]);
+        if (progress.status === "unavailable") this.publish({ indexError: "Some recordings have unavailable League data." });
       }
       this.publish({ indexing: this.catalogPending || this.pending.size > 0 });
       // Preserve input queued before the catalog token existed. Recording
@@ -157,9 +170,11 @@ export class HistoryController {
       if (this.current(context)) {
         // Retry requires a new accepted refresh, avoiding an idle failure loop.
         this.catalogPending = false; this.pending.clear();
-        this.publish({ indexing: false, loading: false, indexError: libraryError(error) });
+        context.revision++;
+        this.publish({ indexing: false, indexError: libraryError(error) });
+        this.refreshQuery();
       }
-    }).finally(() => { this.importActive = false; this.schedule(); });
+    }).finally(() => { this.importActive = false; this.finishInitialization(context); this.schedule(); });
   }
   close() {
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);

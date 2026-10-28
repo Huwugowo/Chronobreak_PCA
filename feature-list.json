@@ -6,6 +6,41 @@
   },
   "features": [
     {
+      "id": "QB-LIB-023",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Controlled League data initialization and recovery",
+      "description": "Coordinate background and selected-replay indexing, distinguish loading from limited source coverage and real failure, and replace flickering or debug-style notices with honest stable product feedback.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "in-progress",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-019", "QB-LIB-020", "QB-REPLAY-020"],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-lib-023-controlled-league-data-initialization.md",
+        "progress": "docs/execution/qb-lib-023.md"
+      },
+      "acceptance_criteria": [
+        "Normal startup imports available recordings without treating recognized incomplete filesystem bundles as a global League-data failure; preserve those bundles and their existing incomplete-card treatment.",
+        "History imports, selected replay imports and index reset share bounded frontend writer ownership across navigation and refresh. An unfinished background import cannot make the app's own selected-replay import fail Busy, or vice versa; stale queued work never dispatches or publishes into a new context.",
+        "Library initialization shows one stable Loading match data status while current initialization is active, rather than repeatedly toggling query-progress, incomplete-count and error fragments after each import. Loading ends when work settles, including terminal failure; preserve honest foreground-query and retained-result feedback.",
+        "Unchecked/indexing data, unavailable data and successfully indexed data with limited source coverage remain distinct. A settled coverage notice is relevant to the active League-dependent query and does not describe all recordings as broken or imply missing data is still loading. Preserve conservative query semantics and validation.",
+        "Replay optional-data loading uses a compact status in the replay header outside the picture. Settled failure has restrained user-facing feedback without raw exceptions, null text, source/debug identifiers or a Retry replay details button over the replay; media controls remain usable and existing library refresh/rebuild provides deliberate recovery.",
+        "Controlled regressions prove writer overlap in both navigation directions, queued supersession, root A/B/A, refresh/reset, disposal, productive pending imports, ready-with-tail termination, permanent failure settlement and rapid import UI stability. Fresh release-path validation uses an isolated fixture library and preserves source hashes."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Deferred frontend writer/controller/UI regressions; full frontend suite, typecheck/build, applicable backend tests/fmt/Clippy for catalog classification, production desktop build, canonical and whitespace validation." },
+        { "type": "manual", "description": "Isolated production release with copied/generated fixtures and its own cache/profile: cold startup, repeated early replay opens and returns, terminal malformed optional source, incomplete bundle and stable coverage. Check header-only feedback, playback/seek controls, no raw errors/retry overlay, settled states and source hashes." }
+      ],
+      "evidence": [
+        "Controlled pre-fix failures reproduced writer overlap, partial-only catalog errors and unstable loading presentation. Shared writer ownership, strict missing-versus-invalid classification and settled library/replay states are implemented; detailed results are retained in docs/execution/qb-lib-023.md.",
+        "Post-fix frontend suite: 549 passed after the user-requested 500 ms replay loading-notice delay; its focused Viewer suite has 48 passes. Native suite: 150 passed, 9 ignored, using a process-only execution-policy override for the existing PowerShell child fixture. Typecheck/build, Rust fmt/Clippy, initial production desktop build, focused review and canonical validation passed.",
+        "User reports the isolated production app behaves very well and accepted the 500 ms loading-notice refinement, then requested commit/push. Historical seed and fixture source hashes match after the interaction. The refined production build passed and reopened with the warm test cache; explicit deliberate recovery observation remains outstanding."
+      ],
+      "notes": "2026-10-28 user-authorized root-cause correction. Nine original directories comprise seven indexed recordings plus two partial-only bundles. Master Yi, Graves and Syndra are ready with conservative coverage flags 25; ready import does not imply exhaustive source coverage. Implementation and automated verification are complete. User operates the isolated release while root prepares the scenarios and records results; feature remains in progress pending this acceptance."
+    },
+    {
       "id": "QB-UI-003",
       "kind": "feature",
       "stage": "ready",

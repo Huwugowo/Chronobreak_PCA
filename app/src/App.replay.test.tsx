@@ -9,6 +9,8 @@ import type ClipExporterScreen from "./components/ClipExporterScreen";
 import { ensureHevcCapability, resolveClipDurations } from "./api";
 import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
+import { indexCatalog, indexRecording } from "./leagueIndex";
+import type { CatalogPage, ImportProgress } from "./leagueIndex";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
@@ -16,6 +18,10 @@ const harness = vi.hoisted(() => ({ root: "A", revision: 0,
 }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(),
   initializeReplayBenchmark: vi.fn(async () => null) }));
+vi.mock("./leagueIndex", async original => ({ ...await original<typeof import("./leagueIndex")>(),
+  indexCatalog: vi.fn(async (token: string) => ({ snapshot_token: token, items: [], next: null, catalog_recordings: 1 })),
+  indexRecording: vi.fn(async () => ({ status: "ready", batches: 0, position: null, tail_bytes: 0 })),
+  queryHistory: vi.fn(async () => ({ rows: [], next: null, indexed_recordings: 0, catalog_recordings: 1, unknown_recordings: 1 })) }));
 vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(),
   loadSettings: async () => ({ output_path: harness.root, auto_delete_days: 0 }),
   loadDdragonStatus: () => new Promise(() => {}),
@@ -64,6 +70,29 @@ const mount = async () => {
   await vi.waitFor(() => expect(host.querySelector('[data-testid="open"]')).not.toBeNull());
   return { host, click: (id: string) => host.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click() };
 };
+
+it("shares the actual App writer wiring across early replay open and return", async () => {
+  let releaseCatalog!: (page: CatalogPage) => void;
+  vi.mocked(indexCatalog).mockImplementationOnce(() => new Promise(resolve => { releaseCatalog = resolve; }));
+  const { click } = await mount();
+  await vi.waitFor(() => expect(indexCatalog).toHaveBeenCalledOnce());
+  click("open");
+  const replay = harness.viewer!.indexRecording!("ignored", "1");
+  expect(indexRecording).not.toHaveBeenCalled();
+  releaseCatalog({ snapshot_token: "A-1", items: [], next: null, catalog_recordings: 1 });
+  await replay; expect(indexRecording).toHaveBeenCalledOnce();
+  let releaseReplay!: (progress: ImportProgress) => void;
+  vi.mocked(indexRecording).mockImplementationOnce(() => new Promise(resolve => { releaseReplay = resolve; }));
+  const active = harness.viewer!.indexRecording!("ignored", "1");
+  const stale = expect(active).rejects.toThrow("stale");
+  await vi.waitFor(() => expect(indexRecording).toHaveBeenCalledTimes(2));
+  click("games");
+  await new Promise(resolve => setTimeout(resolve, 25));
+  expect(indexCatalog).toHaveBeenCalledOnce();
+  releaseReplay({ media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), status: "ready", batches: 0, position: null, tail_bytes: 0 });
+  await stale;
+  await vi.waitFor(() => expect(indexCatalog).toHaveBeenCalledTimes(2));
+});
 
 it("opens independently of held assets/durations and reacquires origins on Settings/exporter return", async () => {
   const { host, click } = await mount();

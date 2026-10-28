@@ -188,6 +188,16 @@ function GamesLibrary(props: Props) {
   ));
   onCleanup(() => { clearTimeout(searchTimer); recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId); });
   const updating = () => textPending() || !!props.history?.loading;
+  const semanticQuery = () => !!(riotId() || eventKind() || actorRole() || outcomeFilter() || stolenOnly());
+  const matchStatus = () => {
+    const history = props.history;
+    if (history?.initializing) return "Loading match data...";
+    if (updating()) return history?.page ? "Updating matches. Showing previous results." : "Updating matches...";
+    if (history?.error) return history.page ? "Could not update matches. Showing previous results." : "Match data unavailable. Recordings remain playable.";
+    if (semanticQuery() && history?.indexError) return "Some match data is unavailable. Results may be incomplete.";
+    if (semanticQuery() && history?.page?.unknown_recordings) return "Some recordings have limited match data. Results may be incomplete.";
+    return "";
+  };
   const paginationDisabled = () => updating() || !!props.history?.error;
 
   const savedCount = () => props.games.filter((game) => game.saved).length;
@@ -202,7 +212,7 @@ function GamesLibrary(props: Props) {
 
   const filteredGames = () => {
     const query = searchQuery().trim().toLocaleLowerCase();
-    const semantic = !!(riotId() || eventKind() || actorRole() || outcomeFilter() || stolenOnly());
+    const semantic = semanticQuery();
     const rows = props.history?.page?.rows;
     if (rows) {
       const matches = rows.map(row => props.games.find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
@@ -303,12 +313,7 @@ function GamesLibrary(props: Props) {
         </div>
       </details>
       <p class={matchStyles.coverage} role="status">
-        <Show when={updating()}>Updating matches. </Show>
-        <Show when={props.history?.indexing}>Updating League data. </Show>
-        <Show when={props.history?.page?.unknown_recordings}>{props.history?.page?.unknown_recordings} recordings have incomplete query coverage. </Show>
-        <Show when={props.history?.error}>Could not update matches. Recordings remain playable. </Show>
-        <Show when={props.history?.indexError}>League data unavailable. Recordings remain playable. </Show>
-        <Show when={props.history?.page && (updating() || props.history?.error)}>Showing previous results.</Show>
+        {matchStatus()}
       </p>
 
       <Show

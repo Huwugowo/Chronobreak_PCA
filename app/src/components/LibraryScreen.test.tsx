@@ -45,7 +45,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   const [actionable, setActionable] = createSignal(true);
   const [assets, setAssets] = createSignal(ddragon);
   const [games, setGames] = createSignal([game]);
-  const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,error:null,indexError:null,laterPage:false});
+  const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,initializing:false,error:null,indexError:null,laterPage:false});
   const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn();
   const dispose = render(() => <LibraryScreen
     tab="games"
@@ -69,6 +69,22 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(host.textContent).not.toContain("Remake");
   expect(host.querySelector('[aria-label="Match History"]')).not.toBeNull();
   expect(host.textContent).not.toContain("PERFECT KDA");
+  const settled = history();
+  setHistory({ ...settled, initializing: true, loading: true, indexing: true,
+    page: { rows: [], next: null, indexed_recordings: 0, catalog_recordings: 9, unknown_recordings: 9 } });
+  const status = () => host.querySelector('[role="status"]')?.textContent?.trim();
+  expect(status()).toBe("Loading match data...");
+  setHistory({ ...history(), loading: false, page: { ...history().page!, indexed_recordings: 4, unknown_recordings: 5 } });
+  expect(status()).toBe("Loading match data...");
+  setHistory({ ...history(), initializing: false, indexing: false });
+  expect(status()).toBe("");
+  const eventFilter = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
+  eventFilter.value = "ChampionKill"; eventFilter.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(status()).toBe("Some recordings have limited match data. Results may be incomplete.");
+  setHistory({ ...history(), indexError: "raw import failure" });
+  expect(status()).toBe("Some match data is unavailable. Results may be incomplete.");
+  eventFilter.value = ""; eventFilter.dispatchEvent(new Event("change", { bubbles: true }));
+  setHistory(settled);
   const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],keystone_id:9923,secondary_style:8000,summoner_spells:["4","6"],creep_score:136,duration_seconds:985,evidence:null,final_evidence:null,game_tick:null};
   setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
   expect(host.textContent).not.toContain("Final EOG"); expect(host.textContent).not.toContain("PERFECT KDA");
@@ -169,7 +185,7 @@ it("identifies retained cards during debounce, loading and failure, then clears 
     champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
     kills: 2, deaths: 1, assists: 3, summoner_spells: [], keystone_id: null, items: [], participants: [],
     saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
-  const [history, setHistory] = createSignal<HistoryState>({ loading: false, indexing: false, error: null, indexError: null, laterPage: false,
+  const [history, setHistory] = createSignal<HistoryState>({ loading: false, indexing: false, initializing: false, error: null, indexError: null, laterPage: false,
     page: { rows: [{ media_id: game.media_id!, game, index_status: "ready", stats: { source: "final_eog", kills: 9, deaths: 1, assists: 2,
       items: null, summoner_spells: null, keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null,
       evidence: null, final_evidence: null, game_tick: null } }], next: { recorded_at: game.recorded_at, media_id: game.media_id! },
