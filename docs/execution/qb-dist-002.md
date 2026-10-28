@@ -11,8 +11,8 @@ Canonical status remains ready/in-progress because manual acceptance is outstand
 
 ## Active unit
 
-No product-code unit is active. Retain the explicit Windows manual acceptance gates
-and their existing criteria; independent implementation and automated checks are finished.
+No product-code unit is active. The narrow supervisor follow-up to e79f295 is
+implemented and validated. The original Windows manual acceptance gates remain.
 
 ## Completed
 
@@ -37,6 +37,10 @@ and their existing criteria; independent implementation and automated checks are
   Both parsers preserve unknown fields; merged config/root publication is coordinated.
 - Current architecture and verification docs describe implemented boundaries and the
   QB-DIST-004 stable sibling path, exact Run migration and tray Quit/actual-exit handoff.
+- Follow-up: successful launch requests alone project Starting; explicit launch errors
+  project Unavailable with actionable Retry. An occupied lease with unavailable status
+  remains uncertain and cannot be replaced. A known ServiceFailed owner has Retry
+  disabled until exit. Launch arbitration, shutdown and benchmark gates are unchanged.
 
 ## In flight
 
@@ -59,6 +63,14 @@ and docs/development/VERIFICATION.md. Detailed artifact root: build/verification
 The result.json artifact records staged normal release sizes/SHA-256 identities,
 test logs, resource samples, generated capture and the unrun manual gates.
 
+- Narrow supervisor follow-up: `cargo test --manifest-path app/src-tauri/Cargo.toml
+  recorder_supervisor::tests -- --nocapture` passed all 6 tests (173444.log), including
+  real Windows spawn failure, held lease with no status, launch readiness, failed-owner
+  Retry rejection, other-session/capture separation and disabled/no-runtime construction.
+  App all-target Clippy passed (173320.log); app formatting and diff hygiene passed.
+  The first test compile caught an incorrect event variant in the new test; corrected
+  before the passing run. No benchmark, release rebuild or manual acceptance rerun.
+  The remaining results and staged release identities below are the e79f295 baseline.
 - Shared control all-target suite: 5 unit + 6 real Windows integration tests passed;
   opt-in soak excluded from the normal suite. Latest log .codex/logs/command-20261028-170615.log.
   Includes ten child contenders/crash release, lease deletion exclusion, image/protocol
@@ -126,7 +138,9 @@ recorder omission remains QB-DIST-004. None of these blocks further independent 
 
 ## Next action
 
-Use the staged normal portable pair in a disposable Windows environment for repeated
+For later manual acceptance, rebuild and stage the corrected normal app with the
+paired recorder (the existing staged app predates this correction). Then use the
+normal portable pair in a disposable Windows environment for repeated
 launches, app-close during capture and tray Quit, then actual login enable/sign-in/
 disable/sign-in. Exercise a real same-user second Windows session when available.
 Record observations here; only claim done after the required manual gates pass.

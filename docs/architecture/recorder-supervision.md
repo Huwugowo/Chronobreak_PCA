@@ -6,6 +6,12 @@ direct console-free spawning; there is no automatic restart loop after tray Quit
 A missing recorder leaves browsing/playback/export usable. Observations run every
 five seconds; readiness is the actual initialized service event, not child survival.
 
+A successful launch request projects Starting until readiness is observed. Explicit
+launch failure projects Unavailable with Retry. An occupied lease without status
+is uncertain ownership: Retry only rechecks ownership and cannot replace that owner.
+A known ServiceFailed owner offers no Retry until it exits; the user must Quit its
+tray and wait for exit. No Retry action terminates a recorder.
+
 `recorder-control/` owns a lifetime, non-inherited Windows file lease at local
 app-data `LeagueReplay/recorder-owner.lock`. It excludes competing writers and
 deletion across sessions for the same user, independently of media/config/install

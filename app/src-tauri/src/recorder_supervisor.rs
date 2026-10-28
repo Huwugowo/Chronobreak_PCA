@@ -40,6 +40,23 @@ impl RecorderStatus {
         }
     }
 
+    #[cfg(windows)]
+    fn from_launch(result: anyhow::Result<bool>) -> Self {
+        match result {
+            Ok(true) => Self::simple(RecorderState::Starting, "Recorder is starting…", false),
+            Ok(false) => Self::simple(
+                RecorderState::Unavailable,
+                "A recorder owns this profile, but its status is unavailable. Retry rechecks ownership; it cannot replace a running recorder.",
+                true,
+            ),
+            Err(_) => Self::simple(
+                RecorderState::Unavailable,
+                "Recorder could not start. Check that recorder.exe is installed beside Chronobreak and can be run, then retry.",
+                true,
+            ),
+        }
+    }
+
     fn from_owner(status: Status, session: u32) -> Self {
         let (state, message, can_retry) = if status.projection(session)
             == SessionAvailability::OwnerInOtherSession
@@ -59,8 +76,8 @@ impl RecorderStatus {
                 ),
                 ServiceState::Failed => (
                     RecorderState::ServiceFailed,
-                    "Recorder service failed. Quit its tray before retrying.",
-                    true,
+                    "Recorder service failed. Quit its tray and wait for it to exit before retrying.",
+                    false,
                 ),
                 ServiceState::Stopped => (RecorderState::Unavailable, "Recorder stopped.", true),
                 ServiceState::Available if status.capture_problem.is_some() => (
@@ -225,13 +242,9 @@ async fn observe(
                     Err(_) => {
                         if ensure {
                             let ns = namespace.clone(); let exe = executable.clone();
-                            let launched = tokio::task::spawn_blocking(move || launch_if_unowned(&ns, &exe)).await;
-                            let message = match launched {
-                                Ok(Ok(true)) => "Recorder is starting…",
-                                Ok(Ok(false)) => "A recorder owns this profile, but its status is unavailable. No replacement was started.",
-                                _ => "Recorder could not start. Check the installation and retry.",
-                            };
-                            store(&cache, RecorderStatus::simple(RecorderState::Starting, message, false));
+                            let launched = tokio::task::spawn_blocking(move || launch_if_unowned(&ns, &exe))
+                                .await.unwrap_or_else(|error| Err(error.into()));
+                            store(&cache, RecorderStatus::from_launch(launched));
                         } else if starting_since.elapsed() >= Duration::from_secs(30) || cache.read().unwrap_or_else(|p| p.into_inner()).owner.is_some() {
                             store(&cache, RecorderStatus::simple(RecorderState::Unavailable, "Recorder status is unavailable. Retry checks ownership before starting anything.", true));
                         }
@@ -295,7 +308,86 @@ async fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chronobreak_recorder_control::{AvailabilityEvent, CaptureProblem};
+    use chronobreak_recorder_control::{AvailabilityEvent, CaptureProblem, ServiceFailure};
+
+    #[cfg(windows)]
+    #[test]
+    fn successful_launch_request_waits_for_service_readiness() {
+        let projected = RecorderStatus::from_launch(Ok(true));
+        assert_eq!(projected.state, RecorderState::Starting);
+        assert!(!projected.recording_capable_here && !projected.can_retry);
+        assert!(projected.owner.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unavailable_owner_blocks_launch_even_when_executable_is_missing() {
+        use chronobreak_recorder_control::windows::{FileLease, Namespace};
+        let root = tempfile::tempdir().unwrap();
+        let namespace = Namespace {
+            lease: root.path().join("owner.lock"),
+            pipe: String::new(), // No status server; the held lease alone must exclude launch.
+        };
+        let owner = FileLease::try_acquire(&namespace.lease).unwrap().unwrap();
+        let projected = RecorderStatus::from_launch(launch_if_unowned(
+            &namespace,
+            &root.path().join("missing-recorder.exe"),
+        ));
+        assert_eq!(projected.state, RecorderState::Unavailable);
+        assert!(projected.can_retry && !projected.recording_capable_here);
+        assert!(projected.message.contains("Retry rechecks ownership"));
+        assert!(projected.owner.is_none());
+        assert!(FileLease::try_acquire(&namespace.lease).unwrap().is_none());
+        drop(owner);
+        assert!(FileLease::try_acquire(&namespace.lease).unwrap().is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn explicit_spawn_failure_is_unavailable_and_retryable() {
+        use chronobreak_recorder_control::windows::{FileLease, Namespace, regular_executable};
+        let root = tempfile::tempdir().unwrap();
+        let namespace = Namespace {
+            lease: root.path().join("owner.lock"),
+            pipe: String::new(),
+        };
+        let executable = root.path().join("recorder.exe");
+        std::fs::write(&executable, b"not a Windows executable").unwrap();
+        regular_executable(&executable).unwrap(); // Pass path validation; fail CreateProcess.
+        let error = launch_if_unowned(&namespace, &executable).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        let projected = RecorderStatus::from_launch(Err(error));
+        assert_eq!(projected.state, RecorderState::Unavailable);
+        assert!(projected.can_retry && !projected.recording_capable_here);
+        assert!(
+            projected
+                .message
+                .contains("recorder.exe is installed beside Chronobreak")
+        );
+        assert!(projected.owner.is_none());
+        assert!(FileLease::try_acquire(&namespace.lease).unwrap().is_some());
+    }
+
+    #[test]
+    fn failed_owner_must_exit_before_retry_is_offered() {
+        let mut owner = Status::starting(1, 5, "a".repeat(32));
+        owner.apply(AvailabilityEvent::ServiceError(
+            ServiceFailure::Initialization,
+        ));
+        let projected = RecorderStatus::from_owner(owner, 5);
+        assert_eq!(projected.state, RecorderState::ServiceFailed);
+        assert!(!projected.recording_capable_here && !projected.can_retry);
+        assert!(projected.message.contains("wait for it to exit"));
+        let (retry, mut requests) = mpsc::channel(1);
+        let supervisor = RecorderSupervisor {
+            cache: Arc::new(RwLock::new(projected)),
+            retry,
+            stop: None,
+            disabled: false,
+        };
+        assert!(supervisor.retry().is_err());
+        assert_eq!(requests.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    }
 
     #[test]
     fn other_session_and_capture_failure_never_offer_service_restart() {
