@@ -134,7 +134,7 @@ it.each(["settled", "changed-page", "aborted", "timeout"])("checks the mounted l
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 16));
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
   const page = { rows: [{}, {}] } as HistoryPage;
-  const state = { page, loading: false, indexing: false, error: null, indexError: null };
+  const state = { page, loading: false, indexing: false, error: null, indexIssue: null };
   const history = { get value() { return state; } } as Pick<HistoryController, "value">;
   const input = document.createElement("input"); input.setAttribute("aria-label", "Search matches"); document.body.append(input);
   const abort = new AbortController();
@@ -151,7 +151,7 @@ it.each(["settled", "video", "changed-page", "aborted"])("only samples a quiet m
   vi.useFakeTimers();
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 16));
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
-  const state = { page: { rows: [{}, {}] } as HistoryPage, loading: false, indexing: false, error: null, indexError: null };
+  const state = { page: { rows: [{}, {}] } as HistoryPage, loading: false, indexing: false, error: null, indexIssue: null };
   const history = { get value() { return state; } } as Pick<HistoryController, "value">;
   const input = document.createElement("input"); input.setAttribute("aria-label", "Search matches"); document.body.append(input);
   const observer = { emit: vi.fn(), flush: vi.fn(async () => {}) };

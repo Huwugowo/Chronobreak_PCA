@@ -50,7 +50,7 @@ const setup = (scenario: Partial<BenchmarkScenario> = {}) => {
     origin: { root: "A", rootEpoch: 1, request: 1, token: "snapshot-1", navigation: 1 },
     navigation: { screen: "library", tab: "games" }, loading: false, error: null,
     capability: { tested: true, supported: false, probe_url: "" },
-    history: { page: null, loading: false, indexing: false, initializing: false, error: null, indexError: null, laterPage: false },
+    history: { page: null, loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false },
     library: { root: "A", request: 1, refreshing: false, actionable: true, error: null,
       snapshot: { token: "snapshot-1", games: [game, { ...game, timestamp: "2" }], clips: [],
         usage: { game_count: 2, clip_count: 0, games_bytes: 1, clips_bytes: 0 } },

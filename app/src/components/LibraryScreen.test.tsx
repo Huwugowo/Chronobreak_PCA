@@ -8,6 +8,40 @@ import type { HistoryState } from "../historyController";
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
+it("shows a safe operational warning without semantic filters and clears it after refresh", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const origin = { root: "A", rootEpoch: 1, request: 1, token: "scan", navigation: 1 };
+  const game: GameSummary = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
+    champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
+    kills: 2, deaths: 1, assists: 3, summoner_spells: [], keystone_id: null, items: [], participants: [],
+    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
+  const opened = vi.fn();
+  const [history, setHistory] = createSignal<HistoryState>({ page: null, loading: false, indexing: false,
+    initializing: false, error: null, indexIssue: { kind: "failed", message: "private database path" }, laterPage: false });
+  const dispose = render(() => <LibraryScreen tab="games" games={[game]} clips={[]} history={history()}
+    ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
+    actionable snapshotOrigin={origin} busyId={null} onOpenGame={opened} onToggleSaved={() => {}} onDeleteGame={() => {}}
+    onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  const status = () => host.querySelector('[role="status"]')?.textContent?.trim();
+  try {
+    expect(status()).toBe("Could not load match data. Recordings remain playable.");
+    expect(host.textContent).not.toContain("private database path");
+    const open = host.querySelector<HTMLButtonElement>('[aria-label^="Open Ahri"]')!;
+    expect(open.disabled).toBe(false); open.click();
+    expect(opened).toHaveBeenCalledExactlyOnceWith(game.timestamp, origin);
+    setHistory({ ...history(), initializing: true, loading: true, indexIssue: null });
+    expect(status()).toBe("Loading match data...");
+    setHistory({ ...history(), initializing: false, loading: false,
+      page: { rows: [], next: null, indexed_recordings: 1, catalog_recordings: 2, unknown_recordings: 1 } });
+    expect(status()).toBe("");
+    setHistory({ ...history(), indexIssue: { kind: "limited" } });
+    expect(status()).toBe("");
+    const event = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
+    event.value = "ChampionKill"; event.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(status()).toBe("Some match data is unavailable. Results may be incomplete.");
+  } finally { dispose(); }
+});
+
 it("renders Games from the core snapshot when Data Dragon enrichment fails", () => {
   const game: GameSummary = {
     media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
@@ -45,7 +79,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   const [actionable, setActionable] = createSignal(true);
   const [assets, setAssets] = createSignal(ddragon);
   const [games, setGames] = createSignal([game]);
-  const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,initializing:false,error:null,indexError:null,laterPage:false});
+  const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,initializing:false,error:null,indexIssue:null,laterPage:false});
   const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn();
   const dispose = render(() => <LibraryScreen
     tab="games"
@@ -81,7 +115,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   const eventFilter = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
   eventFilter.value = "ChampionKill"; eventFilter.dispatchEvent(new Event("change", { bubbles: true }));
   expect(status()).toBe("Some recordings have limited match data. Results may be incomplete.");
-  setHistory({ ...history(), indexError: "raw import failure" });
+  setHistory({ ...history(), indexIssue: { kind: "limited" } });
   expect(status()).toBe("Some match data is unavailable. Results may be incomplete.");
   eventFilter.value = ""; eventFilter.dispatchEvent(new Event("change", { bubbles: true }));
   setHistory(settled);
@@ -185,7 +219,7 @@ it("identifies retained cards during debounce, loading and failure, then clears 
     champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
     kills: 2, deaths: 1, assists: 3, summoner_spells: [], keystone_id: null, items: [], participants: [],
     saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
-  const [history, setHistory] = createSignal<HistoryState>({ loading: false, indexing: false, initializing: false, error: null, indexError: null, laterPage: false,
+  const [history, setHistory] = createSignal<HistoryState>({ loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false,
     page: { rows: [{ media_id: game.media_id!, game, index_status: "ready", stats: { source: "final_eog", kills: 9, deaths: 1, assists: 2,
       items: null, summoner_spells: null, keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null,
       evidence: null, final_evidence: null, game_tick: null } }], next: { recorded_at: game.recorded_at, media_id: game.media_id! },

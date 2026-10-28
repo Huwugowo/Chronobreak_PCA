@@ -18,7 +18,7 @@ export const waitForBenchmarkSearchReady = (history: Pick<HistoryController, "va
     const check = () => queueMicrotask(() => {
       if (finished) return;
       const state = history.value;
-      if (state.error || state.indexError) finish(new Error("search preconditioning failed"));
+      if (state.error || state.indexIssue) finish(new Error("search preconditioning failed"));
       else if (state.page && !state.indexing && !state.loading) finish();
     });
     unsubscribe = history.subscribe(check);
@@ -43,7 +43,7 @@ export const waitForBenchmarkLibraryReturn = (history: Pick<HistoryController, "
       if (finished) return;
       const state = history.value;
       const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
-      if (state.error || state.indexError) { finish(new Error("library return failed")); return; }
+      if (state.error || state.indexIssue) { finish(new Error("library return failed")); return; }
       if (!state.page || state.indexing || state.loading || !input?.isConnected || input.value !== "") {
         frame = requestAnimationFrame(check); return;
       }
@@ -109,7 +109,7 @@ export const waitForBenchmarkMemoryWindow = async (observer: ReplayBenchmarkObse
     if (signal.aborted) throw new Error("library search disposed");
     const state = history.value;
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
-    if (state.page !== page || state.loading || state.indexing || state.error || state.indexError ||
+    if (state.page !== page || state.loading || state.indexing || state.error || state.indexIssue ||
         !input?.isConnected || input.value !== "" || document.querySelector("video")) {
       throw new Error("memory window left its settled library");
     }

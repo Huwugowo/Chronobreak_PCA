@@ -12,6 +12,66 @@ const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (erro
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 afterEach(() => vi.useRealTimers());
 
+it.each(["incomplete", "coverage-gaps", "item-error", "catalog-unavailable", "recording-unavailable"] as const)("settles successful initialization with limited source data (%s)", async source => {
+  vi.useFakeTimers();
+  const ready = { media_id: game.media_id!, status: "ready", batches: 0 } as ImportProgress;
+  const limited = source === "item-error" || source.endsWith("unavailable");
+  const item: CatalogPage["items"][number] = { game_timestamp: game.timestamp, media_id: source === "incomplete" ? null : game.media_id!,
+    error: source === "item-error" ? "private recording source error" : null,
+    progress: source === "incomplete" || source === "item-error" ? null : { ...ready,
+      status: source === "catalog-unavailable" ? "unavailable" : source === "recording-unavailable" ? "pending" : "ready" } };
+  const api = { current: () => true,
+    catalog: vi.fn(async (token: string): Promise<CatalogPage> => ({ ...catalog(token), items: [item] })),
+    recording: vi.fn(async (): Promise<ImportProgress> => ({ ...ready, status: "unavailable" })),
+    history: vi.fn(async () => page()) };
+  const controller = new HistoryController(api);
+  try {
+    controller.setContext(origin("A", 1), [game]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(controller.value).toMatchObject({ initializing: false, loading: false, indexing: false, error: null,
+      indexIssue: limited ? { kind: "limited" } : null });
+    expect(controller.value.page?.unknown_recordings).toBe(1);
+    expect(api.catalog).toHaveBeenCalledOnce();
+    expect(api.recording).toHaveBeenCalledTimes(source === "recording-unavailable" ? 1 : 0);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { controller.close(); }
+});
+
+it.each(["catalog", "recording"] as const)("retains a terminal %s failure through final-query settlement and clears it after refresh", async phase => {
+  vi.useFakeTimers();
+  const finalQuery = deferred<HistoryPage>();
+  const ready = { media_id: game.media_id!, status: "ready", batches: 0 } as ImportProgress;
+  const healthyCatalog = (token: string) => ({ ...catalog(token), items: [{ game_timestamp: game.timestamp,
+    media_id: game.media_id!, error: null, progress: ready }] });
+  const api = { current: () => true,
+    catalog: vi.fn(async (token: string) => healthyCatalog(token)),
+    recording: vi.fn(async () => ready), history: vi.fn(() => finalQuery.promise) };
+  if (phase === "catalog") api.catalog.mockRejectedValueOnce(new Error("private operational failure"));
+  else {
+    api.catalog.mockResolvedValueOnce({ ...healthyCatalog("scan-1"), items: [{ game_timestamp: game.timestamp,
+      media_id: game.media_id!, error: null, progress: { ...ready, status: "pending" } }] });
+    api.recording.mockRejectedValueOnce(new Error("private operational failure"));
+  }
+  const controller = new HistoryController(api);
+  try {
+    controller.setContext(origin("A", 1), [game]); await vi.advanceTimersByTimeAsync(8);
+    expect(controller.value).toMatchObject({ initializing: true, indexing: false,
+      indexIssue: { kind: "failed", message: "private operational failure" } });
+    finalQuery.resolve(page()); await flush(); await flush();
+    expect(controller.value).toMatchObject({ initializing: false, loading: false, indexing: false,
+      indexIssue: { kind: "failed", message: "private operational failure" } });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.catalog).toHaveBeenCalledOnce();
+    expect(api.recording).toHaveBeenCalledTimes(phase === "recording" ? 1 : 0);
+    controller.setContext(origin("A", 2), [game]);
+    expect(controller.value).toMatchObject({ initializing: true, indexIssue: null });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(controller.value).toMatchObject({ initializing: false, loading: false, indexing: false, error: null, indexIssue: null });
+    expect(api.catalog).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { controller.close(); }
+});
+
 it.each([false, true])("keeps one initialization through productive imports and final query settlement (query fails: %s)", async failure => {
   vi.useFakeTimers();
   const importResult = deferred<ImportProgress>(), finalQuery = deferred<HistoryPage>();
@@ -44,7 +104,7 @@ it("settles permanent synchronous import/query failures without retry or endless
   try {
     controller.setContext(origin("A", 1)); await vi.advanceTimersByTimeAsync(30_000);
     expect(controller.value).toMatchObject({ initializing: false, loading: false, indexing: false,
-      indexError: "bad source", error: "query unavailable" });
+      indexIssue: { kind: "failed", message: "bad source" }, error: "query unavailable" });
     expect(catalog).toHaveBeenCalledOnce(); expect(query).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
   } finally { controller.close(); }
 });
@@ -120,7 +180,7 @@ it.each([false, true])("settles positive tail coverage without retries (catalog 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(api.catalog).toHaveBeenCalledTimes(1);
     expect(api.recording).toHaveBeenCalledTimes(catalogReady ? 0 : 1);
-    expect(controller.value).toMatchObject({ indexing: false, loading: false, indexError: null });
+    expect(controller.value).toMatchObject({ indexing: false, loading: false, indexIssue: null });
     expect(vi.getTimerCount()).toBe(0);
     // New accepted source observations remain the wake mechanism.
     controller.setContext(origin("A", 2), [game]);

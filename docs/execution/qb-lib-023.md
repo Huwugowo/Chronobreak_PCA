@@ -11,11 +11,10 @@ M1 reproductions and M2 ownership/classification regressions passed.
 
 ## Active unit
 
-User-operated release feedback is positive: "the app behaves all super good".
-The requested 500 ms replay loading-notice delay is implemented, verified, built
-and reopened on the warm isolated test profile. The user accepted the refinement
-("great") and requested committing and pushing the work. No implementation unit
-remains active.
+Narrow user-requested follow-up to 1750337 implemented and verified: typed
+per-recording source limitations versus terminal initialization failures, with
+a safe failure notice in ordinary Match History. Commit/push is authorized.
+No new plan, framework, native changes or benchmark campaign.
 
 ## Completed
 
@@ -67,6 +66,8 @@ path/start time and terminated that test process before retrying the build.
 The refined release is open as process 33968 (13:45:37 UTC), session
 manual-20261028T134536775Z reusing manual-20261028T132923800Z for its warm cache
 and WebView profile. No normal user config/cache/recording data is a write target.
+The later typed-history follow-up is verified in source/frontend output; no new
+desktop executable build or native interaction is claimed for that correction.
 
 ## Remaining
 
@@ -159,6 +160,25 @@ unchanged by this presentation refinement; its previously passed checks remain
 valid. Warm isolated relaunch succeeded; the user accepted the refinement and
 requested GitHub delivery. This does not invent an explicit fixture-recovery
 observation, which remains outstanding.
+Follow-up to 1750337: added eight focused regressions; before correction they
+failed as expected (24 existing cases passed), including the hidden unfiltered
+warning. Replaced the conflated History string with a typed limited/failed issue,
+retaining caught diagnostics privately and clearing it on fresh accepted context.
+Catalog item errors and returned unavailable progress are nonterminal limited
+results; rejected/invalid catalog or recording operations stop the session and
+are failed, irrespective of their underlying source/cache cause. The UI retains
+loading/final-query precedence, shows a safe operational failure warning without
+semantic filters and keeps source/coverage warnings filter-relevant. Benchmark
+consumers received only the field rename, preserving their strict issue guards.
+Final affected frontend tests: 147 passed across six files (history, LibraryScreen,
+shared writer, App replay wiring and existing search/application observer tests).
+Tests cover incomplete bundles, legitimate unknown coverage, catalog item errors,
+returned unavailable results, terminal catalog/recording failures, final-query
+settlement, no idle retry, fresh-refresh recovery and an enabled replay-open action
+while the warning is visible. TypeScript and production Vite build passed.
+Logs: build/qb-lib-023/history-issue-pre-fix.log, history-issue-tests-final.log,
+history-issue-check.log and history-issue-build.log. No native/recorder or unrelated
+suite rerun was needed for this bounded frontend correction.
 
 ## Deviations
 
@@ -200,6 +220,9 @@ windows or overlays. Pending work takes precedence over partial failure; when
 idle, useful survivors yield limited details and no survivors yield unavailable.
 Source changes still invalidate source-specific data. Benchmark readiness retains
 its stricter complete-data meaning independently of user presentation.
+The typed history distinction describes continuation versus session termination,
+not guessed exception text. It preserves all existing source validation, query
+coverage, writer scheduling and loading/final-query settlement paths.
 
 ## Blockers
 
@@ -212,6 +235,6 @@ claiming a retrospective log capture. The user has explicitly resumed implementa
 
 ## Next action
 
-Deliver the user-approved verified tree to GitHub. Before later marking the
-feature done, prepare/observe deliberate fixture recovery; retain the positive
-user report without inventing an individual scenario breakdown.
+Commit/push the verified narrow history correction as requested. Before later
+marking the broader feature done, prepare/observe deliberate native fixture
+recovery; the follow-up itself has no remaining implementation/verification unit.

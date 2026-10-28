@@ -131,6 +131,11 @@ satisfy that barrier; stale results cannot. Success and terminal failures both
 settle it. The library shows one stable Loading match data status throughout this
 session. Settled limited/unavailable coverage is described only for relevant
 League-data filters; ordinary browsing retains incomplete recording cards.
+History distinguishes a nonterminal `indexIssue.kind: limited` (per-recording
+catalog errors or returned unavailable progress) from `failed` (a rejected or
+invalid catalog/import operation that stops initialization). Settled failures
+warn even without League filters, retaining their diagnostic message internally;
+source limitations remain filter-relevant. A fresh accepted context clears both.
 
 Opening a selected game first requests a token-bound `ReplayDescriptor`: snapshot
 token, game ID, protected loopback video URL and validated schema-v2 media timeline.

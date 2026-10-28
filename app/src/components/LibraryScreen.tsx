@@ -194,7 +194,8 @@ function GamesLibrary(props: Props) {
     if (history?.initializing) return "Loading match data...";
     if (updating()) return history?.page ? "Updating matches. Showing previous results." : "Updating matches...";
     if (history?.error) return history.page ? "Could not update matches. Showing previous results." : "Match data unavailable. Recordings remain playable.";
-    if (semanticQuery() && history?.indexError) return "Some match data is unavailable. Results may be incomplete.";
+    if (history?.indexIssue?.kind === "failed") return "Could not load match data. Recordings remain playable.";
+    if (semanticQuery() && history?.indexIssue?.kind === "limited") return "Some match data is unavailable. Results may be incomplete.";
     if (semanticQuery() && history?.page?.unknown_recordings) return "Some recordings have limited match data. Results may be incomplete.";
     return "";
   };

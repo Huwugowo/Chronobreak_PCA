@@ -3,7 +3,10 @@ import { libraryError } from "./libraryController";
 import type { CatalogPage, HistoryPage, HistoryQuery, ImportProgress } from "./leagueIndex";
 import type { GameSummary } from "./types";
 
-export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; initializing: boolean; error: string | null; indexError: string | null; laterPage: boolean };
+// Per-recording limitations permit continued imports; a failed operation ends
+// initialization until a fresh accepted context. Keep its diagnostic private.
+export type HistoryIndexIssue = { kind: "limited" } | { kind: "failed"; message: string };
+export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; initializing: boolean; error: string | null; indexIssue: HistoryIndexIssue | null; laterPage: boolean };
 export type HistoryQueryObservation = {
   kind: "history_query_scheduled" | "history_query_replaced" | "history_query_dispatched" |
     "history_query_completed" | "history_query_superseded" | "history_query_admitted" | "history_query_error";
@@ -24,7 +27,7 @@ const key = (origin: LibraryOrigin) => JSON.stringify(origin);
 /** One idle import and one short query at a time, independent of media reads. */
 export class HistoryController {
   private context: Context | null = null;
-  private state: HistoryState = { page: null, loading: false, indexing: false, initializing: false, error: null, indexError: null, laterPage: false };
+  private state: HistoryState = { page: null, loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false };
   private listeners = new Set<(state: HistoryState) => void>();
   private query: HistoryQuery = { limit: 50 };
   private queryGeneration = 0;
@@ -62,7 +65,7 @@ export class HistoryController {
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
     this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
-    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexError: null, laterPage: false });
+    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexIssue: null, laterPage: false });
     this.schedule();
   }
   setQuery(query: HistoryQuery, actionId?: string) {
@@ -152,7 +155,7 @@ export class HistoryController {
         if (page.snapshot_token !== context.origin.token) throw new Error("Stale index page");
         this.catalogAfter = page.next; this.catalogPending = page.next !== null;
         for (const item of page.items) {
-          if (item.error || item.progress?.status === "unavailable") this.publish({ indexError: "Some recordings have unavailable League data." });
+          if (item.error || item.progress?.status === "unavailable") this.publish({ indexIssue: { kind: "limited" } });
           if (item.progress?.status === "pending" && item.media_id) this.pending.set(item.game_timestamp, item.media_id);
         }
       } else if (next) {
@@ -160,7 +163,7 @@ export class HistoryController {
         const progress = result as ImportProgress;
         if (progress.media_id !== next[1]) throw new Error("Index recording identity changed");
         if (progress.status === "pending") this.pending.set(next[0], next[1]);
-        if (progress.status === "unavailable") this.publish({ indexError: "Some recordings have unavailable League data." });
+        if (progress.status === "unavailable") this.publish({ indexIssue: { kind: "limited" } });
       }
       this.publish({ indexing: this.catalogPending || this.pending.size > 0 });
       // Preserve input queued before the catalog token existed. Recording
@@ -171,7 +174,7 @@ export class HistoryController {
         // Retry requires a new accepted refresh, avoiding an idle failure loop.
         this.catalogPending = false; this.pending.clear();
         context.revision++;
-        this.publish({ indexing: false, indexError: libraryError(error) });
+        this.publish({ indexing: false, indexIssue: { kind: "failed", message: libraryError(error) } });
         this.refreshQuery();
       }
     }).finally(() => { this.importActive = false; this.finishInitialization(context); this.schedule(); });
