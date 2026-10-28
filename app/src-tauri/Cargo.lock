@@ -522,6 +522,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "chronobreak-recorder-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "getrandom 0.3.4",
+ "serde",
+ "serde_json",
+ "tokio",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "chronobreak-replay-time"
 version = "0.1.0"
 dependencies = [
@@ -2018,6 +2031,7 @@ dependencies = [
  "atomicwrites",
  "axum",
  "chronobreak-league-data",
+ "chronobreak-recorder-control",
  "chronobreak-replay-time",
  "directories",
  "getrandom 0.3.4",
@@ -2050,6 +2064,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chronobreak-league-data",
+ "chronobreak-recorder-control",
  "chronobreak-replay-time",
  "directories",
  "queueback-media-runtime",

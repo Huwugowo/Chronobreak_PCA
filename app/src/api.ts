@@ -4,6 +4,8 @@ import { decodeLeagueResultSummary } from "./leagueResult";
 import mockItemNames from "./dev/mockItemNames.json";
 import type {
   AppSettings,
+  RecorderStatus,
+  AutostartStatus,
   AutoDeleteResult,
   BuiltInMusicTrack,
   ClipExportProgress,
@@ -663,6 +665,26 @@ export const loadStorageUsage = async (): Promise<StorageUsage> => {
 export const loadSettings = async (): Promise<AppSettings> => {
   if (useMockApi()) return structuredClone(mockSettings);
   return invoke<AppSettings>("get_settings");
+};
+
+export const loadRecorderStatus = async (): Promise<RecorderStatus> => {
+  if (useMockApi()) return { state: "disabled_for_test", recording_capable_here: false, can_retry: false, message: "Recorder startup is disabled in this preview." };
+  return invoke<RecorderStatus>("get_recorder_status");
+};
+
+export const retryRecorder = async (): Promise<void> => {
+  if (useMockApi()) return;
+  return invoke<void>("retry_recorder");
+};
+
+export const loadAutostartStatus = async (): Promise<AutostartStatus> => {
+  if (useMockApi()) return { desired_autostart: true, actual_registration: "unavailable", effective_startup: "unknown", error: null, disabled_for_test: true };
+  return invoke<AutostartStatus>("get_autostart_status");
+};
+
+export const setAutostart = async (enabled: boolean): Promise<AutostartStatus> => {
+  if (useMockApi()) return loadAutostartStatus();
+  return invoke<AutostartStatus>("set_autostart", { enabled });
 };
 
 export const persistSettings = async (settings: SettingsUpdate, snapshotToken: string): Promise<AppSettings> => {

@@ -3257,19 +3257,21 @@
       "description": "Start and maintain exactly one installed background recorder instance, with a user-controlled Windows login-startup registration and no visible console window.",
       "priority": "P1",
       "area": "process-lifecycle",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-DIST",
       "dependencies": [
         "QB-CAP-001",
         "QB-DIST-001"
       ],
       "evidence": [
-        "The recorder already supports tray/headless lifecycle and hides release console windows, but the app does not supervise an installed recorder or own login registration.",
-        "2026-10-08 QB-DATA-002 setup discovery: recorder/src/main.rs run_headless waits for Ctrl+C before awaiting the service JoinHandle. An unsupported Medium native profile caused service initialization to fail while the headless process remained alive with no idle/recording state. Route early-service-failure visibility and supervision to this lifecycle unit; no fix is claimed by QB-DATA-002."
+        "Before QB-DIST-002, the recorder supported tray/headless lifecycle and hid release console windows, but the app did not supervise an installed recorder or own login registration.",
+        "2026-10-08 QB-DATA-002 setup discovery: recorder/src/main.rs run_headless waits for Ctrl+C before awaiting the service JoinHandle. An unsupported Medium native profile caused service initialization to fail while the headless process remained alive with no idle/recording state. Route early-service-failure visibility and supervision to this lifecycle unit; no fix is claimed by QB-DATA-002.",
+        "2026-10-28 implementation in progress: separate service/capture status, per-user ownership, bounded authenticated status pipe, independent desktop observer, early-service-failure propagation and explicit actual-versus-desired login control are implemented. Shared config writers now read latest persisted TOML under the adjacent lock and patch only owned fields. Focused Windows contention/protocol/disposable-registry, concurrent cross-consumer config, lifecycle and UI tests pass; detailed baseline and generated capture results are in the execution checkpoint. Actual sign-in and portable interactive acceptance remain unverified; not done."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-dist-002-recorder-supervision-and-login-v2.md",
+        "progress": "docs/execution/qb-dist-002.md"
       },
       "acceptance_criteria": [
         "Launching the installed app or logging in when enabled results in exactly one recorder process.",
@@ -3289,7 +3291,7 @@
           "command": null
         }
       ],
-      "notes": "Process lifecycle and active-capture correctness require an ExecPlan and failure-injection review.",
+      "notes": "2026-10-28 approved v2 contracts are implemented through M4; M5 automated verification/documentation and normal portable staging are complete. Other-session owners never confer recording capability here. Preserve QB-DIST-004's stable sibling path, exact Run-value migration and user-mediated tray Quit/actual-exit update contract. Manual acceptance remains required for done and is tracked separately from independent development; see checkpoint and docs/architecture/recorder-supervision.md.",
       "user_value": 5,
       "differentiation": 3,
       "difficulty": 4,
@@ -3387,7 +3389,7 @@
           "command": null
         }
       ],
-      "notes": "Integration gate remains blocked: QB-DIST-002 recorder supervision/login and QB-DIST-003 complete installed settings are not started; current installers omit recorder.exe. Final integration design depends on those contracts. Preserve existing acceptance criteria; build/payload inspection is partial evidence only. See docs/reviews/windows-installer-readiness-2026-10-26.md for concrete findings and remaining clean-machine gates. No finalized ExecPlan or implementation checkpoint yet.",
+      "notes": "Integration gate remains blocked: QB-DIST-002 supervision/login is in progress, QB-DIST-003 complete installed settings is not started, and current installers omit recorder.exe. Preserve the approved stable sibling app/recorder/runtime layout and stable Run target, or explicitly migrate the exact owned Run value. Updates must ask for tray Quit (Status v1 has no shutdown command), await actual owner exit/finalization, and never force-kill or replace live binaries/runtime or leave incompatible mixed components. Uninstall preserves config/media and removes only exact owned registration. See docs/architecture/recorder-supervision.md and docs/reviews/windows-installer-readiness-2026-10-26.md. No finalized ExecPlan or implementation checkpoint yet; existing acceptance criteria remain unchanged.",
       "user_value": 5,
       "differentiation": 2,
       "difficulty": 5,

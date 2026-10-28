@@ -4,6 +4,7 @@ import BackButton from "../ui/BackButton";
 import { ExternalLinkIcon } from "../ui/icons";
 import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
+import RecorderSettings from "./RecorderSettings";
 
 type Props = {
   settings: AppSettings;
@@ -35,6 +36,7 @@ function SettingsScreen(props: Props) {
 
 
       <div class={styles.settingsGrid}>
+        <RecorderSettings />
         <section class={styles.settingsPanel}>
           <header>
             <div>

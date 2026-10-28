@@ -6,7 +6,7 @@ $previousTauriConfig = $env:TAURI_CONFIG
 $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'
 Push-Location $repoRoot
 try {
-    foreach ($crate in @('replay-time', 'league-data', 'media-runtime', 'recorder', 'app/src-tauri')) {
+    foreach ($crate in @('replay-time', 'league-data', 'media-runtime', 'recorder-control', 'recorder', 'app/src-tauri')) {
         $manifest = "$crate/Cargo.toml"
         & cargo "+$Toolchain" fmt --manifest-path $manifest -- --check
         if ($LASTEXITCODE -ne 0) { throw "Formatting failed: $crate" }

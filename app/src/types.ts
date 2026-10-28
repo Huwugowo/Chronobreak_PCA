@@ -204,6 +204,21 @@ export type AppSettings = {
 
 export type SettingsUpdate = Pick<AppSettings, "output_path" | "auto_delete_days">;
 
+export type RecorderStatus = {
+  state: "disabled_for_test" | "starting" | "available" | "recording" | "capture_problem" | "stopping" | "unavailable" | "service_failed" | "owner_in_other_session";
+  recording_capable_here: boolean;
+  can_retry: boolean;
+  message: string;
+};
+
+export type AutostartStatus = {
+  desired_autostart: boolean;
+  actual_registration: "matching" | "absent" | "foreign" | "unavailable";
+  effective_startup: "unknown";
+  error: string | null;
+  disabled_for_test: boolean;
+};
+
 export type AutoDeleteResult = {
   deleted_count: number;
 };

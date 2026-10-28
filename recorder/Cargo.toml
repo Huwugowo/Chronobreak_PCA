@@ -15,6 +15,7 @@ name = "recorder"
 path = "src/main.rs"
 
 [dependencies]
+chronobreak-recorder-control = { path = "../recorder-control" }
 chronobreak-league-data = { path = "../league-data" }
 anyhow = "1"
 chronobreak-replay-time = { path = "../replay-time" }

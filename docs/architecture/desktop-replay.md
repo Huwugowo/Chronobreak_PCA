@@ -2,6 +2,10 @@
 
 ## Tauri boundary and startup
 
+The ordinary Windows app also ensures/observes an independent sibling recorder.
+[Recorder supervision](recorder-supervision.md) defines ownership, session limits,
+test isolation and explicit login registration.
+
 `app/src-tauri/src/lib.rs` loads shared configuration, creates synchronized app state, installs built-in music, starts the local playback server, launches asynchronous Data Dragon initialization, runs retention, and registers Tauri commands. Commands expose settings, library scans/mutations, playback probes, HEVC capability state, assets, music, export, and diagnostics to `app/src/api.ts`.
 
 SolidJS `app/src/App.tsx` owns screen navigation, a single `LibraryController` snapshot for games/clips/storage, and independent settings/Data Dragon resources. The frontend does not receive raw multi-gigabyte video bytes through Tauri IPC.

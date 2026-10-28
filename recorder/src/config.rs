@@ -11,6 +11,7 @@ const APP_ORGANIZATION: &str = "";
 const APP_NAME: &str = "LeagueReplay";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct Config {
     pub recording: RecordingConfig,
     pub storage: StorageConfig,
@@ -18,7 +19,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[serde(default)]
 pub struct RecordingConfig {
     pub profile: RecordingProfile,
     pub codec: CodecPreference,
@@ -59,14 +60,14 @@ pub enum CodecPreference {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[serde(default)]
 pub struct StorageConfig {
     pub output_path: String,
     pub auto_delete_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[serde(default)]
 pub struct AppConfig {
     pub autostart: bool,
     pub hevc_playback_supported: bool,
@@ -101,6 +102,7 @@ impl Default for AppConfig {
 
 impl Config {
     pub fn load_or_create(path: &Path) -> Result<Self> {
+        let _lock = chronobreak_recorder_control::config_lock::ConfigLock::acquire(path)?;
         if path.exists() {
             let text = fs::read_to_string(path)
                 .with_context(|| format!("failed to read config {}", path.display()))?;

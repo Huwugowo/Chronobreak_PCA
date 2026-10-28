@@ -1,5 +1,8 @@
 # Recorder lifecycle and synchronization
 
+Process ownership, availability and login registration are described in
+[Recorder supervision](recorder-supervision.md).
+
 ## Startup and steady state
 
 `recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production tray mode runs the UI event loop while the recording service runs on Tokio.

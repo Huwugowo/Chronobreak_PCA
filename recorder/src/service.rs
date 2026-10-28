@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use chronobreak_recorder_control::{AvailabilityEvent, CaptureActivity, CaptureProblem};
 use chronobreak_replay_time::{
     CaptureAnchorsV2, FinalizationExpectationsV2, MediaId, ProducerEvidenceV2,
 };
@@ -47,6 +48,7 @@ use crate::watcher::{
 
 #[derive(Debug, Clone)]
 pub enum ServiceEvent {
+    Availability(AvailabilityEvent),
     Idle,
     Recording { directory: PathBuf },
     Error { message: String },
@@ -499,6 +501,7 @@ pub async fn run(
         tokio::select! {
             command = commands.recv() => {
                 if matches!(command, Some(ServiceCommand::Shutdown) | None) {
+                    events(ServiceEvent::Availability(AvailabilityEvent::Stopping));
                     cancel_starting(starting.take(), &events).await;
                     if let Some(recording) = active.take() {
                         stop_recording(recording, &events).await;
@@ -557,6 +560,9 @@ pub async fn run(
                             stop_recording(recording, &events).await;
                         }
                         Ok(Err(start_error)) => {
+                            events(ServiceEvent::Availability(if start_error.disposition == RecordingStartupDisposition::Cancelled {
+                                AvailabilityEvent::Capture(CaptureActivity::Idle)
+                            } else { AvailabilityEvent::CaptureError(CaptureProblem::Startup) }));
                             control_telemetry.startup_errors =
                                 control_telemetry.startup_errors.saturating_add(1);
                             let now = TokioInstant::now();
@@ -618,6 +624,7 @@ pub async fn run(
                             }
                         }
                         Err(join_error) => {
+                            events(ServiceEvent::Availability(AvailabilityEvent::CaptureError(CaptureProblem::Startup)));
                             control_telemetry.startup_task_failures =
                                 control_telemetry.startup_task_failures.saturating_add(1);
                             let action = startup_retry.record_failure(
@@ -736,6 +743,7 @@ pub async fn run(
                                 control_telemetry.backend_exits.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
                             warn!("recorder backend exited while League was still running");
+                            events(ServiceEvent::Availability(AvailabilityEvent::CaptureError(CaptureProblem::Interrupted)));
                             events(ServiceEvent::Error {
                                 message: "recorder backend exited unexpectedly; preserving the partial recording".to_owned(),
                             });
@@ -758,6 +766,7 @@ pub async fn run(
                 ) {
                     match capture_target_for_process(process.pid) {
                         Ok(target) => {
+                            events(ServiceEvent::Availability(AvailabilityEvent::Capture(CaptureActivity::Starting)));
                             control_telemetry.startup_attempts =
                                 control_telemetry.startup_attempts.saturating_add(1);
                             starting = Some(spawn_recording_start(RecordingStartup {
@@ -885,6 +894,9 @@ async fn cancel_starting_with_timeout(
             }
         }
     }
+    events(ServiceEvent::Availability(AvailabilityEvent::Capture(
+        CaptureActivity::Idle,
+    )));
 }
 
 pub async fn diagnose(config: &Config) -> Result<DiagnosticReport> {
@@ -1338,6 +1350,9 @@ async fn stop_recording_inner(
     events: &EventSink,
     failure_reason: Option<String>,
 ) -> bool {
+    events(ServiceEvent::Availability(AvailabilityEvent::Capture(
+        CaptureActivity::Finalizing,
+    )));
     let ActiveRecording {
         media_id,
         ffprobe_path,
@@ -1477,6 +1492,9 @@ async fn stop_recording_inner(
                         handle.published(media_id.clone());
                     }
                     info!(directory = %directory.display(), "validated recording published");
+                    events(ServiceEvent::Availability(AvailabilityEvent::Capture(
+                        CaptureActivity::Idle,
+                    )));
                     true
                 }
                 Err(error) => {
@@ -1484,6 +1502,9 @@ async fn stop_recording_inner(
                         handle.cancel(media_id.clone());
                     }
                     error!(error = %format!("{error:#}"), "recording finalization/publication failed");
+                    events(ServiceEvent::Availability(AvailabilityEvent::CaptureError(
+                        CaptureProblem::Finalization,
+                    )));
                     events(ServiceEvent::Error {
                         message: format!(
                             "Recording media could not prove the canonical replay-time contract; no canonical video or metadata was published. Any recoverable output remains under an explicit .partial.mp4 name: {error:#}"
@@ -1498,6 +1519,9 @@ async fn stop_recording_inner(
                 handle.cancel(media_id.clone());
             }
             error!(error = %stop_error, "recording stopped with an error");
+            events(ServiceEvent::Availability(AvailabilityEvent::CaptureError(
+                CaptureProblem::Finalization,
+            )));
             events(ServiceEvent::Error {
                 message: format!(
                     "Recording stopped unexpectedly; no canonical video was published. Any recoverable output remains under an explicit .partial.mp4 name: {stop_error:#}"

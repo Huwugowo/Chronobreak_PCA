@@ -11,6 +11,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::WindowId;
 
 use league_replay_recorder::config::Config;
+use league_replay_recorder::control::{self, StatusSender};
 use league_replay_recorder::service::{ServiceCommand, ServiceEvent};
 
 #[derive(Debug)]
@@ -24,6 +25,7 @@ pub fn run(
     command_sender: mpsc::UnboundedSender<ServiceCommand>,
     command_receiver: mpsc::UnboundedReceiver<ServiceCommand>,
     smoke_test_timeout: Option<Duration>,
+    status: StatusSender,
 ) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
@@ -37,6 +39,7 @@ pub fn run(
         proxy.clone(),
         command_sender.clone(),
         smoke_test_timeout,
+        status.clone(),
     )?;
 
     let menu_proxy = proxy.clone();
@@ -44,7 +47,7 @@ pub fn run(
         let _ = menu_proxy.send_event(UserEvent::Menu(event));
     }));
 
-    let mut application = TrayApplication::new(command_sender);
+    let mut application = TrayApplication::new(command_sender, status);
     let tray_result = event_loop
         .run_app(&mut application)
         .context("tray event loop failed");
@@ -70,6 +73,7 @@ fn spawn_worker(
     proxy: EventLoopProxy<UserEvent>,
     command_sender: mpsc::UnboundedSender<ServiceCommand>,
     smoke_test_timeout: Option<Duration>,
+    status: StatusSender,
 ) -> Result<std::thread::JoinHandle<Result<()>>> {
     let worker = std::thread::Builder::new()
         .name("recorder-service".to_owned())
@@ -87,12 +91,7 @@ fn spawn_worker(
                             let _ = command_sender.send(ServiceCommand::Shutdown);
                         })
                     });
-                    let result = league_replay_recorder::service::run(
-                        config,
-                        command_receiver,
-                        service_sink,
-                    )
-                    .await;
+                    let result = control::run(config, command_receiver, service_sink, status).await;
                     if let Some(task) = smoke_task {
                         task.abort();
                         let _ = task.await;
@@ -121,6 +120,7 @@ struct TrayApplication {
     command_sender: mpsc::UnboundedSender<ServiceCommand>,
     state: TrayState,
     shutting_down: bool,
+    status: StatusSender,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +131,7 @@ enum TrayState {
 }
 
 impl TrayApplication {
-    fn new(command_sender: mpsc::UnboundedSender<ServiceCommand>) -> Self {
+    fn new(command_sender: mpsc::UnboundedSender<ServiceCommand>, status: StatusSender) -> Self {
         Self {
             tray: None,
             idle_icon: circle_icon([128, 138, 150, 255]),
@@ -141,6 +141,7 @@ impl TrayApplication {
             command_sender,
             state: TrayState::Idle,
             shutting_down: false,
+            status,
         }
     }
 
@@ -192,6 +193,10 @@ impl TrayApplication {
             return;
         }
         self.shutting_down = true;
+        control::publish(
+            &self.status,
+            chronobreak_recorder_control::AvailabilityEvent::Stopping,
+        );
         self.state = TrayState::Idle;
         if let Some(tray) = &self.tray {
             let _ = tray.set_tooltip(Some("League Replay — Stopping…"));
@@ -230,6 +235,7 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
             UserEvent::Service(ServiceEvent::ShutdownComplete) => {
                 event_loop.exit();
             }
+            UserEvent::Service(ServiceEvent::Availability(_)) => {}
         }
     }
 

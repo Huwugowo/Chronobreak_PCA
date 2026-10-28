@@ -21,6 +21,7 @@ default = []
 replay-benchmark = []
 
 [dependencies]
+chronobreak-recorder-control = { path = "../../recorder-control" }
 chronobreak-league-data = { path = "../../league-data" }
 anyhow = "1"
 atomicwrites = "0.4"

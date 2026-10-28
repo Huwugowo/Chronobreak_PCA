@@ -80,6 +80,7 @@ hevc_playback_supported = false
     try {
         if ((& git branch --show-current) -ne 'main') { throw 'Launch preprod from the integrated main checkout.' }
         $values = @{
+            CHRONOBREAK_DISABLE_RECORDER_SUPERVISION='1'
             LEAGUE_REPLAY_CONFIG=$configPath
             LEAGUE_REPLAY_OUTPUT_PATH=(Join-Path $owned 'library')
             LEAGUE_REPLAY_APP_DATA_DIR=(Join-Path $owned 'app-data')

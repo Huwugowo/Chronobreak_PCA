@@ -1,3 +1,4 @@
+mod autostart;
 #[cfg(feature = "replay-benchmark")]
 mod benchmark;
 mod clip_duration;
@@ -18,11 +19,12 @@ mod playback_diagnostics;
 mod playback_file;
 mod playback_policy;
 mod playback_server;
+mod recorder_supervisor;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 #[cfg(feature = "replay-benchmark")]
 use std::time::Instant;
 
@@ -51,6 +53,8 @@ use tauri::{Manager, State};
 const HEVC_PROBE_VERSION: u32 = 2;
 
 struct AppState {
+    config_mutations: Arc<Mutex<()>>,
+    recorder: recorder_supervisor::RecorderSupervisor,
     config_path: PathBuf,
     config: Arc<RwLock<Config>>,
     roots: Arc<MediaRoots>,
@@ -485,6 +489,92 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
+fn get_recorder_status(state: State<'_, AppState>) -> recorder_supervisor::RecorderStatus {
+    state.recorder.status()
+}
+
+#[tauri::command]
+fn retry_recorder(state: State<'_, AppState>) -> Result<(), String> {
+    state.recorder.retry()
+}
+
+#[tauri::command(async)]
+fn get_autostart_status(state: State<'_, AppState>) -> autostart::AutostartStatus {
+    let desired = state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .app
+        .autostart;
+    if state.recorder.disabled {
+        return autostart::AutostartStatus::unavailable(
+            desired,
+            true,
+            "Login startup is disabled for this test session.",
+        );
+    }
+    #[cfg(windows)]
+    {
+        use chronobreak_recorder_control::login::{
+            RegistryValue, WindowsRegistration, login_command,
+        };
+        let result = (|| {
+            let executable = recorder_supervisor::sibling_recorder()?;
+            let expected = RegistryValue::command(&login_command(&executable)?);
+            autostart::read(
+                &state.config_path,
+                &WindowsRegistration::production(),
+                &expected,
+            )
+        })();
+        result.unwrap_or_else(|_: anyhow::Error| autostart::AutostartStatus::unavailable(desired, false, "Startup registration is unavailable. Check the recorder installation and configuration."))
+    }
+    #[cfg(not(windows))]
+    {
+        autostart::AutostartStatus::unavailable(desired, false, "Login startup requires Windows.")
+    }
+}
+
+#[tauri::command(async)]
+fn set_autostart(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<autostart::AutostartStatus, String> {
+    ensure_user_mutation_allowed(&state)?;
+    if state.recorder.disabled {
+        return Err("Login startup is disabled for this test session.".into());
+    }
+    let _local = state.config_mutations.lock().map_err(error_string)?;
+    #[cfg(windows)]
+    {
+        use chronobreak_recorder_control::login::{
+            RegistryValue, WindowsRegistration, login_command,
+        };
+        let executable = recorder_supervisor::sibling_recorder().map_err(error_string)?;
+        let expected = RegistryValue::command(&login_command(&executable).map_err(error_string)?);
+        let (mut status, merged) = autostart::update(
+            &state.config_path,
+            &WindowsRegistration::production(),
+            &expected,
+            enabled,
+        );
+        if let Some(config) = merged {
+            if reconcile_config_root(&state, &config).is_err() {
+                status.error = Some("Startup was saved, but the updated library folder could not be opened. Reopen Chronobreak after checking the folder.".into());
+            } else {
+                *state.config.write().unwrap_or_else(|p| p.into_inner()) = config;
+            }
+        }
+        Ok(status)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Err("Login startup requires Windows.".into())
+    }
+}
+
+#[tauri::command]
 async fn save_settings(
     state: State<'_, AppState>,
     snapshot_token: String,
@@ -496,15 +586,12 @@ async fn save_settings(
     let config_path = state.config_path.clone();
     let roots = Arc::clone(&state.roots);
     let library = state.library.clone();
+    let config_mutations = Arc::clone(&state.config_mutations);
     state
         .library
         .settings_for_snapshot(&state.roots, &snapshot_token, move || {
-            let mut next = config.read().unwrap_or_else(|p| p.into_inner()).clone();
-            next.apply_settings(settings).map_err(error_string)?;
-            let output_directory = next.resolved_output_path().map_err(error_string)?;
-            ensure_output_directories(&output_directory).map_err(error_string)?;
-            let output_directory = OutputDirectory::new(output_directory).map_err(error_string)?;
-            persist_settings_and_publish(&config_path, &next, output_directory, &roots, &library)
+            let _local = config_mutations.lock().map_err(error_string)?;
+            let next = persist_settings_and_publish(&config_path, settings, &roots, &library)
                 .map_err(error_string)?;
             *config.write().unwrap_or_else(|p| p.into_inner()) = next.clone();
             Ok(next.settings())
@@ -514,14 +601,18 @@ async fn save_settings(
 
 fn persist_settings_and_publish(
     config_path: &Path,
-    next: &Config,
-    directory: OutputDirectory,
+    settings: SettingsUpdate,
     roots: &MediaRoots,
     library: &LibraryCoordinator,
-) -> Result<()> {
-    config::save(config_path, next)?;
+) -> Result<Config> {
+    let mut transaction = config::ConfigMutation::open(config_path)?;
+    transaction.patch(config::ConfigPatch::Storage(settings))?;
+    let path = transaction.config.resolved_output_path()?;
+    ensure_output_directories(&path)?;
+    let directory = OutputDirectory::new(path)?;
+    let merged = transaction.commit()?;
     library.publish_output_directory(roots, directory);
-    Ok(())
+    Ok(merged)
 }
 
 #[tauri::command(async)]
@@ -552,6 +643,7 @@ fn record_hevc_probe_result(
     state: State<'_, AppState>,
     supported: bool,
 ) -> Result<HevcProbeStatus, String> {
+    let _local = state.config_mutations.lock().map_err(error_string)?;
     #[cfg(not(feature = "replay-benchmark"))]
     ensure_user_mutation_allowed(&state)?;
     #[cfg(feature = "replay-benchmark")]
@@ -572,13 +664,9 @@ fn record_hevc_probe_result(
 
     #[cfg(not(feature = "replay-benchmark"))]
     {
-        let mut next = state
-            .config
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        next.app.hevc_playback_supported = supported;
-        config::save(&state.config_path, &next).map_err(error_string)?;
+        let next = config::mutate(&state.config_path, config::ConfigPatch::Hevc(supported))
+            .map_err(error_string)?;
+        reconcile_config_root(&state, &next).map_err(error_string)?;
         *state
             .config
             .write()
@@ -587,13 +675,9 @@ fn record_hevc_probe_result(
 
     #[cfg(feature = "replay-benchmark")]
     if state.benchmark.is_none() {
-        let mut next = state
-            .config
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        next.app.hevc_playback_supported = supported;
-        config::save(&state.config_path, &next).map_err(error_string)?;
+        let next = config::mutate(&state.config_path, config::ConfigPatch::Hevc(supported))
+            .map_err(error_string)?;
+        reconcile_config_root(&state, &next).map_err(error_string)?;
         *state
             .config
             .write()
@@ -914,10 +998,20 @@ fn reconcile_hevc_capability(
 ) -> Result<()> {
     let supported = read_hevc_marker(marker_path).is_some_and(|marker| marker.supported);
     if config.app.hevc_playback_supported != supported {
-        let mut next = config.clone();
-        next.app.hevc_playback_supported = supported;
-        config::save(config_path, &next).context("failed to reconcile HEVC playback capability")?;
+        let next = config::mutate(config_path, config::ConfigPatch::Hevc(supported))
+            .context("failed to reconcile HEVC playback capability")?;
         *config = next;
+    }
+    Ok(())
+}
+
+fn reconcile_config_root(state: &AppState, config: &Config) -> Result<()> {
+    let path = config.resolved_output_path()?;
+    if path != state.roots.output_directory() {
+        ensure_output_directories(&path)?;
+        state
+            .library
+            .publish_output_directory(&state.roots, OutputDirectory::new(path)?);
     }
     Ok(())
 }
@@ -1156,6 +1250,8 @@ pub fn run() {
             ));
 
             app.manage(AppState {
+                config_mutations: Arc::new(Mutex::new(())),
+                recorder: recorder_supervisor::RecorderSupervisor::start(recorder_supervisor::supervision_disabled()),
                 config_path,
                 config: Arc::new(RwLock::new(config)),
                 roots,
@@ -1249,6 +1345,10 @@ pub fn run() {
 
     #[cfg(feature = "replay-benchmark")]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        get_recorder_status,
+        retry_recorder,
+        get_autostart_status,
+        set_autostart,
         refresh_library,
         league_index_commands::index_league_recording,
         league_index_commands::index_league_catalog,
@@ -1298,6 +1398,10 @@ pub fn run() {
 
     #[cfg(not(feature = "replay-benchmark"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        get_recorder_status,
+        retry_recorder,
+        get_autostart_status,
+        set_autostart,
         refresh_library,
         league_index_commands::index_league_recording,
         league_index_commands::index_league_catalog,
@@ -1384,7 +1488,11 @@ mod tests {
         ] {
             let mut config = Config::default();
             config.app.hevc_playback_supported = true;
-            config::save(&config_path, &config).unwrap();
+            config::mutate(
+                &config_path,
+                config::ConfigPatch::Hevc(config.app.hevc_playback_supported),
+            )
+            .unwrap();
             if let Some(bytes) = marker {
                 fs::write(&marker_path, bytes).unwrap();
             }

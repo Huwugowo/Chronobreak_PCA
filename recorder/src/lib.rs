@@ -1,6 +1,7 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 pub mod config;
+pub mod control;
 pub mod encoder;
 pub(crate) mod finalizer;
 pub mod league_client;

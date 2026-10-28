@@ -10,9 +10,11 @@ async fn main() -> anyhow::Result<()> {
     use std::time::{Duration, Instant};
 
     use anyhow::{Context, bail};
+    use chronobreak_recorder_control::windows::{ControlOwner, Namespace, query};
+    use chronobreak_recorder_control::{CaptureActivity, ServiceState};
     use chronobreak_replay_time::MediaId;
     use league_replay_recorder::config::Config;
-    use league_replay_recorder::service::{self, EventSink, ServiceCommand, ServiceEvent};
+    use league_replay_recorder::service::{EventSink, ServiceCommand, ServiceEvent};
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::sync::mpsc;
@@ -112,19 +114,38 @@ async fn main() -> anyhow::Result<()> {
             event_failure.store(true, Ordering::SeqCst);
         }
     });
-    let service = tokio::spawn(service::run(config, receiver, sink));
+    let namespace = Namespace {
+        lease: root.join("recorder-owner.lock"),
+        pipe: format!(
+            r"\\.\pipe\Chronobreak.CaptureFixture.{}",
+            root.file_name().unwrap().to_string_lossy()
+        ),
+    };
+    let owner = ControlOwner::start(&namespace)?.context("fixture owner collision")?;
+    let status = owner.status_sender();
+    let service = tokio::spawn(league_replay_recorder::control::run(
+        config,
+        receiver,
+        sink,
+        Some(status.clone()),
+    ));
     let exercise = async {
         let directory = tokio::time::timeout(Duration::from_secs(60), async {
             while let Some(event) = events.recv().await {
                 match event {
                     ServiceEvent::Recording { directory } => return Ok(directory),
                     ServiceEvent::Error { .. } | ServiceEvent::ShutdownComplete => bail!("fixture startup failed"),
-                    ServiceEvent::Idle => {}
+                    ServiceEvent::Idle | ServiceEvent::Availability(_) => {}
                 }
             }
             bail!("fixture service event owner closed");
         }).await.context("fixture startup timeout")??;
         println!("fixture_recording_started output={}", root.display());
+        let observer = query(&namespace, &std::env::current_exe()?).await?;
+        if observer.service_state != ServiceState::Available || observer.capture_activity != CaptureActivity::Recording {
+            bail!("service readiness did not follow capture startup");
+        }
+        drop(observer); // Closing an observer must not stop capture.
         let started = Instant::now();
         let mut resources = System::new();
         let pid = Pid::from_u32(std::process::id());
@@ -142,12 +163,14 @@ async fn main() -> anyhow::Result<()> {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {},
                 _ = tokio::signal::ctrl_c() => bail!("fixture interrupted"),
                 event = events.recv() => {
-                    if !matches!(event, Some(ServiceEvent::Idle | ServiceEvent::Recording { .. })) {
+                    if !matches!(event, Some(ServiceEvent::Idle | ServiceEvent::Recording { .. } | ServiceEvent::Availability(_))) {
                         bail!("fixture recording ended early");
                     }
                 }
             }
         }
+        let reopened = query(&namespace, &std::env::current_exe()?).await?;
+        if reopened.capture_activity != CaptureActivity::Recording { bail!("capture did not survive observer close/reopen"); }
         Ok::<_, anyhow::Error>((directory, samples))
     }.await;
     let _ = commands.send(ServiceCommand::Shutdown);
@@ -162,6 +185,9 @@ async fn main() -> anyhow::Result<()> {
     .await;
     fixture_cleanup?;
     service_result??;
+    if status.borrow().service_state != ServiceState::Stopped {
+        bail!("intentional shutdown did not reach Stopped");
+    }
     let (directory, samples) = exercise?;
     if failed.load(Ordering::SeqCst) {
         bail!("fixture service failed during finalization");

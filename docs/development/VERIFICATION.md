@@ -36,7 +36,7 @@ It uses Windows 2025, Node 24 with `npm ci`, and pinned Rust 1.97.1 with rustfmt
 and Clippy. The frontend job runs type checking, tests and a production build.
 The Rust job invokes `tools/ci/check-rust.ps1`, checking formatting, Clippy and
 locked all-target/all-feature tests for replay-time, league-data, media-runtime,
-recorder and the Tauri backend. Every failing native command terminates the job.
+recorder-control, recorder and the Tauri backend. Every failing native command terminates the job.
 The helper temporarily overrides Tauri bundle resources with an empty list so a
 clean checkout can run static checks without a staged media runtime. It restores
 the caller's configuration afterward; production bundle resource validation and
@@ -237,6 +237,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/media_runtime/verify.p
 ```
 
 The generated smoke directory is sentinel-marked and never uses user media. The release smoke must also prove recorder diagnostics resolves `resources/media-runtime` under a PATH with no ffmpeg/ffprobe; missing-runtime checks use only a copied release fixture.
+
+## Recorder ownership and login control
+
+The normal automated suites include real Windows ownership contention/crash
+release, bounded pipe protocol failures, a disposable HKCU test value, concurrent
+configuration writers and UI actual-versus-desired login state. They never change
+the current user's Run registration or use user media. Focused commands:
+
+```powershell
+cargo test --manifest-path recorder-control/Cargo.toml --all-targets
+cargo test --manifest-path recorder-control/Cargo.toml five_minute_idle_observers_and_launch_triggers_remain_bounded -- --ignored --nocapture --test-threads=1
+```
+
+The second command measures only control-owner thread/handle bounds over five
+minutes of generated observers/launch triggers. It is not a capture FPS claim.
+The generated production-service `league_context_capture_fixture` also exercises
+isolated owner/readiness, observer close/reopen during capture and joined shutdown;
+it requires `wgc_fixture.exe`, silent audio and the locked media runtime. Actual
+tray Quit/app-close in the portable desktop, real sign-out/sign-in and same-user
+multi-session behavior remain separately labeled Windows acceptance observations.
+
+For normal synthetic UI launches set
+`CHRONOBREAK_DISABLE_RECORDER_SUPERVISION=1` before starting the app; benchmark
+builds/launches disable ownership/registration automatically. The opt-out disables
+all pipe, production lease, spawn and Run-key operations. `tools/preprod_launch.ps1`
+sets it for its isolated library. Never enable production autostart for a test.
 
 ## Recorder diagnostics
 

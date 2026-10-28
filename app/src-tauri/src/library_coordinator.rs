@@ -1124,8 +1124,10 @@ mod tests {
         assert!(
             crate::persist_settings_and_publish(
                 &blocker.join("config.toml"),
-                &crate::config::Config::default(),
-                OutputDirectory::new(b.path().into()).unwrap(),
+                crate::config::SettingsUpdate {
+                    output_path: b.path().to_str().unwrap().into(),
+                    auto_delete_days: 30
+                },
                 &roots,
                 &coordinator,
             )
