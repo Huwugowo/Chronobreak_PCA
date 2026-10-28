@@ -235,6 +235,34 @@ Before full-instrumentation baseline runs, collect four interleaved 60-second mi
 
 Requested and completed range boundaries, cancelled partial delivery, byte/request counts, how many same-class ranges complete before cancellation, and frame-drop counts depend on WebView transport/decoder scheduling, so they remain first-class measured evidence but are not byte-for-byte semantic identity. Exact semantic identity retains the set of route, method, status, ranged-response, and terminal request-outcome classes plus deterministic action outcomes, errors, and recoveries. Separate count gates retain amplification/error sensitivity. The repeatability gates above detect material observer amplification without rejecting ordinary scheduling jitter. They are evidence-validity thresholds, not product performance budgets. If the control fails, reduce or redesign instrumentation and repeat four fresh pairs before collecting the baseline.
 
+Observer outcome comparison uses `attributed-seek-pair-v1`. Explicitly declared
+`observer_control: true` trials receive this contract; other trials retain their
+existing analysis and cannot establish observer-control validity. Reports retain the
+original `outcome_sha256` (including raw arrival order) and add a separately
+versioned `semantic_outcome_sha256`. Only adjacent native `seeked` and authoritative
+RVFC `seek_presented` observations for the same requested action may commute in
+the semantic behavior sequence; unrelated behavior and action order stay fixed.
+Each completed seek requires exactly one request, dispatch, native completion and
+presentation, with dispatch before both observations. Action ID, generation,
+producer source, fixture, cycle, measurement contract, reason and any media/source
+epoch attribution must agree. Generic completion aliases do not receive this
+ordering exception. Requested and dispatched targets remain comparison
+identities; both completion targets must match dispatch. Missing, invalid,
+undecoded or ambiguous fixture cadence fails closed. Verified fixture cadence
+also bounds observed native/presented positions to the production controller's
+one-frame plus one-microsecond tolerance. Within that existing qualification,
+observed positions and latency remain measurements rather than deterministic
+identities. Missing, duplicate, stale, non-authoritative, off-target or
+misattributed evidence cannot become equal by sorting. Request source/action/
+generation classes, errors, recoveries, loss checks and every overhead threshold
+above remain enforced. Raw records are never reordered or rewritten.
+
+Old report hashes cannot establish this stronger contract: reanalyze their
+preserved raw bundles into new output directories. Reports without the exact
+semantic contract/hash are ineligible for observer-control comparison; no fallback
+to the original digest is permitted. Reanalysis does not repair inconsistent
+source identities, failed collection, or a failed overhead gate.
+
 ## Export evidence
 
 The current strategy is explicitly `full_reencode`; copy and hybrid remain `not_implemented`. Each output records total time, encode time, thumbnail time, selected encoder, all failed/successful encoder attempts, retry count, output size, and progress stages. The runner validates every new sentinel clip with packaged `ffprobe` and a full decode, checks streams/duration and Discord's strict 10,000,000-byte limit, and confirms all source hashes after the trial.

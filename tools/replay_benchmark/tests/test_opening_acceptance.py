@@ -108,6 +108,8 @@ def campaign_fixture(root):
     for sequence, (role, cell, kind, profile, index) in enumerate(order, 1):
         name = f"qb010-opening-v1-{cell.lower()}-{kind.replace('_', '-')}"
         value = BundleBuilder(root, run_id=f"run-{sequence:03d}", observer_profile=profile)
+        if kind == "seek":
+            value.as_observer_control()
         spec, events = evidence(role, kind)
         value.manifest["scenarios"][0].update(spec, scenario_id=name)
         # Production matrix manifests omit analyzer-injected optional defaults.

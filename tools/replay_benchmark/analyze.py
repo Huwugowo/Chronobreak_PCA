@@ -23,6 +23,7 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
+OBSERVER_OUTCOME_CONTRACT = "attributed-seek-pair-v1"
 BENCHMARK_ID = "QB-REPLAY-008"
 SENTINEL_NAME = ".chronobreak-replay-benchmark"
 ARTIFACTS = (
@@ -2774,6 +2775,151 @@ def _outcome_digest(
     )
 
 
+def _semantic_outcome_digest(
+    events: Sequence[Mapping[str, Any]], requests: Sequence[Mapping[str, Any]],
+    fixture_frame_ms: Mapping[str, float] | None = None,
+) -> str:
+    """Commute only adjacent attributed native/RVFC completion observations.
+
+    Keep the original digest separately. Observed clocks/positions and transport
+    scheduling remain raw evidence and measurements, not cross-launch identities.
+    """
+    action_records: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    behavior = []
+    behavior_kinds = (ACTION_REQUEST_KINDS | ACTION_COMPLETE_KINDS
+                      | ACTION_SHORT_CIRCUIT_KINDS | SEEK_DISPATCH_KINDS
+                      | SEEKED_KINDS | PRESENTED_KINDS)
+    for event in events:
+        if (_kind(event) in FAILURE_KINDS or _field(event, "stale", False) is True
+                or _field(event, "event_loss", False) is True
+                or any(_field(event, name, 0) != 0 for name in
+                       ("local_dropped", "remote_dropped", "overwritten_records",
+                        "dropped_records", "event_loss_count"))):
+            raise InvalidData("semantic outcome contains failed/stale/lost evidence")
+        if (_kind(event) in {"seek_requested", "seek_dispatched", "seeked", "seek_presented"}
+                and _field(event, "action_id") is None):
+            raise InvalidData("semantic seek phase lacks action attribution")
+        if _field(event, "action_id") is not None and _kind(event) in behavior_kinds:
+            action_records[str(_field(event, "action_id"))].append(event)
+        if _kind(event) in behavior_kinds:
+            behavior.append(event)
+
+    attributions = []
+    paired: set[str] = set()
+    for action_id, records in action_records.items():
+        requested = [e for e in records if _kind(e) in ACTION_REQUEST_KINDS]
+        if len(requested) != 1:
+            raise InvalidData(f"semantic action {action_id} must have one request")
+        request = requested[0]
+        identity_fields = ("generation", "source", "fixture_id", "cycle",
+                           "measurement_contract", "reason", "media_id", "source_epoch")
+        identity = {name: _field(request, name) for name in identity_fields}
+        phase_records = [e for e in records if _kind(e) in behavior_kinds]
+        if _kind(request) == "seek_requested":
+            if identity["generation"] is None or not identity["source"]:
+                raise InvalidData(f"semantic seek {action_id} lacks attribution")
+            if any(any(_field(e, name) != identity[name] for name in identity_fields)
+                   for e in phase_records):
+                raise InvalidData(f"semantic seek {action_id} attribution differs")
+            # Load tokens/URLs can be fresh per launch; their within-action
+            # equality is mandatory, but their literal values are not comparable.
+            for name in ("source_token", "session_token", "source_url"):
+                if any(_field(e, name) != _field(request, name) for e in phase_records):
+                    raise InvalidData(f"semantic seek {action_id} load attribution differs")
+            shortcuts = [e for e in records if _kind(e) in ACTION_SHORT_CIRCUIT_KINDS]
+            if (len(shortcuts) > 1 or any(sum(_kind(e) in kinds for e in records) > 1
+                                        for kinds in (SEEK_DISPATCH_KINDS, SEEKED_KINDS, PRESENTED_KINDS))):
+                raise InvalidData(f"semantic seek {action_id} has duplicate phases")
+            if not shortcuts:
+                phases = [[e for e in records if _kind(e) in kinds] for kinds in
+                          (SEEK_DISPATCH_KINDS, SEEKED_KINDS, PRESENTED_KINDS)]
+                if any(len(phase) != 1 for phase in phases):
+                    raise InvalidData(f"semantic seek {action_id} has missing/duplicate phases")
+                dispatch, native, presented = [phase[0] for phase in phases]
+                if _kind(native) != "seeked" or _kind(presented) != "seek_presented":
+                    raise InvalidData(f"semantic seek {action_id} lacks exact native/RVFC phases")
+                if (records.index(request) >= records.index(dispatch)
+                        or any(records.index(dispatch) >= records.index(e)
+                               for e in (native, presented))):
+                    raise InvalidData(f"semantic seek {action_id} has impossible phases")
+                if _field(presented, "authoritative") is not True:
+                    raise InvalidData(f"semantic seek {action_id} is not authoritative")
+                target = _field(dispatch, "target_ms")
+                if any(_field(e, "target_ms") != target for e in (native, presented)):
+                    raise InvalidData(f"semantic seek {action_id} settled a different target")
+                frame_ms = _nonnegative_number(
+                    (fixture_frame_ms or {}).get(str(identity["fixture_id"])),
+                    "semantic seek verified fixture frame duration",
+                )
+                if frame_ms == 0:
+                    raise InvalidData("semantic seek verified fixture frame duration must be positive")
+                target = _nonnegative_number(target, "semantic seek target")
+                for event, name in ((native, "actual_media_time_ms"),
+                                    (presented, "presented_media_time_ms")):
+                    observed = _nonnegative_number(_field(event, name), name)
+                    # Same one-frame + one-microsecond boundary as the real
+                    # controller, derived from the verified fixture cadence.
+                    if abs(observed - target) > frame_ms + 0.001:
+                        raise InvalidData(f"semantic seek {action_id} settled off target")
+                paired.add(action_id)
+        attributions.append({
+            "action_id": action_id,
+            "identity": identity,
+            "phases": sorted(({
+                "kind": _kind(e), "source": e.get("source"),
+                "generation": _field(e, "generation"),
+                "target_ms": _field(e, "target_ms"),
+                "requested_preview_ms": _field(e, "requested_preview_ms"),
+                "raw_requested_ms": _field(e, "raw_requested_ms"),
+                "authoritative": _field(e, "authoritative"),
+            } for e in phase_records), key=_canonical_json),
+        })
+
+    # No global sort: intervening behavior or another action remains significant.
+    normalized = list(behavior)
+    for index in range(len(normalized) - 1):
+        first, second = normalized[index:index + 2]
+        action_id = _field(first, "action_id")
+        if (action_id in paired and action_id == _field(second, "action_id")
+                and _kind(first) == "seek_presented" and _kind(second) == "seeked"):
+            normalized[index:index + 2] = [second, first]
+    return _digest({
+        "contract": OBSERVER_OUTCOME_CONTRACT,
+        "outcomes": _outcome_digest(normalized, requests),
+        "behavior": [{"kind": _kind(e), "action_id": _field(e, "action_id"),
+                      "generation": _field(e, "generation"), "source": e.get("source")}
+                     for e in normalized],
+        "attributions": sorted(attributions, key=lambda item: item["action_id"]),
+        "request_attributions": sorted({
+            _canonical_json({name: _field(request, name) for name in
+                             ("source", "action_id", "generation", "route_class", "method", "outcome")})
+            for request in requests
+        }),
+        "errors_and_recoveries": _outcome_digest([
+            e for e in events if any(token in _kind(e) for token in
+                                     ("error", "failed", "timeout", "exhausted", "recovery", "degraded"))
+        ], []),
+    })
+
+
+def _observer_fixture_frame_ms(manifest: Mapping[str, Any]) -> dict[str, float]:
+    """Grant position tolerance only to one unambiguous, decoded video cadence."""
+    cadences = {}
+    for fixture in manifest.get("fixtures", []):
+        validations = fixture.get("media_validation", [])
+        if len(validations) != 1 or validations[0].get("decode_ok") is not True:
+            continue
+        streams = validations[0].get("ffprobe", {}).get("streams", [])
+        videos = [stream for stream in streams if stream.get("codec_type") == "video"]
+        if len(videos) != 1:
+            continue
+        rate = str(videos[0].get("avg_frame_rate", "")).split("/")
+        if len(rate) == 2 and all(part.isdigit() and int(part) > 0 for part in rate):
+            fixture_id = fixture.get("fixture_id", fixture.get("id"))
+            cadences[str(fixture_id)] = 1000 * int(rate[1]) / int(rate[0])
+    return cadences
+
+
 def _numeric_field(record: Mapping[str, Any], names: Sequence[str]) -> float | None:
     for name in names:
         value = _field(record, name)
@@ -2969,6 +3115,7 @@ def analyze_many(input_paths: Sequence[Path]) -> dict[str, Any]:
     scenario_trial_values: dict[tuple[str, str, str], list[float]] = defaultdict(list)
     scenario_observations: dict[tuple[str, str], int] = defaultdict(int)
     for bundle in bundles:
+        fixture_frame_ms = _observer_fixture_frame_ms(bundle.manifest)
         events_by_trial: dict[TrialKey, list[dict[str, Any]]] = defaultdict(list)
         requests_by_trial: dict[TrialKey, list[dict[str, Any]]] = defaultdict(list)
         samples_by_trial: dict[TrialKey, list[dict[str, Any]]] = defaultdict(list)
@@ -3029,6 +3176,12 @@ def analyze_many(input_paths: Sequence[Path]) -> dict[str, Any]:
                     "outcome_sha256": _outcome_digest(
                         events_by_trial[key], requests_by_trial[key]
                     ),
+                    **({
+                        "semantic_outcome_contract": OBSERVER_OUTCOME_CONTRACT,
+                        "semantic_outcome_sha256": _semantic_outcome_digest(
+                            events_by_trial[key], requests_by_trial[key], fixture_frame_ms
+                        ),
+                    } if bundle.expected[key].get("observer_control") is True else {}),
                     "observer_control_evidence": control_evidence,
                     "metrics": metric_report,
                 }
@@ -3290,10 +3443,13 @@ def _observer_trials(
             "control_fingerprint_sha256",
             "subject_sha256",
             "outcome_sha256",
+            "semantic_outcome_sha256",
         ):
             digest = trial.get(digest_name)
             if not isinstance(digest, str) or not HASH_RE.fullmatch(digest):
                 raise InvalidData(f"{label} trial has an invalid {digest_name}")
+        if trial.get("semantic_outcome_contract") != OBSERVER_OUTCOME_CONTRACT:
+            raise InvalidData(f"{label} needs raw-bundle reanalysis with {OBSERVER_OUTCOME_CONTRACT}")
         evidence = trial.get("observer_control_evidence")
         if not isinstance(evidence, Mapping):
             raise InvalidData(f"{label} trial lacks observer-control evidence")
@@ -3450,7 +3606,7 @@ def validate_observer_control(
             raise InvalidData(
                 f"observer-control app identity differs for scenario {key[0]}"
             )
-        if before["outcome_sha256"] != after["outcome_sha256"]:
+        if before["semantic_outcome_sha256"] != after["semantic_outcome_sha256"]:
             raise InvalidData(
                 f"observer-control semantic action/seek/request/error/recovery outcomes differ for scenario {key[0]}"
             )
@@ -3548,6 +3704,7 @@ def validate_observer_control(
         "matched_pair_count": len(minimal_trials),
         "pairing": "matched_scenario_and_sanitized_trial_identity",
         "outcomes_match": True,
+        "semantic_outcome_contract": OBSERVER_OUTCOME_CONTRACT,
         "required_event_request_loss": 0,
         "gates": gates,
     }

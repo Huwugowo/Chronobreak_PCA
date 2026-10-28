@@ -411,6 +411,23 @@ class BundleBuilder:
             record["action_id"] = action_id
         return record
 
+    def as_observer_control(self) -> BundleBuilder:
+        self.manifest["scenarios"][0]["observer_control"] = True
+        self.manifest["fixtures"][0]["media_validation"] = [{
+            "decode_ok": True,
+            "ffprobe": {"streams": [{"codec_type": "video", "avg_frame_rate": "60/1"}]},
+        }]
+        for event in self.events:
+            if event.get("action_id"):
+                event["payload"].update(
+                    target_ms=1000, fixture_id="representative-h264", reason="benchmark",
+                )
+            if event["kind"] == "seeked":
+                event["payload"]["actual_media_time_ms"] = 1000
+            if event["kind"] == "seek_presented":
+                event["payload"]["presented_media_time_ms"] = 1000
+        return self
+
     def persist(self) -> Path:
         run_id = self.manifest["run_id"]
         for records in (self.events, self.requests, self.samples):
@@ -451,6 +468,7 @@ class ReplayAnalyzerTests(unittest.TestCase):
         full_latency: float = 104.0,
         full_memory_increase: float = 10 * 1024 * 1024,
         full_cpu_time_ms: float = 1_010.0,
+        full_presented_first: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         trial_ids = [str(index) for index in range(1, pair_count + 1)]
         minimal = analyze.analyze(
@@ -459,16 +477,26 @@ class ReplayAnalyzerTests(unittest.TestCase):
                 trial_ids=trial_ids,
                 latencies=[minimal_latency] * pair_count,
                 observer_profile="minimal",
-            ).persist()
+            ).as_observer_control().persist()
         )
-        full = analyze.analyze(
-            BundleBuilder(
-                full_root,
-                trial_ids=trial_ids,
-                latencies=[full_latency] * pair_count,
-                observer_profile="full",
-            ).persist()
-        )
+        full_builder = BundleBuilder(
+            full_root,
+            trial_ids=trial_ids,
+            latencies=[full_latency] * pair_count,
+            observer_profile="full",
+        ).as_observer_control()
+        if full_presented_first:
+            for trial_id in trial_ids:
+                native, presented = (
+                    next(e for e in full_builder.events
+                         if e["trial_id"] == trial_id and e["kind"] == kind)
+                    for kind in ("seeked", "seek_presented")
+                )
+                native["monotonic_ms"], presented["monotonic_ms"] = (
+                    presented["monotonic_ms"], native["monotonic_ms"]
+                )
+            full_builder.events.sort(key=lambda e: e["monotonic_ms"])
+        full = analyze.analyze(full_builder.persist())
         for report, cpu_time in ((minimal, 1_000.0), (full, full_cpu_time_ms)):
             for trial in report["trials"]:
                 evidence = trial["observer_control_evidence"]
@@ -1542,14 +1570,14 @@ class ReplayAnalyzerTests(unittest.TestCase):
     def test_observer_control_rejects_a_capability_probe_in_only_one_arm(self) -> None:
         with tempfile.TemporaryDirectory() as minimal_temp, tempfile.TemporaryDirectory() as full_temp:
             minimal, full = self.control_reports(Path(minimal_temp), Path(full_temp))
-            builder = BundleBuilder(Path(minimal_temp), run_id="capability-class")
+            builder = BundleBuilder(Path(minimal_temp), run_id="capability-class").as_observer_control()
             probe = copy.deepcopy(builder.requests[0])
             probe["payload"]["route_class"] = "hevc_probe"
-            minimal["trials"][0]["outcome_sha256"] = analyze._outcome_digest(
-                builder.events, [*builder.requests, probe]
+            minimal["trials"][0]["semantic_outcome_sha256"] = analyze._semantic_outcome_digest(
+                builder.events, [*builder.requests, probe], {"representative-h264": 1000 / 60}
             )
-            full["trials"][0]["outcome_sha256"] = analyze._outcome_digest(
-                builder.events, builder.requests
+            full["trials"][0]["semantic_outcome_sha256"] = analyze._semantic_outcome_digest(
+                builder.events, builder.requests, {"representative-h264": 1000 / 60}
             )
             with self.assertRaisesRegex(analyze.InvalidData, "semantic action/seek/request"):
                 analyze.validate_observer_control(minimal, full)
@@ -1617,7 +1645,7 @@ class ReplayAnalyzerTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as minimal_temp, tempfile.TemporaryDirectory() as full_temp:
             minimal, full = self.control_reports(Path(minimal_temp), Path(full_temp))
-            full["trials"][0]["outcome_sha256"] = "f" * 64
+            full["trials"][0]["semantic_outcome_sha256"] = "f" * 64
             with self.assertRaisesRegex(analyze.InvalidData, "outcomes differ"):
                 analyze.validate_observer_control(minimal, full)
 
