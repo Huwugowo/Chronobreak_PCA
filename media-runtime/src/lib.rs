@@ -1189,31 +1189,4 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.kind(), RuntimeErrorKind::ExecutionBlocked);
     }
-
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn output_overflow_kills_and_reaps_the_child() {
-        let directory = tempfile::tempdir().unwrap();
-        let lock_path = directory.path().join("overflow.lock");
-        let escaped_lock_path = lock_path.display().to_string().replace('\'', "''");
-        let script = format!(
-            "$stream=[System.IO.File]::Open('{escaped_lock_path}',\
-             [System.IO.FileMode]::Create,[System.IO.FileAccess]::ReadWrite,\
-             [System.IO.FileShare]::None);\
-             [Console]::Out.Write('1234');\
-             Start-Sleep -Seconds 30"
-        );
-        let mut command = Command::new("powershell.exe");
-        command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
-
-        let error = run_bounded_process(command, Duration::from_secs(5), 3)
-            .await
-            .unwrap_err();
-        assert_eq!(error.kind(), BoundedProcessErrorKind::OutputLimit);
-        std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(lock_path)
-            .expect("overflowing child must be reaped and release its file lock");
-    }
 }

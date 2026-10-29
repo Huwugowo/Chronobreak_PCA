@@ -15,3 +15,7 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-m
 
 [dev-dependencies]
 tempfile = "3"
+
+[[test]]
+name = "output_overflow"
+harness = false
