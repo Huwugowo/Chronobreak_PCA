@@ -574,6 +574,12 @@ impl NativeRecorderSession {
             return Ok(());
         }
         let anchor = instant_from_qpc_100ns(qpc_100ns)?;
+        tracing::info!(
+            frame_width = dimensions.0,
+            frame_height = dimensions.1,
+            qpc_100ns,
+            "native first usable source frame"
+        );
         self.clock = Some(NativeCfrClock::start(NATIVE_FPS, qpc_100ns, anchor)?);
         self.snapshot_ready = true;
         Ok(())

@@ -180,9 +180,11 @@ impl NativeRecordingSession {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let (evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
+        let startup_span = tracing::Span::current();
         let thread = thread::Builder::new()
             .name("queueback-native-gpu".to_owned())
             .spawn(move || {
+                let _entered = startup_span.enter();
                 run_native_worker(
                     &target,
                     &ffmpeg,
@@ -394,9 +396,20 @@ fn run_native_worker(
     stop: &AtomicBool,
     evidence: &watch::Sender<RecordingEvidence>,
 ) -> Result<NativeSessionTelemetrySnapshot> {
+    let started = Instant::now();
+    tracing::info!(elapsed_ms = 0_u64, "initializing native capture resources");
     let mut session = NativeRecorderSession::start(target, ffmpeg, audio, output)?;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "native WGC/D3D11/NVENC initialized"
+    );
     let run_result = session.run_until_stopped(stop, evidence);
     let finish_result = session.finish();
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        cleanup_ok = finish_result.is_ok(),
+        "native worker cleanup finished"
+    );
     let result = match (run_result, finish_result) {
         (Ok(()), Ok(snapshot)) => Ok(snapshot),
         (Err(run_error), Ok(snapshot)) => {

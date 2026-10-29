@@ -254,7 +254,9 @@ The second command measures only control-owner thread/handle bounds over five
 minutes of generated observers/launch triggers. It is not a capture FPS claim.
 The generated production-service `league_context_capture_fixture` also exercises
 isolated owner/readiness, observer close/reopen during capture and joined shutdown;
-it requires `wgc_fixture.exe`, silent audio and the locked media runtime. Actual
+it requires `wgc_fixture.exe`, silent audio, the locked media runtime and
+`--features native-failure-injection` for constructor-injected pre-capture readiness.
+Active Live polling remains unavailable in that fixture. Actual
 tray Quit/app-close in the portable desktop, real sign-out/sign-in and same-user
 multi-session behavior remain separately labeled Windows acceptance observations.
 

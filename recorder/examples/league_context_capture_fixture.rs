@@ -1,7 +1,7 @@
 //! Dedicated generated-window proof of the production service with unavailable Live data.
 //! Never reads user configuration, records League, or writes to a user library.
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "native-failure-injection"))]
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> anyhow::Result<()> {
     use std::path::Path;
@@ -123,12 +123,14 @@ async fn main() -> anyhow::Result<()> {
     };
     let owner = ControlOwner::start(&namespace)?.context("fixture owner collision")?;
     let status = owner.status_sender();
-    let service = tokio::spawn(league_replay_recorder::control::run(
-        config,
-        receiver,
-        sink,
-        Some(status.clone()),
-    ));
+    // Only pre-capture readiness is generated. Active capture still uses the real,
+    // unavailable Live source, preserving this fixture's missing-data purpose.
+    let sink = league_replay_recorder::control::event_sink(Some(status.clone()), sink);
+    let service = tokio::spawn(
+        league_replay_recorder::service::run_with_generated_readiness_fixture(
+            config, receiver, sink,
+        ),
+    );
     let exercise = async {
         let directory = tokio::time::timeout(Duration::from_secs(60), async {
             while let Some(event) = events.recv().await {
@@ -214,4 +216,9 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(not(windows))]
 fn main() -> anyhow::Result<()> {
     anyhow::bail!("generated production-service capture fixture requires Windows")
+}
+
+#[cfg(all(windows, not(feature = "native-failure-injection")))]
+fn main() -> anyhow::Result<()> {
+    anyhow::bail!("generated readiness fixture requires --features native-failure-injection")
 }

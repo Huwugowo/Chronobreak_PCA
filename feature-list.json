@@ -903,17 +903,19 @@
       "description": "Define and verify a conservative game-readiness policy before native graphics startup so automatic recording defers safely while League is loading or its capture window is unstable.",
       "priority": "P1",
       "area": "capture",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
         "QB-CAP-001"
       ],
       "evidence": [
-        "2026-10-29 source review confirms that a visible eligible League HWND immediately permits native startup; the current source/encode/mux readiness check occurs after graphics initialization. No diagnostic artifacts or controlled reproduction establish recorder causation for the reported Thresh loading-screen incident. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (L1)."
+        "2026-10-29 source review confirms that a visible eligible League HWND immediately permits native startup; the current source/encode/mux readiness check occurs after graphics initialization. No diagnostic artifacts or controlled reproduction establish recorder causation for the reported Thresh loading-screen incident. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (L1).",
+        "2026-10-29 implementation gates bundle/WGC/D3D11/NVENC creation on three fresh advancing local GameStats observations spanning >=4s plus stable visible process/window/size/adapter identity. Cancellation and native per-process suppression are covered. Recorder check/fmt/strict Clippy passed; 215 tests passed, nine hardware/profile fixtures ignored. Generated service evidence admitted at 4030ms then failed WGC support query (0x8007000E), with one attempt and no scheduled retry; no native capture pass or live League launch comparison claimed. Details and remaining acceptance gates: docs/execution/qb-cap-006.md."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-cap-006-league-launch-safety.md",
+        "progress": "docs/execution/qb-cap-006.md"
       },
       "acceptance_criteria": [
         "An explicitly documented and independently tested positive game-readiness policy gates D3D11, WGC, and NVENC startup; a visible/sized HWND or a single LCU phase label alone is insufficient.",
@@ -926,7 +928,7 @@
         {
           "type": "automated",
           "description": "Test the chosen readiness reducer, bounded rearm policy, privacy-safe transition data, and startup cancellation/replacement cases using deterministic fixtures.",
-          "command": null
+          "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features"
         },
         {
           "type": "manual",
@@ -934,11 +936,11 @@
           "command": null
         }
       ],
-      "notes": "Draft investigation and preventive engineering, not a demonstrated P0 defect or an attribution of the Thresh incident. Before ready, select the positive readiness signal, define its freshness and API-unavailability behavior, and explicitly decide the acceptable loss of opening seconds. Existing Live Client polling starts after capture readiness and is not a pre-start gate. Do not reopen the verified active-recording 1x1 frame handling without separate evidence, introduce another capture backend, or claim hard containment of an in-process driver hang. The outstanding QB-PERF-002 matrix remains separate.",
+      "notes": "Conservative policy approved 2026-10-29: three valid advancing local GameStats samples over at least four seconds, gameTime >=5s, matching map/mode and stable visible PID/HWND/dimensions/adapter; bounded latency/freshness, no timeout fallback. Missing readiness can lose opening seconds or the entire recording. Native startup failure suppresses further initialization for that process identity; a new process earns fresh readiness. Existing active-recording 1x1 handling and QB-PERF-002 performance matrix remain separate. Historical loading incident causality remains unattributed.",
       "user_value": 5,
       "differentiation": 4,
       "difficulty": 4,
-      "stage": "draft"
+      "stage": "ready"
     },
     {
       "id": "QB-CAP-007",

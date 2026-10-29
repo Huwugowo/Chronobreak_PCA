@@ -15,6 +15,48 @@ pub const DEFAULT_PROCESS_NAME: &str = "League of Legends";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeagueProcess {
     pub pid: u32,
+    /// OS process creation time, in Unix seconds; distinguishes observed PID reuse.
+    pub started_at: u64,
+}
+
+impl LeagueProcess {
+    /// Query only this PID's identity; readiness must not rely on the watcher's
+    /// previous two-second snapshot when admitting native resources.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn is_current(self) -> bool {
+        self.started_at != 0 && process_creation_time(self.pid) == Some(self.started_at)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn process_creation_time(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    struct ProcessHandle(HANDLE);
+    impl Drop for ProcessHandle {
+        fn drop(&mut self) {
+            // SAFETY: this guard uniquely owns the successful OpenProcess handle.
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+    // SAFETY: query-only access to an OS process identifier; no process mutation.
+    let process =
+        ProcessHandle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?);
+    let (mut created, mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    // SAFETY: the owned process handle and all four distinct output pointers are live.
+    unsafe { GetProcessTimes(process.0, &mut created, &mut exited, &mut kernel, &mut user) }
+        .ok()?;
+    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    // FILETIME uses 100 ns since 1601; sysinfo start_time uses Unix seconds.
+    (ticks / 10_000_000).checked_sub(11_644_473_600)
 }
 
 pub struct ProcessWatcher {
@@ -72,7 +114,10 @@ impl ProcessWatcher {
             .iter()
             .filter(|(_, process)| process_name_matches(process.name(), &self.target_name))
             .min_by_key(|(pid, _)| pid.as_u32())
-            .map(|(pid, _)| LeagueProcess { pid: pid.as_u32() })
+            .map(|(pid, process)| LeagueProcess {
+                pid: pid.as_u32(),
+                started_at: process.start_time(),
+            })
     }
 
     pub fn telemetry(&self) -> ProcessWatcherTelemetry {
@@ -147,7 +192,10 @@ mod tests {
 
     #[test]
     fn detects_only_edges() {
-        let process = LeagueProcess { pid: 7 };
+        let process = LeagueProcess {
+            pid: 7,
+            started_at: 100,
+        };
         assert_eq!(
             transition(None, Some(process)),
             ProcessTransition::Appeared(process)
@@ -161,8 +209,17 @@ mod tests {
             ProcessTransition::Disappeared
         );
         assert_eq!(
-            transition(Some(process), Some(LeagueProcess { pid: 8 })),
-            ProcessTransition::Replaced(LeagueProcess { pid: 8 })
+            transition(
+                Some(process),
+                Some(LeagueProcess {
+                    pid: 8,
+                    started_at: 100
+                })
+            ),
+            ProcessTransition::Replaced(LeagueProcess {
+                pid: 8,
+                started_at: 100
+            })
         );
         assert_eq!(transition(None, None), ProcessTransition::Unchanged);
     }
@@ -172,6 +229,46 @@ mod tests {
         let watcher = ProcessWatcher::new("custom.exe");
         assert_eq!(watcher.target_name(), "custom.exe");
         assert_eq!(watcher.telemetry(), ProcessWatcherTelemetry::default());
+    }
+
+    #[test]
+    fn a_new_process_reusing_a_pid_is_a_replacement() {
+        let before = LeagueProcess {
+            pid: 42,
+            started_at: 100,
+        };
+        let after = LeagueProcess {
+            pid: 42,
+            started_at: 101,
+        };
+        assert_eq!(
+            transition(Some(before), Some(after)),
+            ProcessTransition::Replaced(after)
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn readiness_identity_probe_rejects_a_different_process_creation_time() {
+        let pid = Pid::from_u32(std::process::id());
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            minimal_process_refresh_kind(),
+        );
+        let process = LeagueProcess {
+            pid: pid.as_u32(),
+            started_at: system.process(pid).unwrap().start_time(),
+        };
+        assert!(process.is_current());
+        assert!(
+            !LeagueProcess {
+                started_at: process.started_at + 1,
+                ..process
+            }
+            .is_current()
+        );
     }
 
     #[test]

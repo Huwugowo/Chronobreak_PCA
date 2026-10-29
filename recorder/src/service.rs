@@ -14,6 +14,7 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant as TokioInstant;
+use tracing::Instrument;
 use tracing::{error, info, warn};
 
 use crate::config::{CodecPreference, Config, RecordingConfig, RecordingProfile};
@@ -92,6 +93,9 @@ struct RecordingStartup {
     output_path: PathBuf,
     process: LeagueProcess,
     target: CaptureTarget,
+    events: EventSink,
+    #[cfg(target_os = "windows")]
+    readiness_source: Arc<crate::launch_readiness::ReadinessSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,8 +451,44 @@ impl CaptureProgressWatchdog {
 
 pub async fn run(
     config: Config,
+    commands: mpsc::UnboundedReceiver<ServiceCommand>,
+    events: EventSink,
+) -> Result<()> {
+    run_inner(
+        config,
+        commands,
+        events,
+        #[cfg(target_os = "windows")]
+        Arc::new(crate::launch_readiness::ReadinessSource::Live(
+            crate::poller::acquisition::HttpSource::local()?,
+        )),
+    )
+    .await
+}
+
+/// Generated-window fixture only. Normal service/CLI/config cannot bypass Live readiness.
+#[cfg(all(target_os = "windows", feature = "native-failure-injection"))]
+pub async fn run_with_generated_readiness_fixture(
+    config: Config,
+    commands: mpsc::UnboundedReceiver<ServiceCommand>,
+    events: EventSink,
+) -> Result<()> {
+    run_inner(
+        config,
+        commands,
+        events,
+        Arc::new(crate::launch_readiness::ReadinessSource::GeneratedFixture {
+            started: TokioInstant::now(),
+        }),
+    )
+    .await
+}
+
+async fn run_inner(
+    config: Config,
     mut commands: mpsc::UnboundedReceiver<ServiceCommand>,
     events: EventSink,
+    #[cfg(target_os = "windows")] readiness_source: Arc<crate::launch_readiness::ReadinessSource>,
 ) -> Result<()> {
     let output_path = config.output_path()?;
     fs::create_dir_all(output_path.join("games")).with_context(|| {
@@ -766,7 +806,6 @@ pub async fn run(
                 ) {
                     match capture_target_for_process(process.pid) {
                         Ok(target) => {
-                            events(ServiceEvent::Availability(AvailabilityEvent::Capture(CaptureActivity::Starting)));
                             control_telemetry.startup_attempts =
                                 control_telemetry.startup_attempts.saturating_add(1);
                             starting = Some(spawn_recording_start(RecordingStartup {
@@ -777,6 +816,9 @@ pub async fn run(
                                 output_path: output_path.clone(),
                                 process,
                                 target,
+                                events: Arc::clone(&events),
+                                #[cfg(target_os = "windows")]
+                                readiness_source: Arc::clone(&readiness_source),
                             }));
                         }
                         Err(target_error) => {
@@ -846,7 +888,12 @@ fn log_control_telemetry(
 fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     let (cancellation, receiver) = watch::channel(false);
     let process = startup.process;
-    let task = tokio::spawn(async move { start_recording(startup, receiver).await });
+    let span = tracing::info_span!(
+        "capture_startup",
+        pid = process.pid,
+        process_started_at = process.started_at
+    );
+    let task = tokio::spawn(start_recording(startup, receiver).instrument(span));
     StartingRecording {
         process,
         cancellation,
@@ -951,7 +998,39 @@ async fn start_recording(
         output_path,
         process,
         target,
+        events,
+        #[cfg(target_os = "windows")]
+        readiness_source,
     } = startup;
+    #[cfg(target_os = "windows")]
+    let target = {
+        // Keep the first descriptor out of the admission decision: it can be stale
+        // by the time Live Client signals become available.
+        let _initial_descriptor = target;
+        crate::launch_readiness::wait(
+            process,
+            readiness_source.as_ref(),
+            || {
+                if !process.is_current() {
+                    bail!("League process identity changed during readiness");
+                }
+                let target = capture_target_for_process(process.pid)?;
+                let mut cache = CaptureTargetStateCache::default();
+                let state = query_capture_target_state(&target, &mut cache)?;
+                if state.visibility != CaptureTargetVisibility::Visible {
+                    bail!("League capture window is not visible");
+                }
+                Ok(target)
+            },
+            cancellation.clone(),
+        )
+        .await
+        .ok_or_else(|| {
+            RecordingStartupFailure::cancelled(anyhow::anyhow!(
+                "League readiness wait was cancelled"
+            ))
+        })?
+    };
     let mut target_state_cache = CaptureTargetStateCache::default();
     let initial_target_state = query_capture_target_state(&target, &mut target_state_cache)
         .context("capture target changed before recording startup")
@@ -980,6 +1059,18 @@ async fn start_recording(
             "recording startup was cancelled"
         )));
     }
+    #[cfg(target_os = "windows")]
+    if !process.is_current() {
+        return Err(RecordingStartupFailure::cancelled(anyhow::anyhow!(
+            "League process identity changed before native startup"
+        )));
+    }
+    events(ServiceEvent::Availability(AvailabilityEvent::Capture(
+        CaptureActivity::Starting,
+    )));
+    info!(pid = process.pid, process_started_at = process.started_at,
+        hwnd = target.windows_hwnd(), dimensions = ?target.dimensions(),
+        "capture admitted; creating recording bundle and starting native resources");
     let timestamp = unix_timestamp_now().terminal_startup()?;
     let directory = create_game_directory(&output_path, timestamp).terminal_startup()?;
     let media_id = MediaId::new_v4();
@@ -1008,17 +1099,13 @@ async fn start_recording(
         let session = match session_result {
             Ok(session) => session,
             Err(error) => {
-                let disposition = match error.disposition() {
-                    NativeRecordingStartupFailureDisposition::Cancelled => {
-                        RecordingStartupDisposition::Cancelled
-                    }
-                    NativeRecordingStartupFailureDisposition::Retryable => {
-                        RecordingStartupDisposition::Retryable
-                    }
-                    NativeRecordingStartupFailureDisposition::Terminal => {
-                        RecordingStartupDisposition::Terminal
-                    }
-                };
+                let disposition = native_startup_disposition(error.disposition());
+                warn!(
+                    pid = process.pid,
+                    process_started_at = process.started_at,
+                    ?disposition,
+                    "native startup ended; failure suppresses reinitialization for this process"
+                );
                 return Err(RecordingStartupFailure {
                     disposition,
                     error: error.into_error(),
@@ -1301,6 +1388,21 @@ async fn start_recording(
             capture: capture_details.6,
         },
     })
+}
+
+#[cfg(target_os = "windows")]
+fn native_startup_disposition(
+    disposition: NativeRecordingStartupFailureDisposition,
+) -> RecordingStartupDisposition {
+    match disposition {
+        NativeRecordingStartupFailureDisposition::Cancelled => {
+            RecordingStartupDisposition::Cancelled
+        }
+        NativeRecordingStartupFailureDisposition::Retryable
+        | NativeRecordingStartupFailureDisposition::Terminal => {
+            RecordingStartupDisposition::Terminal
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1595,7 +1697,10 @@ mod tests {
 
     #[test]
     fn a_process_without_a_window_remains_eligible_on_the_next_tick() {
-        let process = LeagueProcess { pid: 42 };
+        let process = LeagueProcess {
+            pid: 42,
+            started_at: 100,
+        };
         let retry = RecordingStartupRetryState::default();
         let now = TokioInstant::now();
         assert_eq!(
@@ -1618,7 +1723,10 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn retryable_startup_failures_follow_the_exact_bounded_schedule() {
-        let process = LeagueProcess { pid: 42 };
+        let process = LeagueProcess {
+            pid: 42,
+            started_at: 100,
+        };
         let mut retry = RecordingStartupRetryState::default();
 
         for (index, expected_delay) in [2_u64, 5, 10, 30, 30].into_iter().enumerate() {
@@ -1643,8 +1751,14 @@ mod tests {
 
     #[test]
     fn terminal_startup_failure_blocks_only_the_same_process() {
-        let process = LeagueProcess { pid: 42 };
-        let replacement = LeagueProcess { pid: 43 };
+        let process = LeagueProcess {
+            pid: 42,
+            started_at: 100,
+        };
+        let replacement = LeagueProcess {
+            pid: 43,
+            started_at: 100,
+        };
         let now = TokioInstant::now();
         let mut retry = RecordingStartupRetryState::default();
 
@@ -1660,13 +1774,57 @@ mod tests {
         );
         assert!(!repeated.notify_user);
         assert!(retry.permits(replacement, now));
+        assert!(retry.permits(
+            LeagueProcess {
+                pid: process.pid,
+                started_at: process.started_at + 1
+            },
+            now
+        ));
         retry.reset();
         assert!(retry.permits(process, now));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_failures_never_reinitialize_the_same_game_process() {
+        for failure in [
+            NativeRecordingStartupFailureDisposition::Retryable,
+            NativeRecordingStartupFailureDisposition::Terminal,
+        ] {
+            let process = LeagueProcess {
+                pid: 42,
+                started_at: 100,
+            };
+            let mut retry = RecordingStartupRetryState::default();
+            let now = TokioInstant::now();
+            let action = retry.record_failure(process, native_startup_disposition(failure), now);
+            assert_eq!(action.retry_at, None);
+            for seconds in [2, 5, 10, 30, 300, 3600] {
+                assert_eq!(
+                    startup_candidate(
+                        Some(process),
+                        false,
+                        false,
+                        &retry,
+                        now + Duration::from_secs(seconds)
+                    ),
+                    None
+                );
+            }
+            assert_eq!(
+                native_startup_disposition(NativeRecordingStartupFailureDisposition::Cancelled),
+                RecordingStartupDisposition::Cancelled
+            );
+        }
+    }
+
     #[test]
     fn cancellation_resets_pending_backoff_without_alerting() {
-        let process = LeagueProcess { pid: 42 };
+        let process = LeagueProcess {
+            pid: 42,
+            started_at: 100,
+        };
         let now = TokioInstant::now();
         let mut retry = RecordingStartupRetryState::default();
         retry.record_failure(process, RecordingStartupDisposition::Retryable, now);
@@ -1701,7 +1859,10 @@ mod tests {
             )))
         });
         let starting = StartingRecording {
-            process: LeagueProcess { pid: 42 },
+            process: LeagueProcess {
+                pid: 42,
+                started_at: 100,
+            },
             cancellation,
             task,
         };
@@ -1714,7 +1875,10 @@ mod tests {
 
     #[test]
     fn active_failure_does_not_create_an_implicit_second_segment() {
-        let process = LeagueProcess { pid: 42 };
+        let process = LeagueProcess {
+            pid: 42,
+            started_at: 100,
+        };
         let now = TokioInstant::now();
         let mut retry = RecordingStartupRetryState::default();
 

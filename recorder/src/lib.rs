@@ -4,6 +4,8 @@ pub mod config;
 pub mod control;
 pub mod encoder;
 pub(crate) mod finalizer;
+#[cfg(any(target_os = "windows", test))]
+mod launch_readiness;
 pub mod league_client;
 #[cfg(feature = "replay-time-fixture")]
 pub use finalizer::{

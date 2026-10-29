@@ -457,6 +457,9 @@ impl NativeWgcCapture {
         let item_size = item
             .Size()
             .context("could not read native WGC target size")?;
+        tracing::info!(hwnd, hwnd_dimensions = ?target.dimensions(),
+            item_width = item_size.Width, item_height = item_size.Height,
+            "created native WGC capture item");
         if item_size.Width <= 0 || item_size.Height <= 0 {
             bail!("native WGC target reported an empty content size");
         }
