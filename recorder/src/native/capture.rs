@@ -407,6 +407,7 @@ pub(crate) struct NativeWgcCapture {
     frame_arrived_token: Option<i64>,
     item_closed_token: Option<i64>,
     receiver: Receiver<QueuedWgcFrame>,
+    startup_sender: Option<SyncSender<QueuedWgcFrame>>,
     pending: LatestPending<QueuedWgcFrame>,
     worker_frame_discards: u64,
     telemetry: Arc<NativeWgcTelemetry>,
@@ -417,7 +418,7 @@ pub(crate) struct NativeWgcCapture {
 }
 
 impl NativeWgcCapture {
-    pub(crate) fn start(
+    pub(crate) fn prepare(
         _winrt: &WinRtMtaGuard,
         target: &CaptureTarget,
         device: &NativeD3d11Device,
@@ -460,14 +461,24 @@ impl NativeWgcCapture {
         tracing::info!(hwnd, hwnd_dimensions = ?target.dimensions(),
             item_width = item_size.Width, item_height = item_size.Height,
             "created native WGC capture item");
-        if item_size.Width <= 0 || item_size.Height <= 0 {
-            bail!("native WGC target reported an empty content size");
+        let pool_size = initial_pool_size(item_size, target.dimensions())?;
+        if pool_size != item_size {
+            tracing::info!(
+                pool_width = pool_size.Width,
+                pool_height = pool_size.Height,
+                "using validated HWND size for transient initial WGC item size"
+            );
         }
-
-        let frame_pool = create_free_threaded_frame_pool(device, item_size)?;
-        let session = frame_pool
-            .CreateCaptureSession(&item)
-            .context("could not create native WGC capture session")?;
+        let frame_pool = create_free_threaded_frame_pool(device, pool_size)?;
+        let session = match frame_pool.CreateCaptureSession(&item) {
+            Ok(session) => session,
+            Err(error) => {
+                let cleanup = frame_pool.Close();
+                return Err(anyhow::anyhow!(
+                    "could not create native WGC capture session: {error}; frame-pool cleanup: {cleanup:?}"
+                ));
+            }
+        };
 
         // Cursor capture is not required by Chronobreak. Older supported builds
         // may not expose this setter, so failure here is non-fatal and does not
@@ -478,9 +489,35 @@ impl NativeWgcCapture {
         let callback_state = Arc::new(FrameCallbackState::default());
         let (sender, receiver) = sync_channel::<QueuedWgcFrame>(NATIVE_WGC_HANDOFF_CAPACITY);
 
-        let callback_telemetry = telemetry.clone();
-        let frame_callback_owner = FrameCallbackOwner::new(&callback_state);
-        let frame_arrived_token = frame_pool
+        Ok(Self {
+            frame_pool,
+            session,
+            item,
+            target_hwnd: HWND(hwnd as usize as *mut _),
+            frame_arrived_token: None,
+            item_closed_token: None,
+            receiver,
+            startup_sender: Some(sender),
+            pending: LatestPending::default(),
+            worker_frame_discards: 0,
+            telemetry,
+            callback_state,
+            pool_width: pool_size.Width as u32,
+            pool_height: pool_size.Height as u32,
+            shutdown_complete: false,
+        })
+    }
+
+    /// The complete source/device/MTA owner exists before callback registration.
+    pub(crate) fn start(&mut self) -> Result<()> {
+        let sender = self
+            .startup_sender
+            .take()
+            .context("native WGC was already started")?;
+        let callback_telemetry = self.telemetry.clone();
+        let frame_callback_owner = FrameCallbackOwner::new(&self.callback_state);
+        let frame_arrived_token = self
+            .frame_pool
             .FrameArrived(
                 &TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(
                     move |pool, _| {
@@ -508,9 +545,11 @@ impl NativeWgcCapture {
             )
             .context("could not register native WGC FrameArrived callback")?;
 
-        let closed_telemetry = telemetry.clone();
-        let closed_callback_owner = FrameCallbackOwner::new(&callback_state);
-        let item_closed_token = item
+        self.frame_arrived_token = Some(frame_arrived_token);
+        let closed_telemetry = self.telemetry.clone();
+        let closed_callback_owner = FrameCallbackOwner::new(&self.callback_state);
+        let item_closed_token = self
+            .item
             .Closed(
                 &TypedEventHandler::<GraphicsCaptureItem, IInspectable>::new(move |_, _| {
                     let _owner = &closed_callback_owner;
@@ -520,26 +559,12 @@ impl NativeWgcCapture {
             )
             .context("could not register native WGC target-closed callback")?;
 
-        session
+        self.item_closed_token = Some(item_closed_token);
+        self.session
             .StartCapture()
             .context("could not start native WGC capture")?;
 
-        Ok(Self {
-            frame_pool,
-            session,
-            item,
-            target_hwnd: HWND(hwnd as usize as *mut _),
-            frame_arrived_token: Some(frame_arrived_token),
-            item_closed_token: Some(item_closed_token),
-            receiver,
-            pending: LatestPending::default(),
-            worker_frame_discards: 0,
-            telemetry,
-            callback_state,
-            pool_width: item_size.Width as u32,
-            pool_height: item_size.Height as u32,
-            shutdown_complete: false,
-        })
+        Ok(())
     }
 
     pub(crate) fn try_recv(&self) -> Result<Option<CapturedWgcFrame<'_>>> {
@@ -779,9 +804,25 @@ impl NativeWgcCapture {
     }
 }
 
-/// Load the WGC statics for this worker instead of using the generated
-/// process-static FactoryCache. The returned COM pointer is therefore dropped
-/// before this worker's explicit WinRT MTA guard is uninitialized.
+/// Item.Size can describe a transient tiny window. Allocate the same source's
+/// initial pool from the admitted HWND instead; frame ContentSize owns recovery.
+fn initial_pool_size(item: SizeInt32, target: Option<(u32, u32)>) -> Result<SizeInt32> {
+    let usable =
+        |width: u32, height: u32| super::convert::center_crop_rect(width, height, 16, 9).is_ok();
+    if item.Width > 0 && item.Height > 0 && usable(item.Width as u32, item.Height as u32) {
+        return Ok(item);
+    }
+    let (width, height) = target.context("unusable WGC item size has no validated HWND size")?;
+    if !usable(width, height) {
+        bail!("neither initial WGC item nor HWND size supports an NV12 crop");
+    }
+    Ok(SizeInt32 {
+        Width: i32::try_from(width)?,
+        Height: i32::try_from(height)?,
+    })
+}
+
+/// Load worker-scoped statics so their COM pointers cannot outlive its MTA.
 fn graphics_capture_supported() -> Result<bool> {
     let statics: IGraphicsCaptureSessionStatics =
         factory::<GraphicsCaptureSession, IGraphicsCaptureSessionStatics>()
@@ -929,6 +970,38 @@ impl Drop for NativeWgcCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_pool_size_uses_item_size_or_validated_hwnd_for_transient_sizes() {
+        let target = Some((1920, 1080));
+        let valid = SizeInt32 {
+            Width: 1280,
+            Height: 720,
+        };
+        assert_eq!(initial_pool_size(valid, target).unwrap(), valid);
+        for (width, height) in [(1, 1), (0, 0), (-1, 1080), (1920, -1), (2, 2)] {
+            let size = initial_pool_size(
+                SizeInt32 {
+                    Width: width,
+                    Height: height,
+                },
+                target,
+            )
+            .unwrap();
+            assert_eq!((size.Width, size.Height), (1920, 1080));
+        }
+    }
+
+    #[test]
+    fn unusable_initial_size_fails_before_allocating_a_pool_without_usable_fallback() {
+        let tiny = SizeInt32 {
+            Width: 1,
+            Height: 1,
+        };
+        for target in [None, Some((1, 1)), Some((0, 1080)), Some((u32::MAX, 1080))] {
+            assert!(initial_pool_size(tiny, target).is_err());
+        }
+    }
 
     #[test]
     fn callback_error_latch_preserves_first_category_and_hresult_bits() {

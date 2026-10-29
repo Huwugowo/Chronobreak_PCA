@@ -33,6 +33,36 @@ pub struct CaptureTarget {
     pub source: CaptureSource,
 }
 
+/// Passive physical-window identity. No graphics device or DXGI factory needed.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CaptureWindowSnapshot {
+    pub pid: u32,
+    pub hwnd: u64,
+    pub width: u32,
+    pub height: u32,
+    pub dpi: u32,
+    pub monitor: u64,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl CaptureWindowSnapshot {
+    pub fn usable_for(self, pid: u32) -> bool {
+        self.pid == pid
+            && self.hwnd != 0
+            && self.width >= 320
+            && self.height >= 200
+            && self.dpi != 0
+            && self.monitor != 0
+    }
+
+    pub fn matches_target(self, target: &CaptureTarget) -> bool {
+        matches!(&target.source, CaptureSource::WindowsGraphicsCapture { pid, hwnd, width, height, dpi, .. }
+            if self.pid == *pid && self.hwnd == *hwnd && self.width & !1 == *width
+                && self.height & !1 == *height && self.dpi == *dpi)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureTargetVisibility {
     Visible,
@@ -164,6 +194,9 @@ impl CaptureTarget {
 
 #[cfg(target_os = "windows")]
 mod windows;
+
+#[cfg(target_os = "windows")]
+pub(crate) use windows::capture_window_for_process;
 
 #[cfg(target_os = "windows")]
 pub use windows::{

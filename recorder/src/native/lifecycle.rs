@@ -19,6 +19,35 @@ use super::{NativeRecorderSession, NativeSessionTelemetrySnapshot};
 
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Only observed source progress extends waiting for a usable initial frame.
+/// Stalls and all later encode/mux failures retain their existing deadline.
+pub(super) struct StartupDeadline {
+    expires: Instant,
+    timeout: Duration,
+    progress: u64,
+}
+
+impl StartupDeadline {
+    pub(super) fn new(now: Instant, timeout: Duration) -> Self {
+        Self {
+            expires: now + timeout,
+            timeout,
+            progress: 0,
+        }
+    }
+
+    pub(super) fn observe(&mut self, progress: u64, now: Instant) {
+        if progress > self.progress {
+            self.expires = now + self.timeout;
+            self.progress = progress;
+        }
+    }
+
+    pub(super) fn expired(&self, now: Instant) -> bool {
+        now >= self.expires
+    }
+}
+
 struct NativeWorker {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<NativeSessionTelemetrySnapshot>>>,
@@ -216,7 +245,7 @@ impl NativeRecordingSession {
         mut cancellation: watch::Receiver<bool>,
         startup_timeout: Duration,
     ) -> NativeRecordingStartupResult<Self> {
-        let deadline = Instant::now() + startup_timeout;
+        let mut deadline = StartupDeadline::new(Instant::now(), startup_timeout);
 
         loop {
             if *cancellation.borrow() {
@@ -226,6 +255,9 @@ impl NativeRecordingSession {
                 ));
             }
             let snapshot = evidence.borrow().clone();
+            if snapshot.capture_ready && snapshot.first_qpc.is_none() {
+                deadline.observe(snapshot.source_frames_surfaced, Instant::now());
+            }
             if let Some(error) = snapshot.protocol_error.as_deref() {
                 let worker_error = worker.stop_and_join().await.err();
                 return Err(NativeRecordingStartupFailure::terminal(anyhow!(
@@ -270,7 +302,7 @@ impl NativeRecordingSession {
                 );
                 return Err(NativeRecordingStartupFailure::terminal(anyhow!(error)));
             }
-            if Instant::now() >= deadline {
+            if deadline.expired(Instant::now()) {
                 let snapshot = evidence.borrow().clone();
                 let worker_error = worker.stop_and_join().await.err();
                 return Err(NativeRecordingStartupFailure::retryable(anyhow!(
@@ -398,7 +430,21 @@ fn run_native_worker(
 ) -> Result<NativeSessionTelemetrySnapshot> {
     let started = Instant::now();
     tracing::info!(elapsed_ms = 0_u64, "initializing native capture resources");
-    let mut session = NativeRecorderSession::start(target, ffmpeg, audio, output)?;
+    let mut session = match NativeRecorderSession::start_with_stop(
+        target,
+        ffmpeg,
+        audio,
+        output,
+        stop,
+        Some(evidence),
+    ) {
+        Ok(session) => session,
+        Err(error) => {
+            tracing::error!(elapsed_ms = started.elapsed().as_millis() as u64,
+                error = %format!("{error:#}"), "native initialization failed after partial-resource cleanup");
+            return Err(error);
+        }
+    };
     tracing::info!(
         elapsed_ms = started.elapsed().as_millis() as u64,
         "native WGC/D3D11/NVENC initialized"
@@ -461,6 +507,23 @@ mod tests {
         NativeCfrTelemetrySnapshot, NativeMuxTelemetrySnapshot, NativeNv12TelemetrySnapshot,
         NativeNvencTelemetrySnapshot, NativeWgcTelemetrySnapshot,
     };
+
+    #[test]
+    fn initial_frame_wait_extends_only_for_new_source_progress() {
+        let start = Instant::now();
+        let timeout = Duration::from_secs(5);
+        let mut deadline = StartupDeadline::new(start, timeout);
+        for progress in 1..=4 {
+            let now = start + Duration::from_secs(progress * 4);
+            assert!(!deadline.expired(now));
+            deadline.observe(progress, now);
+        }
+        // Cached or regressed counters must not turn a stalled source into
+        // unbounded waiting, even after a long recoverable tiny-frame period.
+        deadline.observe(4, start + Duration::from_secs(20));
+        deadline.observe(3, start + Duration::from_secs(20));
+        assert!(deadline.expired(start + Duration::from_secs(21)));
+    }
 
     fn telemetry() -> NativeSessionTelemetrySnapshot {
         NativeSessionTelemetrySnapshot {

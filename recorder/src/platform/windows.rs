@@ -18,7 +18,7 @@ use windows::core::BOOL;
 
 use super::{
     CaptureSource, CaptureTarget, CaptureTargetState, CaptureTargetStateCache,
-    CaptureTargetVisibility, WindowsVisibleBounds,
+    CaptureTargetVisibility, CaptureWindowSnapshot, WindowsVisibleBounds,
 };
 
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -108,6 +108,36 @@ pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
     }
 
     anyhow::bail!("could not find a visible League window for PID {pid}")
+}
+
+/// Discovery/physical sizing only; adapter resolution belongs to admission.
+pub(crate) fn capture_window_for_process(pid: u32) -> Result<CaptureWindowSnapshot> {
+    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
+    let candidate = find_largest_window(pid)?.context("League has no visible usable window")?;
+    let monitor = monitor_with_largest_intersection(candidate.screen_rect)?;
+    let mut current_pid = 0;
+    // SAFETY: all calls synchronously query a non-owned EnumWindows HWND.
+    let (exists, visible, minimized, dpi) = unsafe {
+        GetWindowThreadProcessId(candidate.hwnd, Some(&mut current_pid));
+        (
+            IsWindow(Some(candidate.hwnd)).as_bool(),
+            IsWindowVisible(candidate.hwnd).as_bool(),
+            IsIconic(candidate.hwnd).as_bool(),
+            GetDpiForWindow(candidate.hwnd),
+        )
+    };
+    let snapshot = CaptureWindowSnapshot {
+        pid: current_pid,
+        hwnd: candidate.hwnd.0 as usize as u64,
+        width: candidate.width,
+        height: candidate.height,
+        dpi,
+        monitor: monitor.0 as usize as u64,
+    };
+    if !exists || !visible || minimized || !snapshot.usable_for(pid) {
+        anyhow::bail!("League window changed during passive discovery");
+    }
+    Ok(snapshot)
 }
 
 pub fn fallback_capture_target() -> Result<CaptureTarget> {

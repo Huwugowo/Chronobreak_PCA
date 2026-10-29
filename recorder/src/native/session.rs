@@ -8,6 +8,7 @@ use tokio::sync::watch;
 use crate::encoder::{AudioSource, RecordingEvidence};
 use crate::platform::{CaptureTarget, instant_from_qpc_100ns};
 
+use super::lifecycle::StartupDeadline;
 use super::{
     NATIVE_ENCODER_SLOT_COUNT, NATIVE_WGC_FRAME_POOL_CAPACITY, NativeCfrClock,
     NativeCfrTelemetrySnapshot, NativeMuxPlan, NativeMuxProcess, NativeMuxTelemetrySnapshot,
@@ -100,12 +101,46 @@ impl NativeRecorderSession {
         audio: &AudioSource,
         output: &Path,
     ) -> Result<Self> {
-        let source = NativeWgcSource::start(target)?;
-        let converter = source.create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS)?;
-        let plan = NativeMuxPlan::h264(NATIVE_FPS, audio, output)?;
-        let mut mux = NativeMuxProcess::start(ffmpeg, &plan)?;
-        let writer = mux.take_video_writer()?;
-        let encoder = NativeNvencEncoder::new(&source, &converter, writer)?;
+        Self::start_with_stop(target, ffmpeg, audio, output, &AtomicBool::new(false), None)
+    }
+
+    pub(crate) fn start_with_stop(
+        target: &CaptureTarget,
+        ffmpeg: &Path,
+        audio: &AudioSource,
+        output: &Path,
+        stop: &AtomicBool,
+        evidence: Option<&watch::Sender<RecordingEvidence>>,
+    ) -> Result<Self> {
+        let mut source = NativeWgcSource::start(target)?;
+        let initialized = (|| {
+            let (unusable_size_frames, first_unusable_size) =
+                wait_for_usable_source(&mut source, stop, evidence)?;
+            let converter = source
+                .create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS)
+                .context("native converter initialization")?;
+            let plan = NativeMuxPlan::h264(NATIVE_FPS, audio, output)?;
+            let mut mux =
+                NativeMuxProcess::start(ffmpeg, &plan).context("native mux initialization")?;
+            let writer = mux.take_video_writer()?;
+            let encoder = NativeNvencEncoder::new(&source, &converter, writer)
+                .context("native NVENC initialization")?;
+            Ok((
+                converter,
+                mux,
+                encoder,
+                unusable_size_frames,
+                first_unusable_size,
+            ))
+        })();
+        let (converter, mux, encoder, unusable_size_frames, first_unusable_size) =
+            match initialized {
+                Ok(initialized) => initialized,
+                Err(error) => {
+                    return Err(source
+                        .close_after_initialization_failure("native graph initialization", error));
+                }
+            };
         Ok(Self {
             encoder: Some(encoder),
             mux: Some(mux),
@@ -115,8 +150,8 @@ impl NativeRecorderSession {
             output: output.to_path_buf(),
             snapshot_ready: false,
             pending_resize: None,
-            unusable_size_frames: 0,
-            first_unusable_size: None,
+            unusable_size_frames,
+            first_unusable_size,
             no_slot_admission_failures: 0,
             unstaged_tick_admission_failures: 0,
             maximum_catch_up_batch: 0,
@@ -526,7 +561,11 @@ impl NativeRecorderSession {
         let dimensions = frame.dimensions();
         let qpc_100ns = frame.qpc_100ns();
         let pool_dimensions = source.pool_dimensions();
-        if dimensions != pool_dimensions {
+        if dimensions != pool_dimensions
+            || !self
+                .converter
+                .can_convert_content_size(dimensions.0, dimensions.1)
+        {
             let can_resize = self
                 .converter
                 .can_convert_content_size(dimensions.0, dimensions.1);
@@ -630,7 +669,9 @@ impl NativeRecorderSession {
             close_result?;
             return Ok(());
         }
-        if dimensions != pool_dimensions {
+        if dimensions != pool_dimensions
+            || !converter.can_convert_content_size(dimensions.0, dimensions.1)
+        {
             let can_resize = converter.can_convert_content_size(dimensions.0, dimensions.1);
             let close_result = frame.close();
             source.record_worker_frame_discard();
@@ -891,6 +932,64 @@ impl NativeRecorderSession {
             progress_end: terminal && mux.progress_end,
             protocol_error,
         })
+    }
+}
+
+/// Before audio/mux/encoding, retain this single source through tiny-frame
+/// transitions. A usable frame is closed/counted before any pool reconfiguration.
+fn wait_for_usable_source(
+    source: &mut NativeWgcSource,
+    stop: &AtomicBool,
+    evidence: Option<&watch::Sender<RecordingEvidence>>,
+) -> Result<(u64, Option<(u32, u32)>)> {
+    let mut deadline = StartupDeadline::new(Instant::now(), FIRST_FRAME_TIMEOUT);
+    let mut evidence_due = Instant::now();
+    let mut unusable = 0;
+    let mut first_unusable = None;
+    loop {
+        if stop.load(Ordering::Acquire) {
+            bail!("native initialization cancelled before usable source");
+        }
+        if deadline.expired(Instant::now()) {
+            bail!("native WGC produced no usable initial frame within the source deadline");
+        }
+        if let Some(frame) = source.recv_timeout(MAX_SOURCE_WAIT)? {
+            let dimensions = frame.dimensions();
+            let usable = super::convert::center_crop_rect(
+                dimensions.0,
+                dimensions.1,
+                NATIVE_WIDTH,
+                NATIVE_HEIGHT,
+            )
+            .is_ok();
+            let close = frame.close();
+            source.record_worker_frame_discard();
+            close?;
+            if usable {
+                if dimensions != source.pool_dimensions() {
+                    source.recreate_for_content_size(dimensions.0, dimensions.1)?;
+                }
+                return Ok((unusable, first_unusable));
+            }
+            record_unusable_size(dimensions, &mut unusable, &mut first_unusable);
+            deadline.observe(unusable, Instant::now());
+        }
+        let capture = source.telemetry();
+        if capture.closed {
+            bail!("native WGC target closed before usable initial frame");
+        }
+        if let Some(error) = capture.first_callback_error {
+            bail!("native WGC callback failed during initialization: {error:?}");
+        }
+        if let Some(evidence) = evidence
+            && Instant::now() >= evidence_due
+        {
+            evidence.send_modify(|state| {
+                state.capture_ready = true;
+                state.source_frames_surfaced = capture.admitted;
+            });
+            evidence_due = Instant::now() + NATIVE_EVIDENCE_INTERVAL;
+        }
     }
 }
 

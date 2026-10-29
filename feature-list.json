@@ -910,11 +910,12 @@
       ],
       "evidence": [
         "2026-10-29 source review confirms that a visible eligible League HWND immediately permits native startup; the current source/encode/mux readiness check occurs after graphics initialization. No diagnostic artifacts or controlled reproduction establish recorder causation for the reported Thresh loading-screen incident. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (L1).",
-        "2026-10-29 implementation gates bundle/WGC/D3D11/NVENC creation on three fresh advancing local GameStats observations spanning >=4s plus stable visible process/window/size/adapter identity. Cancellation and native per-process suppression are covered. Recorder check/fmt/strict Clippy passed; 215 tests passed, nine hardware/profile fixtures ignored. Generated service evidence admitted at 4030ms then failed WGC support query (0x8007000E), with one attempt and no scheduled retry; no native capture pass or live League launch comparison claimed. Details and remaining acceptance gates: docs/execution/qb-cap-006.md."
+        "2026-10-29 implementation gates bundle/WGC/D3D11/NVENC creation on three fresh advancing local GameStats observations spanning >=4s plus stable visible process/window/size/adapter identity. Cancellation and native per-process suppression are covered. Recorder check/fmt/strict Clippy passed; 215 tests passed, nine hardware/profile fixtures ignored. Generated service evidence admitted at 4030ms then failed WGC support query (0x8007000E), with one attempt and no scheduled retry; no native capture pass or live League launch comparison claimed. Details and remaining acceptance gates: docs/execution/qb-cap-006.md.",
+        "2026-10-29 review corrections retain one WGC source through initial tiny content, delay audio/encoding until usable dimensions, and explicitly close partial startup with primary/cleanup diagnostics and callback-safe retention. Passive readiness uses lightweight window/monitor identity and resolves DXGI only at admission; clock-offset intersection accounts for request timing up to the existing two-second deadline. Recorder check/fmt/strict Clippy passed; 222 tests passed, nine hardware/profile fixtures ignored. Hardware and controlled League launch verification remain pending; feature stays in-progress."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-cap-006-league-launch-safety.md",
+        "plan": "docs/exec-plans/qb-cap-006-league-launch-safety-v2.md",
         "progress": "docs/execution/qb-cap-006.md"
       },
       "acceptance_criteria": [
@@ -936,7 +937,7 @@
           "command": null
         }
       ],
-      "notes": "Conservative policy approved 2026-10-29: three valid advancing local GameStats samples over at least four seconds, gameTime >=5s, matching map/mode and stable visible PID/HWND/dimensions/adapter; bounded latency/freshness, no timeout fallback. Missing readiness can lose opening seconds or the entire recording. Native startup failure suppresses further initialization for that process identity; a new process earns fresh readiness. Existing active-recording 1x1 handling and QB-PERF-002 performance matrix remain separate. Historical loading incident causality remains unattributed.",
+      "notes": "Conservative policy approved 2026-10-29: three valid advancing local GameStats samples over at least four seconds, gameTime >=5s, matching map/mode and stable visible PID/HWND/physical dimensions/DPI/monitor, then full adapter validation. Clock-offset intervals include request timing and 250ms combined jitter; RTT <=2s, post-response admission <=500ms, no timeout fallback. Missing readiness can lose opening seconds or the entire recording. Initial tiny WGC content waits within one source before audio/encoding; stalls or native startup failures suppress that process, and a new process earns fresh readiness. QB-PERF-002 performance matrix remains separate. Hardware-only recovery/League verification and historical loading incident causality remain unverified.",
       "user_value": 5,
       "differentiation": 4,
       "difficulty": 4,

@@ -34,6 +34,8 @@ use crate::league_client::sidecar::{ContextWriter, DirectoryGuard};
 use crate::native::{
     NATIVE_ENCODER_SLOT_COUNT, NativeRecordingSession, NativeRecordingStartupFailureDisposition,
 };
+#[cfg(target_os = "windows")]
+use crate::platform::capture_window_for_process;
 #[cfg(not(target_os = "windows"))]
 use crate::platform::fallback_capture_target;
 use crate::platform::{
@@ -92,6 +94,7 @@ struct RecordingStartup {
     audio: AudioSource,
     output_path: PathBuf,
     process: LeagueProcess,
+    #[cfg(not(target_os = "windows"))]
     target: CaptureTarget,
     events: EventSink,
     #[cfg(target_os = "windows")]
@@ -804,8 +807,12 @@ async fn run_inner(
                     &startup_retry,
                     TokioInstant::now(),
                 ) {
-                    match capture_target_for_process(process.pid) {
-                        Ok(target) => {
+                    #[cfg(target_os = "windows")]
+                    let target = capture_window_for_process(process.pid);
+                    #[cfg(not(target_os = "windows"))]
+                    let target = capture_target_for_process(process.pid);
+                    match target {
+                        Ok(_target) => {
                             control_telemetry.startup_attempts =
                                 control_telemetry.startup_attempts.saturating_add(1);
                             starting = Some(spawn_recording_start(RecordingStartup {
@@ -815,7 +822,8 @@ async fn run_inner(
                                 audio: audio.clone(),
                                 output_path: output_path.clone(),
                                 process,
-                                target,
+                                #[cfg(not(target_os = "windows"))]
+                                target: _target,
                                 events: Arc::clone(&events),
                                 #[cfg(target_os = "windows")]
                                 readiness_source: Arc::clone(&readiness_source),
@@ -997,6 +1005,7 @@ async fn start_recording(
         audio,
         output_path,
         process,
+        #[cfg(not(target_os = "windows"))]
         target,
         events,
         #[cfg(target_os = "windows")]
@@ -1004,9 +1013,6 @@ async fn start_recording(
     } = startup;
     #[cfg(target_os = "windows")]
     let target = {
-        // Keep the first descriptor out of the admission decision: it can be stale
-        // by the time Live Client signals become available.
-        let _initial_descriptor = target;
         crate::launch_readiness::wait(
             process,
             readiness_source.as_ref(),
@@ -1014,14 +1020,9 @@ async fn start_recording(
                 if !process.is_current() {
                     bail!("League process identity changed during readiness");
                 }
-                let target = capture_target_for_process(process.pid)?;
-                let mut cache = CaptureTargetStateCache::default();
-                let state = query_capture_target_state(&target, &mut cache)?;
-                if state.visibility != CaptureTargetVisibility::Visible {
-                    bail!("League capture window is not visible");
-                }
-                Ok(target)
+                capture_window_for_process(process.pid)
             },
+            |window| capture_target_for_process(window.pid),
             cancellation.clone(),
         )
         .await

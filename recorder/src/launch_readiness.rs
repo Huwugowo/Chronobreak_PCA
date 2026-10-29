@@ -6,55 +6,16 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::platform::{CaptureSource, CaptureTarget};
+use crate::platform::{CaptureTarget, CaptureWindowSnapshot};
 use crate::poller::acquisition::Source;
 use crate::watcher::LeagueProcess;
 
 const CADENCE: Duration = Duration::from_secs(2);
 const STABLE_SPAN: Duration = Duration::from_secs(4);
 const MAX_GAP: Duration = Duration::from_secs(5);
-const MAX_RTT: Duration = Duration::from_millis(500);
+const MAX_RTT: Duration = crate::poller::acquisition::NETWORK_DEADLINE;
+const MAX_RESPONSE_AGE: Duration = Duration::from_millis(500);
 const CLOCK_TOLERANCE_US: u128 = 250_000;
-
-/// Semantic identity; descriptor generation changes on every discovery.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct WindowKey {
-    pid: u32,
-    hwnd: u64,
-    width: u32,
-    height: u32,
-    dpi: u32,
-    adapter_luid: u64,
-    output: String,
-}
-
-impl WindowKey {
-    fn of(target: &CaptureTarget, process: LeagueProcess) -> Option<Self> {
-        match &target.source {
-            CaptureSource::WindowsGraphicsCapture {
-                pid,
-                hwnd,
-                width,
-                height,
-                dpi,
-                adapter_luid,
-                output_name,
-                ..
-            } if *pid == process.pid && *hwnd != 0 && *width >= 320 && *height >= 200 => {
-                Some(Self {
-                    pid: *pid,
-                    hwnd: *hwnd,
-                    width: *width,
-                    height: *height,
-                    dpi: *dpi,
-                    adapter_luid: *adapter_luid,
-                    output: output_name.clone(),
-                })
-            }
-            _ => None,
-        }
-    }
-}
 
 struct GameSignal {
     tick_us: i64,
@@ -87,7 +48,7 @@ enum Decision {
 }
 
 struct Sample {
-    window: WindowKey,
+    window: CaptureWindowSnapshot,
     game: GameSignal,
     midpoint: Duration,
 }
@@ -97,6 +58,7 @@ struct Readiness {
     previous: Option<Sample>,
     first: Duration,
     count: u32,
+    offset_bounds: Option<(i128, i128)>,
 }
 
 impl Readiness {
@@ -124,14 +86,24 @@ impl Readiness {
             if sample.game.mode != previous.game.mode
                 || sample.game.map != previous.game.map
                 || game_delta <= 0
-                || u128::from(game_delta.unsigned_abs()).abs_diff(elapsed.as_micros())
-                    > CLOCK_TOLERANCE_US
             {
                 return self.reset(Decision::ClockUnstable);
             }
         } else {
             self.first = sample.midpoint;
         }
+        // A response may sample the game anywhere in its request interval.
+        // Intersect all possible offsets, rather than compounding pairwise slack.
+        let center = i128::from(sample.game.tick_us) - sample.midpoint.as_micros() as i128;
+        let uncertainty = (round_trip.as_micros() + CLOCK_TOLERANCE_US) as i128 / 2;
+        let mut bounds = (center - uncertainty, center + uncertainty);
+        if let Some(previous) = self.offset_bounds {
+            bounds = (bounds.0.max(previous.0), bounds.1.min(previous.1));
+            if bounds.0 > bounds.1 {
+                return self.reset(Decision::ClockUnstable);
+            }
+        }
+        self.offset_bounds = Some(bounds);
         self.count = self.count.saturating_add(1);
         let ready = self.count >= 3 && sample.midpoint.saturating_sub(self.first) >= STABLE_SPAN;
         self.previous = Some(sample);
@@ -148,7 +120,8 @@ impl Readiness {
 pub(crate) async fn wait<S: Source>(
     process: LeagueProcess,
     source: &S,
-    mut target: impl FnMut() -> anyhow::Result<CaptureTarget>,
+    mut window: impl FnMut() -> anyhow::Result<CaptureWindowSnapshot>,
+    mut resolve: impl FnMut(&CaptureWindowSnapshot) -> anyhow::Result<CaptureTarget>,
     mut cancellation: watch::Receiver<bool>,
 ) -> Option<CaptureTarget> {
     let started = Instant::now();
@@ -156,46 +129,51 @@ pub(crate) async fn wait<S: Source>(
     let mut last_decision = None;
     loop {
         let observation = async {
-            let before = target().ok().and_then(|t| WindowKey::of(&t, process));
+            let before = window().ok().filter(|w| w.usable_for(process.pid));
             let Some(before) = before else {
-                return (Decision::WindowUnavailable, None);
+                return (Decision::WindowUnavailable, None, None);
             };
             let request_started = Instant::now();
             let response = source.fetch(Endpoint::GameStats).await;
             let finished = Instant::now();
             let round_trip = finished.saturating_duration_since(request_started);
-            let after = target().ok();
-            if after
-                .as_ref()
-                .and_then(|t| WindowKey::of(t, process))
-                .as_ref()
-                != Some(&before)
-            {
-                return (Decision::WindowChanged, after);
+            let after = window().ok().filter(|w| w.usable_for(process.pid));
+            if after != Some(before) {
+                return (Decision::WindowChanged, after, None);
             }
-            if finished.elapsed() > MAX_RTT {
-                return (Decision::Stale, after);
+            if finished.elapsed() > MAX_RESPONSE_AGE {
+                return (Decision::Stale, after, None);
             }
             let Ok(bytes) = response else {
-                return (Decision::SignalUnavailable, after);
+                return (Decision::SignalUnavailable, after, None);
             };
             let Some(game) = game_signal(&bytes) else {
-                return (Decision::SignalInvalid, after);
+                return (Decision::SignalInvalid, after, None);
             };
             let midpoint = request_started.duration_since(started) + round_trip / 2;
-            (
-                readiness.observe(
-                    Sample {
-                        window: before,
-                        game,
-                        midpoint,
-                    },
-                    round_trip,
-                ),
-                after,
-            )
+            let decision = readiness.observe(
+                Sample {
+                    window: before,
+                    game,
+                    midpoint,
+                },
+                round_trip,
+            );
+            if decision != Decision::Ready {
+                return (decision, after, None);
+            }
+            let target = resolve(&before)
+                .ok()
+                .filter(|target| before.matches_target(target));
+            if target.is_none() || window().ok() != Some(before) {
+                return (Decision::WindowChanged, after, None);
+            }
+            if finished.elapsed() > MAX_RESPONSE_AGE {
+                return (Decision::Stale, after, None);
+            }
+            (Decision::Ready, after, target)
         };
-        let (decision, final_target) = tokio::select! {
+        let (decision, final_window, final_target) = tokio::select! {
             biased;
             _ = cancelled(&mut cancellation) => return None,
             observed = observation => observed,
@@ -209,15 +187,15 @@ pub(crate) async fn wait<S: Source>(
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 ?decision, samples = readiness.count,
                 game_tick_us = readiness.previous.as_ref().map(|sample| sample.game.tick_us),
-                hwnd = final_target.as_ref().and_then(CaptureTarget::windows_hwnd),
-                dimensions = ?final_target.as_ref().and_then(CaptureTarget::dimensions),
+                hwnd = final_window.map(|w| w.hwnd),
+                dimensions = ?final_window.map(|w| (w.width, w.height)),
                 "League pre-capture readiness");
             last_decision = Some(decision);
         }
         if decision == Decision::Ready {
             if let Some(CaptureTarget {
                 source:
-                    CaptureSource::WindowsGraphicsCapture {
+                    crate::platform::CaptureSource::WindowsGraphicsCapture {
                         generation,
                         adapter_luid,
                         ..
@@ -274,6 +252,7 @@ impl Source for ReadinessSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::CaptureSource;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn process() -> LeagueProcess {
@@ -283,27 +262,38 @@ mod tests {
         }
     }
 
-    fn target() -> CaptureTarget {
-        CaptureTarget {
+    fn target() -> CaptureWindowSnapshot {
+        CaptureWindowSnapshot {
+            pid: 42,
+            hwnd: 7,
+            width: 1920,
+            height: 1080,
+            dpi: 96,
+            monitor: 9,
+        }
+    }
+
+    fn resolve_target(window: &CaptureWindowSnapshot) -> anyhow::Result<CaptureTarget> {
+        Ok(CaptureTarget {
             source: CaptureSource::WindowsGraphicsCapture {
-                pid: 42,
+                pid: window.pid,
                 generation: 1,
-                hwnd: 7,
-                width: 1920,
-                height: 1080,
-                dpi: 96,
+                hwnd: window.hwnd,
+                width: window.width & !1,
+                height: window.height & !1,
+                dpi: window.dpi,
                 window_title: None,
                 adapter_index: 0,
                 adapter_luid: 9,
                 adapter_name: String::new(),
                 output_name: "fixture".into(),
             },
-        }
+        })
     }
 
     fn sample(seconds: u64, game: i64) -> Sample {
         Sample {
-            window: WindowKey::of(&target(), process()).unwrap(),
+            window: target(),
             game: GameSignal {
                 tick_us: game * 1_000_000,
                 mode: "CLASSIC".into(),
@@ -360,6 +350,36 @@ mod tests {
     }
 
     #[test]
+    fn request_timing_uncertainty_allows_latency_without_accepting_clock_jumps() {
+        let mut gate = Readiness::default();
+        let rtt = Duration::from_millis(800);
+        for (seconds, tick_us, expected) in [
+            (0, 5_000_000, Decision::Collecting),
+            (2, 7_600_000, Decision::Collecting),
+            (4, 9_200_000, Decision::Ready),
+            (6, 13_000_000, Decision::ClockUnstable),
+        ] {
+            let mut next = sample(seconds, 5);
+            next.game.tick_us = tick_us;
+            assert_eq!(gate.observe(next, rtt), expected);
+        }
+    }
+
+    #[test]
+    fn clock_tolerance_cannot_accumulate_pairwise_drift() {
+        let mut gate = Readiness::default();
+        for (seconds, tick_us, expected) in [
+            (0, 5_000_000, Decision::Collecting),
+            (2, 7_200_000, Decision::Collecting),
+            (4, 9_400_000, Decision::ClockUnstable),
+        ] {
+            let mut next = sample(seconds, 5);
+            next.game.tick_us = tick_us;
+            assert_eq!(gate.observe(next, Duration::ZERO), expected);
+        }
+    }
+
+    #[test]
     fn resets_for_window_and_game_identity_changes() {
         for change in 0..7 {
             let mut gate = Readiness::default();
@@ -369,8 +389,8 @@ mod tests {
                 0 => next.window.hwnd += 1,
                 1 => next.window.pid += 1,
                 2 => next.window.width += 2,
-                3 => next.window.adapter_luid += 1,
-                4 => next.window.output.push('2'),
+                3 => next.window.monitor += 1,
+                4 => next.window.dpi += 1,
                 5 => next.game.map += 1,
                 _ => next.game.mode = "OTHER".into(),
             }
@@ -381,20 +401,12 @@ mod tests {
                 Decision::Collecting
             );
         }
-        let mut tiny = target();
-        if let CaptureSource::WindowsGraphicsCapture { width, height, .. } = &mut tiny.source {
-            *width = 1;
-            *height = 1;
-        }
-        assert!(WindowKey::of(&tiny, process()).is_none());
-        let mut rediscovered = target();
-        if let CaptureSource::WindowsGraphicsCapture { generation, .. } = &mut rediscovered.source {
-            *generation = 200;
-        }
-        assert_eq!(
-            WindowKey::of(&target(), process()),
-            WindowKey::of(&rediscovered, process())
-        );
+        let tiny = CaptureWindowSnapshot {
+            width: 1,
+            height: 1,
+            ..target()
+        };
+        assert!(!tiny.usable_for(process().pid));
     }
 
     #[test]
@@ -446,6 +458,7 @@ mod tests {
                 }
                 Ok(target())
             },
+            resolve_target,
             cancellation,
         )
         .await;
@@ -469,23 +482,53 @@ mod tests {
             || {
                 discoveries += 1;
                 let mut t = target();
-                if let CaptureSource::WindowsGraphicsCapture {
-                    hwnd, generation, ..
-                } = &mut t.source
-                {
-                    if discoveries >= 2 {
-                        *hwnd = 8;
-                    }
-                    *generation = discoveries;
+                if discoveries >= 2 {
+                    t.hwnd = 8;
                 }
                 Ok(t)
             },
+            resolve_target,
             cancellation,
         )
         .await
         .unwrap();
         assert_eq!(result.windows_hwnd(), Some(8));
         assert_eq!(source.calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolves_adapter_only_at_admission_and_rechecks_window_after_resolution() {
+        let source = FixtureSource {
+            started: Instant::now(),
+            calls: AtomicUsize::new(0),
+            fail_first: 0,
+        };
+        let (_cancel, cancellation) = watch::channel(false);
+        let hwnd = std::cell::Cell::new(7);
+        let mut resolutions = 0;
+        let result = wait(
+            process(),
+            &source,
+            || {
+                Ok(CaptureWindowSnapshot {
+                    hwnd: hwnd.get(),
+                    ..target()
+                })
+            },
+            |window| {
+                resolutions += 1;
+                assert_eq!(source.calls.load(Ordering::SeqCst), resolutions * 3);
+                if resolutions == 1 {
+                    hwnd.set(8);
+                }
+                resolve_target(window)
+            },
+            cancellation,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.windows_hwnd(), Some(8));
+        assert_eq!(resolutions, 2);
     }
 
     #[tokio::test]
@@ -497,7 +540,13 @@ mod tests {
             }
         }
         let (cancel, cancellation) = watch::channel(false);
-        let waiting = wait(process(), &Pending, || Ok(target()), cancellation);
+        let waiting = wait(
+            process(),
+            &Pending,
+            || Ok(target()),
+            resolve_target,
+            cancellation,
+        );
         tokio::pin!(waiting);
         assert!(
             tokio::time::timeout(Duration::from_millis(1), &mut waiting)
@@ -521,7 +570,13 @@ mod tests {
             fail_first: usize::MAX,
         };
         let (cancel, cancellation) = watch::channel(false);
-        let waiting = wait(process(), &source, || Ok(target()), cancellation);
+        let waiting = wait(
+            process(),
+            &source,
+            || Ok(target()),
+            |_| panic!("unavailable readiness must not resolve DXGI"),
+            cancellation,
+        );
         tokio::pin!(waiting);
         assert!(
             tokio::time::timeout(Duration::from_secs(600), &mut waiting)
@@ -548,15 +603,13 @@ mod tests {
             || {
                 discoveries += 1;
                 let mut t = target();
-                if discoveries == 3
-                    && let CaptureSource::WindowsGraphicsCapture { width, height, .. } =
-                        &mut t.source
-                {
-                    *width = 1;
-                    *height = 1;
+                if discoveries == 3 {
+                    t.width = 1;
+                    t.height = 1;
                 }
                 Ok(t)
             },
+            resolve_target,
             cancellation,
         )
         .await;

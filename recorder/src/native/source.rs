@@ -29,12 +29,19 @@ impl NativeWgcSource {
             .windows_adapter_luid()
             .context("native WGC target has no DXGI adapter LUID")?;
         let device = NativeD3d11Device::for_luid(&winrt, adapter_luid)?;
-        let capture = NativeWgcCapture::start(&winrt, target, &device)?;
-        Ok(Self {
+        let capture = NativeWgcCapture::prepare(&winrt, target, &device)
+            .context("native WGC preparation failed before callback registration")?;
+        let mut source = Self {
             capture,
             device,
             _winrt: winrt,
-        })
+        };
+        if let Err(error) = source.capture.start() {
+            return Err(
+                source.close_after_initialization_failure("WGC callback/session startup", error)
+            );
+        }
+        Ok(source)
     }
 
     pub fn try_recv(&self) -> Result<Option<CapturedWgcFrame<'_>>> {
@@ -131,6 +138,61 @@ impl NativeWgcSource {
                 );
                 std::mem::forget(self);
                 Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn close_after_initialization_failure(
+        self,
+        stage: &'static str,
+        error: anyhow::Error,
+    ) -> anyhow::Error {
+        initialization_failure(stage, error, || self.close().map(|_| ()))
+    }
+}
+
+fn initialization_failure(
+    stage: &'static str,
+    error: anyhow::Error,
+    cleanup: impl FnOnce() -> Result<()>,
+) -> anyhow::Error {
+    let cleanup = cleanup();
+    tracing::error!(stage, error = %format!("{error:#}"), cleanup_ok = cleanup.is_ok(),
+        cleanup_error = cleanup.as_ref().err().map(|error| format!("{error:#}")),
+        "native partial initialization failed; source cleanup completed or retained safely");
+    match cleanup {
+        Ok(()) => error.context(format!("{stage}; source cleanup complete")),
+        Err(cleanup) => error.context(format!(
+            "{stage}; source retained after cleanup failure: {cleanup:#}"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn partial_initialization_closes_once_and_retains_primary_and_cleanup_errors() {
+        for cleanup_fails in [false, true] {
+            let calls = std::cell::Cell::new(0);
+            let error = initialization_failure(
+                "converter",
+                anyhow::anyhow!("GPU setup failed").context("original stage"),
+                || {
+                    calls.set(calls.get() + 1);
+                    if cleanup_fails {
+                        anyhow::bail!("callback still owned");
+                    }
+                    Ok(())
+                },
+            );
+            let message = format!("{error:#}");
+            assert_eq!(calls.get(), 1);
+            assert!(message.contains("original stage: GPU setup failed"));
+            if cleanup_fails {
+                assert!(message.contains("retained after cleanup failure: callback still owned"));
+            } else {
+                assert!(message.contains("source cleanup complete"));
             }
         }
     }

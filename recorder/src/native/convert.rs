@@ -988,7 +988,7 @@ fn validate_dimensions(
     Ok(())
 }
 
-fn center_crop_rect(
+pub(super) fn center_crop_rect(
     input_width: u32,
     input_height: u32,
     output_width: u32,
