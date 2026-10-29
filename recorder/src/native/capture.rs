@@ -807,19 +807,30 @@ impl NativeWgcCapture {
 /// Item.Size can describe a transient tiny window. Allocate the same source's
 /// initial pool from the admitted HWND instead; frame ContentSize owns recovery.
 fn initial_pool_size(item: SizeInt32, target: Option<(u32, u32)>) -> Result<SizeInt32> {
-    let usable =
-        |width: u32, height: u32| super::convert::center_crop_rect(width, height, 16, 9).is_ok();
-    if item.Width > 0 && item.Height > 0 && usable(item.Width as u32, item.Height as u32) {
+    let expected = target.context("initial WGC item has no validated HWND size")?;
+    if !initial_content_ready(expected, expected) {
+        bail!("validated HWND size cannot support initial capture");
+    }
+    if item.Width > 0
+        && item.Height > 0
+        && initial_content_ready((item.Width as u32, item.Height as u32), expected)
+    {
         return Ok(item);
     }
-    let (width, height) = target.context("unusable WGC item size has no validated HWND size")?;
-    if !usable(width, height) {
-        bail!("neither initial WGC item nor HWND size supports an NV12 crop");
-    }
+    let (width, height) = expected;
     Ok(SizeInt32 {
         Width: i32::try_from(width)?,
         Height: i32::try_from(height)?,
     })
+}
+
+/// Startup content must cover the admitted physical client size (already
+/// rounded down to even pixels). Larger WGC window/border surfaces are valid.
+/// This admission policy is intentionally separate from converter capability.
+pub(super) fn initial_content_ready(content: (u32, u32), expected: (u32, u32)) -> bool {
+    content.0 >= expected.0
+        && content.1 >= expected.1
+        && super::convert::center_crop_rect(content.0, content.1, 16, 9).is_ok()
 }
 
 /// Load worker-scoped statics so their COM pointers cannot outlive its MTA.
@@ -975,11 +986,20 @@ mod tests {
     fn initial_pool_size_uses_item_size_or_validated_hwnd_for_transient_sizes() {
         let target = Some((1920, 1080));
         let valid = SizeInt32 {
-            Width: 1280,
-            Height: 720,
+            Width: 1936,
+            Height: 1119,
         };
         assert_eq!(initial_pool_size(valid, target).unwrap(), valid);
-        for (width, height) in [(1, 1), (0, 0), (-1, 1080), (1920, -1), (2, 2)] {
+        for (width, height) in [
+            (1, 1),
+            (0, 0),
+            (-1, 1080),
+            (1920, -1),
+            (2, 2),
+            (4, 4),
+            (1280, 720),
+            (1919, 1079),
+        ] {
             let size = initial_pool_size(
                 SizeInt32 {
                     Width: width,
@@ -990,6 +1010,28 @@ mod tests {
             .unwrap();
             assert_eq!((size.Width, size.Height), (1920, 1080));
         }
+    }
+
+    #[test]
+    fn initial_content_admission_requires_expected_client_size_not_just_nv12() {
+        let expected = (1920, 1080);
+        assert!(super::super::convert::center_crop_rect(4, 4, 16, 9).is_ok());
+        for dimensions in [
+            (1, 1),
+            (4, 4),
+            (320, 200),
+            (1280, 720),
+            (1919, 1080),
+            (1920, 1079),
+        ] {
+            assert!(!initial_content_ready(dimensions, expected));
+        }
+        for dimensions in [expected, (1921, 1081), (1936, 1119)] {
+            assert!(initial_content_ready(dimensions, expected));
+        }
+        // Smaller admitted game windows use their own dimensions, not a fixed
+        // output-resolution threshold; transient shrinkage must first recover.
+        assert!(initial_content_ready((1280, 720), (1280, 720)));
     }
 
     #[test]

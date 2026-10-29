@@ -23,7 +23,9 @@ pub use capture::{
 pub use clock::{NativeCfrClock, NativeCfrTelemetrySnapshot, NativeCfrTick};
 pub use convert::{ConvertedNv12Frame, NativeNv12Converter, NativeNv12TelemetrySnapshot};
 pub use encode::{NativeNvencEncoder, NativeNvencTelemetrySnapshot};
-pub(crate) use lifecycle::{NativeRecordingSession, NativeRecordingStartupFailureDisposition};
+pub(crate) use lifecycle::{
+    NATIVE_STARTUP_TIMEOUT, NativeRecordingSession, NativeRecordingStartupFailureDisposition,
+};
 pub use mux::{NativeMuxPlan, NativeMuxProcess, NativeMuxTelemetrySnapshot};
 pub use nvenc::{NvencApiVersion, NvencDriverProbe, NvencH264Capability};
 pub use session::{NativeRecorderSession, NativeSessionTelemetrySnapshot};

@@ -18,19 +18,21 @@ use crate::storage::VIDEO_PARTIAL_MP4;
 use super::{NativeRecorderSession, NativeSessionTelemetrySnapshot};
 
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(50);
+pub(crate) const NATIVE_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Only observed source progress extends waiting for a usable initial frame.
-/// Stalls and all later encode/mux failures retain their existing deadline.
+/// Source progress may extend inactivity waiting, never the absolute budget.
 pub(super) struct StartupDeadline {
     expires: Instant,
+    absolute: Instant,
     timeout: Duration,
     progress: u64,
 }
 
 impl StartupDeadline {
-    pub(super) fn new(now: Instant, timeout: Duration) -> Self {
+    pub(super) fn new(now: Instant, timeout: Duration, absolute: Instant) -> Self {
         Self {
             expires: now + timeout,
+            absolute,
             timeout,
             progress: 0,
         }
@@ -43,8 +45,20 @@ impl StartupDeadline {
         }
     }
 
-    pub(super) fn expired(&self, now: Instant) -> bool {
-        now >= self.expires
+    pub(super) fn expiration(&self, now: Instant) -> Option<&'static str> {
+        if now >= self.absolute {
+            Some("absolute_deadline")
+        } else if now >= self.expires {
+            Some("source_inactivity")
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn remaining(&self, now: Instant) -> Duration {
+        self.expires
+            .min(self.absolute)
+            .saturating_duration_since(now)
     }
 }
 
@@ -210,6 +224,7 @@ impl NativeRecordingSession {
         let worker_stop = Arc::clone(&stop);
         let (evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
         let startup_span = tracing::Span::current();
+        let startup_deadline = Instant::now() + startup_timeout;
         let thread = thread::Builder::new()
             .name("queueback-native-gpu".to_owned())
             .spawn(move || {
@@ -221,6 +236,7 @@ impl NativeRecordingSession {
                     &worker_output,
                     &worker_stop,
                     &evidence_sender,
+                    startup_deadline,
                 )
             })
             .context("failed to start native recorder GPU worker")
@@ -232,7 +248,7 @@ impl NativeRecordingSession {
             worker,
             evidence,
             cancellation,
-            startup_timeout,
+            startup_deadline,
         )
         .await
     }
@@ -243,10 +259,8 @@ impl NativeRecordingSession {
         worker: NativeWorker,
         mut evidence: watch::Receiver<RecordingEvidence>,
         mut cancellation: watch::Receiver<bool>,
-        startup_timeout: Duration,
+        startup_deadline: Instant,
     ) -> NativeRecordingStartupResult<Self> {
-        let mut deadline = StartupDeadline::new(Instant::now(), startup_timeout);
-
         loop {
             if *cancellation.borrow() {
                 let cleanup = worker.stop_and_join().await.err();
@@ -255,8 +269,16 @@ impl NativeRecordingSession {
                 ));
             }
             let snapshot = evidence.borrow().clone();
-            if snapshot.capture_ready && snapshot.first_qpc.is_none() {
-                deadline.observe(snapshot.source_frames_surfaced, Instant::now());
+            if Instant::now() >= startup_deadline {
+                let worker_error = worker.stop_and_join().await.err();
+                return Err(NativeRecordingStartupFailure::terminal(anyhow!(
+                    "native recorder exceeded absolute startup deadline (source={}, encoded={}, muxed_bytes={}, output_time_us={:?}){}",
+                    snapshot.source_frames_received(),
+                    snapshot.encoded_frames,
+                    snapshot.muxed_bytes,
+                    snapshot.output_time_us,
+                    format_cleanup_error(worker_error)
+                )));
             }
             if let Some(error) = snapshot.protocol_error.as_deref() {
                 let worker_error = worker.stop_and_join().await.err();
@@ -302,20 +324,6 @@ impl NativeRecordingSession {
                 );
                 return Err(NativeRecordingStartupFailure::terminal(anyhow!(error)));
             }
-            if deadline.expired(Instant::now()) {
-                let snapshot = evidence.borrow().clone();
-                let worker_error = worker.stop_and_join().await.err();
-                return Err(NativeRecordingStartupFailure::retryable(anyhow!(
-                    "native recorder did not produce source, encode and mux progress within {} seconds (source={}, encoded={}, muxed_bytes={}, output_time_us={:?}){}",
-                    startup_timeout.as_secs_f64(),
-                    snapshot.source_frames_received(),
-                    snapshot.encoded_frames,
-                    snapshot.muxed_bytes,
-                    snapshot.output_time_us,
-                    format_cleanup_error(worker_error)
-                )));
-            }
-
             tokio::select! {
                 changed = evidence.changed() => {
                     if changed.is_err() && !worker.is_finished() {
@@ -336,7 +344,7 @@ impl NativeRecordingSession {
                         ));
                     }
                 }
-                _ = tokio::time::sleep(STARTUP_POLL_INTERVAL) => {}
+                _ = tokio::time::sleep(STARTUP_POLL_INTERVAL.min(startup_deadline.saturating_duration_since(Instant::now()))) => {}
             }
         }
     }
@@ -427,6 +435,7 @@ fn run_native_worker(
     output: &Path,
     stop: &AtomicBool,
     evidence: &watch::Sender<RecordingEvidence>,
+    startup_deadline: Instant,
 ) -> Result<NativeSessionTelemetrySnapshot> {
     let started = Instant::now();
     tracing::info!(elapsed_ms = 0_u64, "initializing native capture resources");
@@ -437,6 +446,7 @@ fn run_native_worker(
         output,
         stop,
         Some(evidence),
+        startup_deadline,
     ) {
         Ok(session) => session,
         Err(error) => {
@@ -512,17 +522,39 @@ mod tests {
     fn initial_frame_wait_extends_only_for_new_source_progress() {
         let start = Instant::now();
         let timeout = Duration::from_secs(5);
-        let mut deadline = StartupDeadline::new(start, timeout);
+        let mut deadline = StartupDeadline::new(start, timeout, start + Duration::from_secs(30));
         for progress in 1..=4 {
             let now = start + Duration::from_secs(progress * 4);
-            assert!(!deadline.expired(now));
+            assert_eq!(deadline.expiration(now), None);
             deadline.observe(progress, now);
         }
         // Cached or regressed counters must not turn a stalled source into
         // unbounded waiting, even after a long recoverable tiny-frame period.
         deadline.observe(4, start + Duration::from_secs(20));
         deadline.observe(3, start + Duration::from_secs(20));
-        assert!(deadline.expired(start + Duration::from_secs(21)));
+        assert_eq!(
+            deadline.expiration(start + Duration::from_secs(21)),
+            Some("source_inactivity")
+        );
+    }
+
+    #[test]
+    fn continuous_unusable_progress_cannot_extend_absolute_deadline() {
+        let start = Instant::now();
+        let absolute = start + NATIVE_STARTUP_TIMEOUT;
+        let mut deadline = StartupDeadline::new(start, Duration::from_secs(5), absolute);
+        for second in 1..15 {
+            let now = start + Duration::from_secs(second);
+            assert_eq!(deadline.expiration(now), None);
+            deadline.observe(second, now);
+        }
+        assert_eq!(
+            deadline.remaining(absolute - Duration::from_millis(1)),
+            Duration::from_millis(1)
+        );
+        deadline.observe(15, absolute);
+        assert_eq!(deadline.expiration(absolute), Some("absolute_deadline"));
+        assert!(deadline.remaining(absolute).is_zero());
     }
 
     fn telemetry() -> NativeSessionTelemetrySnapshot {
@@ -725,7 +757,7 @@ mod tests {
                 worker,
                 evidence,
                 cancellation,
-                Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(1),
             )
             .await,
         )
@@ -753,7 +785,7 @@ mod tests {
                 worker,
                 evidence,
                 cancellation,
-                Duration::from_millis(5),
+                Instant::now() + Duration::from_millis(5),
             )
             .await,
         )
@@ -761,7 +793,7 @@ mod tests {
 
         assert_eq!(
             error.disposition(),
-            NativeRecordingStartupFailureDisposition::Retryable
+            NativeRecordingStartupFailureDisposition::Terminal
         );
         assert_explicit_cleanup(&observer);
     }
@@ -791,7 +823,7 @@ mod tests {
                     worker,
                     evidence,
                     cancellation,
-                    Duration::from_secs(1),
+                    Instant::now() + Duration::from_secs(1),
                 )
                 .await,
             )
@@ -819,7 +851,7 @@ mod tests {
                 worker,
                 evidence,
                 cancellation,
-                Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(1),
             )
             .await,
         )
@@ -828,6 +860,76 @@ mod tests {
             error.disposition(),
             NativeRecordingStartupFailureDisposition::Terminal
         );
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn continuous_unusable_startup_progress_terminates_and_joins_worker() {
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let (sender, evidence) = watch::channel(RecordingEvidence {
+            capture_ready: true,
+            source_frames_surfaced: 1,
+            ..RecordingEvidence::default()
+        });
+        let thread = thread::spawn(move || {
+            while !worker_stop.load(Ordering::Acquire) {
+                sender.send_modify(|state| state.source_frames_surfaced += 1);
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(telemetry())
+        });
+        let worker = NativeWorker::with_cleanup_observer(stop, thread, Arc::clone(&observer));
+        let (_cancel, cancellation) = watch::channel(false);
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                Instant::now() + Duration::from_millis(40),
+            ),
+        )
+        .await
+        .expect("startup progress must not keep the worker alive indefinitely");
+        let error = expect_startup_failure(result).await;
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Terminal
+        );
+        assert!(error.to_string().contains("absolute startup deadline"));
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn expired_startup_budget_rejects_even_ready_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let deadline = Instant::now();
+        let worker = waiting_worker(Arc::clone(&observer));
+        let (_sender, evidence) = watch::channel(telemetry().recording_evidence());
+        let (_cancel, cancellation) = watch::channel(false);
+        let error = expect_startup_failure(
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                deadline,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Terminal
+        );
+        assert!(error.to_string().contains("absolute startup deadline"));
         assert_explicit_cleanup(&observer);
     }
 
@@ -848,7 +950,7 @@ mod tests {
                 worker,
                 evidence,
                 cancellation,
-                Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(1),
             )
             .await,
         )

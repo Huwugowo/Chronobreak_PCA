@@ -8,7 +8,7 @@ use tokio::sync::watch;
 use crate::encoder::{AudioSource, RecordingEvidence};
 use crate::platform::{CaptureTarget, instant_from_qpc_100ns};
 
-use super::lifecycle::StartupDeadline;
+use super::lifecycle::{NATIVE_STARTUP_TIMEOUT, StartupDeadline};
 use super::{
     NATIVE_ENCODER_SLOT_COUNT, NATIVE_WGC_FRAME_POOL_CAPACITY, NativeCfrClock,
     NativeCfrTelemetrySnapshot, NativeMuxPlan, NativeMuxProcess, NativeMuxTelemetrySnapshot,
@@ -101,7 +101,15 @@ impl NativeRecorderSession {
         audio: &AudioSource,
         output: &Path,
     ) -> Result<Self> {
-        Self::start_with_stop(target, ffmpeg, audio, output, &AtomicBool::new(false), None)
+        Self::start_with_stop(
+            target,
+            ffmpeg,
+            audio,
+            output,
+            &AtomicBool::new(false),
+            None,
+            Instant::now() + NATIVE_STARTUP_TIMEOUT,
+        )
     }
 
     pub(crate) fn start_with_stop(
@@ -111,11 +119,19 @@ impl NativeRecorderSession {
         output: &Path,
         stop: &AtomicBool,
         evidence: Option<&watch::Sender<RecordingEvidence>>,
+        startup_deadline: Instant,
     ) -> Result<Self> {
         let mut source = NativeWgcSource::start(target)?;
         let initialized = (|| {
-            let (unusable_size_frames, first_unusable_size) =
-                wait_for_usable_source(&mut source, stop, evidence)?;
+            let (unusable_size_frames, first_unusable_size) = wait_for_usable_source(
+                &mut source,
+                stop,
+                evidence,
+                target
+                    .dimensions()
+                    .context("initial capture requires admitted HWND dimensions")?,
+                startup_deadline,
+            )?;
             let converter = source
                 .create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS)
                 .context("native converter initialization")?;
@@ -941,44 +957,69 @@ fn wait_for_usable_source(
     source: &mut NativeWgcSource,
     stop: &AtomicBool,
     evidence: Option<&watch::Sender<RecordingEvidence>>,
+    expected: (u32, u32),
+    startup_deadline: Instant,
 ) -> Result<(u64, Option<(u32, u32)>)> {
-    let mut deadline = StartupDeadline::new(Instant::now(), FIRST_FRAME_TIMEOUT);
-    let mut evidence_due = Instant::now();
-    let mut unusable = 0;
-    let mut first_unusable = None;
-    loop {
+    let started = Instant::now();
+    let mut deadline = StartupDeadline::new(started, FIRST_FRAME_TIMEOUT, startup_deadline);
+    let mut evidence_due = started;
+    let mut diagnostics = InitialRecoveryDiagnostics::default();
+    let mut reason = "source_receive";
+    let result = (|| loop {
+        if let Some(expiration) = deadline.expiration(Instant::now()) {
+            reason = expiration;
+            bail!("native WGC initial content recovery timed out");
+        }
         if stop.load(Ordering::Acquire) {
+            reason = "cancelled";
             bail!("native initialization cancelled before usable source");
         }
-        if deadline.expired(Instant::now()) {
-            bail!("native WGC produced no usable initial frame within the source deadline");
-        }
-        if let Some(frame) = source.recv_timeout(MAX_SOURCE_WAIT)? {
+        reason = "source_receive";
+        if let Some(frame) =
+            source.recv_timeout(MAX_SOURCE_WAIT.min(deadline.remaining(Instant::now())))?
+        {
             let dimensions = frame.dimensions();
-            let usable = super::convert::center_crop_rect(
-                dimensions.0,
-                dimensions.1,
-                NATIVE_WIDTH,
-                NATIVE_HEIGHT,
-            )
-            .is_ok();
+            let usable = super::capture::initial_content_ready(dimensions, expected);
+            diagnostics.observe(dimensions, usable);
+            reason = "frame_close";
             let close = frame.close();
             source.record_worker_frame_discard();
             close?;
+            if let Some(expiration) = deadline.expiration(Instant::now()) {
+                reason = expiration;
+                bail!("native WGC initial content arrived after recovery deadline");
+            }
             if usable {
+                reason = "pool_recreation";
                 if dimensions != source.pool_dimensions() {
                     source.recreate_for_content_size(dimensions.0, dimensions.1)?;
                 }
-                return Ok((unusable, first_unusable));
+                if let Some(expiration) = deadline.expiration(Instant::now()) {
+                    reason = expiration;
+                    bail!("native WGC initial recovery exceeded its deadline");
+                }
+                if stop.load(Ordering::Acquire) {
+                    reason = "cancelled";
+                    bail!("native initialization cancelled before usable source");
+                }
+                return Ok((
+                    diagnostics.unusable_frames,
+                    if diagnostics.unusable_frames > 0 {
+                        diagnostics.first_dimensions
+                    } else {
+                        None
+                    },
+                ));
             }
-            record_unusable_size(dimensions, &mut unusable, &mut first_unusable);
-            deadline.observe(unusable, Instant::now());
+            deadline.observe(diagnostics.unusable_frames, Instant::now());
         }
         let capture = source.telemetry();
         if capture.closed {
+            reason = "target_closed";
             bail!("native WGC target closed before usable initial frame");
         }
         if let Some(error) = capture.first_callback_error {
+            reason = "callback_error";
             bail!("native WGC callback failed during initialization: {error:?}");
         }
         if let Some(evidence) = evidence
@@ -990,6 +1031,39 @@ fn wait_for_usable_source(
             });
             evidence_due = Instant::now() + NATIVE_EVIDENCE_INTERVAL;
         }
+    })();
+    result.map_err(|error| diagnostics.failure(started.elapsed(), expected, reason, error))
+}
+
+#[derive(Default)]
+struct InitialRecoveryDiagnostics {
+    unusable_frames: u64,
+    first_dimensions: Option<(u32, u32)>,
+    latest_dimensions: Option<(u32, u32)>,
+}
+
+impl InitialRecoveryDiagnostics {
+    fn observe(&mut self, dimensions: (u32, u32), usable: bool) {
+        self.first_dimensions.get_or_insert(dimensions);
+        self.latest_dimensions = Some(dimensions);
+        if !usable {
+            self.unusable_frames = self.unusable_frames.saturating_add(1);
+        }
+    }
+
+    fn failure(
+        &self,
+        elapsed: Duration,
+        expected: (u32, u32),
+        reason: &str,
+        error: anyhow::Error,
+    ) -> anyhow::Error {
+        tracing::error!(elapsed_ms = elapsed.as_millis() as u64, reason,
+            unusable_frames = self.unusable_frames, first_dimensions = ?self.first_dimensions,
+            latest_dimensions = ?self.latest_dimensions, expected_dimensions = ?expected,
+            error = %format!("{error:#}"), "native initial content recovery failed");
+        error.context(format!("initial content recovery: reason={reason}, elapsed_ms={}, unusable_frames={}, first_dimensions={:?}, latest_dimensions={:?}, expected_dimensions={expected:?}",
+            elapsed.as_millis(), self.unusable_frames, self.first_dimensions, self.latest_dimensions))
     }
 }
 
@@ -1113,4 +1187,38 @@ fn native_protocol_error(
 
 fn format_result_error<T>(result: Result<T>) -> String {
     result.map_or_else(|error| format!("{error:#}"), |_| "none".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_failure_preserves_no_frame_and_unusable_frame_evidence() {
+        let mut diagnostics = InitialRecoveryDiagnostics::default();
+        let no_frames = diagnostics.failure(
+            Duration::from_secs(5),
+            (1920, 1080),
+            "source_inactivity",
+            anyhow::anyhow!("no initial frame"),
+        );
+        let message = format!("{no_frames:#}");
+        assert!(message.contains("reason=source_inactivity, elapsed_ms=5000, unusable_frames=0"));
+        assert!(message.contains("first_dimensions=None, latest_dimensions=None"));
+        assert!(message.contains("no initial frame"));
+
+        diagnostics.observe((1, 1), false);
+        diagnostics.observe((4, 4), false);
+        let unusable = diagnostics.failure(
+            Duration::from_secs(15),
+            (1920, 1080),
+            "absolute_deadline",
+            anyhow::anyhow!("recovery timed out"),
+        );
+        let message = format!("{unusable:#}");
+        assert!(message.contains("reason=absolute_deadline, elapsed_ms=15000, unusable_frames=2"));
+        assert!(message.contains("first_dimensions=Some((1, 1)), latest_dimensions=Some((4, 4))"));
+        assert!(message.contains("expected_dimensions=(1920, 1080)"));
+        assert!(message.contains("recovery timed out"));
+    }
 }

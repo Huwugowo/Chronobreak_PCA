@@ -253,8 +253,6 @@ fn startup_retry_delay(failure_count: u32) -> Duration {
 const STARTUP_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(20);
 const CAPTURE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTROL_TELEMETRY_INTERVAL: Duration = Duration::from_secs(60);
-#[cfg(target_os = "windows")]
-const WINDOWS_RECORDING_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 enum VideoRecordingSession {
     #[cfg(not(target_os = "windows"))]
@@ -1094,7 +1092,7 @@ async fn start_recording(
             ffmpeg.path().to_path_buf(),
             audio.clone(),
             cancellation.clone(),
-            WINDOWS_RECORDING_STARTUP_TIMEOUT,
+            crate::native::NATIVE_STARTUP_TIMEOUT,
         )
         .await;
         let session = match session_result {
