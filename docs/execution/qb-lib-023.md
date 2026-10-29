@@ -2,19 +2,19 @@
 
 Feature: `QB-LIB-023`
 ExecPlan: `docs/exec-plans/qb-lib-023-controlled-league-data-initialization.md`
-Updated: 2026-10-28
+Updated: 2026-10-29
 
 ## Current milestone
 
-M3: final verification and isolated production acceptance.
-M1 reproductions and M2 ownership/classification regressions passed.
+Implementation complete and accepted for delivery by explicit user decision on
+2026-10-29. Deliberate fixture-recovery observation is optional follow-up.
+Recorded automated/build evidence and positive release feedback remain valid;
+unobserved native scenarios are not claimed passed.
 
 ## Active unit
 
-Narrow user-requested follow-up to 1750337 implemented and verified: typed
-per-recording source limitations versus terminal initialization failures, with
-a safe failure notice in ordinary Match History. Commit/push is authorized.
-No new plan, framework, native changes or benchmark campaign.
+None. The verified typed-history correction is already committed as `9e5ca04`.
+This documentation handoff records the revised acceptance and confirms delivery.
 
 ## Completed
 
@@ -56,6 +56,9 @@ contradiction. Immutable plan linked only after that approval.
 
 ## In flight
 
+None. The following is historical launch/verification context, not current
+process state or an instruction to resume acceptance:
+
 Implementation integrated; fresh read-only focused review found no consequential
 contract bug. User-operated launch used process 35688 and the isolated profile
 build/qb-lib-023/native/manual-20261028T132923800Z. User reports the app behaves
@@ -71,13 +74,19 @@ desktop executable build or native interaction is claimed for that correction.
 
 ## Remaining
 
-Implementation, automated regressions/full checks, release build, focused review,
-durable architecture updates and source comparison are complete. User-operated
-release feedback is positive and the loading refinement is accepted. Explicit
-deliberate fixture-recovery observation remains before canonical completion;
-the broad user report is retained without inventing individual scenario results.
+No required implementation or acceptance work. Deliberate native fixture
+recovery remains unobserved and optional; individual manual scenario results
+were not supplied. The last typed-history follow-up has focused frontend/build
+verification, without a separately claimed desktop rebuild/native interaction.
 
 ## Verification
+
+2026-10-29 scope/state handoff: canonical validator passed (102 items / 22
+plan/checkpoint pairs); whitespace check passed. Documentation/state changes
+only; no product suite, native scenario or benchmark rerun is claimed.
+
+GitHub refs/heads/main confirmed at `cc4938238c48bf9f3b538a42be5dc998f5d78897`,
+which already contains the verified implementation commit `9e5ca04`.
 
 Read-only current-cache queries completed: three named games ready/zero-tail/
 flags25/final-result-present; seven total indexed rows current/ready. Source
@@ -182,7 +191,12 @@ suite rerun was needed for this bounded frontend correction.
 
 ## Deviations
 
-None. The root-cause investigation expanded the user-facing label request into
+2026-10-29 explicit user-directed requirement revision: deliberate native fixture
+recovery is optional follow-up, not a completion/delivery gate. This does not
+convert unobserved scenarios into passes. The plan carries this narrow amendment.
+
+Originally no design deviation. The root-cause investigation expanded the
+user-facing label request into
 one coordinated initialization/ownership feature rather than masking failures.
 User refinement after native observation: delay only the replay loading notice
 by 500 ms to avoid a flash during ordinary opens. The underlying loading/work and
@@ -191,6 +205,10 @@ minimum display duration prolongs finished work. This is presentation timing,
 not a changed ownership/classification design.
 
 ## Decisions
+
+2026-10-29: accept the verified implementation for delivery and close this feature.
+Do not prolong implementation for optional deliberate fixture recovery. Existing
+code/verification history is retained; no product code changed in this handoff.
 
 The user explicitly answered Yes, fix the behaviour too. Implementation is
 authorized; do not ask the same scope question again in the execution pass.
@@ -226,15 +244,12 @@ coverage, writer scheduling and loading/final-query settlement paths.
 
 ## Blockers
 
-No blocker for the requested commit/push. Prior Computer Use capture/control
-failures are limitations of that automation attempt, not a failed product result.
-The user has since reported good app behaviour and accepted the loading polish.
-Historical startup exception is unavailable; fix the
-demonstrable producer/consumer defects with controlled reproduction rather than
-claiming a retrospective log capture. The user has explicitly resumed implementation.
+None for delivery or completion under the user-revised scope. Earlier Computer
+Use failures and lack of individual manual observations remain recorded
+limitations, not passing results.
 
 ## Next action
 
-Commit/push the verified narrow history correction as requested. Before later
-marking the broader feature done, prepare/observe deliberate native fixture
-recovery; the follow-up itself has no remaining implementation/verification unit.
+No active implementation or required acceptance work. The verified implementation
+is already on origin/main; this scope/closure handoff is authorized for delivery.
+Optional fixture recovery may be revisited only when useful to a product question.

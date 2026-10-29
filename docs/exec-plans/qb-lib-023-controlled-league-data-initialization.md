@@ -1,5 +1,13 @@
 # QB-LIB-023: Controlled League data initialization and recovery
 
+## User-directed scope amendment (2026-10-29)
+
+The user revised acceptance on 2026-10-29: deliberate native fixture-recovery
+observation is optional follow-up and must not prolong implementation or block
+delivery/completion. Retain actual verification and unobserved scenarios in the
+checkpoint; never infer individual manual passes from broad release feedback.
+The original implementation design below is retained.
+
 ## Purpose
 
 Opening Games or a replay presents honest, calm match-data loading. The app

@@ -2,9 +2,20 @@
 
 Feature: `QB-REPLAY-010`
 ExecPlan: `docs/exec-plans/qb-replay-010-replay-opening-acceptance.md`
-Updated: 2026-10-13
+Updated: 2026-10-29
 
 ## Current milestone
+
+Integrated opening campaign discontinued by explicit product decision on
+2026-10-29. Performance acceptance is inconclusive/deferred; no aggregate observer
+or current full-feature performance gate passed. Status blocked means deferred
+acceptance, not an established product defect. No active implementation unit.
+
+The dated history below is preserved and superseded wherever it calls for
+benchmark continuation, repair, replacement or further acceptance work. Closed
+library/descriptor/UI units and their evidence remain accepted.
+
+### Historical milestone context (superseded)
 
 Integrated replay-opening acceptance M1 completed on 2026-10-12. The versioned
 candidate/reference workload, strict same-clock extraction, frozen-campaign
@@ -76,6 +87,13 @@ descriptor, timeline and playback scope. The immutable attribution plan remains 
 `docs/exec-plans/qb-replay-010-measured-library-and-replay-opening.md`.
 
 ## Active unit
+
+None. Stop r4 telemetry diagnosis and the large benchmark campaign. No
+replacement/top-up/main measurement or infrastructure repair without a specific
+product-driven justification. No new product defect is established by the
+incomplete benchmark telemetry.
+
+### Historical campaign handoff (superseded; do not execute)
 
 M2: r4 has frozen 22 matrices and 116 launches with unique pristine app-data and
 scratch roots, matching declared input fingerprints and 224–230-character atomic
@@ -568,6 +586,9 @@ Canonical evidence is retained at
 
 ## In flight
 
+None. The following preparation and campaign narrative is retained historical
+evidence; it does not authorize more collection or describe current processes.
+
 M2 corpus preparation is complete. S/R/L passed the original packaged probe/full
 decode. Both bulk N/E preparation attempts were interrupted without final
 receipts; their partial libraries, started receipts and logs remain preserved.
@@ -733,20 +754,17 @@ Ignored root: `build/perf/qb-replay-010/.chronobreak-replay-benchmark`.
 
 ## Remaining
 
-- M2: freeze reference/current subjects, prepare generated S/R/L/N/E fixtures and
-  exact paired specs, pass all static preflights and both observer-control matrices.
-- M3: collect the fixed cold/warm comparison (100 main launches; 16 prerequisite
-  observer-control launches), validate independent counts/identities/source hashes,
-  and disposition every material resource, I/O, playback or timing signal.
-- M4: complete affected automated/build checks and current normal-build native
-  acceptance, including optional-details continuity and the configured/resolved
-  root-alias watchpoint. Record actual evidence before claiming full completion.
+No active engineering work. Criterion 6/current integrated performance acceptance
+is inconclusive/deferred. The aggregate observer gate failed to establish valid
+acceptance and all 100 main launches remain unrun. Current normal-build native
+acceptance and the configured/resolved-root alias watchpoint are also unverified
+and deferred; neither is a confirmed product failure.
 
-No library, descriptor or original reconciliation milestone remains. Their source
-and acceptance results stay closed. No full-feature latency/I/O or current native
-acceptance pass is implied by those prior results. Any demonstrated product defect
-needs a focused corrective design; no speculative backend/index implementation is
-authorized. Preserve the original unchanged feature criteria and old campaign data.
+Preserve all subjects, fixtures, reports and raw failed/accepted receipts under
+`build/perf/qb-replay-010-opening-v1/` and the existing evidence paths below.
+Prior library/descriptor/UI results remain closed and unpooled. Revisit only for
+a specific product-driven question; do not repair benchmark infrastructure or
+launch a replacement merely to complete the old plan.
 
 ### Closed descriptor boundary
 
@@ -777,6 +795,10 @@ remaining-scope bullets below were superseded by descriptor/UI closure.
   initial absolute-root rendering was observed, not alias/root-switch acceptance.
 
 ## Verification
+
+2026-10-29 scope/state handoff: canonical validator passed (102 items / 22
+plan/checkpoint pairs); whitespace check passed. Documentation/state changes
+only; no product suite, native scenario or benchmark rerun is claimed.
 
 - 2026-10-13 user-requested reconciliation incorporates the newer PC handoff while
   preserving the opening work and closed campaign evidence. Combined-source
@@ -1295,6 +1317,13 @@ remaining-scope bullets below were superseded by descriptor/UI closure.
 
 ## Decisions
 
+- 2026-10-29 user-directed stop: discontinue the large integrated campaign;
+  preserve every existing artifact and accepted product unit. Current performance
+  acceptance is inconclusive/deferred, not passed. No replacement campaigns or
+  benchmark-infrastructure diagnosis/repair without a specific product-driven
+  justification. This supersedes historical execution instructions below and is
+  reflected by a narrow scope amendment in the linked plan.
+
 - 2026-10-12 implementation clarification: the generic analyzer currently emits
   schema version 1, despite the plan's clerical schema-v2 wording. Preserve that
   existing schema; opening acceptance has its own strict version-1 report.
@@ -1415,24 +1444,14 @@ remaining-scope bullets below were superseded by descriptor/UI closure.
 
 ## Blockers
 
-No current environment blocker was established during planning: repository reads,
-documentation writes and canonical validation work. Historical native-pipe and
-shell restrictions in the retained history are dated observations, not a fresh
-failure. M2/M4 must attempt the relevant current preflight before reporting environment-blocked;
-human native observations remain valid when recorded explicitly.
-
-The feature remains in progress because matched measurements/resource dispositions
-and current native acceptance have not run. Closed V2/M4, descriptor and original
-reconciliation units have no reopened blocker. Unknown replay I/O/resource effects
-and the configured/resolved-root alias risk remain unproven, not confirmed defects.
+Acceptance deferred by product choice. R4 launch 16 completed the application
+scenario but failed process-telemetry completeness; that evidence remains invalid
+for benchmark acceptance. No aggregate observer or main performance pass is
+claimed. Unknown I/O/resource effects and the root-alias watchpoint remain
+unproven; they do not authorize speculative product changes.
 
 ## Next action
 
-Diagnose r4 launch 16's process-telemetry completeness failure from preserved
-samples, collector accounting and notifications. The application completed, but
-this is not a valid benchmark bundle. R4 and all earlier campaigns are closed;
-no main measurement, top-up or automatic replacement is permitted. The app is
-closed. The accepted fixtures/builds remain valid unless diagnosis invalidates
-their dependencies.
-Preserve every attempted root and keep work uncommitted; no automatic live retry,
-top-up or replacement campaign.
+No scheduled action. Keep the campaign discontinued and its evidence preserved.
+Resume only when a specific product-driven justification identifies a concrete
+question and bounded work worth doing; formal plan completion alone is not one.

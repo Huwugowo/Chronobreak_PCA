@@ -1,5 +1,15 @@
 # QB-REPLAY-010 — Integrated replay-opening acceptance
 
+## User-directed scope amendment (2026-10-29)
+
+The user discontinued the large integrated opening campaign on 2026-10-29.
+Its remaining performance acceptance is deferred and must not be treated as
+passed. No replacement campaign, top-up, main collection or further benchmark
+infrastructure repair is authorized without a specific product-driven
+justification. Preserve all existing evidence and accepted product work.
+This amendment supersedes the execution requirements below; the original
+design is retained as history. Current outcomes belong to the checkpoint.
+
 ## Purpose
 
 Establish whether the integrated application makes the Games library and selected
