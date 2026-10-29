@@ -15,7 +15,11 @@
       "area": "library-replay",
       "status": "done",
       "parent_id": "EPIC-LIBRARY",
-      "dependencies": ["QB-LIB-019", "QB-LIB-020", "QB-REPLAY-020"],
+      "dependencies": [
+        "QB-LIB-019",
+        "QB-LIB-020",
+        "QB-REPLAY-020"
+      ],
       "execution": {
         "workflow": "planned",
         "plan": "docs/exec-plans/qb-lib-023-controlled-league-data-initialization.md",
@@ -781,7 +785,9 @@
         "QB-CAP-001",
         "QB-CAP-002"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-10-29 source review confirms that video and metadata publication uses separate renames with ordinary-error rollback but no recorder-startup reconciliation. A crash can leave video.mp4 plus metadata.pending.json; the app surfaces an incomplete item rather than a playable completed recording. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (M2)."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
@@ -789,12 +795,13 @@
       "acceptance_criteria": [
         "An intentionally interrupted recording can be recovered to a playable file when the chosen media/container strategy permits it.",
         "Recovery does not duplicate the match in the library.",
-        "Unrecoverable cases are reported explicitly."
+        "Unrecoverable cases are reported explicitly.",
+        "Recovery covers interruption between recording-video and metadata publication, validates media/metadata identity, is idempotent, and never overwrites canonical or foreign artifacts; ambiguous states retain their bytes and receive an explicit classification."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Interrupt a fixture recording before graceful finalization and exercise recovery.",
+          "description": "Interrupt generated fixture recordings before graceful finalization and terminate an isolated test process around each video/metadata publication transition; verify restart reconciliation, identity checks, non-overwrite behavior, retained ambiguous output, and repeated-run idempotence in a dedicated temporary library.",
           "command": null
         },
         {
@@ -803,7 +810,7 @@
           "command": null
         }
       ],
-      "notes": "Fragmented MP4 currently preserves completed fragments, but there is no discovery/repair workflow or explicit unrecoverable-state reporting.",
+      "notes": "Fragmented MP4 preserves completed fragments, but there is no recorder-media discovery/repair workflow or explicit unrecoverable-state reporting. The separate optional post-game coordinator and clip-export staging recovery do not reconcile recording publication. Include validated canonical-video/pending-metadata pairs and partial/orphan classification in the planned design; do not treat two file renames as one transaction or use real recordings as destructive fixtures.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,
@@ -822,7 +829,9 @@
         "QB-CAP-001",
         "QB-CAP-002"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-10-29 source review confirms that recorder finalization already runs a bounded packaged ffprobe summary and independently counts fragmented-MP4 video samples. It does not independently enforce output dimensions or H.264 High profile, and aggregate rate/count/duration checks do not prove every sample's exact CFR timing. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (M1)."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
@@ -830,16 +839,18 @@
       "acceptance_criteria": [
         "Chronobreak validates expected media streams and sensible duration/timestamps after finalization.",
         "Known malformed fixture output is detected.",
-        "A valid recording passes without unnecessary user-facing noise."
+        "A valid recording passes without unnecessary user-facing noise.",
+        "Native production output is independently checked against its selected 1920x1080 H.264 High plan rather than inferring dimensions/profile from producer configuration.",
+        "An exact-CFR claim is supported by an independent bounded sample-timing check; correct aggregate frame rate, count, and duration alone do not certify a per-sample presentation grid."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Validate good and deliberately malformed media fixtures.",
+          "description": "Validate generated good and malformed media fixtures, including wrong dimensions, wrong H.264 profile, and perturbed sample timing with otherwise correct aggregate rate/count/duration; prove bounded work and preserve all source media.",
           "command": null
         }
       ],
-      "notes": "The app validates selected metadata before playback/export, but recorder finalization does not currently run ffprobe or a content-progress integrity check.",
+      "notes": "The existing recorder finalizer checks stream cardinality/codecs, aggregate timing, producer reconciliation, and actual fragmented sample count through bounded ffprobe/header reads. This feature owns the remaining independent property/timing and content-progress integrity work; the existing baseline is not a full integrity or frozen-content certification. Extend the shared replay-time contract where required, preserve its strict identity/timeline checks, and avoid a full decode of every user recording merely to establish inexpensive structural properties.",
       "user_value": 4,
       "differentiation": 4,
       "difficulty": 3,
@@ -884,6 +895,98 @@
       "differentiation": 4,
       "difficulty": 3,
       "stage": "ready"
+    },
+    {
+      "id": "QB-CAP-006",
+      "kind": "feature",
+      "name": "Protect League launch before native capture startup",
+      "description": "Define and verify a conservative game-readiness policy before native graphics startup so automatic recording defers safely while League is loading or its capture window is unstable.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "evidence": [
+        "2026-10-29 source review confirms that a visible eligible League HWND immediately permits native startup; the current source/encode/mux readiness check occurs after graphics initialization. No diagnostic artifacts or controlled reproduction establish recorder causation for the reported Thresh loading-screen incident. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (L1)."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "An explicitly documented and independently tested positive game-readiness policy gates D3D11, WGC, and NVENC startup; a visible/sized HWND or a single LCU phase label alone is insufficient.",
+        "Missing readiness, unstable dimensions, PID/HWND replacement, and startup failure defer or suppress recording with a bounded per-process/session rearm policy and actionable diagnostics; Chronobreak never blocks, suspends, manipulates, or terminates League to obtain footage.",
+        "Transition diagnostics correlate monotonic time, process generation/PID, HWND identity, HWND/capture-item/frame dimensions, readiness decisions, startup milestones, retry disposition, and cleanup outcome without recording LCU credentials or tokens.",
+        "Deterministic fixtures cover readiness freshness/progression, unavailable signals, unstable/hidden/closed windows, PID/HWND replacement, startup cancellation/failure, and repeated game restarts without an aggressive initialization loop.",
+        "Repeated controlled Practice Tool launches compare recorder absent, process running passively, and native capture enabled with timestamped launch/first-render and recorder evidence. Historical incident causality remains unattributed unless actual diagnostics or a controlled reproduction establish it."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Test the chosen readiness reducer, bounded rearm policy, privacy-safe transition data, and startup cancellation/replacement cases using deterministic fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Use generated Windows targets for unstable startup/failure paths, then perform the repeated Practice Tool absent/passive/capture launch comparison on supported hardware; retain timestamped evidence without risking multiplayer matches for diagnostics.",
+          "command": null
+        }
+      ],
+      "notes": "Draft investigation and preventive engineering, not a demonstrated P0 defect or an attribution of the Thresh incident. Before ready, select the positive readiness signal, define its freshness and API-unavailability behavior, and explicitly decide the acceptable loss of opening seconds. Existing Live Client polling starts after capture readiness and is not a pre-start gate. Do not reopen the verified active-recording 1x1 frame handling without separate evidence, introduce another capture backend, or claim hard containment of an in-process driver hang. The outstanding QB-PERF-002 matrix remains separate.",
+      "user_value": 5,
+      "differentiation": 4,
+      "difficulty": 4,
+      "stage": "draft"
+    },
+    {
+      "id": "QB-CAP-007",
+      "kind": "feature",
+      "name": "Prove safe rollback of partial WGC startup",
+      "description": "Establish callback-aware teardown and source-lifetime guarantees for every failure while constructing the native WGC capture owner.",
+      "priority": "P1",
+      "area": "capture",
+      "status": "not-started",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "evidence": [
+        "2026-10-29 source review confirms that FrameArrived/Closed registration and StartCapture precede construction of NativeWgcCapture, so construction errors do not use its explicit callback-quiescence shutdown path. Ordinary COM destruction may already be sufficient; no use-after-free or unsafe runtime outcome was demonstrated. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (N1)."
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Every construction failure after callback registration may begin has an explicit lifetime/rollback guarantee established by applicable WinRT contracts or guarded cleanup before the successful owner is returned.",
+        "Cleanup accounts for registered tokens, queued frames, frame-pool/session close ordering, callback activity and handler-owner release; resources that callbacks may still reference are retained when quiescence cannot be proven.",
+        "Deterministic failure injection covers FrameArrived registration, Closed registration, and StartCapture without weakening existing validation, successful-owner teardown, or source accounting.",
+        "A real Windows WGC fixture verifies the relevant partial-start failure paths, handler-owner release, no post-rollback frame admission, and teardown order; synthetic Rust callback-state tests alone are not treated as proof of WinRT teardown behavior."
+      ],
+      "verification": [
+        {
+          "type": "inspection",
+          "description": "Document the exact vendor lifetime guarantees at each construction boundary and use a rollback guard where the required guarantee cannot be established.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Inject each registration/start failure and verify owned cleanup, callback accounting, and retained-resource behavior using dedicated fixtures.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Exercise injected partial construction failures on a generated Windows WGC target, retaining callback release and teardown-order evidence without touching League or user recordings.",
+          "command": null
+        }
+      ],
+      "notes": "Draft assurance gap from N1, not proof of memory unsafety. Resolve the WinRT rollback contract and injection design before ready; reuse the existing callback-aware ownership model rather than introducing parallel cleanup. Preserve the explicit N2 limitation: an in-process native call that never returns cannot be safely terminated by detaching/freeing resources. No hard driver-hang containment claim belongs to this feature.",
+      "user_value": 5,
+      "differentiation": 3,
+      "difficulty": 4,
+      "stage": "draft"
     },
     {
       "id": "EPIC-CAP-PERF",
@@ -996,7 +1099,8 @@
         "The subsequent practice-tool run reached approximately 92 seconds and produced a fully decodable 1080p60 H.264/AAC partial before Windows reported an access violation in GraphicsCapture.dll_unloaded during target teardown. Teardown now closes the frame pool before the session, drains encoder/mux before releasing WGC, and retains the source stack when callback quiescence cannot be proven; recorder tests, strict Clippy, and the locked release build passed after this correction. Real League finalization remains pending.",
         "The next real game, captured with the pre-target-close-fix release, produced a decodable 709.013-second 1920x1080 H.264/AAC partial and durable Live Client data (84 events, 70 snapshots, 0 JSON write failures) but stopped when the selected game HWND closed, so no canonical video or metadata was published. The corrected release now treats exact selected-HWND closure as a graceful terminal boundary, while replaced/foreign HWND identity remains failed/partial; 121 recorder library tests, 3 binary tests, 3 fixture tests, strict Clippy, formatting, locked release build, and packaged-runtime diagnostics passed after the change. A post-fix real League finalization run is still required.",
         "2026-09-29 finalizer correction: the next real run reached graceful target-close shutdown but failed because ffprobe omits nb_frames for fragmented MP4. The finalizer now counts actual video samples from bounded fragment-header reads without reading encoded payload or weakening replay-time/producer checks. Temporary copies of the 4,705- and 42,540-frame partials validated and published in tests; intentional producer mismatches were rejected and original SHA-256 hashes were unchanged. Recorder checks, 126 library plus 3 binary/3 fixture tests, formatting, strict Clippy and locked release build passed. The subsequent real Practice Tool run finalized normally: 2,463 reconciled 1080p60 frames, strict full decode passed, identity-matched metadata/game log, and no recorder error. The user confirmed playback in the app. This verifies the correction on a short real session, not the formal performance matrix; detailed results are in the checkpoint.",
-        "QB-PERF-002 is blocked on the required Ryzen 5 5600X/RTX 4060 interactive League capped/uncapped matrix, which has not been run. Native AMD/Intel encoder adapters are not implemented and are explicitly unsupported; no negligible-impact or vendor-wide completion claim is justified. Detailed commands, artifacts, decisions, and next action are in the execution record."
+        "QB-PERF-002 is blocked on the required Ryzen 5 5600X/RTX 4060 interactive League capped/uncapped matrix, which has not been run. Native AMD/Intel encoder adapters are not implemented and are explicitly unsupported; no negligible-impact or vendor-wide completion claim is justified. Detailed commands, artifacts, decisions, and next action are in the execution record.",
+        "2026-10-29 review-only reconciliation corrected media-runtime.md's retired external-backend description, retained the documented in-process driver-hang limit and pinned ABI assertions/probes, and routed launch safety, partial WGC rollback, recovery, and independent media validation to their own features. Recorder/timing tests passed; no new hardware or League performance evidence was obtained. See docs/reviews/recorder-engineering-review-2026-10-29.md and the execution checkpoint."
       ],
       "execution": {
         "workflow": "planned",

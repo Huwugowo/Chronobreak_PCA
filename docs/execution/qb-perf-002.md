@@ -2,7 +2,7 @@
 
 Feature: `QB-PERF-002`
 ExecPlan: `docs/exec-plans/qb-perf-002-low-overhead-native-windows-capture-v3.md`
-Updated: 2026-09-29
+Updated: 2026-10-29
 
 ## Current milestone
 
@@ -10,7 +10,7 @@ Superseding-plan Milestone 5: valid target League capped/uncapped performance pr
 
 ## Active unit
 
-No product-code unit is active. The fragmented-MP4 finalizer correction passed synthetic checks, temporary-copy validation/publication of both prior partials, the locked release rebuild, and the subsequent real Practice Tool run `1790670285`. That run finalized normally, passed full decode, and the user confirmed playback in the app. Previous timestamp/size/teardown fixes remain in place. The formal performance matrix remains outstanding; the user has deferred audio work and selected data-feature refinement after committing these fixes.
+No product-code unit is active. The fragmented-MP4 finalizer correction passed synthetic checks, temporary-copy validation/publication of both prior partials, the locked release rebuild, and the subsequent real Practice Tool run `1790670285`. That run finalized normally, passed full decode, and the user confirmed playback in the app. Previous timestamp/size/teardown fixes remain in place. The formal performance matrix remains outstanding and audio remains deferred. The 2026-10-29 source-review follow-ups are tracked separately in `QB-CAP-006`, `QB-CAP-007`, `QB-CAP-003`, and `QB-CAP-004`; this review did not resume product-code implementation.
 
 Do not substitute current-workstation generated-window evidence, the historical native/external A/B, the accepted-invalid QB-PERF-001 report, or a different GPU/CPU target for that matrix.
 
@@ -77,6 +77,14 @@ No valid League matrix, negligible-impact claim, AMD/Intel implementation or har
 - Release `--diagnose` resolved the staged r6 runtime and NVENC/H.264 High. The default-log attempt was sandbox-denied under AppData; rerunning with `LEAGUE_REPLAY_LOG_DIR` under `build/perf/finalizer-fix-diagnostics` passed. Diagnostics still reports the existing silent-stereo fallback (no Windows loopback device found); this fix does not change audio discovery.
 - Real post-fix Practice Tool run `1790670285` produced canonical `video.mp4`, `metadata.json`, and identity-matched schema-v2 `game_log.json`. Selected-HWND closure at 08:25:28.136 UTC followed the normal finalization path and publication completed at 08:25:28.200 UTC with no recorder error. The 63,752,518-byte video contains exactly 2,463 H.264 1920x1080/60-FPS frames (41.05 seconds); packaged ffprobe packet count matches producer/metadata, and strict single-thread full decode passed. The poller retained available calibration, 2 events and 4 snapshots with 45 successful responses and zero JSON write failures. The independent diagnostic captured LCU phases and Live data; raw captures remain local/ignored. The user subsequently launched the app and confirmed it all worked. This is real finalization/playback evidence, not a formal performance or long-match reliability pass. Audio remains the known silent fallback and is explicitly deferred by the user.
 
+2026-10-29 review-only reconciliation:
+
+- Checked the supplied recorder review against source revision `20f9fa952ed9aef6aeb37d4fab8f68728fecc000`; detailed findings, qualifications, canonical routing, and source ranges are retained in `docs/reviews/recorder-engineering-review-2026-10-29.md`.
+- Corrected `docs/architecture/media-runtime.md` to distinguish historical compiled FFmpeg capability from the sole supported native Windows recorder. The documented in-process driver-hang limitation and pinned native ABI assertions/probes remain in force; no new unsafe outcome or ABI defect was demonstrated.
+- `cargo test --manifest-path recorder/Cargo.toml --locked --all-targets --all-features` passed: 196 library, 4 binary, and 3 fixture tests; 9 opt-in tests ignored. `cargo test --manifest-path replay-time/Cargo.toml --locked` passed 14 tests and doc tests. Successful logs are retained under `build/verification/recorder-review-20261029/`; the initial restricted attempts did not launch tests because the required logger could not write its log directory.
+- Canonical schema/dependency/lifecycle/linked-artifact validation passed for 104 roadmap items and 22 plan/checkpoint pairs; `git diff --check` passed after the documentation/tracking edits.
+- No League launch experiment, native hardware fixture, full project quality run, or formal performance matrix was run. The review does not change the feature's blocked status or establish the cause of the reported loading-screen incident.
+
 ## Deviations
 
 The original approved plan retained a packaged external FFmpeg WGC backend as an explicit alternative and current AMF/QSV route. The 2026-09-01 product architecture decision and capability audit materially invalidated that design: the external path had no unique validated production obligation, duplicated capture/lifecycle ownership, and exposed only unvalidated codec/vendor combinations. The original plan remains unchanged as history; the versioned v3 plan is the current design.
@@ -97,4 +105,4 @@ The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target
 
 ## Next action
 
-Recorder-fix verification is complete. The user's next requested work is refinement of the data features using existing captures, with audio deferred. When returning to QB-PERF-002, run the outstanding formal performance matrix under the approved v3 design; do not reopen the verified finalizer correction without new contradictory evidence.
+When returning to QB-PERF-002, run the outstanding formal performance matrix under the approved v3 design and complete its remaining support/documentation/verification gates. Keep the separately tracked launch-safety, rollback, recovery, and media-validation work within their own feature scopes; do not reopen the verified fragmented-sample-count correction without new contradictory evidence. Audio remains deferred.
