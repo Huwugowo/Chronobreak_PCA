@@ -50,6 +50,26 @@ fn wait_for(path: &Path) {
     }
 }
 
+// Publish a closed, complete file in one rename. Existence alone must never
+// expose the empty/partial receipt created by fs::write to the parent process.
+fn publish_receipt(path: &Path, contents: &str) {
+    let pending = path.with_extension("pending");
+    std::fs::write(&pending, contents).unwrap();
+    std::fs::rename(pending, path).unwrap();
+}
+
+#[test]
+fn receipt_publication_exposes_complete_contents_and_consumes_pending_file() {
+    let root = tempfile::tempdir().unwrap();
+    let receipt = root.path().join("result-first");
+    let pending = receipt.with_extension("pending");
+    std::fs::write(&pending, "ow").unwrap();
+    assert!(!receipt.exists());
+    publish_receipt(&receipt, "owner");
+    assert_eq!(std::fs::read_to_string(receipt).unwrap(), "owner");
+    assert!(!pending.exists());
+}
+
 #[test]
 fn fixture_child() {
     let Some(root) = std::env::var_os("CHRONOBREAK_CONTROL_FIXTURE") else {
@@ -59,15 +79,14 @@ fn fixture_child() {
     assert!(root.join("fixture-sentinel").is_file());
     let id = std::env::var("CHRONOBREAK_CONTROL_FIXTURE_ID").unwrap();
     let owner = ControlOwner::start(&namespace(&root)).unwrap();
-    std::fs::write(
-        root.join(format!("result-{id}")),
+    publish_receipt(
+        &root.join(format!("result-{id}")),
         if owner.is_some() {
             "owner"
         } else {
             "duplicate"
         },
-    )
-    .unwrap();
+    );
     let Some(owner) = owner else {
         return;
     };
