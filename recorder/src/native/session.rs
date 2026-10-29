@@ -121,26 +121,50 @@ impl NativeRecorderSession {
         evidence: Option<&watch::Sender<RecordingEvidence>>,
         startup_deadline: Instant,
     ) -> Result<Self> {
-        let mut source = NativeWgcSource::start(target)?;
+        let mut source = startup_stage(
+            stop,
+            startup_deadline,
+            "native source initialization",
+            || NativeWgcSource::start(target),
+        )?;
+        // Every check after source creation belongs inside this result scope:
+        // dependent locals drop before the explicit callback-safe source close.
         let initialized = (|| {
-            let (unusable_size_frames, first_unusable_size) = wait_for_usable_source(
-                &mut source,
+            let (unusable_size_frames, first_unusable_size) =
+                startup_stage(stop, startup_deadline, "initial content recovery", || {
+                    wait_for_usable_source(
+                        &mut source,
+                        stop,
+                        evidence,
+                        target
+                            .dimensions()
+                            .context("initial capture requires admitted HWND dimensions")?,
+                        startup_deadline,
+                    )
+                })?;
+            let converter = startup_stage(
                 stop,
-                evidence,
-                target
-                    .dimensions()
-                    .context("initial capture requires admitted HWND dimensions")?,
                 startup_deadline,
+                "native converter initialization",
+                || source.create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS),
             )?;
-            let converter = source
-                .create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS)
-                .context("native converter initialization")?;
-            let plan = NativeMuxPlan::h264(NATIVE_FPS, audio, output)?;
             let mut mux =
-                NativeMuxProcess::start(ffmpeg, &plan).context("native mux initialization")?;
-            let writer = mux.take_video_writer()?;
-            let encoder = NativeNvencEncoder::new(&source, &converter, writer)
-                .context("native NVENC initialization")?;
+                startup_stage(stop, startup_deadline, "native mux initialization", || {
+                    let plan = NativeMuxPlan::h264(NATIVE_FPS, audio, output)?;
+                    NativeMuxProcess::start(ffmpeg, &plan)
+                })?;
+            let encoder = startup_stage(
+                stop,
+                startup_deadline,
+                "native NVENC initialization",
+                || {
+                    let writer = mux.take_video_writer()?;
+                    NativeNvencEncoder::new(&source, &converter, writer)
+                },
+            )?;
+            startup_stage(stop, startup_deadline, "native startup completion", || {
+                Ok(())
+            })?;
             Ok((
                 converter,
                 mux,
@@ -951,6 +975,24 @@ impl NativeRecorderSession {
     }
 }
 
+/// Cooperatively gate each constructor; native calls themselves are not interruptible.
+fn startup_stage<T>(
+    stop: &AtomicBool,
+    deadline: Instant,
+    stage: &'static str,
+    initialize: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if stop.load(Ordering::Acquire) {
+        bail!("native startup cancelled before {stage}");
+    }
+    if Instant::now() >= deadline {
+        bail!("native startup deadline expired before {stage}");
+    }
+    // Check again at the next boundary, not after returning an owner here:
+    // a live WGC source must reach its caller's explicit close on failure.
+    initialize().context(stage)
+}
+
 /// Before audio/mux/encoding, retain this single source through tiny-frame
 /// transitions. A usable frame is closed/counted before any pool reconfiguration.
 fn wait_for_usable_source(
@@ -1192,6 +1234,105 @@ fn format_result_error<T>(result: Result<T>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delayed_startup_rejects_cancellation_and_expiry_before_source_creation() {
+        let target = CaptureTarget {
+            source: crate::platform::CaptureSource::DesktopRegion {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                window_title: None,
+            },
+        };
+        for cancelled in [true, false] {
+            let stop = AtomicBool::new(cancelled);
+            let deadline = if cancelled {
+                Instant::now() + NATIVE_STARTUP_TIMEOUT
+            } else {
+                Instant::now()
+            };
+            let error = NativeRecorderSession::start_with_stop(
+                &target,
+                Path::new("unused"),
+                &AudioSource::Silent,
+                Path::new("unused"),
+                &stop,
+                None,
+                deadline,
+            )
+            .err()
+            .expect("a rejected worker must never construct a source");
+            let reason = if cancelled {
+                "cancelled"
+            } else {
+                "deadline expired"
+            };
+            // An attempted source construction would instead reject this
+            // non-WGC target. No GPU or filesystem fixture is needed.
+            assert_eq!(
+                error.to_string(),
+                format!("native startup {reason} before native source initialization")
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_between_stages_skips_later_constructors_and_drops_dependents() {
+        struct Dependent<'a>(&'a std::cell::Cell<bool>);
+        impl Drop for Dependent<'_> {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let stop = AtomicBool::new(false);
+        let dropped = std::cell::Cell::new(false);
+        let deadline = Instant::now() + NATIVE_STARTUP_TIMEOUT;
+        let result: Result<()> = (|| {
+            let _converter = startup_stage(&stop, deadline, "converter", || {
+                // Model cancellation during the non-interruptible constructor.
+                stop.store(true, Ordering::Release);
+                Ok(Dependent(&dropped))
+            })?;
+            startup_stage(&stop, deadline, "mux", || panic!("mux must not start"))?;
+            startup_stage(&stop, deadline, "NVENC", || panic!("NVENC must not start"))
+        })();
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "native startup cancelled before mux"
+        );
+        // As in start_with_stop's initialized scope, dependents are gone before
+        // its caller invokes explicit source cleanup.
+        assert!(dropped.get());
+    }
+
+    #[test]
+    fn constructor_overrun_prevents_the_next_startup_stage() {
+        let stop = AtomicBool::new(false);
+        let deadline = Instant::now() + Duration::from_millis(500);
+        startup_stage(&stop, deadline, "converter", || {
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            Ok(())
+        })
+        .unwrap();
+        let error = startup_stage::<()>(&stop, deadline, "mux", || {
+            panic!("expired startup must not launch mux")
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "native startup deadline expired before mux"
+        );
+        let error = startup_stage::<()>(&stop, deadline, "NVENC", || {
+            panic!("expired startup must not launch NVENC")
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "native startup deadline expired before NVENC"
+        );
+    }
 
     #[test]
     fn recovery_failure_preserves_no_frame_and_unusable_frame_evidence() {

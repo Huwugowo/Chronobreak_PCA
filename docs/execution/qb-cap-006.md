@@ -6,11 +6,11 @@ Updated: 2026-10-29
 
 ## Current milestone
 
-Bounded initial recovery correction implemented and automatically verified; hardware/League acceptance remains pending.
+Construction-boundary correction implemented and automatically verified. Hardware/League acceptance remains pending.
 
 ## Active unit
 
-Correction complete. A read-only scout confirmed client sizing and timeout/cleanup boundaries; root implemented and verified the change.
+Correction complete. The existing v3 design remains authoritative; no design or sizing change was required.
 
 ## Completed
 
@@ -25,6 +25,7 @@ Required bootstrap, existing investigation and focused scout challenge. Plan rev
 - Initial invalid/tiny capture-item dimensions use the validated HWND pool size. The same source waits for usable content before converter/audio/mux/NVENC startup; ongoing tiny frames extend startup waiting, stalls/errors/cancellation still stop it, and no native retry loop is introduced. Unusable content is rejected even when its dimensions equal the pool's.
 - Capture preparation creates the full source/device/MTA owner before callbacks are registered. Later partial initialization closes it explicitly after dependent locals drop; stage, primary error chain and cleanup outcome are logged. Existing full-stack retention on failed callback quiescence is preserved.
 - Follow-up correction bounds native startup by one absolute 15-second deadline beginning before worker spawn, retaining five-second source inactivity. Ongoing unusable frames cannot extend that cap; timeout is terminal and explicitly joins the worker. Initial item/frame admission requires dimensions covering the admitted physical client, separate from converter capability. One recovery failure event/error chain retains count, first/latest/expected dimensions, elapsed time and terminal reason.
+- Review of `962b1cb`: a shared guarded-stage helper checks cancellation/deadline before source construction, recovery, converter, mux, NVENC and completion. Post-source checks remain inside the existing initialization result closure, dropping dependent locals before explicit source close. Already-reported protocol errors precede generic timeout while cancellation retains priority.
 
 ## In flight
 
@@ -35,6 +36,12 @@ None for this focused correction.
 Run the unchanged repeated controlled Practice Tool absent/passive/native launch comparison on an interactive supported Windows setup. Obtain a successful generated native capture check there. No benchmark campaign was performed or claimed.
 
 ## Verification
+
+Construction-boundary correction:
+
+- Locked recorder all-target/all-feature check and tests passed: 224 library + 4 binary + 3 fixture (231 total), nine hardware/profile fixtures ignored. Four new regressions cover already-cancelled/expired session entry, cancellation between constructors with dependent destruction, a constructor exceeding its deadline preventing mux/NVENC entry, and protocol-error precedence with explicit worker join. Tests exercise the real session entry and shared stage helper; they do not simulate proof of native driver or COM rollback behavior. Log: `.codex/logs/command-20261029-163834.log`.
+- Recorder formatting check and strict all-target/all-feature Clippy passed. Canonical feature validation and diff whitespace checks passed.
+- No hardware fixtures or League capture were run. Strict expected-client sizing remains conservative; real transitions, hard driver hangs and QB-CAP-007 partial native failure injection remain unverified.
 
 Bounded-recovery correction:
 
@@ -60,6 +67,8 @@ Previous implementation (`ffc4c48`):
 ## Deviations
 
 Review of `dcaaa0f` demonstrated that progress-based recovery lacked an absolute bound and crop convertibility admitted tiny surfaces. Version 3 supersedes that design while preserving earlier plans. The requested focused correction proceeds through implementation and commit; deeper failure injection stays under QB-CAP-007.
+
+Review of `962b1cb` exposed missing enforcement at native constructor boundaries. The correction implements the existing v3 cancellation/deadline contract and keeps its design, dimensions policy and artifact links unchanged.
 
 ## Decisions
 

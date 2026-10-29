@@ -269,6 +269,13 @@ impl NativeRecordingSession {
                 ));
             }
             let snapshot = evidence.borrow().clone();
+            if let Some(error) = snapshot.protocol_error.as_deref() {
+                let worker_error = worker.stop_and_join().await.err();
+                return Err(NativeRecordingStartupFailure::terminal(anyhow!(
+                    "native recorder startup failed: {error}{}",
+                    format_cleanup_error(worker_error)
+                )));
+            }
             if Instant::now() >= startup_deadline {
                 let worker_error = worker.stop_and_join().await.err();
                 return Err(NativeRecordingStartupFailure::terminal(anyhow!(
@@ -277,13 +284,6 @@ impl NativeRecordingSession {
                     snapshot.encoded_frames,
                     snapshot.muxed_bytes,
                     snapshot.output_time_us,
-                    format_cleanup_error(worker_error)
-                )));
-            }
-            if let Some(error) = snapshot.protocol_error.as_deref() {
-                let worker_error = worker.stop_and_join().await.err();
-                return Err(NativeRecordingStartupFailure::terminal(anyhow!(
-                    "native recorder startup failed: {error}{}",
                     format_cleanup_error(worker_error)
                 )));
             }
@@ -902,6 +902,40 @@ mod tests {
             NativeRecordingStartupFailureDisposition::Terminal
         );
         assert!(error.to_string().contains("absolute startup deadline"));
+        assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn specific_protocol_failure_precedes_an_expired_startup_deadline() {
+        let directory = tempfile::tempdir().unwrap();
+        let observer = Arc::new(NativeWorkerCleanupObserver::default());
+        let worker = waiting_worker(Arc::clone(&observer));
+        let (_sender, evidence) = watch::channel(RecordingEvidence {
+            protocol_error: Some("fixture device initialization failed".to_owned()),
+            ..RecordingEvidence::default()
+        });
+        let (_cancel, cancellation) = watch::channel(false);
+        let error = expect_startup_failure(
+            NativeRecordingSession::await_startup(
+                directory.path().to_path_buf(),
+                directory.path().join(VIDEO_PARTIAL_MP4),
+                worker,
+                evidence,
+                cancellation,
+                Instant::now(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            error.disposition(),
+            NativeRecordingStartupFailureDisposition::Terminal
+        );
+        assert!(
+            error.to_string().starts_with(
+                "native recorder startup failed: fixture device initialization failed"
+            )
+        );
         assert_explicit_cleanup(&observer);
     }
 
