@@ -1455,39 +1455,45 @@ mod tests {
     }
 
     #[cfg(target_os = "windows")]
+    #[test]
+    fn bounded_probe_timeout_child() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let Some(directory) = std::env::var_os("CHRONOBREAK_ENCODER_TIMEOUT_FIXTURE") else {
+            return;
+        };
+        let directory = Path::new(&directory);
+        assert!(directory.join("fixture-sentinel").is_file());
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(directory.join("child.lock"))
+            .unwrap();
+        std::fs::write(directory.join("ready.txt"), std::process::id().to_string()).unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+        drop(lock);
+    }
+
+    #[cfg(target_os = "windows")]
     #[tokio::test]
     async fn bounded_probe_kills_and_reaps_a_timed_out_child() {
         use std::os::windows::fs::OpenOptionsExt;
 
         let directory = tempfile::tempdir().unwrap();
-        let script = directory.path().join("hang-probe.ps1");
         let ready = directory.path().join("ready.txt");
         let lock = directory.path().join("child.lock");
-        std::fs::write(
-            &script,
-            r#"param([string]$ReadyFile, [string]$LockFile)
-$stream = [System.IO.File]::Open(
-    $LockFile,
-    [System.IO.FileMode]::OpenOrCreate,
-    [System.IO.FileAccess]::ReadWrite,
-    [System.IO.FileShare]::None
-)
-try {
-    [System.IO.File]::WriteAllText($ReadyFile, [string]$PID)
-    while ($true) { Start-Sleep -Milliseconds 100 }
-} finally {
-    $stream.Dispose()
-}
-"#,
-        )
-        .unwrap();
+        std::fs::write(directory.path().join("fixture-sentinel"), b"timeout test").unwrap();
 
-        let mut command = ffmpeg_command(Path::new("powershell.exe"));
+        let mut command = ffmpeg_command(&std::env::current_exe().unwrap());
         command
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-            .arg(&script)
-            .arg(&ready)
-            .arg(&lock);
+            .args([
+                "--exact",
+                "encoder::tests::bounded_probe_timeout_child",
+                "--nocapture",
+            ])
+            .env("CHRONOBREAK_ENCODER_TIMEOUT_FIXTURE", directory.path());
         let started = Instant::now();
         let error = tokio::time::timeout(
             Duration::from_secs(5),
