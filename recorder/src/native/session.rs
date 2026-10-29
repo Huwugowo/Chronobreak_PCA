@@ -74,7 +74,7 @@ pub struct NativeRecorderSession {
     mux: Option<NativeMuxProcess>,
     converter: NativeNv12Converter,
     source: Option<NativeWgcSource>,
-    clock: Option<NativeCfrClock>,
+    clock: NativeCfrClock,
     output: PathBuf,
     snapshot_ready: bool,
     pending_resize: Option<(u32, u32)>,
@@ -130,9 +130,9 @@ impl NativeRecorderSession {
         // Every check after source creation belongs inside this result scope:
         // dependent locals drop before the explicit callback-safe source close.
         let initialized = (|| {
-            let (unusable_size_frames, first_unusable_size) =
+            let (converter, clock, diagnostics) =
                 startup_stage(stop, startup_deadline, "initial content recovery", || {
-                    wait_for_usable_source(
+                    stage_initial_source(
                         &mut source,
                         stop,
                         evidence,
@@ -142,12 +142,6 @@ impl NativeRecorderSession {
                         startup_deadline,
                     )
                 })?;
-            let converter = startup_stage(
-                stop,
-                startup_deadline,
-                "native converter initialization",
-                || source.create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS),
-            )?;
             let mut mux =
                 startup_stage(stop, startup_deadline, "native mux initialization", || {
                     let plan = NativeMuxPlan::h264(NATIVE_FPS, audio, output)?;
@@ -165,33 +159,27 @@ impl NativeRecorderSession {
             startup_stage(stop, startup_deadline, "native startup completion", || {
                 Ok(())
             })?;
-            Ok((
-                converter,
-                mux,
-                encoder,
-                unusable_size_frames,
-                first_unusable_size,
-            ))
+            Ok((converter, clock, mux, encoder, diagnostics))
         })();
-        let (converter, mux, encoder, unusable_size_frames, first_unusable_size) =
-            match initialized {
-                Ok(initialized) => initialized,
-                Err(error) => {
-                    return Err(source
-                        .close_after_initialization_failure("native graph initialization", error));
-                }
-            };
+        let (converter, clock, mux, encoder, diagnostics) = match initialized {
+            Ok(initialized) => initialized,
+            Err(error) => {
+                return Err(
+                    source.close_after_initialization_failure("native graph initialization", error)
+                );
+            }
+        };
         Ok(Self {
             encoder: Some(encoder),
             mux: Some(mux),
             converter,
             source: Some(source),
-            clock: None,
+            clock,
             output: output.to_path_buf(),
-            snapshot_ready: false,
+            snapshot_ready: true,
             pending_resize: None,
-            unusable_size_frames,
-            first_unusable_size,
+            unusable_size_frames: diagnostics.unusable_frames,
+            first_unusable_size: diagnostics.first_unusable_dimensions,
             no_slot_admission_failures: 0,
             unstaged_tick_admission_failures: 0,
             maximum_catch_up_batch: 0,
@@ -291,22 +279,13 @@ impl NativeRecorderSession {
     /// source-frame anchor. Source polling never waits beyond the next tick.
     pub fn run_for(&mut self, duration: Duration) -> Result<()> {
         ensure!(!duration.is_zero(), "native recording duration is zero");
-        self.wait_for_first_source()?;
-        let recording_deadline = self
-            .clock
-            .as_ref()
-            .context("native CFR clock was not anchored")?
-            .deadline_after(duration)?;
+        let recording_deadline = self.clock.deadline_after(duration)?;
         let catch_up_deadline = recording_deadline
             .checked_add(FINAL_CATCH_UP_TIMEOUT)
             .context("native final catch-up deadline exceeded the monotonic clock range")?;
 
         loop {
-            let next_deadline = self
-                .clock
-                .as_ref()
-                .context("native CFR clock disappeared")?
-                .next_deadline()?;
+            let next_deadline = self.clock.next_deadline()?;
             if next_deadline >= recording_deadline {
                 break;
             }
@@ -318,11 +297,7 @@ impl NativeRecorderSession {
             if now >= catch_up_deadline {
                 bail!(
                     "native CFR could not commit every tick before the bounded final catch-up deadline (next_tick={} target_duration={:.3}s)",
-                    self.clock
-                        .as_ref()
-                        .context("native CFR clock disappeared")?
-                        .telemetry()
-                        .scheduled_ticks,
+                    self.clock.telemetry().scheduled_ticks,
                     duration.as_secs_f64()
                 );
             }
@@ -361,22 +336,8 @@ impl NativeRecorderSession {
         stop: &AtomicBool,
         evidence: &watch::Sender<RecordingEvidence>,
     ) -> Result<()> {
-        let first_frame_deadline = Instant::now() + FIRST_FRAME_TIMEOUT;
-        while self.clock.is_none() {
-            if stop.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            if Instant::now() >= first_frame_deadline {
-                bail!(
-                    "native WGC produced no first frame within {} seconds",
-                    FIRST_FRAME_TIMEOUT.as_secs_f64()
-                );
-            }
-            self.receive_source(MAX_SOURCE_WAIT)?;
-            self.publish_evidence(evidence)?;
-            if self.target_closed {
-                bail!("native WGC target closed before the first CFR frame");
-            }
+        if stop.load(Ordering::Acquire) {
+            return Ok(());
         }
 
         let mut evidence_due = Instant::now();
@@ -403,11 +364,7 @@ impl NativeRecorderSession {
                         "native target-close catch-up deadline exceeded the monotonic clock range",
                     )?);
             }
-            let next_deadline = self
-                .clock
-                .as_ref()
-                .context("native CFR clock disappeared")?
-                .next_deadline()?;
+            let next_deadline = self.clock.next_deadline()?;
             if stop_at.is_some_and(|deadline| next_deadline >= deadline) {
                 break;
             }
@@ -465,11 +422,7 @@ impl NativeRecorderSession {
 
         match (capture, encode, mux) {
             (Ok(capture), Ok(encode), Ok(mux)) => {
-                let cfr = self
-                    .clock
-                    .as_ref()
-                    .context("native session finished without a CFR clock")?
-                    .telemetry();
+                let cfr = self.clock.telemetry();
                 ensure!(
                     encode.completed_frames == mux.encoded_frames,
                     "native encoder/mux frame accounting differs: {} completed vs {} muxed",
@@ -556,123 +509,21 @@ impl NativeRecorderSession {
         }
     }
 
-    fn wait_for_first_source(&mut self) -> Result<()> {
-        let deadline = Instant::now() + FIRST_FRAME_TIMEOUT;
-        while self.clock.is_none() {
-            if Instant::now() >= deadline {
-                bail!(
-                    "native WGC produced no first frame within {} seconds",
-                    FIRST_FRAME_TIMEOUT.as_secs_f64()
-                );
-            }
-            self.receive_source(MAX_SOURCE_WAIT)?;
-            if self.target_closed {
-                bail!("native WGC target closed before the first CFR frame");
-            }
-        }
-        Ok(())
-    }
-
     fn receive_source(&mut self, timeout: Duration) -> Result<()> {
-        if self.clock.is_some() {
-            let source = self
-                .source
-                .as_mut()
-                .context("native WGC source is closed")?;
-            let (received, replacements) = source.receive_pending_timeout(timeout)?;
-            if !received {
-                self.target_closed = source.telemetry().closed;
-            }
-            self.clock
-                .as_mut()
-                .context("native CFR clock disappeared")?
-                .record_source_discards(replacements);
-            return Ok(());
-        }
-
         let source = self
             .source
-            .as_ref()
+            .as_mut()
             .context("native WGC source is closed")?;
-        let Some(frame) = source.recv_timeout(timeout)? else {
+        let (received, replacements) = source.receive_pending_timeout(timeout)?;
+        if !received {
             self.target_closed = source.telemetry().closed;
-            return Ok(());
-        };
-        let dimensions = frame.dimensions();
-        let qpc_100ns = frame.qpc_100ns();
-        let pool_dimensions = source.pool_dimensions();
-        if dimensions != pool_dimensions
-            || !self
-                .converter
-                .can_convert_content_size(dimensions.0, dimensions.1)
-        {
-            let can_resize = self
-                .converter
-                .can_convert_content_size(dimensions.0, dimensions.1);
-            let close_result = frame.close();
-            self.source
-                .as_mut()
-                .context("native WGC source is closed")?
-                .record_worker_frame_discard();
-            close_result?;
-            if !can_resize {
-                record_unusable_size(
-                    dimensions,
-                    &mut self.unusable_size_frames,
-                    &mut self.first_unusable_size,
-                );
-                return Ok(());
-            }
-            self.source
-                .as_mut()
-                .context("native WGC source is closed")?
-                .recreate_for_content_size(dimensions.0, dimensions.1)?;
-            // Keep converting the last valid GPU snapshot while the recreated
-            // WGC pool produces its first new-size surface. Replacing the
-            // snapshot here would create a CFR hole during the resize gap.
-            self.pending_resize = Some(dimensions);
-            return Ok(());
         }
-
-        let stage_result = stage_source_snapshot(
-            &frame,
-            &mut self.encoder,
-            &mut self.converter,
-            &mut self.pending_resize,
-        );
-        let close_result = frame.close();
-        if !matches!(&stage_result, Ok(true)) {
-            self.source
-                .as_mut()
-                .context("native WGC source is closed")?
-                .record_worker_frame_discard();
-        }
-        let staged = stage_result?;
-        close_result?;
-        if !staged {
-            return Ok(());
-        }
-        let anchor = instant_from_qpc_100ns(qpc_100ns)?;
-        tracing::info!(
-            frame_width = dimensions.0,
-            frame_height = dimensions.1,
-            qpc_100ns,
-            "native first usable source frame"
-        );
-        self.clock = Some(NativeCfrClock::start(NATIVE_FPS, qpc_100ns, anchor)?);
-        self.snapshot_ready = true;
+        self.clock.record_source_discards(replacements);
         Ok(())
     }
 
     fn stage_pending_source_for_tick(&mut self) -> Result<()> {
-        if self
-            .clock
-            .as_ref()
-            .context("native CFR clock disappeared")?
-            .telemetry()
-            .scheduled_ticks
-            == 0
-        {
+        if self.clock.telemetry().scheduled_ticks == 0 {
             // Tick zero belongs to the first frame that established the CFR
             // anchor. Coalescing starts only after that frame is presented.
             return Ok(());
@@ -690,7 +541,6 @@ impl NativeRecorderSession {
             ..
         } = self;
         let source = source.as_mut().context("native WGC source is closed")?;
-        let clock = clock.as_mut().context("native CFR clock disappeared")?;
         let replacements = source.drain_handoff_to_pending()?;
         clock.record_source_discards(replacements);
         let pool_dimensions = source.pool_dimensions();
@@ -809,11 +659,7 @@ impl NativeRecorderSession {
         let mut catch_up = false;
 
         while submissions < MAX_CATCH_UP_SUBMISSIONS_PER_PASS {
-            let next_deadline = self
-                .clock
-                .as_ref()
-                .context("native CFR clock disappeared")?
-                .next_deadline()?;
+            let next_deadline = self.clock.next_deadline()?;
             if stop_before.is_some_and(|deadline| next_deadline >= deadline)
                 || Instant::now() < next_deadline
             {
@@ -828,23 +674,14 @@ impl NativeRecorderSession {
             let now = Instant::now();
             let tick = self
                 .clock
-                .as_ref()
-                .context("native CFR clock disappeared")?
                 .peek_due(now)?
                 .context("due native CFR deadline did not expose a tick")?;
             match self.submit_tick(tick.qpc_100ns)? {
                 TickAdmission::Submitted => {
                     let committed_at = Instant::now();
-                    self.clock
-                        .as_mut()
-                        .context("native CFR clock disappeared")?
-                        .commit(tick, committed_at)?;
+                    self.clock.commit(tick, committed_at)?;
                     submissions = submissions.saturating_add(1);
-                    let another_deadline = self
-                        .clock
-                        .as_ref()
-                        .context("native CFR clock disappeared")?
-                        .next_deadline()?;
+                    let another_deadline = self.clock.next_deadline()?;
                     let another_target_tick =
                         stop_before.is_none_or(|deadline| another_deadline < deadline);
                     if another_target_tick && another_deadline <= Instant::now() {
@@ -869,11 +706,7 @@ impl NativeRecorderSession {
         #[cfg(feature = "native-failure-injection")]
         if self
             .injected_nvenc_failure_after_ticks
-            .is_some_and(|threshold| {
-                self.clock
-                    .as_ref()
-                    .is_some_and(|clock| clock.telemetry().scheduled_ticks >= threshold)
-            })
+            .is_some_and(|threshold| self.clock.telemetry().scheduled_ticks >= threshold)
         {
             self.injected_nvenc_failure_after_ticks = None;
             self.encoder
@@ -900,12 +733,7 @@ impl NativeRecorderSession {
 
     #[cfg(feature = "native-failure-injection")]
     fn maybe_inject_worker_stall(&mut self) -> Result<()> {
-        let scheduled_ticks = self
-            .clock
-            .as_ref()
-            .context("native CFR clock disappeared")?
-            .telemetry()
-            .scheduled_ticks;
+        let scheduled_ticks = self.clock.telemetry().scheduled_ticks;
         let Some(injection) = self
             .injected_worker_stall
             .filter(|injection| scheduled_ticks >= injection.after_ticks)
@@ -947,7 +775,7 @@ impl NativeRecorderSession {
             .as_ref()
             .context("native mux process is closed")?
             .telemetry();
-        let cfr = self.clock.as_ref().map(NativeCfrClock::telemetry);
+        let cfr = self.clock.telemetry();
         let protocol_error = native_protocol_error(capture, encode, mux);
         Ok(RecordingEvidence {
             capture_ready: true,
@@ -962,13 +790,13 @@ impl NativeRecorderSession {
                 .handoff_drops
                 .saturating_add(capture.pending_frame_replacements),
             pool_recreations: capture.recreations,
-            first_qpc: cfr.map(|snapshot| snapshot.first_source_qpc_100ns),
-            latest_qpc: cfr.map(|snapshot| snapshot.latest_source_qpc_100ns),
+            first_qpc: Some(cfr.first_source_qpc_100ns),
+            latest_qpc: Some(cfr.latest_source_qpc_100ns),
             encoded_frames: encode.completed_frames,
             muxed_bytes: mux.muxed_bytes.max(mux.output_file_bytes),
             output_time_us: mux.output_time_us,
-            cfr_duplicates: cfr.map_or(0, |snapshot| snapshot.duplicate_ticks),
-            cfr_discards: cfr.map_or(0, |snapshot| snapshot.source_discards),
+            cfr_duplicates: cfr.duplicate_ticks,
+            cfr_discards: cfr.source_discards,
             progress_end: terminal && mux.progress_end,
             protocol_error,
         })
@@ -993,15 +821,20 @@ fn startup_stage<T>(
     initialize().context(stage)
 }
 
-/// Before audio/mux/encoding, retain this single source through tiny-frame
-/// transitions. A usable frame is closed/counted before any pool reconfiguration.
-fn wait_for_usable_source(
+/// Copy the first complete surface into the existing owned GPU snapshot before
+/// audio/mux/encoding. No borrowed WGC frame escapes this function; a resize
+/// closes its surface before recreating the pool, within the same startup budget.
+fn stage_initial_source(
     source: &mut NativeWgcSource,
     stop: &AtomicBool,
     evidence: Option<&watch::Sender<RecordingEvidence>>,
     expected: (u32, u32),
     startup_deadline: Instant,
-) -> Result<(u64, Option<(u32, u32)>)> {
+) -> Result<(
+    NativeNv12Converter,
+    NativeCfrClock,
+    InitialRecoveryDiagnostics,
+)> {
     let started = Instant::now();
     let mut deadline = StartupDeadline::new(started, FIRST_FRAME_TIMEOUT, startup_deadline);
     let mut evidence_due = started;
@@ -1023,35 +856,51 @@ fn wait_for_usable_source(
             let dimensions = frame.dimensions();
             let usable = super::capture::initial_content_ready(dimensions, expected);
             diagnostics.observe(dimensions, usable);
-            reason = "frame_close";
-            let close = frame.close();
-            source.record_worker_frame_discard();
-            close?;
-            if let Some(expiration) = deadline.expiration(Instant::now()) {
-                reason = expiration;
-                bail!("native WGC initial content arrived after recovery deadline");
+            // Validate the physical texture too: ContentSize may already describe
+            // a restored HWND while the surface still has its old allocation.
+            let staged = process_and_close_frame(
+                frame,
+                |frame| {
+                    if !usable
+                        || dimensions != source.pool_dimensions()
+                        || !source_texture_contains_content(frame)?
+                    {
+                        return Ok(None);
+                    }
+                    let mut converter = startup_stage(
+                        stop,
+                        startup_deadline,
+                        "native converter initialization",
+                        || source.create_nv12_converter(NATIVE_WIDTH, NATIVE_HEIGHT, NATIVE_FPS),
+                    )?;
+                    startup_stage(stop, startup_deadline, "initial source snapshot", || {
+                        ensure!(
+                            converter.stage_latest_source(frame)?,
+                            "initial WGC surface changed after texture validation"
+                        );
+                        // Keep the physical source epoch, including time spent constructing
+                        // the downstream graph. Rebasing it to now would falsify replay time.
+                        let qpc = frame.qpc_100ns();
+                        let clock =
+                            NativeCfrClock::start(NATIVE_FPS, qpc, instant_from_qpc_100ns(qpc)?)?;
+                        Ok(Some((converter, clock)))
+                    })
+                },
+                super::CapturedWgcFrame::close,
+            );
+            if !matches!(&staged, Ok(Some(_))) {
+                source.record_worker_frame_discard();
             }
-            if usable {
+            reason = "initial_source_snapshot";
+            let staged = staged?;
+            if let Some((converter, clock)) = staged {
+                return Ok((converter, clock));
+            }
+            if usable && dimensions != source.pool_dimensions() {
                 reason = "pool_recreation";
-                if dimensions != source.pool_dimensions() {
-                    source.recreate_for_content_size(dimensions.0, dimensions.1)?;
-                }
-                if let Some(expiration) = deadline.expiration(Instant::now()) {
-                    reason = expiration;
-                    bail!("native WGC initial recovery exceeded its deadline");
-                }
-                if stop.load(Ordering::Acquire) {
-                    reason = "cancelled";
-                    bail!("native initialization cancelled before usable source");
-                }
-                return Ok((
-                    diagnostics.unusable_frames,
-                    if diagnostics.unusable_frames > 0 {
-                        diagnostics.first_dimensions
-                    } else {
-                        None
-                    },
-                ));
+                startup_stage(stop, startup_deadline, reason, || {
+                    source.recreate_for_content_size(dimensions.0, dimensions.1)
+                })?;
             }
             deadline.observe(diagnostics.unusable_frames, Instant::now());
         }
@@ -1074,13 +923,35 @@ fn wait_for_usable_source(
             evidence_due = Instant::now() + NATIVE_EVIDENCE_INTERVAL;
         }
     })();
-    result.map_err(|error| diagnostics.failure(started.elapsed(), expected, reason, error))
+    result
+        .map_err(|error| diagnostics.failure(started.elapsed(), expected, reason, error))
+        .map(|(converter, clock)| (converter, clock, diagnostics))
+}
+
+/// Keep the borrowed surface inside one scope. Both fallible operations run,
+/// and no initialized dependent escapes when closing the surface fails.
+fn process_and_close_frame<F, T>(
+    frame: F,
+    process: impl FnOnce(&F) -> Result<T>,
+    close: impl FnOnce(F) -> Result<()>,
+) -> Result<T> {
+    let processed = process(&frame);
+    let closed = close(frame);
+    match (processed, closed) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error.context("initial WGC frame close failed")),
+        (Err(error), Err(close)) => {
+            Err(error.context(format!("initial WGC frame close also failed: {close:#}")))
+        }
+    }
 }
 
 #[derive(Default)]
 struct InitialRecoveryDiagnostics {
     unusable_frames: u64,
     first_dimensions: Option<(u32, u32)>,
+    first_unusable_dimensions: Option<(u32, u32)>,
     latest_dimensions: Option<(u32, u32)>,
 }
 
@@ -1089,6 +960,7 @@ impl InitialRecoveryDiagnostics {
         self.first_dimensions.get_or_insert(dimensions);
         self.latest_dimensions = Some(dimensions);
         if !usable {
+            self.first_unusable_dimensions.get_or_insert(dimensions);
             self.unusable_frames = self.unusable_frames.saturating_add(1);
         }
     }
@@ -1234,6 +1106,61 @@ fn format_result_error<T>(result: Result<T>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_snapshot_handoff_closes_frame_before_returning_owned_pixels() {
+        let events = std::cell::RefCell::new(Vec::new());
+        let pixels = process_and_close_frame(
+            vec![42_u8],
+            |frame| {
+                events.borrow_mut().push("copy");
+                Ok(frame.clone())
+            },
+            |frame| {
+                events.borrow_mut().push("close");
+                drop(frame);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*events.borrow(), ["copy", "close"]);
+        assert_eq!(pixels, [42]);
+    }
+
+    #[test]
+    fn initial_handoff_failure_closes_once_and_drops_partial_dependents() {
+        struct Dependent<'a>(&'a std::cell::Cell<bool>);
+        impl Drop for Dependent<'_> {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        for processing_fails in [false, true] {
+            let closed = std::cell::Cell::new(0);
+            let dropped = std::cell::Cell::new(false);
+            let result = process_and_close_frame(
+                (),
+                |_| {
+                    let dependent = Dependent(&dropped);
+                    if processing_fails {
+                        bail!("converter failed");
+                    }
+                    Ok(dependent)
+                },
+                |_| {
+                    closed.set(closed.get() + 1);
+                    bail!("Close failed");
+                },
+            );
+            let message = format!("{:#}", result.err().unwrap());
+            assert_eq!(closed.get(), 1);
+            assert!(dropped.get());
+            assert!(message.contains("Close failed"));
+            if processing_fails {
+                assert!(message.contains("converter failed"));
+            }
+        }
+    }
 
     #[test]
     fn delayed_startup_rejects_cancellation_and_expiry_before_source_creation() {

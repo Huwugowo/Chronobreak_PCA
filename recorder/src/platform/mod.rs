@@ -196,7 +196,7 @@ impl CaptureTarget {
 mod windows;
 
 #[cfg(target_os = "windows")]
-pub(crate) use windows::capture_window_for_process;
+pub(crate) use windows::{capture_target_for_window, capture_window_for_process};
 
 #[cfg(target_os = "windows")]
 pub use windows::{

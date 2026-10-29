@@ -31,7 +31,6 @@ struct WindowCandidate {
     width: u32,
     height: u32,
     screen_rect: RECT,
-    title: Option<String>,
 }
 
 #[derive(Debug)]
@@ -80,34 +79,28 @@ impl Drop for ThreadDpiAwarenessGuard {
 }
 
 pub fn capture_target_for_process(pid: u32) -> Result<CaptureTarget> {
-    let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
-    if let Some(candidate) = find_largest_window(pid)? {
-        let monitor = monitor_with_largest_intersection(candidate.screen_rect)?;
-        let adapter = adapter_for_monitor(monitor)?;
-        // SAFETY: `candidate.hwnd` is an opaque handle supplied by the current
-        // synchronous EnumWindows pass; this query neither owns nor closes it.
-        let dpi = unsafe { GetDpiForWindow(candidate.hwnd) };
-        if dpi == 0 {
-            anyhow::bail!("could not determine League window DPI");
-        }
-        return Ok(CaptureTarget {
-            source: CaptureSource::WindowsGraphicsCapture {
-                pid,
-                generation: TARGET_GENERATION.fetch_add(1, Ordering::Relaxed),
-                hwnd: candidate.hwnd.0 as usize as u64,
-                width: even(candidate.width),
-                height: even(candidate.height),
-                dpi,
-                window_title: candidate.title,
-                adapter_index: adapter.index,
-                adapter_luid: adapter.luid,
-                adapter_name: adapter.name,
-                output_name: adapter.output_name,
-            },
-        });
-    }
+    capture_target_for_window(&capture_window_for_process(pid)?)
+}
 
-    anyhow::bail!("could not find a visible League window for PID {pid}")
+/// Resolve only the monitor already admitted by passive readiness. The caller
+/// rechecks the window snapshot after this potentially slower DXGI operation.
+pub(crate) fn capture_target_for_window(window: &CaptureWindowSnapshot) -> Result<CaptureTarget> {
+    let adapter = adapter_for_monitor(HMONITOR(window.monitor as usize as *mut _))?;
+    Ok(CaptureTarget {
+        source: CaptureSource::WindowsGraphicsCapture {
+            pid: window.pid,
+            generation: TARGET_GENERATION.fetch_add(1, Ordering::Relaxed),
+            hwnd: window.hwnd,
+            width: even(window.width),
+            height: even(window.height),
+            dpi: window.dpi,
+            window_title: window_title(HWND(window.hwnd as usize as *mut _)),
+            adapter_index: adapter.index,
+            adapter_luid: adapter.luid,
+            adapter_name: adapter.name,
+            output_name: adapter.output_name,
+        },
+    })
 }
 
 /// Discovery/physical sizing only; adapter resolution belongs to admission.
@@ -397,7 +390,6 @@ unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
             right: x.saturating_add(width as i32),
             bottom: y.saturating_add(height as i32),
         },
-        title: window_title(hwnd),
     });
     BOOL(1)
 }

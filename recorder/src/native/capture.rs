@@ -127,6 +127,16 @@ impl Drop for QueuedWgcFrame {
 /// worker. Its lifetime is borrowed from the source, so safe code cannot tear
 /// down WinRT/WGC before closing the frame. The internal pool surface is never
 /// exposed as a cloneable COM handle.
+///
+/// The source cannot be closed while a frame still borrows its WGC lifetime:
+/// ```compile_fail
+/// use league_replay_recorder::native::NativeWgcSource;
+/// fn close_too_early(source: NativeWgcSource) {
+///     let frame = source.try_recv().unwrap().unwrap();
+///     source.close().unwrap();
+///     frame.close().unwrap();
+/// }
+/// ```
 pub struct CapturedWgcFrame<'source> {
     inner: QueuedWgcFrame,
     _source: PhantomData<&'source NativeWgcCapture>,

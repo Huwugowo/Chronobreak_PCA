@@ -563,6 +563,41 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn monitor_change_during_resolution_requires_fresh_readiness_for_same_hwnd() {
+        let source = FixtureSource {
+            started: Instant::now(),
+            calls: AtomicUsize::new(0),
+            fail_first: 0,
+        };
+        let (_cancel, cancellation) = watch::channel(false);
+        let monitor = std::cell::Cell::new(target().monitor);
+        let mut resolved_monitors = Vec::new();
+        let admitted = wait(
+            process(),
+            &source,
+            || {
+                Ok(CaptureWindowSnapshot {
+                    monitor: monitor.get(),
+                    ..target()
+                })
+            },
+            |window| {
+                resolved_monitors.push(window.monitor);
+                if resolved_monitors.len() == 1 {
+                    monitor.set(window.monitor + 1);
+                }
+                resolve_target(window)
+            },
+            cancellation,
+        )
+        .await
+        .unwrap();
+        assert_eq!(admitted.windows_hwnd(), Some(target().hwnd));
+        assert_eq!(resolved_monitors, [target().monitor, target().monitor + 1]);
+        assert_eq!(source.calls.load(Ordering::SeqCst), 6);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn unavailable_signal_never_admits_even_after_a_long_wait() {
         let source = FixtureSource {
             started: Instant::now(),

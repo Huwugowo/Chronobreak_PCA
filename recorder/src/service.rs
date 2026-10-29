@@ -34,14 +34,13 @@ use crate::league_client::sidecar::{ContextWriter, DirectoryGuard};
 use crate::native::{
     NATIVE_ENCODER_SLOT_COUNT, NativeRecordingSession, NativeRecordingStartupFailureDisposition,
 };
-#[cfg(target_os = "windows")]
-use crate::platform::capture_window_for_process;
-#[cfg(not(target_os = "windows"))]
-use crate::platform::fallback_capture_target;
 use crate::platform::{
-    CaptureTarget, CaptureTargetStateCache, CaptureTargetVisibility, capture_target_for_process,
-    query_capture_target_state,
+    CaptureTarget, CaptureTargetStateCache, CaptureTargetVisibility, query_capture_target_state,
 };
+#[cfg(not(target_os = "windows"))]
+use crate::platform::{capture_target_for_process, fallback_capture_target};
+#[cfg(target_os = "windows")]
+use crate::platform::{capture_target_for_window, capture_window_for_process};
 use crate::poller::{CaptureMetadata, PollerSession, RecordingDetails, RecordingMetadata};
 use crate::storage::{create_game_directory, unix_timestamp_now};
 use crate::watcher::{
@@ -1020,7 +1019,7 @@ async fn start_recording(
                 }
                 capture_window_for_process(process.pid)
             },
-            |window| capture_target_for_process(window.pid),
+            capture_target_for_window,
             cancellation.clone(),
         )
         .await
