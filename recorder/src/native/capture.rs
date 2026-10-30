@@ -551,6 +551,12 @@ impl NativeWgcCapture {
         // change the capture correctness contract.
         let _ = session.SetIsCursorCaptureEnabled(false);
 
+        // The yellow capture indicator is controlled by Windows. Request its
+        // removal where supported; older builds or OS policy may retain it.
+        if let Err(error) = session.SetIsBorderRequired(false) {
+            tracing::debug!(%error, "Windows capture border suppression unavailable");
+        }
+
         let telemetry = Arc::new(NativeWgcTelemetry::default());
         let callback_state = Arc::new(FrameCallbackState::default());
         let (sender, receiver) = sync_channel::<QueuedWgcFrame>(NATIVE_WGC_HANDOFF_CAPACITY);

@@ -6,6 +6,42 @@
   },
   "features": [
     {
+      "id": "QB-CAP-008",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Suppress the Windows recording border",
+      "description": "Request removal of the yellow Windows Graphics Capture indicator before recording starts, wherever Windows permits it.",
+      "priority": "P2",
+      "area": "capture",
+      "status": "in-progress",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": ["QB-CAP-001"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Every native capture session requests IsBorderRequired=false before StartCapture.",
+        "Unsupported border suppression does not prevent recording and its API error is logged.",
+        "The border is absent in an interactive capture on Windows that permits suppression."
+      ],
+      "verification": [
+        {
+          "type": "inspection",
+          "description": "Inspect native session initialization and run the applicable recorder check, tests, formatting, strict Clippy and release build.",
+          "command": null
+        },
+        {
+          "type": "manual",
+          "description": "Use the generated native-window fixture to check capture still succeeds and visually confirm border suppression where Windows permits it.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/native_backend/run_native_fixture.ps1 -Scenario steady -DurationSeconds 10"
+        }
+      ],
+      "evidence": [
+        "2026-10-30: NativeWgcCapture::prepare now requests SetIsBorderRequired(false) immediately after cursor exclusion, before StartCapture; unsupported API errors are logged at debug level and remain non-fatal.",
+        "2026-10-30: Recorder all-target/all-feature check and tests passed (251 tests, 11 ignored), formatting, strict all-target/all-feature Clippy and production release build passed. Logs: .codex/logs/command-20261030-{175650,175723,175756,175808}.log. Canonical schema/graph/checkpoint validation and git diff --check passed.",
+        "2026-10-30: Generated steady-window fixture built but capture was environment-blocked at native NVENC initialization: NO_ENCODE_DEVICE. Source cleanup completed. Logs: build/perf/qb-cap-008/20261030-175828-steady-none-72424028/. No successful capture or visual border-removal claim."
+      ],
+      "notes": "2026-10-30 user-requested bounded presentation fix. Windows policy or another capturer may retain its indicator; recording remains independent of border-removal permission. Code and release build are complete; generated recording validation is blocked by unavailable NVENC hardware. Next action: visually confirm border absence on the supported recording machine; retain non-done status until that acceptance passes."
+    },
+    {
       "id": "QB-LIB-023",
       "kind": "feature",
       "stage": "ready",
