@@ -52,12 +52,18 @@ impl NativeWgcSource {
         self.capture.recv_timeout(timeout)
     }
 
-    pub(crate) fn receive_pending_timeout(&mut self, timeout: Duration) -> Result<(bool, u64)> {
-        self.capture.receive_pending_timeout(timeout)
+    pub(crate) fn receive_pending_timeout(
+        &mut self,
+        timeout: Duration,
+        after: i64,
+        through: i64,
+    ) -> Result<(bool, u64)> {
+        self.capture
+            .receive_pending_timeout(timeout, after, through)
     }
 
-    pub(crate) fn drain_handoff_to_pending(&mut self) -> Result<u64> {
-        self.capture.drain_handoff_to_pending()
+    pub(crate) fn poll_pending_for_tick(&mut self, after: i64, through: i64) -> Result<u64> {
+        self.capture.poll_pending_for_tick(after, through)
     }
 
     pub(crate) fn take_pending_through(&mut self, qpc_100ns: i64) -> Option<CapturedWgcFrame<'_>> {

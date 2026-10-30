@@ -514,7 +514,20 @@ impl NativeRecorderSession {
             .source
             .as_mut()
             .context("native WGC source is closed")?;
-        let (received, replacements) = source.receive_pending_timeout(timeout)?;
+        // Catch-up and full encoder slots need submission progress, not more
+        // coalescing. Keep both existing WGC slots intact for tick selection.
+        if Instant::now() >= self.clock.next_deadline()? {
+            self.target_closed = source.telemetry().closed;
+            if !timeout.is_zero() && !self.converter.has_free_slot() {
+                std::thread::sleep(timeout.min(NO_SLOT_RETRY_WAIT));
+            }
+            return Ok(());
+        }
+        let (received, replacements) = source.receive_pending_timeout(
+            timeout,
+            self.clock.telemetry().latest_source_qpc_100ns,
+            self.clock.next_qpc_100ns()?,
+        )?;
         if !received {
             self.target_closed = source.telemetry().closed;
         }
@@ -541,7 +554,10 @@ impl NativeRecorderSession {
             ..
         } = self;
         let source = source.as_mut().context("native WGC source is closed")?;
-        let replacements = source.drain_handoff_to_pending()?;
+        let replacements = source.poll_pending_for_tick(
+            clock.telemetry().latest_source_qpc_100ns,
+            clock.next_qpc_100ns()?,
+        )?;
         clock.record_source_discards(replacements);
         let pool_dimensions = source.pool_dimensions();
         // Catch-up ticks describe the past. Leave a future capture in the

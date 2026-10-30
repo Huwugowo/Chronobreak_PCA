@@ -51,7 +51,7 @@ struct QueuedWgcFrame {
 }
 
 #[derive(Debug)]
-struct LatestPending<T> {
+struct PendingFrame<T> {
     value: Option<T>,
     replacements: u64,
     high_water_mark: u64,
@@ -61,10 +61,10 @@ struct LatestPending<T> {
 enum PendingOffer {
     Stored,
     Replaced,
-    Stale,
+    Discarded,
 }
 
-impl<T> Default for LatestPending<T> {
+impl<T> Default for PendingFrame<T> {
     fn default() -> Self {
         Self {
             value: None,
@@ -74,7 +74,7 @@ impl<T> Default for LatestPending<T> {
     }
 }
 
-impl<T> LatestPending<T> {
+impl<T> PendingFrame<T> {
     fn replace(&mut self, value: T) -> bool {
         let replaced = self.value.replace(value).is_some();
         if replaced {
@@ -84,13 +84,29 @@ impl<T> LatestPending<T> {
         replaced
     }
 
-    fn offer_newer_by(&mut self, value: T, timestamp: impl Fn(&T) -> i64) -> PendingOffer {
-        if self
-            .value
-            .as_ref()
-            .is_some_and(|pending| timestamp(&value) <= timestamp(pending))
-        {
-            return PendingOffer::Stale;
+    /// Prefer the newest eligible capture, otherwise the earliest future one.
+    /// Delivery time and a later arrival never move the presentation cutoff.
+    fn offer_for_tick(
+        &mut self,
+        value: T,
+        after: i64,
+        through: i64,
+        timestamp: impl Fn(&T) -> i64,
+    ) -> PendingOffer {
+        let incoming = timestamp(&value);
+        if incoming <= after {
+            return PendingOffer::Discarded;
+        }
+        if let Some(pending) = &self.value {
+            let current = timestamp(pending);
+            let replace = if current <= through {
+                incoming > current && incoming <= through
+            } else {
+                incoming < current
+            };
+            if !replace {
+                return PendingOffer::Discarded;
+            }
         }
         if self.replace(value) {
             PendingOffer::Replaced
@@ -104,14 +120,33 @@ impl<T> LatestPending<T> {
     }
 
     fn take_through(&mut self, cutoff: i64, timestamp: impl FnOnce(&T) -> i64) -> Option<T> {
-        if self
-            .value
-            .as_ref()
-            .is_some_and(|value| timestamp(value) <= cutoff)
-        {
+        if self.has_through(cutoff, timestamp) {
             self.take()
         } else {
             None
+        }
+    }
+
+    fn has_through(&self, cutoff: i64, timestamp: impl FnOnce(&T) -> i64) -> bool {
+        self.value
+            .as_ref()
+            .is_some_and(|value| timestamp(value) <= cutoff)
+    }
+
+    fn poll_for_tick(
+        &mut self,
+        receiver: &Receiver<T>,
+        after: i64,
+        through: i64,
+        timestamp: impl Fn(&T) -> i64,
+    ) -> std::result::Result<Option<PendingOffer>, TryRecvError> {
+        if self.has_through(through, &timestamp) {
+            return Ok(None);
+        }
+        match receiver.try_recv() {
+            Ok(frame) => Ok(Some(self.offer_for_tick(frame, after, through, timestamp))),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(error) => Err(error),
         }
     }
 
@@ -430,7 +465,7 @@ pub(crate) struct NativeWgcCapture {
     item_closed_token: Option<i64>,
     receiver: Receiver<QueuedWgcFrame>,
     startup_sender: Option<SyncSender<QueuedWgcFrame>>,
-    pending: LatestPending<QueuedWgcFrame>,
+    pending: PendingFrame<QueuedWgcFrame>,
     worker_frame_discards: u64,
     telemetry: Arc<NativeWgcTelemetry>,
     callback_state: Arc<FrameCallbackState>,
@@ -520,7 +555,7 @@ impl NativeWgcCapture {
             item_closed_token: None,
             receiver,
             startup_sender: Some(sender),
-            pending: LatestPending::default(),
+            pending: PendingFrame::default(),
             worker_frame_discards: 0,
             telemetry,
             callback_state,
@@ -619,12 +654,17 @@ impl NativeWgcCapture {
         }
     }
 
-    pub(crate) fn receive_pending_timeout(&mut self, timeout: Duration) -> Result<(bool, u64)> {
+    pub(crate) fn receive_pending_timeout(
+        &mut self,
+        timeout: Duration,
+        after: i64,
+        through: i64,
+    ) -> Result<(bool, u64)> {
         match self.receiver.recv_timeout(timeout) {
             Ok(frame) => {
-                let replacements = self
-                    .offer_pending(frame)
-                    .saturating_add(self.drain_handoff_to_pending()?);
+                // Recheck the scheduler after one receive. An eager drain can
+                // run across the deadline and consume the following tick's frame.
+                let replacements = self.offer_pending(frame, after, through);
                 Ok((true, replacements))
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -637,29 +677,33 @@ impl NativeWgcCapture {
         }
     }
 
-    pub(crate) fn drain_handoff_to_pending(&mut self) -> Result<u64> {
-        let mut replacements = 0_u64;
-        loop {
-            match self.receiver.try_recv() {
-                Ok(frame) => {
-                    replacements = replacements.saturating_add(self.offer_pending(frame));
-                }
-                Err(TryRecvError::Empty) => return Ok(replacements),
-                Err(TryRecvError::Disconnected) => {
-                    bail!("native WGC callback handoff disconnected")
-                }
+    pub(crate) fn poll_pending_for_tick(&mut self, after: i64, through: i64) -> Result<u64> {
+        // Consume an already eligible pending frame first, leaving the other
+        // surface in the existing capacity-one handoff for the next tick.
+        match self
+            .pending
+            .poll_for_tick(&self.receiver, after, through, |frame| frame.qpc_100ns)
+        {
+            Ok(Some(outcome)) => Ok(self.account_pending_offer(outcome)),
+            Ok(None) | Err(TryRecvError::Empty) => Ok(0),
+            Err(TryRecvError::Disconnected) => {
+                bail!("native WGC callback handoff disconnected")
             }
         }
     }
 
-    fn offer_pending(&mut self, frame: QueuedWgcFrame) -> u64 {
-        match self
+    fn offer_pending(&mut self, frame: QueuedWgcFrame, after: i64, through: i64) -> u64 {
+        let outcome = self
             .pending
-            .offer_newer_by(frame, |queued| queued.qpc_100ns)
-        {
+            .offer_for_tick(frame, after, through, |queued| queued.qpc_100ns);
+        self.account_pending_offer(outcome)
+    }
+
+    fn account_pending_offer(&mut self, outcome: PendingOffer) -> u64 {
+        match outcome {
             PendingOffer::Stored => 0,
             PendingOffer::Replaced => 1,
-            PendingOffer::Stale => {
+            PendingOffer::Discarded => {
                 self.record_worker_frame_discard();
                 0
             }
@@ -1016,7 +1060,7 @@ mod tests {
             }
         }
         let closed = Cell::new(0);
-        let mut pending = LatestPending::default();
+        let mut pending = PendingFrame::default();
         pending.replace(Frame(500_000, &closed));
         for tick in [166_666, 333_333] {
             assert!(pending.take_through(tick, |frame| frame.0).is_none());
@@ -1120,11 +1164,12 @@ mod tests {
         const OUTPUT_TICKS: u64 = 60;
 
         for source_rate in [60_u64, 144, 240] {
-            let mut pending = LatestPending::default();
+            let mut pending = PendingFrame::default();
             let mut source_index = 1_u64;
             let mut arrivals = 1_u64;
             let mut snapshot_copies = 1_u64;
             let mut observed_replacements = 0_u64;
+            let mut latest_staged = 0_i64;
 
             for tick_index in 1..OUTPUT_TICKS {
                 let tick_nanos = u128::from(tick_index) * NANOS_PER_SECOND / OUTPUT_RATE;
@@ -1133,15 +1178,22 @@ mod tests {
                 {
                     let source_nanos =
                         u128::from(source_index) * NANOS_PER_SECOND / u128::from(source_rate);
-                    if pending.replace((source_index, source_nanos)) {
+                    if pending.offer_for_tick(
+                        (source_index, source_nanos),
+                        latest_staged,
+                        tick_nanos as i64,
+                        |value| value.1 as i64,
+                    ) == PendingOffer::Replaced
+                    {
                         observed_replacements = observed_replacements.saturating_add(1);
                     }
                     arrivals = arrivals.saturating_add(1);
                     source_index = source_index.saturating_add(1);
                 }
 
-                let (selected_index, selected_nanos) =
-                    pending.take().expect("each output tick has a source");
+                let (selected_index, selected_nanos) = pending
+                    .take_through(tick_nanos as i64, |value| value.1 as i64)
+                    .expect("each output tick has a source");
                 assert_eq!(
                     selected_index,
                     source_index - 1,
@@ -1151,6 +1203,7 @@ mod tests {
                     tick_nanos.saturating_sub(selected_nanos) <= NANOS_PER_SECOND / OUTPUT_RATE,
                     "source rate {source_rate} exceeded one output interval of source age"
                 );
+                latest_staged = selected_nanos as i64;
                 snapshot_copies = snapshot_copies.saturating_add(1);
             }
 
@@ -1169,19 +1222,110 @@ mod tests {
     }
 
     #[test]
+    fn eligible_pending_precedes_future_handoff_without_losing_either_surface() {
+        use std::cell::Cell;
+        struct Frame<'a>(i64, &'a Cell<u32>, &'a Cell<u32>);
+        impl Drop for Frame<'_> {
+            fn drop(&mut self) {
+                self.1.set(self.1.get() - 1);
+                self.2.set(self.2.get() + 1);
+            }
+        }
+        let live = Cell::new(0);
+        let closed = Cell::new(0);
+        let frame = |timestamp| {
+            live.set(live.get() + 1);
+            Frame(timestamp, &live, &closed)
+        };
+        let (sender, receiver) = sync_channel(NATIVE_WGC_HANDOFF_CAPACITY);
+        let mut pending = PendingFrame::default();
+        assert_eq!(
+            pending.offer_for_tick(frame(90), 80, 100, |f| f.0),
+            PendingOffer::Stored
+        );
+        assert!(sender.try_send(frame(110)).is_ok());
+        assert_eq!(
+            pending.poll_for_tick(&receiver, 80, 100, |f| f.0).unwrap(),
+            None
+        );
+        assert_eq!(live.get(), 2);
+        // No dequeue occurred: the unchanged callback handoff still rejects overflow.
+        let overflow = sender.try_send(frame(120));
+        assert!(matches!(&overflow, Err(TrySendError::Full(_))));
+        drop(overflow);
+        assert_eq!(live.get(), 2);
+        assert_eq!(closed.get(), 1); // Never admitted; a handoff drop only.
+        let selected = pending.take_through(100, |f| f.0).unwrap();
+        assert_eq!(selected.0, 90);
+        drop(selected);
+        assert_eq!(
+            pending.poll_for_tick(&receiver, 90, 105, |f| f.0).unwrap(),
+            Some(PendingOffer::Stored)
+        );
+        assert!(pending.take_through(105, |f| f.0).is_none());
+        assert_eq!(closed.get(), 2);
+        let selected = pending.take_through(120, |f| f.0).unwrap();
+        assert_eq!(selected.0, 110);
+        drop(selected);
+        assert_eq!(live.get(), 0);
+        assert_eq!(closed.get(), 3);
+        assert_eq!(pending.high_water_mark, 1);
+        assert_eq!(pending.replacements, 0);
+        // Both admitted frames were selected; overflow is not an admitted discard.
+        assert_eq!(2, 2 + pending.replacements);
+    }
+
+    #[test]
+    fn receive_boundary_and_irregular_delivery_preserve_eligibility_and_accounting() {
+        let mut pending = PendingFrame::default();
+        let mut discards = 0_u64;
+        // A blocking receive may wake beyond the tick boundary. Its future
+        // arrival must not evict an eligible frame already waiting for that tick.
+        for (timestamp, expected) in [
+            (90, PendingOffer::Stored),
+            (95, PendingOffer::Replaced),
+            (110, PendingOffer::Discarded),
+            (94, PendingOffer::Discarded),
+            (95, PendingOffer::Discarded),
+            (80, PendingOffer::Discarded),
+        ] {
+            let outcome = pending.offer_for_tick(timestamp, 80, 100, |t| *t);
+            assert_eq!(outcome, expected);
+            discards += u64::from(outcome == PendingOffer::Discarded);
+        }
+        assert_eq!(pending.take_through(100, |t| *t), Some(95));
+        for (timestamp, expected) in [
+            (120, PendingOffer::Stored),
+            (110, PendingOffer::Replaced), // Closest future capture, not latest arrival.
+            (130, PendingOffer::Discarded),
+            (99, PendingOffer::Replaced), // Late delivery, but newer than last staged.
+            (80, PendingOffer::Discarded),
+        ] {
+            let outcome = pending.offer_for_tick(timestamp, 95, 100, |t| *t);
+            assert_eq!(outcome, expected);
+            discards += u64::from(outcome == PendingOffer::Discarded);
+        }
+        assert_eq!(pending.take_through(100, |t| *t), Some(99));
+        assert_eq!(pending.replacements, 3);
+        assert_eq!(discards, 6);
+        assert_eq!(11, 2 + pending.replacements + discards);
+        assert_eq!(pending.high_water_mark, 1);
+    }
+
+    #[test]
     fn pending_timestamp_order_keeps_newest_and_accounts_for_stale_frames() {
-        let mut pending = LatestPending::default();
+        let mut pending = PendingFrame::default();
         let mut worker_discards = 0_u64;
         for (timestamp, expected) in [
             (100, PendingOffer::Stored),
             (120, PendingOffer::Replaced),
-            (110, PendingOffer::Stale),
-            (120, PendingOffer::Stale),
+            (110, PendingOffer::Discarded),
+            (120, PendingOffer::Discarded),
             (130, PendingOffer::Replaced),
         ] {
-            let outcome = pending.offer_newer_by(timestamp, |value| *value);
+            let outcome = pending.offer_for_tick(timestamp, 0, 200, |value| *value);
             assert_eq!(outcome, expected);
-            worker_discards += u64::from(outcome == PendingOffer::Stale);
+            worker_discards += u64::from(outcome == PendingOffer::Discarded);
         }
         assert_eq!(pending.take(), Some(130));
         assert_eq!(pending.replacements, 2);
@@ -1200,7 +1344,7 @@ mod tests {
         }
 
         let drops = Arc::new(AtomicU64::new(0));
-        let mut pending = LatestPending::default();
+        let mut pending = PendingFrame::default();
         assert!(!pending.replace(DropCounter(Arc::clone(&drops))));
         assert_eq!(drops.load(Ordering::Relaxed), 0);
 
