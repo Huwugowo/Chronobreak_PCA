@@ -872,7 +872,8 @@
       ],
       "evidence": [
         "2026-10-31: Windows startup resolves the games destination and uses GetDiskFreeSpaceExW available-to-caller bytes before Starting, bundle allocation or native capture. Below 8 GiB (about one hour at current 18 Mb/s maximum H.264 plus 192 kb/s AAC) or query failure returns an actionable terminal error through the existing tray route; no cleanup, ongoing polling or new UI.",
-        "2026-10-31: Three focused preflight tests pass: low/boundary/sufficient capacity, resolved destination, missing/query failures, unchanged existing recording/no allocation, and a real Windows query. Recorder all-target/all-feature check and tests pass (255 passed, 12 opt-in ignored), formatting and strict Clippy pass, canonical validation and diff whitespace check pass. Detailed results and scope limits: docs/execution/qb-cap-005.md."
+        "2026-10-31: Three focused preflight tests pass: low/boundary/sufficient capacity, resolved destination, missing/query failures, unchanged existing recording/no allocation, and a real Windows query. Recorder all-target/all-feature check and tests pass (255 passed, 12 opt-in ignored), formatting and strict Clippy pass, canonical validation and diff whitespace check pass. Detailed results and scope limits: docs/execution/qb-cap-005.md.",
+        "2026-10-31 tooltip follow-up: error and recording-path tooltip text is bounded to 127 UTF-16 units with Unicode-safe ellipsis truncation; full error state/logs remain intact. Three focused tooltip tests and recorder check/test/fmt/strict Clippy pass (263 passed, 12 opt-in ignored)."
       ],
       "execution": {
         "workflow": "planned",

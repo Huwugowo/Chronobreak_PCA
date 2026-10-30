@@ -175,14 +175,16 @@ impl TrayApplication {
             }
             TrayState::Recording(directory) => {
                 tray.set_icon(Some(self.recording_icon.clone()))?;
-                tray.set_tooltip(Some(format!(
+                tray.set_tooltip(Some(bounded_tooltip(&format!(
                     "League Replay — Recording\n{}",
                     directory.display()
-                )))?;
+                ))))?;
             }
             TrayState::Error(message) => {
                 tray.set_icon(Some(self.error_icon.clone()))?;
-                tray.set_tooltip(Some(format!("League Replay — Error\n{message}")))?;
+                tray.set_tooltip(Some(bounded_tooltip(&format!(
+                    "League Replay — Error\n{message}"
+                ))))?;
             }
         }
         Ok(())
@@ -252,6 +254,27 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
     }
 }
 
+fn bounded_tooltip(text: &str) -> String {
+    // Windows NOTIFYICONDATAW::szTip has 128 UTF-16 units including the NUL.
+    const MAX_UNITS: usize = 127;
+    if text.encode_utf16().count() <= MAX_UNITS {
+        return text.to_owned();
+    }
+
+    let mut tooltip = String::new();
+    let mut remaining = MAX_UNITS - 1; // Reserve one unit for the ellipsis.
+    for character in text.chars() {
+        let units = character.len_utf16();
+        if units > remaining {
+            break;
+        }
+        tooltip.push(character);
+        remaining -= units;
+    }
+    tooltip.push('…');
+    tooltip
+}
+
 fn circle_icon(color: [u8; 4]) -> Icon {
     const SIZE: u32 = 32;
     let mut rgba = vec![0_u8; (SIZE * SIZE * 4) as usize];
@@ -278,6 +301,49 @@ fn circle_icon(color: [u8; 4]) -> Icon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tooltip_preserves_text_that_fits_and_marks_truncation() {
+        for text in [
+            "".to_owned(),
+            "League Replay — Idle".to_owned(),
+            "a".repeat(127),
+        ] {
+            assert_eq!(bounded_tooltip(&text), text);
+        }
+        assert_eq!(
+            bounded_tooltip(&"a".repeat(128)),
+            format!("{}…", "a".repeat(126))
+        );
+    }
+
+    #[test]
+    fn tooltip_counts_utf16_units_without_splitting_unicode() {
+        for prefix_length in [124, 125, 126] {
+            let text = format!("{}😀{}", "é".repeat(prefix_length), "尾".repeat(10));
+            let tooltip = bounded_tooltip(&text);
+            assert!(tooltip.encode_utf16().count() <= 127);
+            assert!(text.starts_with(tooltip.strip_suffix('…').unwrap()));
+        }
+        let exact = format!("{}😀", "é".repeat(125));
+        assert_eq!(bounded_tooltip(&exact), exact);
+    }
+
+    #[test]
+    fn tooltip_keeps_low_space_action_before_a_long_destination() {
+        let message = format!(
+            "League Replay — Error\nRecording failed to start: Low recording space: free 8 GiB or change folder; restart recorder. C:\\{}",
+            "recordings\\".repeat(30)
+        );
+        let tooltip = bounded_tooltip(&message);
+        assert!(tooltip.contains("free 8 GiB or change folder; restart recorder."));
+        assert!(tooltip.ends_with('…'));
+        assert_eq!(tooltip.encode_utf16().count(), 127);
+        assert!(message.len() > tooltip.len());
+
+        let recording = format!("League Replay — Recording\nC:\\{}", "games\\".repeat(30));
+        assert_eq!(bounded_tooltip(&recording).encode_utf16().count(), 127);
+    }
 
     #[test]
     fn generated_icons_are_valid() {

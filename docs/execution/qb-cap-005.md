@@ -6,7 +6,7 @@ Updated: 2026-10-31
 
 ## Current milestone
 
-Complete.
+Complete, including the tray-tooltip follow-up.
 
 ## Active unit
 
@@ -20,6 +20,8 @@ Implemented storage.rs resolution/available-to-caller query and policy, service
 insertion before Starting/bundle allocation, three focused tests and lifecycle docs.
 Reviewed final diff and existing terminal startup/tray error route. All feature
 acceptance criteria satisfied; canonical completion evidence recorded.
+Follow-up: bounded rendered error and recording-path tooltips to 127 UTF-16 units
+with an ellipsis, preserving Unicode scalar boundaries and full error state/logs.
 
 ## In flight
 
@@ -58,6 +60,17 @@ None.
 Initial test invocation hit the shell logging hook's denied write under
 `.codex/logs`; the installed Cargo executable ran directly without that wrapper.
 
+2026-10-31 tooltip follow-up: three focused tests pass for short/exact/over-limit
+text, BMP/non-BMP Unicode boundaries, and low-space action retention before a long
+path (including the complete tray/service prefixes). Recording paths share the
+same bound. Recorder all-target/all-feature check/tests and strict Clippy plus
+formatting pass: 263 tests passed across targets, 12 existing opt-in tests ignored.
+Logs: `build/qb-cap-005/tooltip-{check,test,fmt,clippy}.log`. Existing generated
+publication tests ran with approved filesystem access. No interactive tray result
+is claimed. Windows' 128-WCHAR buffer includes NUL, per
+[NOTIFYICONDATAW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-notifyicondataw);
+tray-icon 0.24.2 copies up to 128 units without reserving NUL for oversized input.
+
 ## Deviations
 
 Continue from planning into implementation in this session to fulfill the explicit
@@ -65,6 +78,8 @@ user request to implement and commit. User requests focused tests only; replace 
 generic manual verification item with actionable-message tests and inspection of
 the unchanged existing tray error route before implementation, retaining every
 acceptance criterion. No live low-disk/UI or hardware campaign is required.
+The user's tooltip bug report requires a small display-bound correction to the
+existing error route, not a new capture/storage design or revised immutable plan.
 
 ## Decisions
 
@@ -79,4 +94,4 @@ None.
 ## Next action
 
 No further feature action. Retain this checkpoint as verification history.
-Unrelated untracked `tools/audio/` files are outside this change.
+Unrelated audio files and concurrent native-reliability work are outside this fix.
