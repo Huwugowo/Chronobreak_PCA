@@ -21,6 +21,17 @@ Live Client readiness and `GameEnd` are not start/stop signals. A process with n
 
 After orderly shutdown joins startup, capture and post-game owners, the service may run one bounded interrupted-publication maintenance pass, described in [replay-time.md](replay-time.md), before ShutdownComplete. The production owner lease remains held. Fresh process checks skip or end the pass when League is observed; admitted work stays joined. This can extend orderly exit, including OS filesystem delays, but cannot block a running service's watcher or capture admission. There is no concurrent recovery worker.
 
+Immediately before Windows capture enters Starting or allocates a recording bundle,
+storage preflight resolves the existing `games` directory (including junctions and
+mounts) and queries its volume's available-to-caller bytes. Less than 8 GiB, or an
+unavailable destination/query, produces an actionable terminal startup error through
+the existing tray error state, suppressing retries for that game process. The
+8 GiB floor covers about an hour at the native maximum 18 Mb/s H.264 plus 192 kb/s
+AAC rate with modest overhead headroom. It is a snapshot, not a reservation or a
+guarantee against later exhaustion/longer matches. There is no ongoing space poll
+or automatic cleanup; existing recordings are untouched. After fixing storage or
+changing the configured folder, restart the recorder to retry the same game.
+
 ## Capture and finalization
 
 On Windows, the sole production video path is in-process exact-HWND Windows Graphics Capture on an explicit D3D11 adapter, D3D11 resize/BGRA-to-NV12 conversion, and direct NVENC H.264 submission. There is no external capture-backend selector and no automatic GDI, primary-display, software, cross-adapter, codec, or vendor fallback. See [windows-capture.md](windows-capture.md) for the complete supported surface and frame/resource contract.

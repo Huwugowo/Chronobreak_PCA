@@ -11,6 +11,67 @@ pub const VIDEO_PARTIAL_MP4: &str = "video.partial.mp4";
 pub const GAME_LOG_JSON: &str = "game_log.json";
 pub const METADATA_JSON: &str = "metadata.json";
 
+// One hour at native H.264's 18 Mb/s maximum plus 192 kb/s AAC is
+// 8,186,400,000 bytes. 8 GiB leaves modest mux/metadata headroom. This is a
+// critical-start floor, not a reservation or a guarantee that any match fits.
+#[cfg(target_os = "windows")]
+const MIN_RECORDING_FREE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+#[cfg(target_os = "windows")]
+pub(crate) fn preflight_recording_storage(games_path: &Path) -> Result<()> {
+    preflight_recording_storage_with(games_path, available_recording_bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn preflight_recording_storage_with(
+    games_path: &Path,
+    available_bytes: impl FnOnce(&Path) -> Result<u64>,
+) -> Result<()> {
+    // Resolve the games directory itself: it may be a junction/mount on a
+    // different volume from the configured library root or system drive.
+    let destination = fs::canonicalize(games_path).with_context(|| {
+        format!(
+            "Recording folder unavailable; check access or change folder, then restart recorder: {}",
+            games_path.display()
+        )
+    })?;
+    let available = available_bytes(&destination).with_context(|| {
+        format!(
+            "Cannot check recording space; check folder access, then restart recorder: {}",
+            destination.display()
+        )
+    })?;
+    anyhow::ensure!(
+        available >= MIN_RECORDING_FREE_BYTES,
+        "Low recording space: free 8 GiB or change folder; restart recorder. {} ({:.2} GiB free).",
+        games_path.display(),
+        available as f64 / (1024.0 * 1024.0 * 1024.0),
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn available_recording_bytes(destination: &Path) -> Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::core::PCWSTR;
+
+    let path: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut available = 0;
+    // SAFETY: path is a live NUL-terminated UTF-16 directory path; available is
+    // writable for the call. The other optional outputs are deliberately null.
+    unsafe {
+        GetDiskFreeSpaceExW(PCWSTR(path.as_ptr()), Some(&mut available), None, None)?;
+    }
+    // Use bytes available to this caller, respecting quotas rather than total
+    // free bytes on the volume.
+    Ok(available)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct JsonWriteStats {
     pub serialized_bytes: u64,
@@ -117,6 +178,73 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn storage_preflight_checks_resolved_destination_and_preserves_recordings() {
+        let directory = tempfile::tempdir().unwrap();
+        let games = directory.path().join("games");
+        let existing = create_game_directory(directory.path(), 42).unwrap();
+        let recording = existing.join(VIDEO_MP4);
+        fs::write(&recording, b"existing recording").unwrap();
+
+        for available in [
+            0,
+            MIN_RECORDING_FREE_BYTES - 1,
+            MIN_RECORDING_FREE_BYTES,
+            u64::MAX,
+        ] {
+            let result = preflight_recording_storage_with(&games, |destination| {
+                assert_eq!(destination, fs::canonicalize(&games).unwrap());
+                Ok(available)
+            });
+            if available < MIN_RECORDING_FREE_BYTES {
+                let message = result.unwrap_err().to_string();
+                assert!(message.contains("Low recording space"));
+                assert!(message.contains("free 8 GiB or change folder"));
+                assert!(message.contains("restart recorder"));
+                assert!(message.contains(&games.display().to_string()));
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(fs::read(&recording).unwrap(), b"existing recording");
+            assert_eq!(fs::read_dir(&games).unwrap().count(), 1);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn storage_preflight_fails_actionably_when_destination_or_query_is_unavailable() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing");
+        let message = preflight_recording_storage_with(&missing, |_| {
+            panic!("must not query a missing destination")
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(message.contains("Recording folder unavailable"));
+        assert!(message.contains("check access or change folder"));
+        assert!(!missing.exists());
+
+        let error = preflight_recording_storage_with(directory.path(), |_| {
+            anyhow::bail!("controlled query failure")
+        })
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("Cannot check recording space"));
+        assert!(message.contains("check folder access, then restart recorder"));
+        assert!(message.contains("controlled query failure"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn storage_preflight_queries_real_windows_destination_without_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = fs::canonicalize(directory.path()).unwrap();
+        // No minimum-space assumption about the machine running the test.
+        let _available = available_recording_bytes(&destination).unwrap();
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn current_timestamp_is_after_2025() {

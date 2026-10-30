@@ -899,18 +899,22 @@
       "id": "QB-CAP-005",
       "kind": "feature",
       "name": "Storage Preflight for Recording",
-      "description": "Prevent avoidable recording failure caused by insufficient available storage before or during a match.",
+      "description": "Check available storage on the actual recording destination before capture and refuse critically constrained starts without changing existing media.",
       "priority": "P1",
       "area": "capture",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
         "QB-CAP-001"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-10-31: Windows startup resolves the games destination and uses GetDiskFreeSpaceExW available-to-caller bytes before Starting, bundle allocation or native capture. Below 8 GiB (about one hour at current 18 Mb/s maximum H.264 plus 192 kb/s AAC) or query failure returns an actionable terminal error through the existing tray route; no cleanup, ongoing polling or new UI.",
+        "2026-10-31: Three focused preflight tests pass: low/boundary/sufficient capacity, resolved destination, missing/query failures, unchanged existing recording/no allocation, and a real Windows query. Recorder all-target/all-feature check and tests pass (255 passed, 12 opt-in ignored), formatting and strict Clippy pass, canonical validation and diff whitespace check pass. Detailed results and scope limits: docs/execution/qb-cap-005.md."
+      ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-cap-005-storage-preflight.md",
+        "progress": "docs/execution/qb-cap-005.md"
       },
       "acceptance_criteria": [
         "Chronobreak checks whether recording storage is critically constrained before starting capture.",
@@ -920,16 +924,16 @@
       "verification": [
         {
           "type": "automated",
-          "description": "Exercise preflight against controlled low-space/limit conditions where feasible.",
-          "command": null
+          "description": "Focused preflight tests cover low/boundary/sufficient space, resolved destination, query failures and source preservation; run applicable recorder baseline checks.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features"
         },
         {
-          "type": "manual",
-          "description": "Verify user-facing failure behavior.",
+          "type": "inspection",
+          "description": "Verify the preflight precedes bundle/native allocation and actionable errors use the existing terminal startup/tray error route; no new UI or ongoing polling.",
           "command": null
         }
       ],
-      "notes": "Post-game usage and age retention exist in the app; the recorder does not currently check free space before or during capture.",
+      "notes": "2026-10-31 explicit user scope: one pre-start check, simple justified threshold, graceful actionable error; preserve existing recordings, no automatic cleanup/storage manager/polling/new UI, focused tests only. Use the current native maximum video plus AAC rate to justify an 8 GiB critical-start floor; not a full-match space guarantee. Generic manual validation is replaced with focused message tests and inspection of the unchanged error route before implementation.",
       "user_value": 4.5,
       "differentiation": 4,
       "difficulty": 3,

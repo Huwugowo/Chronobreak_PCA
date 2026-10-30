@@ -1072,6 +1072,8 @@ async fn start_recording(
             "League process identity changed before native startup"
         )));
     }
+    #[cfg(target_os = "windows")]
+    crate::storage::preflight_recording_storage(&output_path.join("games")).terminal_startup()?;
     events(ServiceEvent::Availability(AvailabilityEvent::Capture(
         CaptureActivity::Starting,
     )));
