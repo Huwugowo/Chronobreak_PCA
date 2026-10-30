@@ -848,12 +848,10 @@ async fn run_inner(
                             control_telemetry.backend_exits =
                                 control_telemetry.backend_exits.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
-                            warn!("recorder backend exited while League was still running");
-                            events(ServiceEvent::Availability(AvailabilityEvent::CaptureError(CaptureProblem::Interrupted)));
-                            events(ServiceEvent::Error {
-                                message: "recorder backend exited unexpectedly; preserving the partial recording".to_owned(),
-                            });
-                            stop_recording(recording, &events).await;
+                            info!("recorder backend exited; checking its terminal result before publication");
+                            if stop_recording(recording, &events).await {
+                                events(ServiceEvent::Idle);
+                            }
                             startup_retry.block_active_process(current_process);
                         }
                         Ok(false) => {}
@@ -1130,8 +1128,6 @@ async fn start_recording(
             "League process identity changed before native startup"
         )));
     }
-    #[cfg(target_os = "windows")]
-    crate::storage::preflight_recording_storage(&output_path.join("games")).terminal_startup()?;
     #[cfg(target_os = "windows")]
     crate::storage::preflight_recording_storage(&output_path.join("games")).terminal_startup()?;
     events(ServiceEvent::Availability(AvailabilityEvent::Capture(

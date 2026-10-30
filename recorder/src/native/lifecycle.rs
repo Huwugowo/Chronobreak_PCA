@@ -386,6 +386,7 @@ impl NativeRecordingSession {
             video_started_at: _,
             recorded_at: _,
         } = self;
+        let exited_before_stop = worker.is_finished();
         let worker_result = worker.stop_and_join().await;
         if let Some(reason) = failure_reason {
             let worker_error = worker_result.err();
@@ -395,7 +396,15 @@ impl NativeRecordingSession {
                 output.display()
             );
         }
-        worker_result?;
+        let snapshot = worker_result?;
+        // A worker may finish without an owner stop when WGC closes the target.
+        // Terminal drain evidence alone cannot explain any other early exit.
+        if exited_before_stop && !snapshot.target_closed {
+            bail!(
+                "native recorder worker exited without a stop request or target close; partial fragmented MP4 preserved at {}",
+                output.display()
+            );
+        }
 
         let final_evidence = evidence.borrow().clone();
         if let Some(error) = final_evidence.protocol_error {
@@ -655,8 +664,6 @@ mod tests {
         directory: &Path,
         snapshot: NativeSessionTelemetrySnapshot,
     ) -> NativeRecordingSession {
-        let output = directory.join(VIDEO_PARTIAL_MP4);
-        std::fs::write(&output, b"fixture-fragmented-mp4").unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
@@ -665,15 +672,45 @@ mod tests {
             }
             Ok(snapshot)
         });
+        fake_session_with_worker(directory, snapshot, NativeWorker::new(stop, thread))
+    }
+
+    fn fake_session_with_worker(
+        directory: &Path,
+        snapshot: NativeSessionTelemetrySnapshot,
+        worker: NativeWorker,
+    ) -> NativeRecordingSession {
+        let output = directory.join(VIDEO_PARTIAL_MP4);
+        std::fs::write(&output, b"fixture-fragmented-mp4").unwrap();
         let (_sender, evidence) = watch::channel(snapshot.recording_evidence());
         NativeRecordingSession {
             directory: directory.to_path_buf(),
             output,
-            worker: NativeWorker::new(stop, thread),
+            worker,
             evidence,
             video_started_at: Instant::now(),
             recorded_at: SystemTime::now(),
         }
+    }
+
+    async fn exited_session(
+        directory: &Path,
+        snapshot: NativeSessionTelemetrySnapshot,
+        result: Result<NativeSessionTelemetrySnapshot>,
+    ) -> NativeRecordingSession {
+        let worker = NativeWorker::new(
+            Arc::new(AtomicBool::new(false)),
+            thread::spawn(move || result),
+        );
+        let session = fake_session_with_worker(directory, snapshot, worker);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !session.has_exited() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("fixture worker did not exit");
+        session
     }
 
     fn waiting_worker(observer: Arc<NativeWorkerCleanupObserver>) -> NativeWorker {
@@ -739,6 +776,53 @@ mod tests {
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
         assert_explicit_cleanup(&observer);
+    }
+
+    #[tokio::test]
+    async fn exited_target_close_can_reach_candidate_validation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut snapshot = telemetry();
+        snapshot.target_closed = true;
+        let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
+
+        let candidate = session.stop().await.unwrap();
+        assert_eq!(candidate.expected_frame_count().get(), 120);
+        assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+    }
+
+    #[tokio::test]
+    async fn exited_worker_without_target_close_rejects_even_complete_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = telemetry();
+        let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
+
+        let error = session.stop().await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("without a stop request or target close")
+        );
+        assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+    }
+
+    #[tokio::test]
+    async fn exited_target_close_does_not_override_worker_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut snapshot = telemetry();
+        snapshot.target_closed = true;
+        let session = exited_session(
+            directory.path(),
+            snapshot,
+            Err(anyhow!("fixture native mux failure")),
+        )
+        .await;
+
+        let error = session.stop().await.unwrap_err();
+        assert!(error.to_string().contains("fixture native mux failure"));
+        assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
     }
 
     #[tokio::test]
