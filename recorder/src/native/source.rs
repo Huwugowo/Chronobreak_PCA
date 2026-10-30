@@ -1,3 +1,4 @@
+use std::mem::ManuallyDrop;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -11,19 +12,29 @@ use super::winrt::WinRtMtaGuard;
 
 /// Thread-affine owner of the complete native source stack.
 ///
-/// Field order is intentional: Rust drops fields in declaration order, so WGC
-/// is detached and closed before the D3D11 device is released, and the WinRT
-/// MTA guard is uninitialized last on the same thread. The guard is !Send/!Sync,
-/// which prevents moving a live source to another thread after construction.
+/// Explicit destruction releases capture/device/MTA in that order, only after
+/// callback release is proven. This also covers implicit drop and unwinding.
+/// The MTA guard is !Send/!Sync, preventing movement to another thread.
 pub struct NativeWgcSource {
-    capture: NativeWgcCapture,
-    device: NativeD3d11Device,
-    _winrt: WinRtMtaGuard,
+    capture: ManuallyDrop<NativeWgcCapture>,
+    device: ManuallyDrop<NativeD3d11Device>,
+    _winrt: ManuallyDrop<WinRtMtaGuard>,
 }
 
 impl NativeWgcSource {
     /// Construct this value inside the dedicated GPU submission worker.
     pub fn start(target: &CaptureTarget) -> Result<Self> {
+        Self::start_impl(
+            target,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    fn start_impl(
+        target: &CaptureTarget,
+        #[cfg(test)] failure: Option<super::capture::StartupFailurePoint>,
+    ) -> Result<Self> {
         let winrt = WinRtMtaGuard::initialize()?;
         let adapter_luid = target
             .windows_adapter_luid()
@@ -32,11 +43,14 @@ impl NativeWgcSource {
         let capture = NativeWgcCapture::prepare(&winrt, target, &device)
             .context("native WGC preparation failed before callback registration")?;
         let mut source = Self {
-            capture,
-            device,
-            _winrt: winrt,
+            capture: ManuallyDrop::new(capture),
+            device: ManuallyDrop::new(device),
+            _winrt: ManuallyDrop::new(winrt),
         };
-        if let Err(error) = source.capture.start() {
+        if let Err(error) = source.capture.start(
+            #[cfg(test)]
+            failure,
+        ) {
             return Err(
                 source.close_after_initialization_failure("WGC callback/session startup", error)
             );
@@ -130,14 +144,7 @@ impl NativeWgcSource {
     pub fn close(mut self) -> Result<NativeWgcTelemetrySnapshot> {
         match self.capture.shutdown() {
             Ok(()) => Ok(self.capture.telemetry()),
-            Err(error) => {
-                // A free-threaded WGC callback can still be unwinding when a
-                // bounded shutdown reports failure. Dropping the source here
-                // would release the WinRT objects/device and uninitialize the
-                // worker MTA underneath that callback, which can crash inside
-                // GraphicsCapture.dll. This is a terminal recording failure;
-                // deliberately retain the complete source stack until process
-                // exit rather than turning it into a use-after-unload.
+            Err(error) if !self.capture.shutdown_complete() => {
                 tracing::error!(
                     error = %error,
                     "retaining native WGC source after incomplete shutdown to protect late callbacks"
@@ -145,6 +152,9 @@ impl NativeWgcSource {
                 std::mem::forget(self);
                 Err(error)
             }
+            Err(error) => Err(error.context(
+                "native WGC cleanup failed after callback release; source resources released",
+            )),
         }
     }
 
@@ -154,6 +164,29 @@ impl NativeWgcSource {
         error: anyhow::Error,
     ) -> anyhow::Error {
         initialization_failure(stage, error, || self.close().map(|_| ()))
+    }
+}
+
+impl Drop for NativeWgcSource {
+    fn drop(&mut self) {
+        let cleanup = self.capture.shutdown();
+        if !self.capture.shutdown_complete() {
+            tracing::error!(error = ?cleanup.err(),
+                "retaining native WGC source on drop: callback release is unproven");
+            return;
+        }
+        if let Err(error) = cleanup {
+            tracing::error!(%error, "native WGC cleanup failed after callback release");
+        }
+        // SAFETY: this is the sole destruction site for these ManuallyDrop
+        // fields. The source is thread-affine, all handler owners have released,
+        // and shutdown_complete prevents capture's Drop from repeating cleanup.
+        // Release WGC COM references before D3D11 and uninitialize the MTA last.
+        unsafe {
+            ManuallyDrop::drop(&mut self.capture);
+            ManuallyDrop::drop(&mut self.device);
+            ManuallyDrop::drop(&mut self._winrt);
+        }
     }
 }
 
@@ -168,15 +201,57 @@ fn initialization_failure(
         "native partial initialization failed; source cleanup completed or retained safely");
     match cleanup {
         Ok(()) => error.context(format!("{stage}; source cleanup complete")),
-        Err(cleanup) => error.context(format!(
-            "{stage}; source retained after cleanup failure: {cleanup:#}"
-        )),
+        Err(cleanup) => error.context(format!("{stage}; source cleanup failed: {cleanup:#}")),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a running generated wgc_fixture window and QUEUEBACK_TEST_WGC_PID"]
+    fn generated_wgc_partial_start_rollback() -> Result<()> {
+        use super::super::capture::StartupFailurePoint;
+        use crate::platform::{CaptureSource, capture_target_for_process};
+
+        let pid = std::env::var("QUEUEBACK_TEST_WGC_PID")?.parse()?;
+        let target = capture_target_for_process(pid)?;
+        anyhow::ensure!(
+            matches!(&target.source,
+            CaptureSource::WindowsGraphicsCapture { window_title: Some(title), .. }
+                if title == "QueueBack WGC Changing-Window Fixture"),
+            "rollback fixture accepts only the generated WGC window"
+        );
+        for point in [
+            StartupFailurePoint::FrameArrived,
+            StartupFailurePoint::Closed,
+            StartupFailurePoint::StartCapture,
+            StartupFailurePoint::AfterStartCapture,
+        ] {
+            let error = match NativeWgcSource::start_impl(&target, Some(point)) {
+                Ok(source) => {
+                    source.close()?;
+                    anyhow::bail!("startup injection was not reached");
+                }
+                Err(error) => error,
+            };
+            let message = format!("{error:#}");
+            anyhow::ensure!(
+                message.contains(&format!("injected WGC {point:?} failure")),
+                "did not reach {point:?}: {message}"
+            );
+            anyhow::ensure!(
+                message.contains("source cleanup complete"),
+                "rollback failed at {point:?}: {message}"
+            );
+            println!("WGC_ROLLBACK_PASS point={point:?} idle=true handlers_released=true");
+        }
+        // Successful owners also use the guarded Drop path without close().
+        drop(NativeWgcSource::start(&target)?);
+        Ok(())
+    }
+
     #[test]
     fn partial_initialization_closes_once_and_retains_primary_and_cleanup_errors() {
         for cleanup_fails in [false, true] {
@@ -196,7 +271,7 @@ mod tests {
             assert_eq!(calls.get(), 1);
             assert!(message.contains("original stage: GPU setup failed"));
             if cleanup_fails {
-                assert!(message.contains("retained after cleanup failure: callback still owned"));
+                assert!(message.contains("source cleanup failed: callback still owned"));
             } else {
                 assert!(message.contains("source cleanup complete"));
             }

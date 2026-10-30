@@ -952,17 +952,20 @@
       "description": "Establish callback-aware teardown and source-lifetime guarantees for every failure while constructing the native WGC capture owner.",
       "priority": "P1",
       "area": "capture",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
         "QB-CAP-001"
       ],
       "evidence": [
-        "2026-10-29 source review confirms that FrameArrived/Closed registration and StartCapture precede construction of NativeWgcCapture, so construction errors do not use its explicit callback-quiescence shutdown path. Ordinary COM destruction may already be sufficient; no use-after-free or unsafe runtime outcome was demonstrated. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (N1)."
+        "2026-10-30: traced current source/session/worker ownership and Microsoft WinRT/windows 0.62.2 contracts. CAP006 had already fixed pre-owner registration. Corrected Close after failed idle proof, retention despite released callbacks, and implicit Drop bypassing full-source retention; no UAF was demonstrated.",
+        "Three deterministic regressions use actual COM delegates with production startup/shutdown seams for registration/start errors, retained handlers without tokens, late callback rejection, idle/owner proof failures and drop-safe cleanup errors. Locked recorder check/test (251 passed; 11 ignored), formatting and strict Clippy passed.",
+        "Generated Windows WGC rollback fixture passed all four operation boundaries, including after actual StartCapture and a received frame; successful cleanup proves handler-owner release before source destruction. No recording/media files used. Details and limits: docs/execution/qb-cap-007.md; native evidence build/verification/qb-cap-007/rollback-test.log."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-cap-007-partial-wgc-startup.md",
+        "progress": "docs/execution/qb-cap-007.md"
       },
       "acceptance_criteria": [
         "Every construction failure after callback registration may begin has an explicit lifetime/rollback guarantee established by applicable WinRT contracts or guarded cleanup before the successful owner is returned.",
@@ -979,19 +982,19 @@
         {
           "type": "automated",
           "description": "Inject each registration/start failure and verify owned cleanup, callback accounting, and retained-resource behavior using dedicated fixtures.",
-          "command": null
+          "command": "cargo test --manifest-path recorder/Cargo.toml --locked --all-features native::capture::tests"
         },
         {
           "type": "manual",
           "description": "Exercise injected partial construction failures on a generated Windows WGC target, retaining callback release and teardown-order evidence without touching League or user recordings.",
-          "command": null
+          "command": "cargo test --manifest-path recorder/Cargo.toml --locked --all-features generated_wgc_partial_start_rollback -- --ignored --nocapture"
         }
       ],
-      "notes": "Draft assurance gap from N1, not proof of memory unsafety. QB-CAP-006 commit dcaaa0f now constructs the source owner before callbacks and explicitly closes partial startup, retaining the full stack on failed quiescence. Actual registration/StartCapture/removal/quiescence failure paths remain unproven and belong here. Resolve the WinRT rollback contract and injection design before ready; reuse the existing callback-aware ownership model rather than introducing parallel cleanup. Preserve the explicit N2 limitation: an in-process native call that never returns cannot be safely terminated by detaching/freeing resources. No hard driver-hang containment claim belongs to this feature.",
+      "notes": "Full source ownership precedes callback registration. Idle proof now gates drain/Close; handler-owner release gates capture/device/MTA destruction, including implicit Drop. Cleanup API errors remain errors but only unproven callback release retains the stack. Generated WGC rollback passed; forced vendor-internal HRESULT failures, hard driver hangs, League launch/FPS/GPU behavior and interactive playback remain unmeasured. Test seams do not claim synchronous WinRT revocation or hard containment. No new frame-path synchronization, GPU work, threads or retries.",
       "user_value": 5,
       "differentiation": 3,
       "difficulty": 4,
-      "stage": "draft"
+      "stage": "ready"
     },
     {
       "id": "EPIC-CAP-PERF",

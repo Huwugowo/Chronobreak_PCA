@@ -27,6 +27,15 @@ use super::{NATIVE_WGC_FRAME_POOL_CAPACITY, NATIVE_WGC_HANDOFF_CAPACITY};
 
 const CALLBACK_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StartupFailurePoint {
+    FrameArrived,
+    Closed,
+    StartCapture,
+    AfterStartCapture,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum NativeWgcCallbackErrorCategory {
@@ -566,62 +575,53 @@ impl NativeWgcCapture {
     }
 
     /// The complete source/device/MTA owner exists before callback registration.
-    pub(crate) fn start(&mut self) -> Result<()> {
+    pub(crate) fn start(
+        &mut self,
+        #[cfg(test)] failure: Option<StartupFailurePoint>,
+    ) -> Result<()> {
         let sender = self
             .startup_sender
             .take()
             .context("native WGC was already started")?;
-        let callback_telemetry = self.telemetry.clone();
-        let frame_callback_owner = FrameCallbackOwner::new(&self.callback_state);
-        let frame_arrived_token = self
-            .frame_pool
-            .FrameArrived(
-                &TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(
-                    move |pool, _| {
-                        let Some(_activity) = frame_callback_owner.state.enter() else {
-                            return Ok(());
-                        };
-                        let Some(pool) = pool.as_ref() else {
-                            callback_telemetry.record_callback_error(
-                                NativeWgcCallbackErrorCategory::MissingEventSource,
-                                None,
-                            );
-                            return Ok(());
-                        };
-                        callback_telemetry.arrivals.fetch_add(1, Ordering::Relaxed);
-                        match pool.TryGetNextFrame() {
-                            Ok(frame) => admit_frame(frame, &sender, &callback_telemetry),
-                            Err(error) => callback_telemetry.record_callback_error(
-                                NativeWgcCallbackErrorCategory::FrameAcquisition,
-                                Some(error.code().0),
-                            ),
-                        }
-                        Ok(())
-                    },
-                ),
-            )
-            .context("could not register native WGC FrameArrived callback")?;
-
-        self.frame_arrived_token = Some(frame_arrived_token);
-        let closed_telemetry = self.telemetry.clone();
-        let closed_callback_owner = FrameCallbackOwner::new(&self.callback_state);
-        let item_closed_token = self
-            .item
-            .Closed(
-                &TypedEventHandler::<GraphicsCaptureItem, IInspectable>::new(move |_, _| {
-                    let _owner = &closed_callback_owner;
-                    closed_telemetry.closed.store(true, Ordering::Release);
-                    Ok(())
-                }),
-            )
-            .context("could not register native WGC target-closed callback")?;
-
-        self.item_closed_token = Some(item_closed_token);
-        self.session
-            .StartCapture()
-            .context("could not start native WGC capture")?;
-
-        Ok(())
+        start_operations(
+            &mut self.frame_arrived_token,
+            &mut self.item_closed_token,
+            || {
+                let handler = frame_arrived_handler(&self.callback_state, &self.telemetry, sender);
+                #[cfg(test)]
+                fail_startup_at(failure, StartupFailurePoint::FrameArrived)?;
+                self.frame_pool.FrameArrived(&handler)
+            },
+            || {
+                let handler = closed_handler(&self.callback_state, &self.telemetry);
+                #[cfg(test)]
+                fail_startup_at(failure, StartupFailurePoint::Closed)?;
+                self.item.Closed(&handler)
+            },
+            || {
+                #[cfg(test)]
+                fail_startup_at(failure, StartupFailurePoint::StartCapture)?;
+                self.session.StartCapture()?;
+                #[cfg(test)]
+                if failure == Some(StartupFailurePoint::AfterStartCapture) {
+                    // Exercise rollback after an actual callback/handoff, not
+                    // just after a successful StartCapture HRESULT.
+                    let frame =
+                        self.receiver
+                            .recv_timeout(Duration::from_secs(2))
+                            .map_err(|error| {
+                                windows::core::Error::new(
+                                    windows::Win32::Foundation::E_FAIL,
+                                    format!("rollback fixture received no frame: {error}"),
+                                )
+                            })?;
+                    drop(frame);
+                    self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+                    fail_startup_at(failure, StartupFailurePoint::AfterStartCapture)?;
+                }
+                Ok(())
+            },
+        )
     }
 
     pub(crate) fn try_recv(&self) -> Result<Option<CapturedWgcFrame<'_>>> {
@@ -803,73 +803,171 @@ impl NativeWgcCapture {
 
         let mut first_error = None;
         self.callback_state.stopping.store(true, Ordering::SeqCst);
-        if let Some(token) = self.frame_arrived_token.take()
-            && let Err(error) = self.frame_pool.RemoveFrameArrived(token)
-        {
-            first_error = Some(
-                anyhow::Error::new(error).context("could not detach native WGC frame callback"),
-            );
+        if let Some(token) = self.frame_arrived_token {
+            match self.frame_pool.RemoveFrameArrived(token) {
+                Ok(()) => self.frame_arrived_token = None,
+                Err(error) => {
+                    first_error = Some(
+                        anyhow::Error::new(error)
+                            .context("could not detach native WGC frame callback"),
+                    );
+                }
+            }
         }
-        if let Some(token) = self.item_closed_token.take()
-            && let Err(error) = self.item.RemoveClosed(token)
-            && first_error.is_none()
-        {
-            first_error = Some(
-                anyhow::Error::new(error).context("could not detach native WGC close callback"),
-            );
-        }
-        if !self
-            .callback_state
-            .wait_until_idle(CALLBACK_SHUTDOWN_TIMEOUT)
-            && first_error.is_none()
-        {
-            first_error = Some(anyhow::anyhow!(
-                "native WGC frame callback did not stop within {} ms",
-                CALLBACK_SHUTDOWN_TIMEOUT.as_millis()
-            ));
+        if let Some(token) = self.item_closed_token {
+            match self.item.RemoveClosed(token) {
+                Ok(()) => self.item_closed_token = None,
+                Err(error) if first_error.is_none() => {
+                    first_error = Some(
+                        anyhow::Error::new(error)
+                            .context("could not detach native WGC close callback"),
+                    );
+                }
+                Err(_) => {}
+            }
         }
 
-        while let Ok(frame) = self.receiver.try_recv() {
-            drop(frame);
-            self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
-        }
-        if self.pending.clear() {
-            self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
-        }
+        finish_shutdown(
+            &self.callback_state,
+            CALLBACK_SHUTDOWN_TIMEOUT,
+            first_error,
+            &mut self.shutdown_complete,
+            || {
+                while let Ok(frame) = self.receiver.try_recv() {
+                    drop(frame);
+                    self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+                }
+                if self.pending.clear() {
+                    self.worker_frame_discards = self.worker_frame_discards.saturating_add(1);
+                }
 
-        if let Err(error) = self.frame_pool.Close()
-            && first_error.is_none()
-        {
-            first_error =
-                Some(anyhow::Error::new(error).context("could not close native WGC frame pool"));
-        }
-        // Close the frame pool before the capture session. The free-threaded
-        // pool owns the FrameArrived worker and its recyclable surfaces; the
-        // session must not outlive that pool teardown.
-        if let Err(error) = self.session.Close()
-            && first_error.is_none()
-        {
-            first_error =
-                Some(anyhow::Error::new(error).context("could not close native WGC session"));
-        }
-
-        if !self
-            .callback_state
-            .wait_until_released(CALLBACK_SHUTDOWN_TIMEOUT)
-            && first_error.is_none()
-        {
-            // NativeWgcSource::close retains the whole source stack whenever
-            // this bounded proof fails. Do not let the WinRT MTA unwind while
-            // a free-threaded event handler still owns a callback closure.
-            first_error = Some(anyhow::anyhow!(
-                "native WGC callbacks did not quiesce within {} ms",
-                CALLBACK_SHUTDOWN_TIMEOUT.as_millis()
-            ));
-        }
-
-        self.shutdown_complete = true;
-        first_error.map_or(Ok(()), Err)
+                // Preserve the established pool-before-session policy. Neither
+                // Close is assumed to synchronize or release event handlers.
+                let pool = self
+                    .frame_pool
+                    .Close()
+                    .context("could not close native WGC frame pool");
+                let session = self
+                    .session
+                    .Close()
+                    .context("could not close native WGC session");
+                pool.and(session)
+            },
+        )
     }
+
+    pub(crate) fn shutdown_complete(&self) -> bool {
+        self.shutdown_complete
+    }
+}
+
+fn start_operations(
+    frame_token: &mut Option<i64>,
+    closed_token: &mut Option<i64>,
+    add_frame: impl FnOnce() -> windows::core::Result<i64>,
+    add_closed: impl FnOnce() -> windows::core::Result<i64>,
+    start: impl FnOnce() -> windows::core::Result<()>,
+) -> Result<()> {
+    *frame_token =
+        Some(add_frame().context("could not register native WGC FrameArrived callback")?);
+    *closed_token =
+        Some(add_closed().context("could not register native WGC target-closed callback")?);
+    start().context("could not start native WGC capture")
+}
+
+fn frame_arrived_handler(
+    state: &Arc<FrameCallbackState>,
+    telemetry: &Arc<NativeWgcTelemetry>,
+    sender: SyncSender<QueuedWgcFrame>,
+) -> TypedEventHandler<Direct3D11CaptureFramePool, IInspectable> {
+    let owner = FrameCallbackOwner::new(state);
+    let telemetry = Arc::clone(telemetry);
+    TypedEventHandler::new(
+        move |pool: windows::core::Ref<Direct3D11CaptureFramePool>, _| {
+            let Some(_activity) = owner.state.enter() else {
+                return Ok(());
+            };
+            let Some(pool) = pool.as_ref() else {
+                telemetry.record_callback_error(
+                    NativeWgcCallbackErrorCategory::MissingEventSource,
+                    None,
+                );
+                return Ok(());
+            };
+            telemetry.arrivals.fetch_add(1, Ordering::Relaxed);
+            match pool.TryGetNextFrame() {
+                Ok(frame) => admit_frame(frame, &sender, &telemetry),
+                Err(error) => telemetry.record_callback_error(
+                    NativeWgcCallbackErrorCategory::FrameAcquisition,
+                    Some(error.code().0),
+                ),
+            }
+            Ok(())
+        },
+    )
+}
+
+fn closed_handler(
+    state: &Arc<FrameCallbackState>,
+    telemetry: &Arc<NativeWgcTelemetry>,
+) -> TypedEventHandler<GraphicsCaptureItem, IInspectable> {
+    let owner = FrameCallbackOwner::new(state);
+    let telemetry = Arc::clone(telemetry);
+    TypedEventHandler::new(move |_, _| {
+        let _owner = &owner;
+        telemetry.closed.store(true, Ordering::Release);
+        Ok(())
+    })
+}
+
+fn finish_shutdown(
+    state: &FrameCallbackState,
+    timeout: Duration,
+    first_error: Option<anyhow::Error>,
+    complete: &mut bool,
+    drain_and_close: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if !state.wait_until_idle(timeout) {
+        let error = anyhow::anyhow!(
+            "native WGC frame callback did not stop within {} ms; source retained before Close",
+            timeout.as_millis()
+        );
+        return Err(match first_error {
+            Some(first) => first.context(error),
+            None => error,
+        });
+    }
+
+    // The stopping gate rejects every later frame callback before WGC access.
+    // Close may release handlers itself, so owner release is checked afterward.
+    let close = drain_and_close();
+    *complete = state.wait_until_released(timeout);
+    let result = first_error.map_or(close, Err);
+    if !*complete {
+        let error = anyhow::anyhow!(
+            "native WGC callbacks did not quiesce within {} ms; source retained",
+            timeout.as_millis()
+        );
+        return Err(match result {
+            Err(first) => first.context(error),
+            Ok(()) => error,
+        });
+    }
+    result
+}
+
+#[cfg(test)]
+fn fail_startup_at(
+    failure: Option<StartupFailurePoint>,
+    point: StartupFailurePoint,
+) -> windows::core::Result<()> {
+    if failure == Some(point) {
+        return Err(windows::core::Error::new(
+            windows::Win32::Foundation::E_FAIL,
+            format!("injected WGC {point:?} failure"),
+        ));
+    }
+    Ok(())
 }
 
 /// Item.Size can describe a transient tiny window. Allocate the same source's
@@ -1393,5 +1491,172 @@ mod tests {
         state.stopping.store(true, Ordering::SeqCst);
         assert!(state.wait_until_released(Duration::from_secs(1)));
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn partial_start_failures_release_real_com_handlers_and_commit_only_returned_tokens() {
+        use std::cell::RefCell;
+
+        for failure in [
+            Some(StartupFailurePoint::FrameArrived),
+            Some(StartupFailurePoint::Closed),
+            Some(StartupFailurePoint::StartCapture),
+            None,
+        ] {
+            let state = Arc::new(FrameCallbackState::default());
+            let telemetry = Arc::new(NativeWgcTelemetry::default());
+            let (sender, receiver) = sync_channel(NATIVE_WGC_HANDOFF_CAPACITY);
+            let frame_registration = RefCell::new(None);
+            let closed_registration = RefCell::new(None);
+            let operations = RefCell::new(Vec::new());
+            let (mut frame_token, mut closed_token) = (None, None);
+            let result = start_operations(
+                &mut frame_token,
+                &mut closed_token,
+                || {
+                    operations.borrow_mut().push("frame");
+                    let handler = frame_arrived_handler(&state, &telemetry, sender);
+                    fail_startup_at(failure, StartupFailurePoint::FrameArrived)?;
+                    // Clone/Drop exercises actual COM AddRef/Release, not an
+                    // imitation callback-owner counter in a fake event object.
+                    *frame_registration.borrow_mut() = Some(handler.clone());
+                    Ok(11)
+                },
+                || {
+                    operations.borrow_mut().push("closed");
+                    let handler = closed_handler(&state, &telemetry);
+                    fail_startup_at(failure, StartupFailurePoint::Closed)?;
+                    *closed_registration.borrow_mut() = Some(handler.clone());
+                    Ok(22)
+                },
+                || {
+                    operations.borrow_mut().push("start");
+                    fail_startup_at(failure, StartupFailurePoint::StartCapture)
+                },
+            );
+            assert_eq!(result.is_err(), failure.is_some());
+            let frame_registered = failure != Some(StartupFailurePoint::FrameArrived);
+            let closed_registered =
+                frame_registered && failure != Some(StartupFailurePoint::Closed);
+            assert_eq!(frame_token, frame_registered.then_some(11));
+            assert_eq!(closed_token, closed_registered.then_some(22));
+            assert_eq!(
+                state.owners.load(Ordering::SeqCst),
+                u64::from(frame_registered) + u64::from(closed_registered)
+            );
+            assert_eq!(
+                *operations.borrow(),
+                match failure {
+                    Some(StartupFailurePoint::FrameArrived) => vec!["frame"],
+                    Some(StartupFailurePoint::Closed) => vec!["frame", "closed"],
+                    _ => vec!["frame", "closed", "start"],
+                }
+            );
+
+            state.stopping.store(true, Ordering::SeqCst);
+            if let Some(handler) = frame_registration.borrow().as_ref() {
+                // A null sender would be a callback error if admission passed.
+                handler.Invoke(None, None).unwrap();
+            }
+            assert_eq!(telemetry.snapshot().callback_errors, 0);
+            assert_eq!(telemetry.snapshot().admitted, 0);
+            assert!(receiver.try_recv().is_err());
+            let mut complete = false;
+            finish_shutdown(&state, Duration::ZERO, None, &mut complete, || {
+                drop(frame_registration.borrow_mut().take());
+                drop(closed_registration.borrow_mut().take());
+                Ok(())
+            })
+            .unwrap();
+            assert!(complete);
+            assert_eq!(state.owners.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn active_callback_prevents_frame_drain_and_native_close_even_after_remove_error() {
+        let state = FrameCallbackState::default();
+        let activity = state.enter().unwrap();
+        state.stopping.store(true, Ordering::SeqCst);
+        let mut complete = false;
+        let error = finish_shutdown(
+            &state,
+            Duration::ZERO,
+            Some(anyhow::anyhow!("remove failed")),
+            &mut complete,
+            || panic!("must retain queued frames and native objects beneath an active callback"),
+        )
+        .unwrap_err();
+        assert!(!complete);
+        let message = format!("{error:#}");
+        assert!(message.contains("retained before Close"));
+        assert!(message.contains("remove failed"));
+        drop(activity);
+        assert!(state.wait_until_idle(Duration::ZERO));
+    }
+
+    #[test]
+    fn retained_com_delegate_requires_retention_but_released_delegate_allows_drop_on_api_error() {
+        let state = Arc::new(FrameCallbackState::default());
+        let telemetry = Arc::new(NativeWgcTelemetry::default());
+        let (sender, _receiver) = sync_channel(NATIVE_WGC_HANDOFF_CAPACITY);
+        let mut late_handler = None;
+        let (mut frame_token, mut closed_token) = (None, None);
+        // Registration failure is not documented as atomic. Model the
+        // ambiguous case explicitly: a real COM delegate is retained, but
+        // the operation returns an error and no token can be committed.
+        start_operations(
+            &mut frame_token,
+            &mut closed_token,
+            || {
+                let handler = frame_arrived_handler(&state, &telemetry, sender);
+                late_handler = Some(handler.clone());
+                Err(windows::core::Error::from_hresult(
+                    windows::Win32::Foundation::E_FAIL,
+                ))
+            },
+            || panic!("must not register Closed"),
+            || panic!("must not start"),
+        )
+        .unwrap_err();
+        assert_eq!((frame_token, closed_token), (None, None));
+        let late_handler = late_handler.unwrap();
+        state.stopping.store(true, Ordering::SeqCst);
+        let mut complete = false;
+        let close_calls = std::cell::Cell::new(0);
+        let error = finish_shutdown(&state, Duration::ZERO, None, &mut complete, || {
+            close_calls.set(close_calls.get() + 1);
+            late_handler.Invoke(None, None).unwrap();
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("source retained"));
+        assert!(!complete);
+        assert_eq!(close_calls.get(), 1);
+        assert_eq!(state.owners.load(Ordering::SeqCst), 1);
+        assert_eq!(telemetry.snapshot().callback_errors, 0);
+
+        // HRESULT success is not the ownership proof; actual final Release is.
+        drop(late_handler);
+        let error = finish_shutdown(
+            &state,
+            Duration::ZERO,
+            Some(anyhow::anyhow!("remove failed")),
+            &mut complete,
+            || {
+                close_calls.set(close_calls.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "remove failed");
+        assert!(complete);
+        let error = finish_shutdown(&state, Duration::ZERO, None, &mut complete, || {
+            Err(anyhow::anyhow!("Close failed"))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "Close failed");
+        assert!(complete);
+        assert_eq!(state.owners.load(Ordering::SeqCst), 0);
     }
 }
