@@ -355,14 +355,23 @@ impl NativeNv12Converter {
     /// BGRA texture. This releases the capacity-two WGC pool surface promptly
     /// while preserving GPU-resident pixels for future CFR duplicate ticks.
     pub fn stage_latest_source(&mut self, frame: &CapturedWgcFrame<'_>) -> Result<bool> {
+        self.stage_source_texture(&frame.source_texture()?, frame.dimensions())
+    }
+
+    /// Initial admission already inspected this borrowed texture. Reuse that
+    /// interface and descriptor rather than acquiring the WGC surface twice.
+    pub(super) fn stage_source_texture(
+        &mut self,
+        source: &NativeSourceTexture<'_>,
+        dimensions: (u32, u32),
+    ) -> Result<bool> {
         ensure!(
-            frame.dimensions() == (self.input_width, self.input_height),
+            dimensions == (self.input_width, self.input_height),
             "native WGC content size {:?} does not match source snapshot {}x{}; reconfigure first",
-            frame.dimensions(),
+            dimensions,
             self.input_width,
             self.input_height
         );
-        let source = frame.source_texture()?;
         ensure!(
             source.desc().Format == DXGI_FORMAT_B8G8R8A8_UNORM,
             "native WGC source format {:?} is not BGRA8 UNORM",

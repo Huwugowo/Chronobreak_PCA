@@ -544,7 +544,9 @@ impl NativeRecorderSession {
         let replacements = source.drain_handoff_to_pending()?;
         clock.record_source_discards(replacements);
         let pool_dimensions = source.pool_dimensions();
-        let Some(frame) = source.take_pending() else {
+        // Catch-up ticks describe the past. Leave a future capture in the
+        // existing pending slot and repeat the last eligible GPU snapshot.
+        let Some(frame) = source.take_pending_through(clock.next_qpc_100ns()?) else {
             *target_closed = source.telemetry().closed;
             return Ok(());
         };
@@ -861,12 +863,14 @@ fn stage_initial_source(
             let staged = process_and_close_frame(
                 frame,
                 |frame| {
-                    if !usable
-                        || dimensions != source.pool_dimensions()
-                        || !source_texture_contains_content(frame)?
-                    {
+                    if !usable || dimensions != source.pool_dimensions() {
                         return Ok(None);
                     }
+                    let texture = frame.source_texture()?;
+                    if texture.desc().Width < dimensions.0 || texture.desc().Height < dimensions.1 {
+                        return Ok(None);
+                    }
+                    diagnostics.usable_surfaces = diagnostics.usable_surfaces.saturating_add(1);
                     let mut converter = startup_stage(
                         stop,
                         startup_deadline,
@@ -875,9 +879,10 @@ fn stage_initial_source(
                     )?;
                     startup_stage(stop, startup_deadline, "initial source snapshot", || {
                         ensure!(
-                            converter.stage_latest_source(frame)?,
+                            converter.stage_source_texture(&texture, dimensions)?,
                             "initial WGC surface changed after texture validation"
                         );
+                        diagnostics.staged_frames = diagnostics.staged_frames.saturating_add(1);
                         // Keep the physical source epoch, including time spent constructing
                         // the downstream graph. Rebasing it to now would falsify replay time.
                         let qpc = frame.qpc_100ns();
@@ -902,7 +907,9 @@ fn stage_initial_source(
                     source.recreate_for_content_size(dimensions.0, dimensions.1)
                 })?;
             }
-            deadline.observe(diagnostics.unusable_frames, Instant::now());
+            // Any received surface is source activity, even when its physical
+            // allocation still trails ContentSize. The absolute cap is unchanged.
+            deadline.observe(diagnostics.received_frames, Instant::now());
         }
         let capture = source.telemetry();
         if capture.closed {
@@ -949,6 +956,9 @@ fn process_and_close_frame<F, T>(
 
 #[derive(Default)]
 struct InitialRecoveryDiagnostics {
+    received_frames: u64,
+    usable_surfaces: u64,
+    staged_frames: u64,
     unusable_frames: u64,
     first_dimensions: Option<(u32, u32)>,
     first_unusable_dimensions: Option<(u32, u32)>,
@@ -957,6 +967,7 @@ struct InitialRecoveryDiagnostics {
 
 impl InitialRecoveryDiagnostics {
     fn observe(&mut self, dimensions: (u32, u32), usable: bool) {
+        self.received_frames = self.received_frames.saturating_add(1);
         self.first_dimensions.get_or_insert(dimensions);
         self.latest_dimensions = Some(dimensions);
         if !usable {
@@ -973,11 +984,14 @@ impl InitialRecoveryDiagnostics {
         error: anyhow::Error,
     ) -> anyhow::Error {
         tracing::error!(elapsed_ms = elapsed.as_millis() as u64, reason,
+            received_frames = self.received_frames, usable_surfaces = self.usable_surfaces,
+            staged_frames = self.staged_frames,
             unusable_frames = self.unusable_frames, first_dimensions = ?self.first_dimensions,
             latest_dimensions = ?self.latest_dimensions, expected_dimensions = ?expected,
             error = %format!("{error:#}"), "native initial content recovery failed");
-        error.context(format!("initial content recovery: reason={reason}, elapsed_ms={}, unusable_frames={}, first_dimensions={:?}, latest_dimensions={:?}, expected_dimensions={expected:?}",
-            elapsed.as_millis(), self.unusable_frames, self.first_dimensions, self.latest_dimensions))
+        error.context(format!("initial content recovery: reason={reason}, elapsed_ms={}, unusable_frames={}, first_dimensions={:?}, latest_dimensions={:?}, expected_dimensions={expected:?}, received_frames={}, usable_surfaces={}, staged_frames={}",
+            elapsed.as_millis(), self.unusable_frames, self.first_dimensions, self.latest_dimensions,
+            self.received_frames, self.usable_surfaces, self.staged_frames))
     }
 }
 
@@ -1288,5 +1302,33 @@ mod tests {
         assert!(message.contains("first_dimensions=Some((1, 1)), latest_dimensions=Some((4, 4))"));
         assert!(message.contains("expected_dimensions=(1920, 1080)"));
         assert!(message.contains("recovery timed out"));
+    }
+
+    #[test]
+    fn physical_surface_recovery_is_activity_but_never_extends_absolute_budget() {
+        let started = Instant::now();
+        let absolute = started + Duration::from_secs(15);
+        let mut deadline = StartupDeadline::new(started, FIRST_FRAME_TIMEOUT, absolute);
+        let mut diagnostics = InitialRecoveryDiagnostics::default();
+        for seconds in [4, 8, 12] {
+            let now = started + Duration::from_secs(seconds);
+            assert_eq!(deadline.expiration(now), None);
+            // Correct logical size, but no physically usable/staged surface yet.
+            diagnostics.observe((1920, 1080), true);
+            deadline.observe(diagnostics.received_frames, now);
+        }
+        assert_eq!(diagnostics.received_frames, 3);
+        assert_eq!(diagnostics.unusable_frames, 0);
+        assert_eq!(diagnostics.usable_surfaces, 0);
+        assert_eq!(diagnostics.staged_frames, 0);
+        assert_eq!(deadline.expiration(absolute), Some("absolute_deadline"));
+
+        let mut inactive = StartupDeadline::new(started, FIRST_FRAME_TIMEOUT, absolute);
+        inactive.observe(1, started);
+        inactive.observe(1, started + Duration::from_secs(4));
+        assert_eq!(
+            inactive.expiration(started + FIRST_FRAME_TIMEOUT),
+            Some("source_inactivity")
+        );
     }
 }

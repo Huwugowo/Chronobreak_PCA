@@ -42,10 +42,16 @@ impl NativeMuxPlan {
         }
 
         let mut arguments = Vec::new();
-        #[cfg(feature = "replay-time-fixture")]
-        let audio_first = matches!(audio, AudioSource::ReplayTimeFixturePcm(_));
-        #[cfg(not(feature = "replay-time-fixture"))]
-        let audio_first = false;
+        // Open live audio before probing the video pipe: audio that occurs
+        // during H.264 probing cannot be recovered by a later timestamp shift.
+        // This preserves DShow sample timestamps; it does not establish a
+        // DShow-clock/WGC-QPC mapping or assert that their first samples coincide.
+        let audio_first = match audio {
+            AudioSource::DirectShow(_) => true,
+            #[cfg(feature = "replay-time-fixture")]
+            AudioSource::ReplayTimeFixturePcm(_) => true,
+            _ => false,
+        };
         if audio_first {
             append_windows_audio_arguments(&mut arguments, audio);
         }
@@ -1151,6 +1157,38 @@ mod tests {
         assert!(audio_input < video_input);
         assert!(arguments.windows(2).any(|pair| pair == ["-map", "1:v:0"]));
         assert!(arguments.windows(2).any(|pair| pair == ["-map", "0:a:0"]));
+    }
+
+    #[test]
+    fn live_audio_opens_before_video_probe_without_replacing_sample_timestamps() {
+        let plan = NativeMuxPlan::h264(
+            60,
+            &AudioSource::DirectShow("fixture".into()),
+            Path::new("native.mp4"),
+        )
+        .unwrap();
+        let arguments = strings(&plan);
+        let audio = arguments
+            .windows(2)
+            .position(|pair| pair == ["-i", "audio=fixture"])
+            .unwrap();
+        let video = arguments
+            .windows(2)
+            .position(|pair| pair == ["-i", "pipe:0"])
+            .unwrap();
+        assert!(audio < video);
+        assert!(
+            !arguments[..audio]
+                .iter()
+                .any(|value| value == "-use_wallclock_as_timestamps")
+        );
+        assert!(arguments.windows(2).any(|pair| pair == ["-map", "0:a:0"]));
+        assert!(arguments.windows(2).any(|pair| pair == ["-map", "1:v:0"]));
+        assert!(arguments.windows(2).any(|pair| pair
+            == [
+                "-bsf:v",
+                "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1"
+            ]));
     }
 
     #[test]

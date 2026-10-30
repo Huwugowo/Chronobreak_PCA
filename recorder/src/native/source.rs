@@ -60,8 +60,8 @@ impl NativeWgcSource {
         self.capture.drain_handoff_to_pending()
     }
 
-    pub(crate) fn take_pending(&mut self) -> Option<CapturedWgcFrame<'_>> {
-        self.capture.take_pending()
+    pub(crate) fn take_pending_through(&mut self, qpc_100ns: i64) -> Option<CapturedWgcFrame<'_>> {
+        self.capture.take_pending_through(qpc_100ns)
     }
 
     pub(crate) fn record_worker_frame_discard(&mut self) {

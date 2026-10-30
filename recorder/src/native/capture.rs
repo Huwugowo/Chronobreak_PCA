@@ -103,6 +103,18 @@ impl<T> LatestPending<T> {
         self.value.take()
     }
 
+    fn take_through(&mut self, cutoff: i64, timestamp: impl FnOnce(&T) -> i64) -> Option<T> {
+        if self
+            .value
+            .as_ref()
+            .is_some_and(|value| timestamp(value) <= cutoff)
+        {
+            self.take()
+        } else {
+            None
+        }
+    }
+
     fn clear(&mut self) -> bool {
         self.value.take().is_some()
     }
@@ -654,11 +666,13 @@ impl NativeWgcCapture {
         }
     }
 
-    pub(crate) fn take_pending(&mut self) -> Option<CapturedWgcFrame<'_>> {
-        self.pending.take().map(|inner| CapturedWgcFrame {
-            inner,
-            _source: PhantomData,
-        })
+    pub(crate) fn take_pending_through(&mut self, qpc_100ns: i64) -> Option<CapturedWgcFrame<'_>> {
+        self.pending
+            .take_through(qpc_100ns, |frame| frame.qpc_100ns)
+            .map(|inner| CapturedWgcFrame {
+                inner,
+                _source: PhantomData,
+            })
     }
 
     pub(crate) fn record_worker_frame_discard(&mut self) {
@@ -991,6 +1005,30 @@ impl Drop for NativeWgcCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_future_surface_stays_owned_until_its_presentation_tick() {
+        use std::cell::Cell;
+        struct Frame<'a>(i64, &'a Cell<u32>);
+        impl Drop for Frame<'_> {
+            fn drop(&mut self) {
+                self.1.set(self.1.get() + 1);
+            }
+        }
+        let closed = Cell::new(0);
+        let mut pending = LatestPending::default();
+        pending.replace(Frame(500_000, &closed));
+        for tick in [166_666, 333_333] {
+            assert!(pending.take_through(tick, |frame| frame.0).is_none());
+            assert_eq!(closed.get(), 0);
+        }
+        let frame = pending.take_through(500_000, |frame| frame.0).unwrap();
+        assert!(pending.take_through(500_000, |frame| frame.0).is_none());
+        assert_eq!(pending.high_water_mark, 1);
+        assert_eq!(pending.replacements, 0);
+        drop(frame);
+        assert_eq!(closed.get(), 1);
+    }
 
     #[test]
     fn initial_pool_size_uses_item_size_or_validated_hwnd_for_transient_sizes() {

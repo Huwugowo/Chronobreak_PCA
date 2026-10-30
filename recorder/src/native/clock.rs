@@ -82,13 +82,19 @@ impl NativeCfrClock {
         })
     }
 
-    /// Record a freshly staged GPU source snapshot. If another source was
+    /// Record a freshly staged GPU source snapshot captured no later than the
+    /// next presentation tick. Encoding lateness never changes this cutoff.
+    /// If another source was
     /// already waiting for the same output tick, that older image is an
     /// intentional pre-conversion CFR discard.
     pub fn observe_source(&mut self, qpc_100ns: i64) -> Result<()> {
         ensure!(
             qpc_100ns > self.latest_source_qpc_100ns,
             "native CFR source timestamp did not advance monotonically"
+        );
+        ensure!(
+            qpc_100ns <= self.next_qpc_100ns()?,
+            "native CFR source was captured after the pending presentation tick"
         );
         if self.source_pending {
             self.source_discards = self.source_discards.saturating_add(1);
@@ -108,6 +114,14 @@ impl NativeCfrClock {
             .context("native CFR deadline exceeded the monotonic clock range")
     }
 
+    pub(crate) fn next_qpc_100ns(&self) -> Result<i64> {
+        let offset = tick_qpc_offset(self.next_tick_index, self.frames_per_second)?;
+        i128::from(self.first_source_qpc_100ns)
+            .checked_add(i128::from(offset))
+            .and_then(|value| i64::try_from(value).ok())
+            .context("native CFR QPC timestamp overflowed")
+    }
+
     pub fn deadline_after(&self, duration: Duration) -> Result<Instant> {
         self.anchor_deadline
             .checked_add(duration)
@@ -125,11 +139,7 @@ impl NativeCfrClock {
             return Ok(None);
         }
         let index = self.next_tick_index;
-        let qpc_offset = tick_qpc_offset(index, self.frames_per_second)?;
-        let qpc_100ns = i128::from(self.first_source_qpc_100ns)
-            .checked_add(i128::from(qpc_offset))
-            .and_then(|value| i64::try_from(value).ok())
-            .context("native CFR QPC timestamp overflowed")?;
+        let qpc_100ns = self.next_qpc_100ns()?;
         let duplicate = !self.source_pending;
         Ok(Some(NativeCfrTick {
             index,
@@ -259,12 +269,17 @@ mod tests {
     fn superseded_sources_and_missing_sources_are_accounted_separately() {
         let anchor = Instant::now();
         let mut clock = NativeCfrClock::start(60, 1_000_000, anchor).unwrap();
+        clock.emit_due(anchor).unwrap().unwrap();
         clock.observe_source(1_000_100).unwrap();
-        let fresh = clock.emit_due(anchor).unwrap().unwrap();
+        clock.observe_source(1_000_200).unwrap();
+        let fresh = clock
+            .emit_due(anchor + tick_duration(1, 60).unwrap())
+            .unwrap()
+            .unwrap();
         assert!(!fresh.duplicate);
 
         let duplicate = clock
-            .emit_due(anchor + tick_duration(1, 60).unwrap())
+            .emit_due(anchor + tick_duration(2, 60).unwrap())
             .unwrap()
             .unwrap();
         assert!(duplicate.duplicate);
@@ -279,7 +294,36 @@ mod tests {
         let mut clock = NativeCfrClock::start(60, 1_000_000, anchor).unwrap();
         assert!(clock.observe_source(1_000_000).is_err());
         assert!(clock.observe_source(999_999).is_err());
+        clock.emit_due(anchor).unwrap().unwrap();
         clock.observe_source(1_000_001).unwrap();
+    }
+
+    #[test]
+    fn startup_and_stall_catch_up_never_apply_future_capture_to_past_ticks() {
+        let anchor = Instant::now();
+        let first_qpc = 10_000_000;
+        let future_qpc = first_qpc + 500_000; // Captured at tick 3 (50 ms).
+        let mut clock = NativeCfrClock::start(60, first_qpc, anchor).unwrap();
+        let encoding_time = anchor + Duration::from_millis(250);
+        let mut selected = Vec::new();
+        for index in 0..4 {
+            if index < 3 {
+                assert!(clock.observe_source(future_qpc).is_err());
+                assert_eq!(clock.telemetry().latest_source_qpc_100ns, first_qpc);
+            } else {
+                clock.observe_source(future_qpc).unwrap();
+            }
+            let tick = clock.peek_due(encoding_time).unwrap().unwrap();
+            assert_eq!(tick.index, index);
+            let source = clock.telemetry().latest_source_qpc_100ns;
+            assert!(source <= tick.qpc_100ns);
+            selected.push(source);
+            clock.commit(tick, encoding_time).unwrap();
+        }
+        assert_eq!(selected, [first_qpc, first_qpc, first_qpc, future_qpc]);
+        assert_eq!(clock.telemetry().duplicate_ticks, 2);
+        assert_eq!(clock.telemetry().source_discards, 0);
+        assert_eq!(clock.telemetry().scheduled_ticks, 4);
     }
 
     #[test]
