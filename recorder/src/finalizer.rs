@@ -8,12 +8,17 @@ use chronobreak_replay_time::{
 };
 use queueback_media_runtime::{BoundedProcessErrorKind, run_bounded_process};
 use serde::Serialize;
+#[cfg(not(windows))]
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::storage::{METADATA_JSON, VIDEO_MP4};
 
 mod fragments;
+#[cfg(windows)]
+mod publication;
+#[cfg(windows)]
+pub(crate) mod recovery;
 
 const FINALIZATION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const FINALIZATION_PROBE_OUTPUT_LIMIT: usize = 1024 * 1024;
@@ -86,6 +91,8 @@ impl CompletedVideoCandidate {
 pub(crate) struct ValidatedVideoCandidate {
     candidate: CompletedVideoCandidate,
     timeline: MediaTimelineV2,
+    #[cfg(windows)]
+    receipt: publication::Receipt,
     #[cfg(feature = "replay-time-fixture")]
     probe_stdout_bytes: usize,
     #[cfg(feature = "replay-time-fixture")]
@@ -123,25 +130,40 @@ pub(crate) async fn validate_candidate(
         bail!("finalization expectations do not match the private candidate evidence");
     }
     expectations.require_zero_video_start = true;
-    let deadline = Instant::now() + FINALIZATION_PROBE_TIMEOUT;
-    let mut output = run_packaged_probe(ffprobe, candidate.partial_path()).await?;
-    #[cfg(feature = "replay-time-fixture")]
-    let probe_stdout_bytes = output.stdout.len();
-    #[cfg(feature = "replay-time-fixture")]
-    let probe_stderr_bytes = output.stderr.len();
-    if output.success && !output.timed_out && !output.exceeded_output_limit {
-        complete_fragmented_frame_count(&mut output.stdout, candidate.partial_path(), deadline)
-            .await?;
-    }
-    let timeline = evaluate_probe_output(output, expectations)?;
+    #[cfg(windows)]
+    let _directory = publication::DirectoryPins::open(candidate.directory())?;
+    #[cfg(windows)]
+    let _media = publication::open_file(candidate.partial_path(), false)?;
+    #[cfg(windows)]
+    let receipt = publication::Receipt::capture(&_directory, &_media, &expectations.media_id)?;
+    let timeline = validate_media(ffprobe, candidate.partial_path(), expectations).await?;
     Ok(ValidatedVideoCandidate {
         candidate,
-        timeline,
+        timeline: timeline.0,
+        #[cfg(windows)]
+        receipt,
         #[cfg(feature = "replay-time-fixture")]
-        probe_stdout_bytes,
+        probe_stdout_bytes: timeline.1,
         #[cfg(feature = "replay-time-fixture")]
-        probe_stderr_bytes,
+        probe_stderr_bytes: timeline.2,
     })
+}
+
+async fn validate_media(
+    ffprobe: &Path,
+    media: &Path,
+    mut expectations: FinalizationExpectationsV2,
+) -> Result<(MediaTimelineV2, usize, usize)> {
+    expectations.require_zero_video_start = true;
+    let deadline = Instant::now() + FINALIZATION_PROBE_TIMEOUT;
+    let mut output = run_packaged_probe(ffprobe, media).await?;
+    let probe_stdout_bytes = output.stdout.len();
+    let probe_stderr_bytes = output.stderr.len();
+    if output.success && !output.timed_out && !output.exceeded_output_limit {
+        complete_fragmented_frame_count(&mut output.stdout, media, deadline).await?;
+    }
+    let timeline = evaluate_probe_output(output, expectations)?;
+    Ok((timeline, probe_stdout_bytes, probe_stderr_bytes))
 }
 
 async fn complete_fragmented_frame_count(
@@ -308,66 +330,71 @@ where
         bail!("metadata, game log, and validated media identity/timeline do not match");
     }
 
-    let directory = validated.candidate.directory();
-    let canonical_video = directory.join(VIDEO_MP4);
-    let canonical_metadata = directory.join(METADATA_JSON);
-    let pending_metadata = directory.join(METADATA_PENDING_JSON);
-    for path in [&canonical_video, &canonical_metadata, &pending_metadata] {
-        if tokio::fs::try_exists(path)
-            .await
-            .with_context(|| format!("failed to inspect publication target {}", path.display()))?
-        {
-            bail!(
-                "refusing to overwrite recording artifact {}",
-                path.display()
-            );
-        }
+    #[cfg(windows)]
+    {
+        publish_windows(validated, metadata)
     }
+    #[cfg(not(windows))]
+    {
+        let directory = validated.candidate.directory();
+        let canonical_video = directory.join(VIDEO_MP4);
+        let canonical_metadata = directory.join(METADATA_JSON);
+        let pending_metadata = directory.join(METADATA_PENDING_JSON);
+        for path in [&canonical_video, &canonical_metadata, &pending_metadata] {
+            if tokio::fs::try_exists(path).await.with_context(|| {
+                format!("failed to inspect publication target {}", path.display())
+            })? {
+                bail!(
+                    "refusing to overwrite recording artifact {}",
+                    path.display()
+                );
+            }
+        }
 
-    let mut bytes =
-        serde_json::to_vec_pretty(metadata).context("failed to serialize v2 metadata")?;
-    bytes.push(b'\n');
-    let mut pending = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending_metadata)
-        .await
-        .with_context(|| {
+        let mut bytes =
+            serde_json::to_vec_pretty(metadata).context("failed to serialize v2 metadata")?;
+        bytes.push(b'\n');
+        let mut pending = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pending_metadata)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to create pending metadata {}",
+                    pending_metadata.display()
+                )
+            })?;
+        pending.write_all(&bytes).await.with_context(|| {
             format!(
-                "failed to create pending metadata {}",
+                "failed to write pending metadata {}",
                 pending_metadata.display()
             )
         })?;
-    pending.write_all(&bytes).await.with_context(|| {
-        format!(
-            "failed to write pending metadata {}",
-            pending_metadata.display()
-        )
-    })?;
-    pending.sync_all().await.with_context(|| {
-        format!(
-            "failed to flush pending metadata {}",
-            pending_metadata.display()
-        )
-    })?;
-    drop(pending);
-
-    if let Err(error) =
-        tokio::fs::rename(validated.candidate.partial_path(), &canonical_video).await
-    {
-        return Err(error).with_context(|| {
+        pending.sync_all().await.with_context(|| {
             format!(
-                "failed to publish validated video {} as {}",
-                validated.candidate.partial_path().display(),
-                canonical_video.display()
+                "failed to flush pending metadata {}",
+                pending_metadata.display()
             )
-        });
-    }
+        })?;
+        drop(pending);
 
-    if let Err(error) = tokio::fs::rename(&pending_metadata, &canonical_metadata).await {
-        let rollback =
-            tokio::fs::rename(&canonical_video, validated.candidate.partial_path()).await;
-        return match rollback {
+        if let Err(error) =
+            tokio::fs::rename(validated.candidate.partial_path(), &canonical_video).await
+        {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to publish validated video {} as {}",
+                    validated.candidate.partial_path().display(),
+                    canonical_video.display()
+                )
+            });
+        }
+
+        if let Err(error) = tokio::fs::rename(&pending_metadata, &canonical_metadata).await {
+            let rollback =
+                tokio::fs::rename(&canonical_video, validated.candidate.partial_path()).await;
+            return match rollback {
             Ok(()) => Err(error).with_context(|| {
                 format!(
                     "failed to publish metadata {}; validated video was returned to its partial path",
@@ -382,7 +409,53 @@ where
                 )
             }),
         };
+        }
+        Ok(directory.to_path_buf())
     }
+}
+
+#[cfg(windows)]
+fn publish_windows<T: FinalMetadata + ?Sized>(
+    validated: ValidatedVideoCandidate,
+    metadata: &T,
+) -> Result<PathBuf> {
+    let directory = validated.candidate.directory();
+    let pins = publication::DirectoryPins::open(directory)?;
+    for leaf in [VIDEO_MP4, METADATA_JSON, METADATA_PENDING_JSON] {
+        if publication::exists(&directory.join(leaf))? {
+            bail!("refusing to overwrite recording artifact {leaf}");
+        }
+    }
+    let media = publication::open_file(validated.candidate.partial_path(), true)?;
+    validated
+        .receipt
+        .verify(&pins, &media, &validated.timeline.media_id)?;
+    let mut value = serde_json::to_value(metadata)?;
+    let object = value
+        .as_object_mut()
+        .context("metadata must be an object")?;
+    object.insert(
+        "publication".to_owned(),
+        serde_json::to_value(&validated.receipt)?,
+    );
+    let mut bytes = serde_json::to_vec_pretty(&value)?;
+    bytes.push(b'\n');
+    let pending = publication::create_pending(&directory.join(METADATA_PENDING_JSON), &bytes)?;
+    #[cfg(test)]
+    recovery::tests::publication_checkpoint("pending");
+    pins.rename(&media, VIDEO_MP4)?;
+    #[cfg(test)]
+    recovery::tests::publication_checkpoint("video");
+    if let Err(error) = pins.rename(&pending, METADATA_JSON) {
+        return match pins.rename(&media, crate::storage::VIDEO_PARTIAL_MP4) {
+            Ok(()) => Err(error).context("metadata publication failed; video returned to partial"),
+            Err(rollback) => Err(error).context(format!(
+                "metadata publication failed; video retained at canonical path: {rollback:#}"
+            )),
+        };
+    }
+    #[cfg(test)]
+    recovery::tests::publication_checkpoint("metadata");
     Ok(directory.to_path_buf())
 }
 
@@ -403,7 +476,7 @@ mod tests {
         Rational::new(numerator, denominator).unwrap()
     }
 
-    fn timeline() -> MediaTimelineV2 {
+    pub(super) fn timeline() -> MediaTimelineV2 {
         MediaTimelineV2 {
             schema_version: 2,
             replay_ticks_per_second: REPLAY_TICKS_PER_SECOND,
@@ -458,6 +531,13 @@ mod tests {
         let partial = directory.join("video.partial.mp4");
         std::fs::write(&partial, b"fixture").unwrap();
         ValidatedVideoCandidate {
+            #[cfg(windows)]
+            receipt: publication::Receipt::capture(
+                &publication::DirectoryPins::open(directory).unwrap(),
+                &publication::open_file(&partial, false).unwrap(),
+                &timeline.media_id,
+            )
+            .unwrap(),
             candidate: CompletedVideoCandidate::new(
                 directory.to_path_buf(),
                 partial,

@@ -502,6 +502,17 @@ async fn run_inner(
     let _ = native_recording_plan(&config.recording)
         .context("unsupported Windows recorder configuration")?;
     let ffmpeg = Ffmpeg::resolve().await?;
+    #[cfg(windows)]
+    match crate::finalizer::recovery::run(&output_path, ffmpeg.ffprobe_path(), &mut commands).await
+    {
+        Ok(true) => {
+            events(ServiceEvent::ShutdownComplete);
+            return Ok(());
+        }
+        Ok(false) => {}
+        Err(error) => warn!(error = %format!("{error:#}"),
+            "interrupted recording recovery unavailable; existing artifacts preserved"),
+    }
     let audio = ffmpeg.detect_audio_source().await;
     #[cfg(target_os = "windows")]
     info!(
@@ -1607,7 +1618,7 @@ async fn stop_recording_inner(
                     )));
                     events(ServiceEvent::Error {
                         message: format!(
-                            "Recording media could not prove the canonical replay-time contract; no canonical video or metadata was published. Any recoverable output remains under an explicit .partial.mp4 name: {error:#}"
+                            "Recording finalization/publication failed. Remaining private or canonical artifacts were preserved for startup reconciliation: {error:#}"
                         ),
                     });
                     false

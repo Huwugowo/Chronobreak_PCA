@@ -7,7 +7,7 @@ Process ownership, availability and login registration are described in
 
 `recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production tray mode runs the UI event loop while the recording service runs on Tokio.
 
-The service resolves the immutable packaged media runtime and detects audio once. It then checks League process presence every two seconds. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
+The service resolves the immutable packaged media runtime, performs the bounded owner-only interrupted-publication pass described in [replay-time.md](replay-time.md), and detects audio once. Shutdown is checked between recovery candidates; an admitted probe is joined before shutdown or capture admission. It then checks League process presence every two seconds. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
 
 League process presence remains the automatic lifecycle authority:
 

@@ -168,6 +168,14 @@ struct MetadataDocument {
     _pool_recreations: u64,
     #[serde(rename = "capture")]
     _capture: Option<CaptureMetadataDocument>,
+    // Recorder-only file-generation proof. Preserve on save; playback authority
+    // remains the independently checked canonical media timeline.
+    #[serde(
+        default,
+        rename = "publication",
+        skip_serializing_if = "Option::is_none"
+    )]
+    _publication: Option<serde_json::Map<String, serde_json::Value>>,
     saved: bool,
 }
 #[derive(Debug, Serialize)]
@@ -1343,6 +1351,57 @@ pub(crate) mod tests {
         let metadata: MetadataDocument = read_metadata(&game.join(METADATA_JSON)).unwrap();
         assert!(metadata.saved);
         assert_eq!(metadata.media_id.as_str(), MEDIA_ID);
+    }
+
+    #[test]
+    fn publication_receipt_is_optional_preserved_and_does_not_relax_other_fields() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "42", "2026-10-30T00:00:00Z", false);
+        let path = game.join(METADATA_JSON);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let receipt = json!({"version":1,"media_id":MEDIA_ID,"directory":{"volume":1,"file_id":[1]},
+            "media":{"volume":1,"file_id":[2]},"length":5,"last_write":3});
+        value["publication"] = receipt.clone();
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(!list_games(root.path()).unwrap()[0].incomplete);
+        replay_descriptor(root.path(), "http://localhost", "42", "fixture".into()).unwrap();
+        save_game(root.path(), "42", true).unwrap();
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["publication"], receipt);
+        assert_eq!(saved["saved"], true);
+        saved["foreign_field"] = json!(1);
+        fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(read_metadata(&path).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires sentinel-marked QUEUEBACK_RECOVERY_FIXTURE_LIBRARY from generated recorder recovery fixture"]
+    fn generated_recovered_recording_admits_one_playable_library_entry() {
+        let fixture =
+            PathBuf::from(std::env::var_os("QUEUEBACK_RECOVERY_FIXTURE_LIBRARY").unwrap());
+        assert!(
+            fixture
+                .join("QUEUEBACK_GENERATED_RECOVERY_FIXTURE")
+                .is_file()
+        );
+        let root = tempdir().unwrap();
+        let game = root.path().join("games/42");
+        fs::create_dir_all(&game).unwrap();
+        for leaf in [METADATA_JSON, VIDEO_MP4] {
+            fs::copy(fixture.join("games/42").join(leaf), game.join(leaf)).unwrap();
+        }
+        for _ in 0..2 {
+            let games = list_games(root.path()).unwrap();
+            assert_eq!(games.len(), 1);
+            assert!(!games[0].incomplete);
+            replay_descriptor(root.path(), "http://localhost", "42", "fixture".into()).unwrap();
+        }
+        save_game(root.path(), "42", true).unwrap();
+        let metadata = read_metadata(&game.join(METADATA_JSON)).unwrap();
+        assert!(metadata.saved);
+        assert!(metadata._publication.is_some());
     }
 
     #[test]
