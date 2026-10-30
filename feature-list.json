@@ -858,20 +858,21 @@
       "id": "QB-CAP-004",
       "kind": "feature",
       "name": "Post-recording Integrity Verification",
-      "description": "Validate finalized recordings cheaply enough to detect obviously broken, malformed, frozen, or missing-stream output.",
+      "description": "Independently validate finalized native recording stream format and exact container presentation timing before publication, with bounded post-capture inspection.",
       "priority": "P1",
       "area": "capture",
-      "status": "not-started",
+      "status": "done",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
-        "QB-CAP-001",
-        "QB-CAP-002"
+        "QB-CAP-001"
       ],
       "evidence": [
-        "2026-10-29 source review confirms that recorder finalization already runs a bounded packaged ffprobe summary and independently counts fragmented-MP4 video samples. It does not independently enforce output dimensions or H.264 High profile, and aggregate rate/count/duration checks do not prove every sample's exact CFR timing. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (M1)."
+        "2026-10-30 recorder/src/finalizer.rs enforces actual packaged-ffprobe 1920x1080 H.264 High stream facts. recorder/src/finalizer/fragments.rs independently verifies every candidate's empty-moov video sample grid from mdhd/trex/tfhd/tfdt/trun, including duration precedence, zero composition offsets, contiguous zero-origin timing, identity edits and complete sample byte ranges. Count, time base and end PTS must agree with the unchanged strict replay-time/producer reconciliation before existing receipt-bound publication.",
+        "2026-10-30 locked packaged-runtime finalizer suite passed 19 tests, including generated valid output, wrong dimensions/profile, and a one-tick timing perturbation that passes the old aggregate validator. Rejected candidates retain identical bytes and no canonical metadata/video; valid publication retains identical media bytes. Existing publication-crash recovery, decode and seek fixtures passed after correcting their generated media to the native contract. Final fragment-boundary suite passed 6 tests, including nonidentity edits, offsets/defaults, truncation, deadline/box limits and an unread virtual 8-GiB mdat.",
+        "2026-10-30 locked recorder all-target/all-feature tests passed (245 library, 4 binary, 3 integration; 12 opt-in ignored), replay-time tests passed (14), recorder all-target/all-feature check and strict Clippy passed, recorder/replay-time formatting passed, and the locked release build passed. Bounds and unproven decoded-content properties are documented in docs/architecture/replay-time.md."
       ],
       "execution": {
-        "workflow": "planned",
+        "workflow": "direct",
         "plan": null
       },
       "acceptance_criteria": [
@@ -885,10 +886,10 @@
         {
           "type": "automated",
           "description": "Validate generated good and malformed media fixtures, including wrong dimensions, wrong H.264 profile, and perturbed sample timing with otherwise correct aggregate rate/count/duration; prove bounded work and preserve all source media.",
-          "command": null
+          "command": "$env:QUEUEBACK_TEST_MEDIA_RUNTIME = (Resolve-Path 'build/media-runtime/windows-x86_64').Path; cargo test --manifest-path recorder/Cargo.toml --locked --lib finalizer:: --all-features -- --include-ignored --skip real_fragmented_media_validates_and_publishes_a_copy --nocapture"
         }
       ],
-      "notes": "The existing recorder finalizer checks stream cardinality/codecs, aggregate timing, producer reconciliation, and actual fragmented sample count through bounded ffprobe/header reads. This feature owns the remaining independent property/timing and content-progress integrity work; the existing baseline is not a full integrity or frozen-content certification. Extend the shared replay-time contract where required, preserve its strict identity/timeline checks, and avoid a full decode of every user recording merely to establish inexpensive structural properties.",
+      "notes": "2026-10-30 explicit user direction scopes this direct correction to bounded dimensions/profile/container presentation proof without another extensive ExecPlan or broad validation campaign. The description reflects that scope: frozen pictures, decoded-frame correctness, later in-band parameter changes and full payload integrity remain unproven. QB-CAP-002 is not a dependency: this post-capture validator consumes existing finalization/producer evidence independently of the deferred live health monitor. Existing identity, publication and recovery contracts remain in force. The user explicitly accepted existing inline finalization and its admission delay between matches; no background finalization, new concurrency, scheduling investigation or scheduling follow-up is introduced.",
       "user_value": 4,
       "differentiation": 4,
       "difficulty": 3,

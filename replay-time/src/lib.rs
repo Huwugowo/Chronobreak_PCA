@@ -1063,6 +1063,9 @@ struct ProbeFormat {
 /// This function never scans media itself. The caller is responsible for invoking
 /// the packaged ffprobe under the documented timeout/output bounds with
 /// [`FFPROBE_SUMMARY_SHOW_ENTRIES`].
+/// Aggregate stream facts alone cannot establish per-sample presentation cadence.
+/// Before publishing recorder media with `exact_cfr`, the recorder finalizer also
+/// independently verifies the fragment sample grid against this summary.
 ///
 /// # Errors
 ///

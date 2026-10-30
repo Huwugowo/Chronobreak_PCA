@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use chronobreak_replay_time::{
     FFPROBE_SUMMARY_SHOW_ENTRIES, FinalizationExpectationsV2, FrameBoundary, MediaId,
     MediaTimelineV2, Rational, parse_ffprobe_media_timeline,
@@ -159,18 +159,36 @@ async fn validate_media(
     let mut output = run_packaged_probe(ffprobe, media).await?;
     let probe_stdout_bytes = output.stdout.len();
     let probe_stderr_bytes = output.stderr.len();
-    if output.success && !output.timed_out && !output.exceeded_output_limit {
-        complete_fragmented_frame_count(&mut output.stdout, media, deadline).await?;
-    }
+    let timing = if output.success && !output.timed_out && !output.exceeded_output_limit {
+        Some(
+            complete_fragmented_media_facts(
+                &mut output.stdout,
+                media,
+                deadline,
+                expectations.producer.expected_frame_rate,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let timeline = evaluate_probe_output(output, expectations)?;
+    let timing = timing.context("independent MP4 timing evidence missing")?;
+    ensure!(
+        timeline.video.time_base == Rational::new(1, u64::from(timing.timescale))?
+            && timeline.video.frame_count.get() == timing.samples
+            && timeline.video.one_past_last_pts.get() == i64::try_from(timing.end_pts)?,
+        "MP4 sample timing disagrees with ffprobe timeline"
+    );
     Ok((timeline, probe_stdout_bytes, probe_stderr_bytes))
 }
 
-async fn complete_fragmented_frame_count(
+async fn complete_fragmented_media_facts(
     stdout: &mut Vec<u8>,
     media: &Path,
     deadline: Instant,
-) -> Result<()> {
+    rate: Rational,
+) -> Result<fragments::VideoTiming> {
     let mut summary: serde_json::Value = serde_json::from_slice(stdout)?;
     let streams = summary["streams"]
         .as_array_mut()
@@ -179,22 +197,43 @@ async fn complete_fragmented_frame_count(
         .iter_mut()
         .filter(|stream| stream["codec_type"] == "video");
     let video = videos.next().context("ffprobe video stream missing")?;
-    if videos.next().is_some() || !video["nb_frames"].is_null() {
-        return Ok(()); // The strict parser still rejects ambiguous/malformed summaries.
-    }
+    ensure!(
+        videos.next().is_none(),
+        "exactly one ffprobe video stream is required"
+    );
+    ensure!(
+        video["width"] == 1920 && video["height"] == 1080,
+        "native recording dimensions must be 1920x1080"
+    );
+    ensure!(
+        video["codec_name"] == "h264" && video["profile"] == "High",
+        "native recording must be H.264 High profile"
+    );
+    // Dimensions are observed here, without widening persisted replay-time schema
+    // or the generic export-summary contract. All remaining strict fields still
+    // pass through the unchanged shared replay-time parser.
+    let object = video
+        .as_object_mut()
+        .context("ffprobe video stream is not an object")?;
+    object.remove("width");
+    object.remove("height");
     let path = media.to_path_buf();
-    let count = tokio::time::timeout(
-        deadline.saturating_duration_since(Instant::now()),
-        tokio::task::spawn_blocking(move || fragments::video_sample_count(&path, deadline)),
-    )
-    .await
-    .context("finalized-media fragment scan exceeded its five-second deadline")?
-    .context("fragment scan worker failed")??;
-    // This is an independent count from actual fragment tables, never duration * FPS
-    // or the producer's expected value. All existing consistency checks still run.
-    video["nb_frames"] = count.to_string().into();
+    // Keep ownership until the deadline-aware reader exits: timing out and
+    // dropping a spawn_blocking handle would leave filesystem work detached.
+    let timing =
+        tokio::task::spawn_blocking(move || fragments::video_sample_timing(&path, deadline, rate))
+            .await
+            .context("fragment scan worker failed")??;
+    if video["nb_frames"].is_null() {
+        video["nb_frames"] = timing.samples.to_string().into();
+    } else {
+        ensure!(
+            video["nb_frames"].as_str() == Some(timing.samples.to_string().as_str()),
+            "ffprobe frame count disagrees with MP4 samples"
+        );
+    }
     *stdout = serde_json::to_vec(&summary)?;
-    Ok(())
+    Ok(timing)
 }
 
 /// Successful observation from the production finalized-media validator.
@@ -272,7 +311,7 @@ async fn run_packaged_probe(ffprobe: &Path, media: &Path) -> Result<ProbeOutput>
         .arg("-print_format")
         .arg("json")
         .arg("-show_entries")
-        .arg(FFPROBE_SUMMARY_SHOW_ENTRIES)
+        .arg(FFPROBE_SUMMARY_SHOW_ENTRIES.replacen("stream=", "stream=width,height,", 1))
         .arg(media);
 
     let output = match run_bounded_process(
@@ -692,5 +731,132 @@ mod tests {
         assert!(directory.path().join(METADATA_JSON).is_file());
         assert!(!partial.exists());
         assert!(source.is_file());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires QUEUEBACK_TEST_MEDIA_RUNTIME; generated temporary media only"]
+    async fn packaged_native_contract_rejects_wrong_format_and_sample_cadence() {
+        let root = PathBuf::from(std::env::var_os("QUEUEBACK_TEST_MEDIA_RUNTIME").unwrap());
+        let tools = queueback_media_runtime::resolve_root(&root).await.unwrap();
+        for (name, dimensions, profile, skew, expected_error) in [
+            ("valid", "1920x1080", "high", false, None),
+            ("dimensions", "1280x720", "high", false, Some("dimensions")),
+            (
+                "profile",
+                "1920x1080",
+                "baseline",
+                false,
+                Some("High profile"),
+            ),
+            (
+                "cadence",
+                "1920x1080",
+                "high",
+                true,
+                Some("sample duration"),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let partial = directory.path().join("video.partial.mp4");
+            let mut command = std::process::Command::new(tools.ffmpeg());
+            command.args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc2=size={dimensions}:rate=60:duration=0.5"),
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=sample_rate=48000:duration=0.5",
+                "-c:v",
+                "libx264",
+                "-threads",
+                "1",
+                "-preset",
+                "fast",
+                "-profile:v",
+                profile,
+                "-bf",
+                "0",
+                "-g",
+                "30",
+                "-c:a",
+                "aac",
+                "-movflags",
+                crate::encoder::FRAGMENTED_MP4_FLAGS,
+                "-avoid_negative_ts",
+                "disabled",
+            ]);
+            if skew {
+                command.args(["-bsf:v", "setts=pts='N*256+if(eq(N,1),1,0)':dts='N*256+if(eq(N,1),1,0)':duration=256:time_base=1/15360:prescale=1"]);
+            }
+            let generated = command.arg(&partial).output().unwrap();
+            assert!(
+                generated.status.success(),
+                "{name}: {}",
+                String::from_utf8_lossy(&generated.stderr)
+            );
+            let original = std::fs::read(&partial).unwrap();
+            let expectations = FinalizationExpectationsV2 {
+                media_id: media_id(),
+                expected_video_codec: "h264".into(),
+                expected_audio_codec: Some("aac".into()),
+                producer: ProducerEvidenceV2 {
+                    expected_frame_count: FrameBoundary::new(30).unwrap(),
+                    ..timeline().producer
+                },
+                capture: None,
+                require_zero_video_start: true,
+            };
+            if skew {
+                // Establish the adversary actually satisfies the old aggregate
+                // validator, using the independently known generated count.
+                let output = run_packaged_probe(tools.ffprobe(), &partial).await.unwrap();
+                let mut summary: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).unwrap();
+                let video = summary["streams"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|s| s["codec_type"] == "video")
+                    .unwrap();
+                video["nb_frames"] = "30".into();
+                video.as_object_mut().unwrap().remove("width");
+                video.as_object_mut().unwrap().remove("height");
+                parse_ffprobe_media_timeline(&summary.to_string(), expectations.clone())
+                    .expect("skew fixture must retain valid aggregate statistics");
+            }
+            let candidate = CompletedVideoCandidate::new(
+                directory.path().to_path_buf(),
+                partial.clone(),
+                rational(60, 1),
+                FrameBoundary::new(30).unwrap(),
+            )
+            .unwrap();
+            let result = validate_candidate(tools.ffprobe(), candidate, expectations).await;
+            if let Some(message) = expected_error {
+                let error = result.unwrap_err();
+                assert!(format!("{error:#}").contains(message), "{name}: {error:#}");
+                assert_eq!(std::fs::read(&partial).unwrap(), original);
+                assert!(!directory.path().join(VIDEO_MP4).exists());
+                assert!(!directory.path().join(METADATA_JSON).exists());
+                assert!(!directory.path().join(METADATA_PENDING_JSON).exists());
+            } else {
+                let validated = result.unwrap();
+                let metadata = TestMetadata {
+                    schema_version: 2,
+                    media_timeline: validated.timeline.clone(),
+                };
+                publish_validated_candidate(validated, &media_id(), &metadata)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    std::fs::read(directory.path().join(VIDEO_MP4)).unwrap(),
+                    original
+                );
+            }
+        }
     }
 }
