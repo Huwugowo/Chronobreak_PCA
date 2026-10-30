@@ -716,11 +716,11 @@
     {
       "id": "QB-CAP-002",
       "kind": "feature",
-      "name": "Recording Health Monitoring",
-      "description": "Supervise every active recording with low-overhead video-frame, mux/file-growth, process, and finalization evidence so QueueBack detects a live-but-stalled or failed recorder within a bounded time, preserves later footage after recovery, and keeps a truthful actionable state in the tray and filesystem library instead of treating process liveness or parseable metadata as success.",
+      "name": "Native Recording Progress Safeguards",
+      "description": "Close material stall-detection and false-finalization gaps in the existing native WGC/D3D11/NVENC recorder without adding another recording-health authority, UI state system, or library policy. Keep independent durable-storage progress and broader runtime reliability evidence explicitly unresolved until safely proved.",
       "priority": "P0",
       "area": "capture",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-CAP-REL",
       "dependencies": [
         "QB-CAP-001"
@@ -728,81 +728,44 @@
       "evidence": [
         "2026-08-12 repository inspection established that the release-era recorder proves startup mainly by child survival and does not yet provide comprehensive stalled-frame/output supervision.",
         "2026-08-12 product correction: an attempted broad health-state implementation made a valid completed Practice Tool recording appear Unknown/non-playable and distracted from the requested capture-performance work. The recorder supervisor, recording-state authority, strict app classification, status UI, and associated tests were rolled back to the pre-feature behavior; recorder tests returned to 31+1 and app tests to 30 passing. This feature is therefore not implemented or complete.",
-        "2026-08-12 dependency decision: QB-PERF-002 no longer depends on this feature. Performance work may add only the minimal first-frame/progress evidence needed to prove its new capture graph, without reintroducing recording-state/library policy."
+        "2026-08-12 dependency decision: QB-PERF-002 no longer depends on this feature. Performance work may add only the minimal first-frame/progress evidence needed to prove its new capture graph, without reintroducing recording-state/library policy.",
+        "2026-10-31 reassessment and bounded corrections: existing native readiness, source/encode/mux supervision, terminal/accounting checks, format/timeline validation and conservative publication are retained. Hidden windows no longer mask encode/mux stalls; every normal stop checks pre-drain evidence, unconfirmed observer gaps cannot finalize cleanly, and process disappearance emits Idle only after successful finalization. Focused service and native-lifecycle tests, recorder all-target/all-feature check/tests, formatting, strict Clippy and canonical schema/invariant validation passed (2026-10-31; ignored physical/runtime fixtures not run). Independent review found the stop-after-gap loophole; its correction and regression are included. Remains in-progress: independent durable-storage proof, later-footage continuation after a stall, semantic freeze/compositor-pause discrimination, hard driver-hang containment and representative long League/suspend/visibility verification are not established."
       ],
       "execution": {
-        "workflow": "planned",
+        "workflow": "direct",
         "plan": null
       },
       "acceptance_criteria": [
-        "A documented backend-neutral recording-health model distinguishes `starting`, internally `suspect`, `recording/healthy`, `recording/stalled`, `recording/recovered-after-incident`, `finalizing`, `finalized`, `finalized-degraded`, `failed-partial`, and `failed-no-output`; current health and the latched session verdict are separate so resumed progress preserves later footage without erasing a known gap.",
-        "Every production ffmpeg recording uses `-progress pipe:1`, `-stats_period 1`, and `-nostats`; stdout progress and stderr diagnostics are drained concurrently without blocking, unknown progress keys are forward-compatible, bounded parser state cannot grow per frame, and loss/malformed output cannot leave the session silently healthy forever.",
-        "Startup is not announced as healthy merely because ffmpeg is alive: within 15 seconds it must observe an advancing encoded-video `frame` counter and a positive durable `video.mp4` size, or it stops the failed startup attempt, preserves any partial bytes, persists a stable failure reason, and surfaces an actionable error.",
-        "During recording, encoded-video frame advancement and actual output-file byte growth are independent required signals; advancing audio timestamps/bytes alone cannot hide a video-frame stall, and frame advancement without durable file growth cannot hide a mux/storage stall. Output time remains diagnostic rather than sufficient health proof.",
-        "A required signal silent for five continuous seconds enters a non-user-facing suspect state; silence reaching exactly 15 seconds is a confirmed incident no later than the next one-second observation. Progress before 15 seconds returns to healthy without an incident, while progress after a confirmed incident becomes recovered-after-incident and leaves the session verdict degraded.",
-        "Any session whose required frame and file-growth signals each advance at least once in every interval shorter than 15 seconds, with valid process/observer state, cannot transition to a user-visible unhealthy state. A detected recorder scheduling/suspend gap rearms one bounded confirmation window and increments an observer-gap diagnostic instead of immediately blaming ffmpeg.",
-        "Unexpected child exit regardless of exit code, nonzero exit, stop timeout/forced kill, progress-channel closure while the child is live, counter regression, output truncation/replacement, confirmed output disappearance, repeated process-inspection failure, and terminal progress-protocol failure map to stable machine reason codes and cannot be finalized as clean success.",
-        "A confirmed stall does not automatically kill or endlessly restart a still-live ffmpeg child: QueueBack continues bounded observation so later footage can be preserved, emits transition-only warnings, and records aggregate incident count/duration/longest-stall data. Repair/remux, automatic live restart, and destructive mutation remain outside this feature.",
-        "The health reducer accepts declared required/optional signal capabilities rather than GDI, GPU vendor, or encoder names. The current backend requires encoded-frame plus output-byte progress; QB-PERF-002 can add source-frame, queue, device, and surface signals to the same model without creating a second health state machine.",
-        "Each new bundle receives an atomically written versioned `recording-state.json` before capture startup. It is the sole durable authority for recording lifecycle, current health, latched verdict, stable reason, bounded incident aggregates, last proven progress, observer gaps, and finalization result; no per-second/per-frame state-file rewrite, root status database, or duplicate health authority is introduced.",
-        "Finalization ordering is crash-conservative: persist finalizing; stop poller and ffmpeg; evaluate the structured child/progress/output result; fsync graceful clean/degraded metadata under a noncanonical pending name; atomically publish canonical `metadata.json`; then atomically persist terminal state. A metadata or terminal-state failure leaves the lifecycle authority non-success and never a clean finalized claim; the app additionally requires coherent terminal state plus canonical metadata, so forced kill, unknown exit, or unhealthy video can never be classified as clean success.",
-        "Recorder service events carry structured lifecycle/health snapshots with bundle identity and stable reason codes. Tray/headless projections show starting, recording, recovered/stalled, finalizing, and failure states; a failure or degraded terminal result is not immediately overwritten by Idle, while a later explicit new recording may replace the live tray display without erasing the prior bundle state.",
-        "The Tauri library reads the versioned state contract conservatively: a valid legacy metadata-only bundle retains its existing behavior; active/finalizing, failed, corrupt-state, and unknown-schema bundles are visibly non-complete, protected from auto-delete and active deletion, and not playback-eligible; a gracefully finalized degraded bundle is playback-eligible only under existing metadata checks and carries a clear interruption warning.",
-        "Library summaries and UI expose a typed recording status, stable problem message, physical video availability, and playback eligibility instead of calling every partial item a recovered bundle. Safe game identifiers accept the recorder's existing `digits` or `digits-suffix` collision format while continuing to reject traversal and malformed identifiers, so health state remains discoverable for every recorder-created bundle.",
-        "Live Client polling/calibration remains independent descriptive-data health: its failure never refreshes video progress, creates a video stall, or turns stalled video healthy. No active-path ffprobe, full decode, content hashing, full-file read/remux, or high-frequency frontend polling is added.",
-        "Deterministic unit and fake-child tests cover progress parsing; exact 5/15-second boundaries; startup; short-pause recovery; repeated/latched incidents; separate frame/file stalls; audio-only advancement; observer gaps; malformed/closed progress; counter/file regression; unexpected zero/nonzero exit; output missing/empty; process inspection errors; graceful stop; ignored `q`/forced kill; shutdown races; poller independence; sticky event ordering; atomic state transitions; and legacy/current/future-unknown app classification using only temporary libraries.",
-        "A real-ffmpeg changing `testsrc2` plus audio fixture proves normal startup/progress/finalization and safe forced interruption, while a 30-minute run produces zero false unhealthy transitions, bounded monitor memory/state, advancing frame and output evidence, and a truthful terminal bundle in a sentinel-marked temporary library.",
-        "A representative 25-minute-or-longer League recording verifies healthy tray state, no false alert during normal focus/Alt-Tab behavior, truthful normal finalization, app-compatible library classification, and no regression to automatic match lifecycle or Live Client synchronization. Forced interruption behavior is proved by deterministic Windows exit-probe/service tests and the real-FFmpeg forced-interruption fixture rather than a second manual League session.",
-        "Applicable recorder, Tauri, frontend, feature-list, and project-wide verification passes; recorder lifecycle/media-library architecture, operator health-state behavior, thresholds, reason codes, and explicit boundaries with QB-CAP-003, QB-CAP-004, QB-CAP-005, QB-DIST-001, and QB-PERF-002 are durably documented with concrete evidence before completion."
+        "Reuse the existing bounded native evidence and 15-second watchdog for copied source QPC, completed encoded frames and mux progress. Hidden/minimized windows suspend only source expectations; encoded-frame and mux progress remain required, including at restore. Audio/output time alone cannot refresh the frame deadline.",
+        "An observation gap longer than the stall timeout rearms one confirmation window instead of immediately blaming capture. Clean stop requires fresh required progress after that gap. Continued silence under regular observation still fails at exactly 15 seconds; explicit protocol errors are never masked by visibility or observer-gap handling.",
+        "Every ordinary finalization path evaluates pre-drain progress through the existing watchdog before flush can refresh counters. A confirmed stall is routed through failed stop, preserves the partial candidate and cannot publish canonical video/metadata. Failed finalization is not immediately followed by an Idle event.",
+        "Retain existing native worker/error propagation, terminal capture/mux proof, frame reconciliation, successful mux exit, nonempty output, independent format/timeline validation and conservative atomic publication/recovery admission; do not recreate recording-state.json or change tray/library/playback contracts.",
+        "Independent live storage durability/progress is proved with a production-safe signal that cannot false-alert on stale open-file length or silently borrow FFmpeg total_size. This remains unresolved by the bounded corrections and prevents a full completion claim.",
+        "Focused deterministic regression tests and applicable recorder static/test checks pass. Representative long League and Windows suspend/visibility validation establishes no false stalls; generated/unit fixtures alone do not complete this live-runtime gate."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Run recorder unit and integration tests for the pure health reducer, ffmpeg progress parser/supervisor, startup, stalls/recovery, child/output/finalization failures, state persistence, service ordering, and temporary-library fake children.",
-          "command": "cargo test --manifest-path recorder/Cargo.toml"
+          "description": "Focused watchdog boundaries, hidden downstream stalls, pre-stop checks, observer gaps and native failed-stop partial-output preservation.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml --lib service::tests; cargo test --manifest-path recorder/Cargo.toml --lib native::lifecycle::tests"
         },
         {
           "type": "automated",
-          "description": "Require formatted, warning-free recorder code after the concurrency/process/persistence changes.",
-          "command": "cargo fmt --manifest-path recorder/Cargo.toml -- --check; cargo clippy --manifest-path recorder/Cargo.toml --all-targets -- -D warnings"
-        },
-        {
-          "type": "automated",
-          "description": "Run Tauri library/status/backward-compatibility/playback/protection tests plus formatting and strict static analysis.",
-          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml; cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check; cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings"
-        },
-        {
-          "type": "automated",
-          "description": "Type-check/test the frontend contract and build the production UI with recording-status badges and playback policy.",
-          "command": "npm run check --prefix app; npm run build --prefix app"
-        },
-        {
-          "type": "automated",
-          "description": "Run the opt-in real-ffmpeg changing-source health integration fixture against a sentinel-marked temporary library; validate normal stop and forced-interruption state without touching user media.",
-          "command": "cargo test --manifest-path recorder/Cargo.toml --test recording_health_ffmpeg -- --ignored --nocapture"
-        },
-        {
-          "type": "benchmark",
-          "description": "Run the changing-source health fixture for 1,800 seconds and verify zero false unhealthy transitions, bounded diagnostics/memory, continual frame/file progress, and truthful finalization.",
-          "command": "$env:QUEUEBACK_HEALTH_SOAK_SECONDS='1800'; cargo test --manifest-path recorder/Cargo.toml --test recording_health_ffmpeg health_soak -- --ignored --exact --nocapture; Remove-Item Env:QUEUEBACK_HEALTH_SOAK_SECONDS"
-        },
-        {
-          "type": "manual",
-          "description": "Record a 25+ minute League session, exercise ordinary focus/Alt-Tab and normal end, and inspect tray transitions, state/metadata files, app classification/playback policy, and Live Client synchronization. Use deterministic Windows process/service tests and the real-FFmpeg fixture for forced interruption.",
-          "command": null
+          "description": "Applicable recorder baseline checks and canonical feature-list validation from docs/development/VERIFICATION.md.",
+          "command": "cargo check --manifest-path recorder/Cargo.toml --all-targets --all-features; cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features; cargo fmt --manifest-path recorder/Cargo.toml -- --check; cargo clippy --manifest-path recorder/Cargo.toml --all-targets --all-features -- -D warnings"
         },
         {
           "type": "inspection",
-          "description": "Trace production health evidence from ffmpeg progress and file bytes through the pure reducer, state persistence, finalization result, service/tray projection, and app classification; confirm bounded/latest-value behavior, stable reason codes, legacy compatibility, and no polling/ffprobe/content-scan hot path.",
+          "description": "Trace native progress, failed-stop routing and existing finalization/publication admission; distinguish FFmpeg total_size from independently durable storage proof.",
           "command": null
         },
         {
-          "type": "automated",
-          "description": "Run every applicable project-wide command from docs/development/VERIFICATION.md, canonical feature-list schema/invariant/plan checks, and diff hygiene before completion.",
+          "type": "manual",
+          "description": "Representative long League recording plus Windows suspend/resume and minimize/restore; verify no false alerts, genuine stalls remain detectable and failed stop never becomes clean publication. Not run by the focused correction.",
           "command": null
         }
       ],
-      "notes": "The attempted 2026-08-12 implementation was explicitly rolled back after it regressed the real library/client experience and did not improve capture performance. If this item is revisited, it requires a new plan grounded in the stable release UX. It is not a dependency of QB-PERF-002.",
+      "notes": "2026-10-31 explicit user reassessment supersedes the obsolete FFmpeg/backend-neutral health-state acceptance checklist. The current native recorder already provides first-frame readiness, copied-source/encode/mux supervision, failure handling, strict final validation and conservative publication. Execute only bounded direct corrections; no new broad ExecPlan, health-state persistence, UI/library redesign, automatic restart or recovery mechanism. Keep in-progress: independent durable-output progress and representative long League/suspend/visibility verification remain important gaps. FFmpeg total_size is a live mux estimate, and Windows open-file length can be stale during healthy capture. Copied-source QPC remains the existing supported-League freshness check; semantic frozen-picture detection and distinguishing all compositor/static-source pauses are unproven. Hard in-process driver-call hang containment remains outside this correction. A confirmed stall still ends this capture attempt and suppresses retries for that game process; later-footage continuation/restart is deferred. The rolled-back health system remains rejected and this item is not a dependency of QB-PERF-002.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,

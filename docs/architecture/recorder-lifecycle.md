@@ -42,6 +42,31 @@ The service validates the captured HWND/PID/adapter identity while active. A clo
 
 Normal stop ends native capture, drains bounded GPU/encoder/mux work, flushes the muxer, and reaps every owned task/thread/child under finite deadlines. A clean result requires an intentional stop boundary, terminal WGC/encode/mux evidence, consistent frame accounting, successful mux exit, and nonempty output. The common finalizer validates the private candidate before renaming it to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixtures remain recoverable.
 
+The existing service watchdog requires copied source-QPC, completed encode and mux-byte
+advancement within 15 seconds under regular observation. Hidden/minimized windows
+pause only the source deadline; CFR encoding and muxing must continue. Restore
+rearms source freshness without extending encode/mux deadlines. A service observation
+gap longer than 15 seconds rearms one confirmation window, with aggregate diagnostics.
+Fresh required progress after the gap must be observed before clean stop is allowed;
+an unresolved confirmation preserves partial output. Explicit protocol errors still
+fail immediately. This is bounded watchdog state,
+not a new lifecycle or library authority.
+
+All ordinary stop paths check the latest evidence against that watchdog before
+draining the worker, so final flush cannot erase an already-confirmed stall. The
+last observed visibility is retained if the target has closed. A stall takes the
+existing failed-stop path and preserves the partial candidate; a failed finalization
+does not emit a subsequent Idle event when League disappears.
+
+Live mux bytes come from FFmpeg `total_size`, not independently proven durable I/O.
+Windows open-file length can remain stale during valid capture, so it is not used
+as a second 15-second watchdog. Durable-storage progress, semantic frozen-picture
+detection, compositor/static-source pause discrimination, long League/suspend
+validation and hard driver-hang containment remain unproved. A confirmed stall still
+ends the attempt; preserving later footage through continuation/restart is deferred.
+QB-CAP-002 remains in progress. No recording-state file, UI/library classification,
+or parallel health mechanism is introduced.
+
 ## Live Client synchronization
 
 `PollerSession` starts only after video readiness. Its monotonic epoch is the first Windows Graphics Capture `SystemRelativeTime`/QPC frame, mapped into the Rust clock, rather than FFmpeg spawn time. Calibration probes `/gamestats` until it observes five strictly advancing, clock-consistent samples and records a midpoint-derived affine schema-v2 game-to-replay calibration.
