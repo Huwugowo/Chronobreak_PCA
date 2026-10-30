@@ -785,13 +785,13 @@
         "QB-CAP-001"
       ],
       "evidence": [
-        "2026-10-30 implemented owner-only bounded startup reconciliation for receipt-bound pending metadata beside private or canonical video. File-generation receipts, existing strict media/timeline validation and handle-relative no-replace publication recover in place; uncertain and conflicting bytes are retained with explicit dispositions.",
-        "Generated publication processes killed after pending sync, video rename and metadata rename: interrupted pairs recovered once, repeated runs used zero probes, exact bytes survived, and full decode/three seeks passed. The app admitted actual recovered output as one playable entry and preserved the receipt on save. Final recorder tests: 238 library + 4 binary + 3 fixture passed, 10 ignored; packaged recovery passed. App baseline: 163 passed, 10 ignored after one unchanged export-staging assertion initially failed then passed isolated and on full rerun. Recorder/app fmt and Clippy, recorder check, frontend check/build and canonical validation passed. Details: docs/execution/qb-cap-003.md.",
-        "Feature remains in-progress: interactive open/seek is environment-blocked by native UI capture timeout; automated decode/seek does not substitute for that observation. League compatibility/FPS/GPU checks remain pending. Receipt-less older pairs, bare partials and output outside startup budgets remain preserved."
+        "2026-10-30 receipt-bound no-replace recovery implemented in e5bbc92; focused correction removes all historical recovery from startup and the watcher loop. Joined maintenance runs only after orderly capture/post-game teardown with exclusive ownership and fresh League admission checks. A bounded directory-bound prefix hint advances across eligible exits; canonical entries skip ancestry pinning and process refresh. Strict media/timeline/receipt checks and original source-byte retention remain intact.",
+        "Focused correction verification: final recorder 241 library + 4 binary + 3 fixture tests passed, 10 ignored; packaged crash recovery passed separately with exact bytes, idempotence, full decode/three seeks. Valid footage behind six invalid candidates recovered in four reopened maintenance passes. 600 canonical entries/eight invalid candidates all reached in 17 capped passes; first real-watcher pass processed 512 entries with six process queries in 65 ms (prior per-entry-query version: 4.476 s/513 queries). Game appearance gates, canonical fast skip and retained foreign/corrupt hints passed. Recorder fmt/strict Clippy and canonical validation passed. Original app/frontend evidence retained in docs/execution/qb-cap-003.md; unchanged app/frontend not rerun for this correction.",
+        "Feature remains in-progress: interactive open/seek observation and real League compatibility/FPS/GPU measurements remain pending, without blocking the focused correction commit. Orderly no-League exits and healthy writable progress are required for eventual complete discovery; source bytes remain retained otherwise."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-cap-003-interrupted-recording-recovery-v2.md",
+        "plan": "docs/exec-plans/qb-cap-003-interrupted-recording-recovery-v3.md",
         "progress": "docs/execution/qb-cap-003.md"
       },
       "acceptance_criteria": [
@@ -812,7 +812,7 @@
           "command": null
         }
       ],
-      "notes": "Publication uses two separate no-replace renames. Plan v2 corrects the original unknown-field assumption: the strict app reader explicitly accepts and preserves only the optional publication object. QB-CAP-002 is not a prerequisite; existing terminal producer evidence and recorder ownership suffice. Receipt-less pairs and bare partials retain bytes and explicit dispositions. Startup caps: 512 direct entries, four probes, ten seconds admission; admitted probes retain their five-second bound. Unexamined/deferred entries remain pending, without a complete large-library recovery guarantee. No production decode/hash/remux or repeated refresh scan. Manual playback gate remains open; League-only compatibility/FPS/GPU checks remain separate and pending.",
+      "notes": "Plan v3 supersedes startup-before-watcher scheduling with capture-first orderly-exit maintenance. Work caps remain 512 discovered/direct entries, four probes and ten seconds admission, plus 512 prefix searches; admitted probes retain five-second bounds and OS operations can extend exit. The recognized directory-bound private hint advances finite stable libraries across eligible exits; unavailable/foreign/corrupt hints are preserved and permit only bounded root passes, without a fairness guarantee. No recovery during startup/capture, concurrent worker, GPU activity, decode/hash/remux or periodic scan. Receipt-less pairs and bare partials stay preserved. Interactive playback and real League compatibility/FPS/GPU evidence remain pending; they do not block the focused correction commit.",
       "user_value": 5,
       "differentiation": 5,
       "difficulty": 4,

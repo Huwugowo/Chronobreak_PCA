@@ -502,17 +502,6 @@ async fn run_inner(
     let _ = native_recording_plan(&config.recording)
         .context("unsupported Windows recorder configuration")?;
     let ffmpeg = Ffmpeg::resolve().await?;
-    #[cfg(windows)]
-    match crate::finalizer::recovery::run(&output_path, ffmpeg.ffprobe_path(), &mut commands).await
-    {
-        Ok(true) => {
-            events(ServiceEvent::ShutdownComplete);
-            return Ok(());
-        }
-        Ok(false) => {}
-        Err(error) => warn!(error = %format!("{error:#}"),
-            "interrupted recording recovery unavailable; existing artifacts preserved"),
-    }
     let audio = ffmpeg.detect_audio_source().await;
     #[cfg(target_os = "windows")]
     info!(
@@ -559,6 +548,15 @@ async fn run_inner(
                     }
                     log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
                     if let Some(post_game)=post_game { post_game.stop().await; }
+                    // Admission is closed and every capture owner has joined.
+                    // Historical filesystem work must never precede a watcher tick.
+                    #[cfg(windows)]
+                    if let Err(error) = crate::finalizer::recovery::run(
+                        &output_path, ffmpeg.ffprobe_path(), || watcher.refresh().is_none(),
+                    ).await {
+                        warn!(error = %format!("{error:#}"),
+                            "interrupted recording maintenance unavailable; artifacts retained");
+                    }
                     events(ServiceEvent::ShutdownComplete);
                     return Ok(());
                 }

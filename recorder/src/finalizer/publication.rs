@@ -124,6 +124,10 @@ impl DirectoryPins {
         self.0.last().expect("absolute path has a directory")
     }
 
+    pub(super) fn identity(&self) -> Result<Identity> {
+        identity(self.leaf())
+    }
+
     pub(super) fn rename(&self, source: &File, leaf: &str) -> Result<()> {
         // All callers use fixed recorder artifact names, never paths from metadata.
         if !matches!(leaf, "video.mp4" | "video.partial.mp4" | "metadata.json") {

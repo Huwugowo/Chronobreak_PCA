@@ -4,6 +4,19 @@ use crate::poller::{PollerSummary, RecordingDetails};
 use chronobreak_replay_time::{FrameBoundary, Rational};
 use std::process::{Command, Stdio};
 
+fn inspect(directory: &Path) -> Result<Inspection> {
+    inspect_when_idle(directory, &mut || true)
+}
+
+async fn reconcile(
+    directory: &Path,
+    ffprobe: &Path,
+    probes: &mut usize,
+    deadline: Instant,
+) -> Result<(Disposition, &'static str)> {
+    reconcile_when_idle(directory, ffprobe, probes, deadline, &mut || true).await
+}
+
 fn metadata(timeline: chronobreak_replay_time::MediaTimelineV2) -> RecordingMetadata {
     let details = RecordingDetails {
         codec: timeline.video.codec.clone(),
@@ -141,7 +154,7 @@ fn missing_malformed_and_mismatched_evidence_never_promotes_bytes() {
 }
 
 #[tokio::test]
-async fn probe_and_shutdown_budgets_leave_candidates_unchanged() {
+async fn probe_and_admission_budgets_leave_candidates_unchanged() {
     let root = tempfile::tempdir().unwrap();
     let game = root.path().join("games/42");
     stage(&game, false);
@@ -173,14 +186,60 @@ async fn probe_and_shutdown_budgets_leave_candidates_unchanged() {
         Disposition::Deferred
     );
     assert_eq!(probes, 0);
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(ServiceCommand::Shutdown).unwrap();
-    assert!(
-        run(root.path(), Path::new("must-not-spawn"), &mut rx)
-            .await
-            .unwrap()
+    let absent = root.path().join("must-not-be-opened-or-created");
+    let report = run(&absent, Path::new("must-not-spawn"), || false)
+        .await
+        .unwrap();
+    assert_eq!(report.inspected, 0);
+    assert_eq!(report.probes, 0);
+    assert!(!absent.exists());
+    // A fresh game observation after admission also refuses an actual media probe.
+    let mut probes = 0;
+    assert_eq!(
+        reconcile_when_idle(
+            &game,
+            Path::new("must-not-spawn"),
+            &mut probes,
+            Instant::now() + ADMISSION_BUDGET,
+            &mut || false
+        )
+        .await
+        .unwrap()
+        .0,
+        Disposition::Deferred
     );
+    assert_eq!(probes, 0);
     assert_eq!(tree(&game), original);
+}
+
+#[tokio::test]
+async fn league_appearance_stops_before_discovery_and_does_not_resume_or_save() {
+    for appears_at in [2, 5] {
+        let root = tempfile::tempdir().unwrap();
+        let games = root.path().join("games");
+        std::fs::create_dir(&games).unwrap();
+        stage(&games.join("42"), false);
+        let pins = DirectoryPins::open(&games).unwrap();
+        let mut cursor = discovery::Cursor::open(&games, &pins).unwrap();
+        cursor.save("42").unwrap();
+        drop(cursor);
+        let original = std::fs::read(games.join(discovery::CURSOR)).unwrap();
+        let mut calls = 0;
+        let report = run(root.path(), Path::new("must-not-spawn"), || {
+            calls += 1;
+            calls != appears_at // Seen before inspection, or after the exact-prefix probe.
+        })
+        .await
+        .unwrap();
+        assert_eq!(report.searches, 0);
+        assert_eq!(report.inspected, usize::from(appears_at == 5));
+        assert_eq!(report.probes, usize::from(appears_at == 5));
+        assert_eq!(calls, appears_at);
+        assert_eq!(
+            std::fs::read(games.join(discovery::CURSOR)).unwrap(),
+            original
+        );
+    }
 }
 
 #[test]
@@ -207,9 +266,145 @@ fn reparse_and_copied_bundle_are_preserved() {
         .unwrap();
     assert!(result.status.success());
     assert!(inspect(&link).is_err());
+    // A new game stops even candidate ancestry inspection, which would reject
+    // this generated junction if it ran.
+    assert!(matches!(
+        inspect_when_idle(&link, &mut || false).unwrap(),
+        Inspection::Untouched(Disposition::Deferred, _)
+    ));
+    std::fs::write(
+        first.join(METADATA_JSON),
+        b"canonical, deliberately not parsed",
+    )
+    .unwrap();
+    // Pinning this junction would fail. Existing canonical metadata is only a
+    // cheap reason to decline recovery, so no ancestry handles are acquired.
+    assert!(matches!(
+        inspect_when_idle(&link, &mut || panic!(
+            "canonical skip must not query processes"
+        ))
+        .unwrap(),
+        Inspection::Untouched(Disposition::CanonicalUntouched, _)
+    ));
     // Remove only this generated junction, never recurse into its destination.
     std::fs::remove_dir(&link).unwrap();
     assert!(first.join(VIDEO_MP4).exists());
+}
+
+#[tokio::test]
+async fn bounded_discovery_advances_past_large_prefix_and_invalid_probes_across_reopens() {
+    let root = tempfile::tempdir().unwrap();
+    let games = root.path().join("games");
+    std::fs::create_dir(&games).unwrap();
+    for suffix in 1..=600 {
+        let game = games.join(format!("1000000000-{suffix}"));
+        std::fs::create_dir(&game).unwrap();
+        std::fs::write(game.join(METADATA_JSON), b"canonical").unwrap();
+    }
+    let names = ["1000000000".to_owned()]
+        .into_iter()
+        .chain((700..707).map(|suffix| format!("1000000000-{suffix}")))
+        .collect::<Vec<_>>();
+    for name in &names {
+        stage(&games.join(name), false);
+    }
+    let original = names
+        .iter()
+        .map(|name| tree(&games.join(name)))
+        .collect::<Vec<_>>();
+    let mut attempted = std::collections::BTreeSet::new();
+    let started = Instant::now();
+    let mut passes = 0;
+    let mut total_entries = 0;
+    let mut total_probes = 0;
+    // Each invocation opens a new on-disk cursor; no process-global state helps.
+    while attempted.len() < names.len() && passes < 64 {
+        let report = if passes == 0 {
+            let mut watcher =
+                crate::watcher::ProcessWatcher::new("QueueBack.absent-test-process.exe");
+            let measured = Instant::now();
+            let report = run(
+                root.path(),
+                Path::new("no-generated-media-probe-executable"),
+                || watcher.refresh().is_none(),
+            )
+            .await
+            .unwrap();
+            println!(
+                "first maintenance pass with real process queries: {:?}, queries={}, entries={}",
+                measured.elapsed(),
+                watcher.telemetry().refreshes,
+                report.inspected
+            );
+            report
+        } else {
+            run(
+                root.path(),
+                Path::new("no-generated-media-probe-executable"),
+                || true,
+            )
+            .await
+            .unwrap()
+        };
+        passes += 1;
+        assert!(report.inspected <= MAX_ENTRIES);
+        assert!(report.searches <= MAX_SEARCHES);
+        assert!(report.probes <= MAX_PROBES);
+        total_entries += report.inspected;
+        total_probes += report.probes;
+        for path in report.attempted {
+            attempted.insert(path.file_name().unwrap().to_str().unwrap().to_owned());
+        }
+    }
+    assert_eq!(attempted, names.iter().cloned().collect());
+    for (name, original) in names.iter().zip(original) {
+        assert_eq!(tree(&games.join(name)), original);
+    }
+    println!(
+        "restart discovery: {passes} passes, {total_entries} entries, {total_probes} failed probe admissions, elapsed={:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn cursor_conflicts_and_copied_generations_are_preserved() {
+    let root = tempfile::tempdir().unwrap();
+    let games = root.path().join("games");
+    std::fs::create_dir(&games).unwrap();
+    let pins = DirectoryPins::open(&games).unwrap();
+    let path = games.join(discovery::CURSOR);
+    let foreign = b"foreign cursor bytes";
+    std::fs::write(&path, foreign).unwrap();
+    assert!(discovery::Cursor::open(&games, &pins).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), foreign);
+    // A damaged/foreign scheduling hint cannot prohibit otherwise safe media
+    // inspection. It is left untouched; cross-exit progress is unavailable.
+    stage(&games.join("42"), false);
+    let report = run(root.path(), Path::new("must-not-exist"), || true)
+        .await
+        .unwrap();
+    assert_eq!(report.probes, 1);
+    assert_eq!(std::fs::read(&path).unwrap(), foreign);
+    std::fs::remove_file(&path).unwrap(); // This generated foreign fixture only.
+    let mut cursor = discovery::Cursor::open(&games, &pins).unwrap();
+    cursor.save("1000000000-7").unwrap();
+    drop(cursor);
+    assert_eq!(
+        discovery::Cursor::open(&games, &pins).unwrap().prefix,
+        "1000000000-7"
+    );
+    let other = root.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    let copied = other.join(discovery::CURSOR);
+    std::fs::copy(&path, &copied).unwrap();
+    let bytes = std::fs::read(&copied).unwrap();
+    assert!(discovery::Cursor::open(&other, &DirectoryPins::open(&other).unwrap()).is_err());
+    assert_eq!(std::fs::read(copied).unwrap(), bytes);
+    let mut bytes = std::fs::read(&path).unwrap();
+    *bytes.last_mut().unwrap() = b'/';
+    std::fs::write(&path, &bytes).unwrap();
+    assert!(discovery::Cursor::open(&games, &pins).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
 
 pub(crate) fn publication_checkpoint(stage: &str) {
@@ -346,15 +541,41 @@ async fn packaged_publication_crashes_recover_once_and_seek() {
         wait_marker(&mut child, &marker);
         let started = Instant::now();
         let mut probes = 0;
-        let disposition = reconcile(
-            &game,
-            tools.ffprobe(),
-            &mut probes,
-            Instant::now() + ADMISSION_BUDGET,
-        )
-        .await
-        .unwrap()
-        .0;
+        let disposition = if stage == "pending" {
+            // Actual valid footage must get past invalid candidates across exits,
+            // rather than relying only on individual reconcile calls.
+            let games = root.path().join("games");
+            for suffix in 1..=6 {
+                self::stage(&games.join(format!("40-{suffix}")), false);
+            }
+            let pins = DirectoryPins::open(&games).unwrap();
+            let mut cursor = discovery::Cursor::open(&games, &pins).unwrap();
+            cursor.save("40").unwrap();
+            drop(cursor);
+            drop(pins);
+            let mut passes = 0;
+            while !game.join(METADATA_JSON).exists() && passes < 16 {
+                let report = run(root.path(), tools.ffprobe(), || true).await.unwrap();
+                assert!(report.probes <= MAX_PROBES && report.inspected <= MAX_ENTRIES);
+                probes += report.probes;
+                passes += 1;
+            }
+            assert!(game.join(METADATA_JSON).exists());
+            println!(
+                "valid footage beyond invalid candidates recovered in {passes} reopened maintenance passes"
+            );
+            Disposition::Recovered
+        } else {
+            reconcile(
+                &game,
+                tools.ffprobe(),
+                &mut probes,
+                Instant::now() + ADMISSION_BUDGET,
+            )
+            .await
+            .unwrap()
+            .0
+        };
         assert_eq!(
             disposition,
             if stage == "metadata" {

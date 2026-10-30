@@ -1,22 +1,23 @@
-//! One owner-only, bounded startup pass over interrupted recording publications.
+//! Joined post-teardown maintenance; never on the capture admission path.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chronobreak_replay_time::FinalizationExpectationsV2;
 use serde::Deserialize;
-use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use super::publication::{self, DirectoryPins, Receipt};
 use super::{METADATA_PENDING_JSON, validate_media};
 use crate::poller::RecordingMetadata;
-use crate::service::ServiceCommand;
 use crate::storage::{METADATA_JSON, VIDEO_MP4, VIDEO_PARTIAL_MP4};
 
+mod discovery;
+
 const MAX_ENTRIES: usize = 512;
+const MAX_SEARCHES: usize = 512;
 const MAX_PROBES: usize = 4;
 const ADMISSION_BUDGET: Duration = Duration::from_secs(10);
 
@@ -53,7 +54,24 @@ enum Inspection {
     Candidate(Box<Prepared>),
 }
 
-fn inspect(directory: &Path) -> Result<Inspection> {
+fn inspect_when_idle(
+    directory: &Path,
+    may_inspect: &mut impl FnMut() -> bool,
+) -> Result<Inspection> {
+    // This only declines recovery. It grants no authority to read or mutate media,
+    // so a stale observation/reparse can at worst defer work to a later pass.
+    if publication::exists(&directory.join(METADATA_JSON))? {
+        return Ok(Inspection::Untouched(
+            Disposition::CanonicalUntouched,
+            "canonical metadata exists; all artifacts retained",
+        ));
+    }
+    if !may_inspect() {
+        return Ok(Inspection::Untouched(
+            Disposition::Deferred,
+            "League present; candidate inspection deferred without opening media",
+        ));
+    }
     let pins = DirectoryPins::open(directory)?;
     let has = |leaf| publication::exists(&directory.join(leaf));
     if has(METADATA_JSON)? {
@@ -157,20 +175,21 @@ fn inspect(directory: &Path) -> Result<Inspection> {
     })))
 }
 
-async fn reconcile(
+async fn reconcile_when_idle(
     directory: &Path,
     ffprobe: &Path,
     probes: &mut usize,
     deadline: Instant,
+    may_probe: &mut impl FnMut() -> bool,
 ) -> Result<(Disposition, &'static str)> {
-    let prepared = match inspect(directory)? {
+    let prepared = match inspect_when_idle(directory, may_probe)? {
         Inspection::Untouched(disposition, reason) => return Ok((disposition, reason)),
         Inspection::Candidate(prepared) => prepared,
     };
-    if *probes >= MAX_PROBES || Instant::now() >= deadline {
+    if *probes >= MAX_PROBES || Instant::now() >= deadline || !may_probe() {
         return Ok((
             Disposition::Deferred,
-            "startup probe budget reached; all bytes retained",
+            "maintenance budget reached or League present; all bytes retained",
         ));
     }
     *probes += 1;
@@ -264,62 +283,200 @@ fn bundle_name(name: &str) -> bool {
     }
 }
 
-/// Called once by the exclusively owned recorder service, before capture starts.
-/// Returns true when shutdown was received; an admitted probe is always joined.
+#[derive(Debug, Default)]
+pub(crate) struct Report {
+    inspected: usize,
+    searches: usize,
+    probes: usize,
+    recovered: usize,
+    #[cfg(test)]
+    attempted: Vec<PathBuf>,
+}
+
+// Finish enumeration synchronously and close its search handle before any await.
+// There is no retained cursor/handle or blocking discovery worker during capture.
+fn discover(
+    games: &Path,
+    prefix: &str,
+    limit: usize,
+    deadline: Instant,
+) -> Result<(Vec<String>, bool)> {
+    let Some(mut search) = discovery::Search::open(games, prefix)? else {
+        return Ok((Vec::new(), true));
+    };
+    let mut names = Vec::new();
+    while names.len() < limit && Instant::now() < deadline {
+        match search.next()? {
+            Some(name) => names.push(name),
+            None => return Ok((names, true)),
+        }
+    }
+    Ok((names, false))
+}
+
+async fn attempt(
+    directory: &Path,
+    ffprobe: &Path,
+    report: &mut Report,
+    deadline: Instant,
+    may_probe: &mut impl FnMut() -> bool,
+) -> bool {
+    #[cfg(test)]
+    let before = report.probes;
+    let result =
+        reconcile_when_idle(directory, ffprobe, &mut report.probes, deadline, may_probe).await;
+    #[cfg(test)]
+    if report.probes != before {
+        report.attempted.push(directory.to_owned());
+    }
+    match result {
+        Ok((Disposition::CanonicalUntouched, _)) => {}
+        Ok((disposition, reason)) => {
+            report.recovered += usize::from(disposition == Disposition::Recovered);
+            info!(directory = %directory.display(), ?disposition, reason,
+                "interrupted recording disposition");
+            return disposition != Disposition::Deferred;
+        }
+        Err(error) => {
+            warn!(directory = %directory.display(), disposition = ?Disposition::Inaccessible,
+            error = %format!("{error:#}"), "interrupted recording preserved")
+        }
+    }
+    true
+}
+
+/// Only after service teardown, while the production owner is still held.
+/// Fresh process checks gate discovery regions, candidate pinning and probes.
+/// Completed bundles need only a cheap metadata-existence check. The caller
+/// joins this future before ShutdownComplete; no command receiver is consumed.
 pub(crate) async fn run(
     output: &Path,
     ffprobe: &Path,
-    commands: &mut mpsc::UnboundedReceiver<ServiceCommand>,
-) -> Result<bool> {
+    mut idle: impl FnMut() -> bool,
+) -> Result<Report> {
+    // Once League is observed, never resume this maintenance pass, even if a
+    // subsequent observation could already see it exit again.
+    let mut remained_idle = true;
+    let mut may_continue = || {
+        remained_idle = remained_idle && idle();
+        remained_idle
+    };
+    let mut report = Report::default();
+    if !may_continue() {
+        return Ok(report);
+    }
     let started = Instant::now();
     let deadline = started + ADMISSION_BUDGET;
     let games = output.join("games");
-    let _pins = DirectoryPins::open(&games)?;
-    let entries = std::fs::read_dir(&games).context("cannot enumerate interrupted recordings")?;
-    let mut probes = 0;
-    let mut inspected = 0;
-    let mut recovered = 0;
-    let mut deferred = false;
-    for entry in entries.take(MAX_ENTRIES + 1) {
-        match commands.try_recv() {
-            Ok(ServiceCommand::Shutdown) | Err(mpsc::error::TryRecvError::Disconnected) => {
-                return Ok(true);
-            }
-            Err(mpsc::error::TryRecvError::Empty) => {}
+    let pins = DirectoryPins::open(&games)?;
+    let mut cursor = match discovery::Cursor::open(&games, &pins) {
+        Ok(cursor) => Some(cursor),
+        Err(error) => {
+            warn!(error = %format!("{error:#}"),
+                "recovery progress unavailable; cursor retained, bounded pass starts at root");
+            None
         }
-        if inspected == MAX_ENTRIES || Instant::now() >= deadline {
-            deferred = true;
+    };
+    let mut prefix = cursor
+        .as_ref()
+        .map_or_else(String::new, |cursor| cursor.prefix.clone());
+    let mut complete = false;
+    'pass: while report.inspected < MAX_ENTRIES
+        && report.searches < MAX_SEARCHES
+        && report.probes < MAX_PROBES
+        && Instant::now() < deadline
+    {
+        if !may_continue() {
             break;
         }
-        inspected += 1;
-        let entry = entry?;
-        if !entry.file_name().to_str().is_some_and(bundle_name) {
-            continue;
+        // A bundle name can itself prefix other bundle names (1, 10, 1-1).
+        // Inspect it before splitting; never lose it in the descendant search.
+        if bundle_name(&prefix) {
+            report.inspected += 1;
+            let directory = games.join(&prefix);
+            if publication::exists(&directory)?
+                && !attempt(
+                    &directory,
+                    ffprobe,
+                    &mut report,
+                    deadline,
+                    &mut may_continue,
+                )
+                .await
+            {
+                break;
+            } // Not attempted: preserve this exact frontier.
         }
-        let directory = entry.path();
-        match reconcile(&directory, ffprobe, &mut probes, deadline).await {
-            Ok((Disposition::CanonicalUntouched, _)) => {}
-            Ok((disposition, reason)) => {
-                recovered += usize::from(disposition == Disposition::Recovered);
-                deferred |= disposition == Disposition::Deferred;
-                info!(directory = %directory.display(), ?disposition, reason,
-                    "interrupted recording disposition");
+        if report.inspected == MAX_ENTRIES
+            || report.probes == MAX_PROBES
+            || Instant::now() >= deadline
+        {
+            prefix = discovery::descend(&prefix)
+                .or_else(|| discovery::advance(&prefix))
+                .unwrap_or_default();
+            break;
+        }
+        // An exact-prefix candidate may just have spent its full probe deadline.
+        // Reobserve League before beginning another filesystem search.
+        if !may_continue() {
+            break;
+        }
+        report.searches += 1;
+        let (names, exhausted) =
+            discover(&games, &prefix, MAX_ENTRIES - report.inspected, deadline)?;
+        report.inspected += names.len();
+        for name in names {
+            if name == prefix || !name.starts_with(&prefix) || !bundle_name(&name) {
+                continue;
             }
-            Err(error) => {
-                warn!(directory = %directory.display(), disposition = ?Disposition::Inaccessible,
-                error = %format!("{error:#}"), "interrupted recording preserved")
+            if report.probes == MAX_PROBES
+                || Instant::now() >= deadline
+                || !attempt(
+                    &games.join(name),
+                    ffprobe,
+                    &mut report,
+                    deadline,
+                    &mut may_continue,
+                )
+                .await
+            {
+                prefix = discovery::descend(&prefix)
+                    .or_else(|| discovery::advance(&prefix))
+                    .unwrap_or_default();
+                break 'pass;
+            }
+        }
+        let next = if exhausted {
+            discovery::advance(&prefix)
+        } else {
+            discovery::descend(&prefix).or_else(|| discovery::advance(&prefix))
+        };
+        match next {
+            Some(next) => prefix = next,
+            None => {
+                prefix.clear();
+                complete = true;
+                break;
             }
         }
     }
+    // Capture wins even over persisting an advisory progress hint.
+    if let Some(cursor) = &mut cursor
+        && may_continue()
+    {
+        cursor.save(&prefix)?;
+    }
     info!(
-        inspected,
-        probes,
-        recovered,
-        deferred,
+        inspected = report.inspected,
+        searches = report.searches,
+        probes = report.probes,
+        recovered = report.recovered,
+        complete,
+        next_prefix = prefix,
         elapsed_ms = started.elapsed().as_millis(),
-        "interrupted recording recovery finished; deferred entries wait for a later recorder start"
+        "interrupted recording maintenance finished; deferred entries wait for an eligible orderly exit"
     );
-    Ok(false)
+    Ok(report)
 }
 
 #[cfg(test)]

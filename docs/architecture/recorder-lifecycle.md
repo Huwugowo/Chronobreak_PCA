@@ -7,7 +7,7 @@ Process ownership, availability and login registration are described in
 
 `recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production tray mode runs the UI event loop while the recording service runs on Tokio.
 
-The service resolves the immutable packaged media runtime, performs the bounded owner-only interrupted-publication pass described in [replay-time.md](replay-time.md), and detects audio once. Shutdown is checked between recovery candidates; an admitted probe is joined before shutdown or capture admission. It then checks League process presence every two seconds. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
+The service resolves the immutable packaged media runtime and detects audio once, then checks League process presence every two seconds. Historical recovery does no work during startup or the watcher loop. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
 
 League process presence remains the automatic lifecycle authority:
 
@@ -18,6 +18,8 @@ League process presence remains the automatic lifecycle authority:
 5. application shutdown cancels startup and finalizes an active recording before emitting completion.
 
 Live Client readiness and `GameEnd` are not start/stop signals. A process with no ready window is retried on the next watcher tick. Retryable startup failures follow the bounded 2/5/10/30-second schedule only after cleanup, while terminal incompatibility and an unexpected active-backend exit suppress runaway retries for that process generation.
+
+After orderly shutdown joins startup, capture and post-game owners, the service may run one bounded interrupted-publication maintenance pass, described in [replay-time.md](replay-time.md), before ShutdownComplete. The production owner lease remains held. Fresh process checks skip or end the pass when League is observed; admitted work stays joined. This can extend orderly exit, including OS filesystem delays, but cannot block a running service's watcher or capture admission. There is no concurrent recovery worker.
 
 ## Capture and finalization
 
