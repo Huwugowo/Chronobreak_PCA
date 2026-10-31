@@ -2,7 +2,7 @@
 
 Feature: `QB-CAP-006`
 ExecPlan: `docs/exec-plans/qb-cap-006-league-launch-safety-v3.md`
-Updated: 2026-10-29
+Updated: 2026-10-31
 
 ## Current milestone
 
@@ -36,6 +36,10 @@ None for this focused correction.
 Run the unchanged repeated controlled Practice Tool absent/passive/native launch comparison on an interactive supported Windows setup. Obtain a successful generated native capture check there. No benchmark campaign was performed or claimed.
 
 ## Verification
+
+Live observation, 2026-10-31:
+
+- One ordinary League session deferred on aggregate clock/window readiness, admitted at gameTime 36.624569s and began recording at 23:00:54 Europe/Paris. Native capture advanced until selected-HWND closure; the later process-end confirmation failure is tracked under QB-CAP-002. Sanitized runtime log, image identity, probe and diagnostic limits: `docs/reviews/recorder-live-incident-2026-10-31.md`. This is neither the controlled repeated launch comparison nor a finalized recording pass; remaining acceptance gates are unchanged. No product-code change or new test-suite run.
 
 Construction-boundary correction:
 

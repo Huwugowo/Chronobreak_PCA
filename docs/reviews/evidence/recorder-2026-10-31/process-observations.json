@@ -1,0 +1,49 @@
+{
+  "timezone": "Europe/Paris (UTC+01:00)",
+  "observations": [
+    {
+      "observed_at_local": "2026-10-31T23:01:51+01:00",
+      "time_precision": "approximate; process query preceded timestamp",
+      "processes": [
+        {
+          "pid": 6488,
+          "name": "recorder.exe",
+          "session_id": 7,
+          "created_at_local": "2026-10-31T22:57:07.384352+01:00",
+          "path": "<REPOSITORY>/recorder/target/release/recorder.exe"
+        },
+        {
+          "pid": 228,
+          "name": "League of Legends.exe",
+          "session_id": 7,
+          "created_at_local": "2026-10-31T22:59:45.303984+01:00"
+        },
+        {
+          "pid": 15452,
+          "parent_pid": 6488,
+          "name": "ffmpeg.exe",
+          "session_id": 7,
+          "created_at_local": "2026-10-31T23:00:51.684535+01:00"
+        }
+      ]
+    },
+    {
+      "observed_at_local": "2026-10-31T23:13:35+01:00",
+      "time_precision": "approximate; process query followed timestamp",
+      "recorder_pid": 6488,
+      "league_present": false,
+      "ffmpeg_present": false
+    }
+  ],
+  "subsequent_query": {
+    "recorder_pid": 6488,
+    "recorder_command_line": "\"<REPOSITORY>\\recorder\\target\\release\\recorder.exe\"",
+    "league_present": false,
+    "ffmpeg_present": false
+  },
+  "limitations": [
+    "ExecutablePath for League was unavailable.",
+    "No process-exit timestamp was captured.",
+    "Process command lines were not collected for League or its client."
+  ]
+}
