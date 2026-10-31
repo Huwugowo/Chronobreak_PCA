@@ -354,9 +354,9 @@ impl NativeRecorderSession {
             }
             if self.target_closed && stop_at.is_none() {
                 // WGC reports the game HWND closing before the process watcher
-                // necessarily observes the League process disappearing. Treat
-                // that terminal target event as the stop boundary and flush the
-                // frames already captured through the normal finalization path.
+                // necessarily observes the League process disappearing. This
+                // sets only the capture/drain boundary; the lifecycle still needs
+                // independent process-end confirmation before returning a candidate.
                 let observed_stop = Instant::now();
                 stop_at = Some(observed_stop);
                 catch_up_deadline =

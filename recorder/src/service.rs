@@ -65,6 +65,7 @@ pub enum ServiceCommand {
 pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 
 struct ActiveRecording {
+    process: LeagueProcess,
     media_id: MediaId,
     ffprobe_path: PathBuf,
     session: VideoRecordingSession,
@@ -306,12 +307,19 @@ impl VideoRecordingSession {
         }
     }
 
-    async fn stop(self) -> Result<CompletedVideoCandidate> {
+    async fn stop(
+        self,
+        target_loss_observed: bool,
+        process_ended: impl FnOnce() -> bool,
+    ) -> Result<CompletedVideoCandidate> {
         match self {
             #[cfg(not(target_os = "windows"))]
-            Self::Ffmpeg(session) => (*session).stop().await,
+            Self::Ffmpeg(session) => {
+                let _ = (target_loss_observed, process_ended);
+                (*session).stop().await
+            }
             #[cfg(target_os = "windows")]
-            Self::Native(session) => session.stop().await,
+            Self::Native(session) => session.stop(target_loss_observed, process_ended).await,
         }
     }
 
@@ -593,9 +601,9 @@ async fn run_inner(
             command = commands.recv() => {
                 if matches!(command, Some(ServiceCommand::Shutdown) | None) {
                     events(ServiceEvent::Availability(AvailabilityEvent::Stopping));
-                    cancel_starting(starting.take(), &events).await;
+                    cancel_starting(starting.take(), &events, &mut watcher).await;
                     if let Some(recording) = active.take() {
-                        stop_recording(recording, &events).await;
+                        stop_recording(recording, &events, &mut watcher).await;
                     }
                     log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
                     if let Some(post_game)=post_game { post_game.stop().await; }
@@ -621,16 +629,16 @@ async fn run_inner(
                     }
                     ProcessTransition::Replaced(process) => {
                         warn!(pid = process.pid, "League process was replaced between watcher polls");
-                        cancel_starting(starting.take(), &events).await;
+                        cancel_starting(starting.take(), &events, &mut watcher).await;
                         if let Some(recording) = active.take() {
-                            stop_recording(recording, &events).await;
+                            stop_recording(recording, &events, &mut watcher).await;
                         }
                         startup_retry.reset();
                     }
                     ProcessTransition::Disappeared => {
-                        cancel_starting(starting.take(), &events).await;
+                        cancel_starting(starting.take(), &events, &mut watcher).await;
                         if let Some(recording) = active.take()
-                            && stop_recording(recording, &events).await
+                            && stop_recording(recording, &events, &mut watcher).await
                         {
                             events(ServiceEvent::Idle);
                         }
@@ -658,7 +666,7 @@ async fn run_inner(
                         }
                         Ok(Ok(recording)) => {
                             warn!(pid = process.pid, "recording became ready after its League process changed");
-                            stop_recording(recording, &events).await;
+                            stop_recording(recording, &events, &mut watcher).await;
                         }
                         Ok(Err(start_error)) => {
                             events(ServiceEvent::Availability(if start_error.disposition == RecordingStartupDisposition::Cancelled {
@@ -783,13 +791,11 @@ async fn run_inner(
                                 control_telemetry.target_failures.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
                             if is_closed_capture_target_error(&target_error) {
-                                // League destroys the game HWND during a normal return to
-                                // the client. The native worker treats that callback as its
-                                // terminal boundary, so let the ordinary finalizer flush the
-                                // captured media instead of converting a completed match into
-                                // an explicit partial recording.
-                                info!(error = %target_error, "the League capture target closed; finalizing the active recording");
-                                if stop_recording(recording, &events).await {
+                                // A closed HWND can also mean unexpected target loss.
+                                // Drain safely, then require process termination before
+                                // admitting the candidate to normal media validation.
+                                info!(error = %target_error, "the League capture target closed; checking process termination after teardown");
+                                if stop_recording_after_target_loss(recording, &events, &mut watcher).await {
                                     events(ServiceEvent::Idle);
                                 }
                             } else {
@@ -849,7 +855,7 @@ async fn run_inner(
                                 control_telemetry.backend_exits.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
                             info!("recorder backend exited; checking its terminal result before publication");
-                            if stop_recording(recording, &events).await {
+                            if stop_recording(recording, &events, &mut watcher).await {
                                 events(ServiceEvent::Idle);
                             }
                             startup_retry.block_active_process(current_process);
@@ -971,14 +977,19 @@ fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     }
 }
 
-async fn cancel_starting(starting: Option<StartingRecording>, events: &EventSink) {
-    cancel_starting_with_timeout(starting, events, STARTUP_CANCELLATION_TIMEOUT).await;
+async fn cancel_starting(
+    starting: Option<StartingRecording>,
+    events: &EventSink,
+    watcher: &mut ProcessWatcher,
+) {
+    cancel_starting_with_timeout(starting, events, STARTUP_CANCELLATION_TIMEOUT, watcher).await;
 }
 
 async fn cancel_starting_with_timeout(
     starting: Option<StartingRecording>,
     events: &EventSink,
     timeout: Duration,
+    watcher: &mut ProcessWatcher,
 ) {
     let Some(mut starting) = starting else {
         return;
@@ -986,7 +997,9 @@ async fn cancel_starting_with_timeout(
     let _ = starting.cancellation.send(true);
     match tokio::time::timeout(timeout, &mut starting.task).await {
         Ok(Ok(Ok(recording))) => {
-            stop_recording(recording, events).await;
+            if !stop_recording(recording, events, watcher).await {
+                return;
+            }
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) => {}
         Err(_) => {
@@ -996,8 +1009,10 @@ async fn cancel_starting_with_timeout(
                     pid = starting.process.pid,
                     "native recording startup cancellation exceeded its deadline; waiting for the offloaded worker join because abort cannot contain a hung driver call"
                 );
-                if let Ok(Ok(recording)) = starting.task.await {
-                    stop_recording(recording, events).await;
+                if let Ok(Ok(recording)) = starting.task.await
+                    && !stop_recording(recording, events, watcher).await
+                {
+                    return;
                 }
             }
             #[cfg(not(target_os = "windows"))]
@@ -1420,6 +1435,7 @@ async fn start_recording(
         identity_admission.send_replace(false);
     }
     Ok(ActiveRecording {
+        process,
         media_id,
         ffprobe_path: ffmpeg.ffprobe_path().to_path_buf(),
         session,
@@ -1494,8 +1510,20 @@ async fn startup_cancelled(cancellation: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn stop_recording(recording: ActiveRecording, events: &EventSink) -> bool {
-    stop_recording_inner(recording, events, None).await
+async fn stop_recording(
+    recording: ActiveRecording,
+    events: &EventSink,
+    watcher: &mut ProcessWatcher,
+) -> bool {
+    stop_recording_inner(recording, events, None, Some(watcher), false).await
+}
+
+async fn stop_recording_after_target_loss(
+    recording: ActiveRecording,
+    events: &EventSink,
+    watcher: &mut ProcessWatcher,
+) -> bool {
+    stop_recording_inner(recording, events, None, Some(watcher), true).await
 }
 
 async fn stop_recording_with_failure(
@@ -1503,7 +1531,7 @@ async fn stop_recording_with_failure(
     events: &EventSink,
     failure_reason: String,
 ) {
-    let _ = stop_recording_inner(recording, events, Some(failure_reason)).await;
+    let _ = stop_recording_inner(recording, events, Some(failure_reason), None, false).await;
 }
 
 fn is_closed_capture_target_error(error: &anyhow::Error) -> bool {
@@ -1516,11 +1544,14 @@ async fn stop_recording_inner(
     recording: ActiveRecording,
     events: &EventSink,
     failure_reason: Option<String>,
+    watcher: Option<&mut ProcessWatcher>,
+    target_loss_observed: bool,
 ) -> bool {
     events(ServiceEvent::Availability(AvailabilityEvent::Capture(
         CaptureActivity::Finalizing,
     )));
     let ActiveRecording {
+        process,
         media_id,
         ffprobe_path,
         session,
@@ -1558,7 +1589,13 @@ async fn stop_recording_inner(
     let video_stop = async {
         match failure_reason {
             Some(reason) => session.stop_with_failure(reason).await,
-            None => session.stop().await,
+            None => {
+                session
+                    .stop(target_loss_observed, || {
+                        watcher.is_some_and(|watcher| watcher.confirms_process_ended(process))
+                    })
+                    .await
+            }
         }
     };
     let (summary, video_result, context_result) = tokio::join!(
@@ -1935,7 +1972,13 @@ mod tests {
         };
         let events: EventSink = Arc::new(|_| {});
 
-        cancel_starting_with_timeout(Some(starting), &events, Duration::from_millis(1)).await;
+        cancel_starting_with_timeout(
+            Some(starting),
+            &events,
+            Duration::from_millis(1),
+            &mut ProcessWatcher::new(DEFAULT_PROCESS_NAME),
+        )
+        .await;
 
         assert!(cleanup_completed.load(std::sync::atomic::Ordering::Acquire));
     }
@@ -1957,7 +2000,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_exact_closed_league_hwnd_is_a_graceful_capture_boundary() {
+    fn only_an_exact_closed_league_hwnd_is_eligible_for_termination_confirmation() {
         let closed = anyhow::anyhow!("the selected League HWND was closed")
             .context("capture target query failed");
         assert!(is_closed_capture_target_error(&closed));

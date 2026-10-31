@@ -120,6 +120,17 @@ impl ProcessWatcher {
             })
     }
 
+    /// Confirm the original generation against the full refreshed snapshot, not
+    /// just `refresh`'s lowest-PID selected League process.
+    pub(crate) fn confirms_process_ended(&mut self, original: LeagueProcess) -> bool {
+        let _ = self.refresh();
+        original.started_at != 0
+            && self
+                .system
+                .process(Pid::from_u32(original.pid))
+                .is_none_or(|process| process.start_time() != original.started_at)
+    }
+
     pub fn telemetry(&self) -> ProcessWatcherTelemetry {
         ProcessWatcherTelemetry {
             refreshes: self.refreshes,
@@ -177,6 +188,30 @@ fn _pid_is_send(_: Pid) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn target_loss_confirmation_checks_original_identity_not_selected_process() {
+        let mut watcher = ProcessWatcher::new("queueback-no-such-process-fixture");
+        assert_eq!(watcher.refresh(), None);
+        let pid = std::process::id();
+        let started_at = watcher
+            .system
+            .process(Pid::from_u32(pid))
+            .unwrap()
+            .start_time();
+        let original = LeagueProcess { pid, started_at };
+
+        // No selected League process does not imply this original owner ended.
+        assert!(!watcher.confirms_process_ended(original));
+        assert!(watcher.confirms_process_ended(LeagueProcess {
+            started_at: started_at + 1,
+            ..original
+        }));
+        assert!(!watcher.confirms_process_ended(LeagueProcess {
+            started_at: 0,
+            ..original
+        }));
+    }
 
     #[test]
     fn process_names_match_case_insensitively() {

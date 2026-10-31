@@ -369,15 +369,25 @@ impl NativeRecordingSession {
         self.worker.is_finished()
     }
 
-    pub(crate) async fn stop(self) -> Result<CompletedVideoCandidate> {
-        self.stop_inner(None).await
+    pub(crate) async fn stop(
+        self,
+        target_loss_observed: bool,
+        process_ended: impl FnOnce() -> bool,
+    ) -> Result<CompletedVideoCandidate> {
+        self.stop_inner(None, target_loss_observed, process_ended)
+            .await
     }
 
     pub(crate) async fn stop_with_failure(self, reason: String) -> Result<CompletedVideoCandidate> {
-        self.stop_inner(Some(reason)).await
+        self.stop_inner(Some(reason), false, || false).await
     }
 
-    async fn stop_inner(self, failure_reason: Option<String>) -> Result<CompletedVideoCandidate> {
+    async fn stop_inner(
+        self,
+        failure_reason: Option<String>,
+        target_loss_observed: bool,
+        process_ended: impl FnOnce() -> bool,
+    ) -> Result<CompletedVideoCandidate> {
         let Self {
             directory,
             output,
@@ -397,15 +407,14 @@ impl NativeRecordingSession {
             );
         }
         let snapshot = worker_result?;
-        // A worker may finish without an owner stop when WGC closes the target.
-        // Terminal drain evidence alone cannot explain any other early exit.
+        // Target closure explains a worker exit, but does not prove League ended.
+        // The service must confirm the original process generation after joining.
         if exited_before_stop && !snapshot.target_closed {
             bail!(
                 "native recorder worker exited without a stop request or target close; partial fragmented MP4 preserved at {}",
                 output.display()
             );
         }
-
         let final_evidence = evidence.borrow().clone();
         if let Some(error) = final_evidence.protocol_error {
             bail!(
@@ -416,6 +425,12 @@ impl NativeRecordingSession {
         if !final_evidence.capture_terminal || !final_evidence.progress_end {
             bail!(
                 "native recorder did not report terminal capture and mux progress; partial fragmented MP4 preserved at {}",
+                output.display()
+            );
+        }
+        if (target_loss_observed || snapshot.target_closed) && !process_ended() {
+            bail!(
+                "native capture target was lost without confirmed League process termination; partial fragmented MP4 preserved at {}",
                 output.display()
             );
         }
@@ -753,7 +768,7 @@ mod tests {
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
 
-        let completed = session.stop().await.unwrap();
+        let completed = session.stop(false, || false).await.unwrap();
         assert_eq!(completed.directory(), directory.path());
         assert_eq!(completed.expected_frame_count().get(), 120);
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
@@ -779,16 +794,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exited_target_close_can_reach_candidate_validation() {
+    async fn exited_target_close_with_confirmed_process_end_can_reach_candidate_validation() {
         let directory = tempfile::tempdir().unwrap();
         let mut snapshot = telemetry();
         snapshot.target_closed = true;
         let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
 
-        let candidate = session.stop().await.unwrap();
+        let candidate = session.stop(false, || true).await.unwrap();
         assert_eq!(candidate.expected_frame_count().get(), 120);
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+    }
+
+    #[tokio::test]
+    async fn target_close_without_process_end_preserves_partial_before_or_after_worker_exit() {
+        for exited in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut snapshot = telemetry();
+            snapshot.target_closed = true;
+            let session = if exited {
+                exited_session(directory.path(), snapshot, Ok(snapshot)).await
+            } else {
+                fake_session(directory.path(), snapshot)
+            };
+
+            let error = session.stop(false, || false).await.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("without confirmed League process termination")
+            );
+            assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+            assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn service_observed_hwnd_loss_cannot_be_hidden_by_owner_stop() {
+        let directory = tempfile::tempdir().unwrap();
+        // The service can observe HWND loss before the worker receives Closed.
+        let session = fake_session(directory.path(), telemetry());
+        let error = session.stop(true, || false).await.unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("without confirmed League process termination")
+        );
+        assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+    }
+
+    #[tokio::test]
+    async fn hwnd_first_process_end_during_teardown_is_confirmed_only_after_worker_join() {
+        for callback_observed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut snapshot = telemetry();
+            snapshot.target_closed = callback_observed;
+            let stop = Arc::new(AtomicBool::new(false));
+            let worker_stop = Arc::clone(&stop);
+            let process_ended = Arc::new(AtomicBool::new(false));
+            let worker_process_ended = Arc::clone(&process_ended);
+            let thread = thread::spawn(move || {
+                while !worker_stop.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                worker_process_ended.store(true, Ordering::Release);
+                Ok(snapshot)
+            });
+            let observer = Arc::new(NativeWorkerCleanupObserver::default());
+            let worker = NativeWorker::with_cleanup_observer(stop, thread, Arc::clone(&observer));
+            let session = fake_session_with_worker(directory.path(), snapshot, worker);
+            assert!(!process_ended.load(Ordering::Acquire));
+
+            let candidate = session
+                .stop(true, || {
+                    assert_explicit_cleanup(&observer);
+                    process_ended.load(Ordering::Acquire)
+                })
+                .await
+                .unwrap();
+            assert_eq!(candidate.expected_frame_count().get(), 120);
+            assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+            assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+        }
     }
 
     #[tokio::test]
@@ -797,7 +886,7 @@ mod tests {
         let snapshot = telemetry();
         let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
 
-        let error = session.stop().await.unwrap_err();
+        let error = session.stop(false, || true).await.unwrap_err();
         assert!(
             error
                 .to_string()
@@ -805,6 +894,37 @@ mod tests {
         );
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+    }
+
+    #[tokio::test]
+    async fn target_close_does_not_override_invalid_terminal_evidence() {
+        for failure in ["protocol", "capture", "mux"] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut snapshot = telemetry();
+            snapshot.target_closed = true;
+            let mut session = fake_session(directory.path(), snapshot);
+            let mut evidence = snapshot.recording_evidence();
+            match failure {
+                "protocol" => evidence.protocol_error = Some("fixture protocol failure".to_owned()),
+                "capture" => evidence.capture_terminal = false,
+                "mux" => evidence.progress_end = false,
+                _ => unreachable!(),
+            }
+            let (_sender, receiver) = watch::channel(evidence);
+            session.evidence = receiver;
+
+            let error = session
+                .stop(false, || panic!("invalid evidence must take precedence"))
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(if failure == "protocol" {
+                "fixture protocol failure"
+            } else {
+                "did not report terminal capture and mux progress"
+            }));
+            assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+            assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+        }
     }
 
     #[tokio::test]
@@ -819,7 +939,10 @@ mod tests {
         )
         .await;
 
-        let error = session.stop().await.unwrap_err();
+        let error = session
+            .stop(false, || panic!("worker failure must take precedence"))
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("fixture native mux failure"));
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
@@ -1186,7 +1309,7 @@ mod tests {
         let final_evidence = session.evidence_receiver();
         tokio::time::sleep(Duration::from_secs(duration_seconds)).await;
 
-        let published = session.stop().await.unwrap();
+        let published = session.stop(false, || false).await.unwrap();
         let video = published.partial_path().to_path_buf();
         assert!(video.is_file());
         assert!(std::fs::metadata(&video).unwrap().len() > 0);
