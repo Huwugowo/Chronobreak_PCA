@@ -43,6 +43,8 @@ use crate::platform::{capture_target_for_process, fallback_capture_target};
 use crate::platform::{capture_target_for_window, capture_window_for_process};
 use crate::poller::{CaptureMetadata, PollerSession, RecordingDetails, RecordingMetadata};
 use crate::storage::{create_game_directory, unix_timestamp_now};
+#[cfg(target_os = "windows")]
+use crate::watcher::OriginalProcess;
 use crate::watcher::{
     DEFAULT_PROCESS_NAME, LeagueProcess, POLL_INTERVAL, ProcessTransition, ProcessWatcher,
     ProcessWatcherTelemetry, transition,
@@ -65,7 +67,8 @@ pub enum ServiceCommand {
 pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 
 struct ActiveRecording {
-    process: LeagueProcess,
+    #[cfg(target_os = "windows")]
+    original_process: OriginalProcess,
     media_id: MediaId,
     ffprobe_path: PathBuf,
     session: VideoRecordingSession,
@@ -309,17 +312,17 @@ impl VideoRecordingSession {
 
     async fn stop(
         self,
-        target_loss_observed: bool,
+        process_end_required: bool,
         process_ended: impl FnOnce() -> bool,
     ) -> Result<CompletedVideoCandidate> {
         match self {
             #[cfg(not(target_os = "windows"))]
             Self::Ffmpeg(session) => {
-                let _ = (target_loss_observed, process_ended);
+                let _ = (process_end_required, process_ended);
                 (*session).stop().await
             }
             #[cfg(target_os = "windows")]
-            Self::Native(session) => session.stop(target_loss_observed, process_ended).await,
+            Self::Native(session) => session.stop(process_end_required, process_ended).await,
         }
     }
 
@@ -601,7 +604,7 @@ async fn run_inner(
             command = commands.recv() => {
                 if matches!(command, Some(ServiceCommand::Shutdown) | None) {
                     events(ServiceEvent::Availability(AvailabilityEvent::Stopping));
-                    cancel_starting(starting.take(), &events, &mut watcher).await;
+                    cancel_starting(starting.take(), &events, &mut watcher, false).await;
                     if let Some(recording) = active.take() {
                         stop_recording(recording, &events, &mut watcher).await;
                     }
@@ -629,16 +632,16 @@ async fn run_inner(
                     }
                     ProcessTransition::Replaced(process) => {
                         warn!(pid = process.pid, "League process was replaced between watcher polls");
-                        cancel_starting(starting.take(), &events, &mut watcher).await;
+                        cancel_starting(starting.take(), &events, &mut watcher, true).await;
                         if let Some(recording) = active.take() {
-                            stop_recording(recording, &events, &mut watcher).await;
+                            stop_recording_with_process_confirmation(recording, &events, &mut watcher).await;
                         }
                         startup_retry.reset();
                     }
                     ProcessTransition::Disappeared => {
-                        cancel_starting(starting.take(), &events, &mut watcher).await;
+                        cancel_starting(starting.take(), &events, &mut watcher, true).await;
                         if let Some(recording) = active.take()
-                            && stop_recording(recording, &events, &mut watcher).await
+                            && stop_recording_with_process_confirmation(recording, &events, &mut watcher).await
                         {
                             events(ServiceEvent::Idle);
                         }
@@ -666,7 +669,7 @@ async fn run_inner(
                         }
                         Ok(Ok(recording)) => {
                             warn!(pid = process.pid, "recording became ready after its League process changed");
-                            stop_recording(recording, &events, &mut watcher).await;
+                            stop_recording_with_process_confirmation(recording, &events, &mut watcher).await;
                         }
                         Ok(Err(start_error)) => {
                             events(ServiceEvent::Availability(if start_error.disposition == RecordingStartupDisposition::Cancelled {
@@ -795,7 +798,7 @@ async fn run_inner(
                                 // Drain safely, then require process termination before
                                 // admitting the candidate to normal media validation.
                                 info!(error = %target_error, "the League capture target closed; checking process termination after teardown");
-                                if stop_recording_after_target_loss(recording, &events, &mut watcher).await {
+                                if stop_recording_with_process_confirmation(recording, &events, &mut watcher).await {
                                     events(ServiceEvent::Idle);
                                 }
                             } else {
@@ -981,8 +984,16 @@ async fn cancel_starting(
     starting: Option<StartingRecording>,
     events: &EventSink,
     watcher: &mut ProcessWatcher,
+    process_end_required: bool,
 ) {
-    cancel_starting_with_timeout(starting, events, STARTUP_CANCELLATION_TIMEOUT, watcher).await;
+    cancel_starting_with_timeout(
+        starting,
+        events,
+        STARTUP_CANCELLATION_TIMEOUT,
+        watcher,
+        process_end_required,
+    )
+    .await;
 }
 
 async fn cancel_starting_with_timeout(
@@ -990,6 +1001,7 @@ async fn cancel_starting_with_timeout(
     events: &EventSink,
     timeout: Duration,
     watcher: &mut ProcessWatcher,
+    process_end_required: bool,
 ) {
     let Some(mut starting) = starting else {
         return;
@@ -997,7 +1009,9 @@ async fn cancel_starting_with_timeout(
     let _ = starting.cancellation.send(true);
     match tokio::time::timeout(timeout, &mut starting.task).await {
         Ok(Ok(Ok(recording))) => {
-            if !stop_recording(recording, events, watcher).await {
+            if !stop_recording_inner(recording, events, None, Some(watcher), process_end_required)
+                .await
+            {
                 return;
             }
         }
@@ -1010,7 +1024,14 @@ async fn cancel_starting_with_timeout(
                     "native recording startup cancellation exceeded its deadline; waiting for the offloaded worker join because abort cannot contain a hung driver call"
                 );
                 if let Ok(Ok(recording)) = starting.task.await
-                    && !stop_recording(recording, events, watcher).await
+                    && !stop_recording_inner(
+                        recording,
+                        events,
+                        None,
+                        Some(watcher),
+                        process_end_required,
+                    )
+                    .await
                 {
                     return;
                 }
@@ -1143,6 +1164,10 @@ async fn start_recording(
             "League process identity changed before native startup"
         )));
     }
+    #[cfg(target_os = "windows")]
+    let original_process = OriginalProcess::open(process)
+        .context("cannot retain the original League process identity before native startup")
+        .terminal_startup()?;
     #[cfg(target_os = "windows")]
     crate::storage::preflight_recording_storage(&output_path.join("games")).terminal_startup()?;
     events(ServiceEvent::Availability(AvailabilityEvent::Capture(
@@ -1435,7 +1460,8 @@ async fn start_recording(
         identity_admission.send_replace(false);
     }
     Ok(ActiveRecording {
-        process,
+        #[cfg(target_os = "windows")]
+        original_process,
         media_id,
         ffprobe_path: ffmpeg.ffprobe_path().to_path_buf(),
         session,
@@ -1518,7 +1544,7 @@ async fn stop_recording(
     stop_recording_inner(recording, events, None, Some(watcher), false).await
 }
 
-async fn stop_recording_after_target_loss(
+async fn stop_recording_with_process_confirmation(
     recording: ActiveRecording,
     events: &EventSink,
     watcher: &mut ProcessWatcher,
@@ -1545,13 +1571,14 @@ async fn stop_recording_inner(
     events: &EventSink,
     failure_reason: Option<String>,
     watcher: Option<&mut ProcessWatcher>,
-    target_loss_observed: bool,
+    process_end_required: bool,
 ) -> bool {
     events(ServiceEvent::Availability(AvailabilityEvent::Capture(
         CaptureActivity::Finalizing,
     )));
     let ActiveRecording {
-        process,
+        #[cfg(target_os = "windows")]
+        original_process,
         media_id,
         ffprobe_path,
         session,
@@ -1591,8 +1618,18 @@ async fn stop_recording_inner(
             Some(reason) => session.stop_with_failure(reason).await,
             None => {
                 session
-                    .stop(target_loss_observed, || {
-                        watcher.is_some_and(|watcher| watcher.confirms_process_ended(process))
+                    .stop(process_end_required, || {
+                        #[cfg(target_os = "windows")]
+                        {
+                            watcher.is_some_and(|watcher| {
+                                watcher.confirms_process_ended(&original_process)
+                            })
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            let _ = watcher;
+                            false
+                        }
                     })
                     .await
             }
@@ -1977,6 +2014,7 @@ mod tests {
             &events,
             Duration::from_millis(1),
             &mut ProcessWatcher::new(DEFAULT_PROCESS_NAME),
+            false,
         )
         .await;
 

@@ -371,10 +371,10 @@ impl NativeRecordingSession {
 
     pub(crate) async fn stop(
         self,
-        target_loss_observed: bool,
+        process_end_required: bool,
         process_ended: impl FnOnce() -> bool,
     ) -> Result<CompletedVideoCandidate> {
-        self.stop_inner(None, target_loss_observed, process_ended)
+        self.stop_inner(None, process_end_required, process_ended)
             .await
     }
 
@@ -385,7 +385,7 @@ impl NativeRecordingSession {
     async fn stop_inner(
         self,
         failure_reason: Option<String>,
-        target_loss_observed: bool,
+        process_end_required: bool,
         process_ended: impl FnOnce() -> bool,
     ) -> Result<CompletedVideoCandidate> {
         let Self {
@@ -428,9 +428,9 @@ impl NativeRecordingSession {
                 output.display()
             );
         }
-        if (target_loss_observed || snapshot.target_closed) && !process_ended() {
+        if (process_end_required || snapshot.target_closed) && !process_ended() {
             bail!(
-                "native capture target was lost without confirmed League process termination; partial fragmented MP4 preserved at {}",
+                "recording stopped without confirmed League process termination; partial fragmented MP4 preserved at {}",
                 output.display()
             );
         }
@@ -830,19 +830,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn service_observed_hwnd_loss_cannot_be_hidden_by_owner_stop() {
-        let directory = tempfile::tempdir().unwrap();
-        // The service can observe HWND loss before the worker receives Closed.
-        let session = fake_session(directory.path(), telemetry());
-        let error = session.stop(true, || false).await.unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("without confirmed League process termination")
-        );
-        assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
-        assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+    async fn automatic_process_or_hwnd_loss_requires_original_exit_even_with_clean_owner_stop() {
+        for process_ended in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            // Watcher replacement/disappearance or service-observed HWND loss can
+            // request stop while the worker still has a healthy capture target.
+            let mut session = fake_session(directory.path(), telemetry());
+            let observer = Arc::new(NativeWorkerCleanupObserver::default());
+            session.worker.cleanup_observer = Some(Arc::clone(&observer));
+            let result = session
+                .stop(true, || {
+                    assert_explicit_cleanup(&observer);
+                    process_ended
+                })
+                .await;
+            if process_ended {
+                assert_eq!(result.unwrap().expected_frame_count().get(), 120);
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("without confirmed League process termination")
+                );
+            }
+            assert_explicit_cleanup(&observer);
+            assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+            assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
+        }
     }
 
     #[tokio::test]

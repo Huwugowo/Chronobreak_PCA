@@ -15,7 +15,7 @@ pub const DEFAULT_PROCESS_NAME: &str = "League of Legends";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeagueProcess {
     pub pid: u32,
-    /// OS process creation time, in Unix seconds; distinguishes observed PID reuse.
+    /// OS creation identity: exact FILETIME ticks on Windows, Unix seconds elsewhere.
     pub started_at: u64,
 }
 
@@ -30,21 +30,33 @@ impl LeagueProcess {
 
 #[cfg(target_os = "windows")]
 fn process_creation_time(pid: u32) -> Option<u64> {
-    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
-    use windows::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
 
-    struct ProcessHandle(HANDLE);
-    impl Drop for ProcessHandle {
-        fn drop(&mut self) {
-            // SAFETY: this guard uniquely owns the successful OpenProcess handle.
-            let _ = unsafe { CloseHandle(self.0) };
-        }
-    }
-    // SAFETY: query-only access to an OS process identifier; no process mutation.
-    let process =
-        ProcessHandle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?);
+    let process = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION).ok()?;
+    creation_time_from_handle(HANDLE(process.as_raw_handle())).ok()
+}
+
+#[cfg(target_os = "windows")]
+fn open_process(
+    pid: u32,
+    access: windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS,
+) -> anyhow::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    use windows::Win32::System::Threading::OpenProcess;
+
+    // SAFETY: only query/synchronize rights are requested for an OS process ID.
+    let handle = unsafe { OpenProcess(access, false, pid) }?;
+    // SAFETY: successful OpenProcess transfers one uniquely owned, valid handle.
+    Ok(unsafe { OwnedHandle::from_raw_handle(handle.0) })
+}
+
+#[cfg(target_os = "windows")]
+fn creation_time_from_handle(handle: windows::Win32::Foundation::HANDLE) -> anyhow::Result<u64> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::GetProcessTimes;
+
     let (mut created, mut exited, mut kernel, mut user) = (
         FILETIME::default(),
         FILETIME::default(),
@@ -52,11 +64,69 @@ fn process_creation_time(pid: u32) -> Option<u64> {
         FILETIME::default(),
     );
     // SAFETY: the owned process handle and all four distinct output pointers are live.
-    unsafe { GetProcessTimes(process.0, &mut created, &mut exited, &mut kernel, &mut user) }
-        .ok()?;
-    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
-    // FILETIME uses 100 ns since 1601; sysinfo start_time uses Unix seconds.
-    (ticks / 10_000_000).checked_sub(11_644_473_600)
+    unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) }?;
+    Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// Pins the original kernel process object before capture, including after exit.
+#[cfg(target_os = "windows")]
+pub(crate) struct OriginalProcess {
+    identity: LeagueProcess,
+    handle: std::os::windows::io::OwnedHandle,
+}
+
+#[cfg(target_os = "windows")]
+impl OriginalProcess {
+    pub(crate) fn open(identity: LeagueProcess) -> anyhow::Result<Self> {
+        use windows::Win32::System::Threading::{
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        };
+
+        let process = Self {
+            identity,
+            handle: open_process(
+                identity.pid,
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            )?,
+        };
+        anyhow::ensure!(
+            !process.has_ended()?,
+            "League process ended before native startup"
+        );
+        Ok(process)
+    }
+
+    fn has_ended(&self) -> anyhow::Result<bool> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Threading::WaitForSingleObject;
+
+        let handle = HANDLE(self.handle.as_raw_handle());
+        let created = creation_time_from_handle(handle);
+        // SAFETY: the retained process handle has synchronize rights. Zero only
+        // queries its signal state; it never waits for or delays League exit.
+        let status = unsafe { WaitForSingleObject(handle, 0) };
+        process_exit_status(self.identity.started_at, created, status)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn process_exit_status(
+    expected_creation: u64,
+    observed_creation: anyhow::Result<u64>,
+    status: windows::Win32::Foundation::WAIT_EVENT,
+) -> anyhow::Result<bool> {
+    use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+
+    anyhow::ensure!(
+        expected_creation != 0 && observed_creation? == expected_creation,
+        "original League process creation identity could not be confirmed"
+    );
+    match status {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => anyhow::bail!("original League process termination query failed: {status:?}"),
+    }
 }
 
 pub struct ProcessWatcher {
@@ -114,21 +184,25 @@ impl ProcessWatcher {
             .iter()
             .filter(|(_, process)| process_name_matches(process.name(), &self.target_name))
             .min_by_key(|(pid, _)| pid.as_u32())
-            .map(|(pid, process)| LeagueProcess {
-                pid: pid.as_u32(),
-                started_at: process.start_time(),
+            .and_then(|(pid, _process)| {
+                #[cfg(target_os = "windows")]
+                let started_at = process_creation_time(pid.as_u32())?;
+                #[cfg(not(target_os = "windows"))]
+                let started_at = _process.start_time();
+                Some(LeagueProcess {
+                    pid: pid.as_u32(),
+                    started_at,
+                })
             })
     }
 
-    /// Confirm the original generation against the full refreshed snapshot, not
-    /// just `refresh`'s lowest-PID selected League process.
-    pub(crate) fn confirms_process_ended(&mut self, original: LeagueProcess) -> bool {
-        let _ = self.refresh();
-        original.started_at != 0
-            && self
-                .system
-                .process(Pid::from_u32(original.pid))
-                .is_none_or(|process| process.start_time() != original.started_at)
+    /// Enumeration and watcher selection never authorize publication.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn confirms_process_ended(&self, original: &OriginalProcess) -> bool {
+        original.has_ended().unwrap_or_else(|error| {
+            tracing::warn!(pid = original.identity.pid, error = %error, "cannot confirm original League process termination");
+            false
+        })
     }
 
     pub fn telemetry(&self) -> ProcessWatcherTelemetry {
@@ -189,28 +263,87 @@ fn _pid_is_send(_: Pid) {}
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
     #[test]
-    fn target_loss_confirmation_checks_original_identity_not_selected_process() {
+    fn termination_requires_exact_identity_and_an_authoritative_signaled_handle() {
+        use windows::Win32::Foundation::{WAIT_EVENT, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+
+        let creation = 134_000_000_000_000_000;
+        assert!(process_exit_status(creation, Ok(creation), WAIT_OBJECT_0).unwrap());
+        for (expected, observed, wait) in [
+            (creation, Ok(creation), WAIT_TIMEOUT),
+            (creation, Ok(creation), WAIT_FAILED),
+            (creation, Ok(creation), WAIT_EVENT(42)),
+            (
+                creation,
+                Err(anyhow::anyhow!("access denied")),
+                WAIT_OBJECT_0,
+            ),
+            (
+                creation,
+                Err(anyhow::anyhow!("query failed")),
+                WAIT_OBJECT_0,
+            ),
+            // PID reuse within one second must not match the old identity.
+            (creation, Ok(creation + 1), WAIT_OBJECT_0),
+            (0, Ok(0), WAIT_OBJECT_0),
+        ] {
+            assert!(!process_exit_status(expected, observed, wait).unwrap_or(false));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn process_exit_child_fixture() {
+        if std::env::var_os("QUEUEBACK_PROCESS_EXIT_CHILD").is_some() {
+            use std::io::Read;
+            // Parent controls the exit boundary without a timer or arbitrary sleep.
+            let _ = std::io::stdin().read_exact(&mut [0_u8]);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn original_process_handle_survives_exit_and_ignores_watcher_selection() {
+        use std::io::Write;
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "watcher::tests::process_exit_child_fixture",
+                "--nocapture",
+            ])
+            .env("QUEUEBACK_PROCESS_EXIT_CHILD", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .unwrap();
+        let identity = LeagueProcess {
+            pid: child.id(),
+            started_at: process_creation_time(child.id()).unwrap(),
+        };
+        let original = OriginalProcess::open(identity).unwrap();
         let mut watcher = ProcessWatcher::new("queueback-no-such-process-fixture");
         assert_eq!(watcher.refresh(), None);
-        let pid = std::process::id();
-        let started_at = watcher
-            .system
-            .process(Pid::from_u32(pid))
-            .unwrap()
-            .start_time();
-        let original = LeagueProcess { pid, started_at };
+        assert!(!watcher.confirms_process_ended(&original));
 
-        // No selected League process does not imply this original owner ended.
-        assert!(!watcher.confirms_process_ended(original));
-        assert!(watcher.confirms_process_ended(LeagueProcess {
-            started_at: started_at + 1,
-            ..original
-        }));
-        assert!(!watcher.confirms_process_ended(LeagueProcess {
-            started_at: 0,
-            ..original
-        }));
+        // A newly selected generation is not evidence about the original owner.
+        let replacement = LeagueProcess {
+            pid: std::process::id(),
+            started_at: process_creation_time(std::process::id()).unwrap(),
+        };
+        assert_eq!(
+            transition(Some(identity), Some(replacement)),
+            ProcessTransition::Replaced(replacement)
+        );
+        assert!(!watcher.confirms_process_ended(&original));
+        child.stdin.take().unwrap().write_all(&[1]).unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(watcher.confirms_process_ended(&original));
     }
 
     #[test]
@@ -285,16 +418,10 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn readiness_identity_probe_rejects_a_different_process_creation_time() {
-        let pid = Pid::from_u32(std::process::id());
-        let mut system = System::new();
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            true,
-            minimal_process_refresh_kind(),
-        );
+        let pid = std::process::id();
         let process = LeagueProcess {
-            pid: pid.as_u32(),
-            started_at: system.process(pid).unwrap().start_time(),
+            pid,
+            started_at: process_creation_time(pid).unwrap(),
         };
         assert!(process.is_current());
         assert!(
@@ -303,6 +430,20 @@ mod tests {
                 ..process
             }
             .is_current()
+        );
+        assert!(
+            OriginalProcess::open(LeagueProcess {
+                started_at: process.started_at + 1,
+                ..process
+            })
+            .is_err()
+        );
+        assert!(
+            OriginalProcess::open(LeagueProcess {
+                pid: 0,
+                started_at: 1
+            })
+            .is_err()
         );
     }
 
