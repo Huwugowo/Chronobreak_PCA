@@ -106,8 +106,6 @@ struct RecordingStartup {
     #[cfg(not(target_os = "windows"))]
     target: CaptureTarget,
     events: EventSink,
-    #[cfg(target_os = "windows")]
-    readiness_source: Arc<crate::launch_readiness::ReadinessSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -536,44 +534,8 @@ impl CaptureProgressWatchdog {
 
 pub async fn run(
     config: Config,
-    commands: mpsc::UnboundedReceiver<ServiceCommand>,
-    events: EventSink,
-) -> Result<()> {
-    run_inner(
-        config,
-        commands,
-        events,
-        #[cfg(target_os = "windows")]
-        Arc::new(crate::launch_readiness::ReadinessSource::Live(
-            crate::poller::acquisition::HttpSource::local()?,
-        )),
-    )
-    .await
-}
-
-/// Generated-window fixture only. Normal service/CLI/config cannot bypass Live readiness.
-#[cfg(all(target_os = "windows", feature = "native-failure-injection"))]
-pub async fn run_with_generated_readiness_fixture(
-    config: Config,
-    commands: mpsc::UnboundedReceiver<ServiceCommand>,
-    events: EventSink,
-) -> Result<()> {
-    run_inner(
-        config,
-        commands,
-        events,
-        Arc::new(crate::launch_readiness::ReadinessSource::GeneratedFixture {
-            started: TokioInstant::now(),
-        }),
-    )
-    .await
-}
-
-async fn run_inner(
-    config: Config,
     mut commands: mpsc::UnboundedReceiver<ServiceCommand>,
     events: EventSink,
-    #[cfg(target_os = "windows")] readiness_source: Arc<crate::launch_readiness::ReadinessSource>,
 ) -> Result<()> {
     let output_path = config.output_path()?;
     fs::create_dir_all(output_path.join("games")).with_context(|| {
@@ -974,8 +936,6 @@ async fn run_inner(
                                 #[cfg(not(target_os = "windows"))]
                                 target: _target,
                                 events: Arc::clone(&events),
-                                #[cfg(target_os = "windows")]
-                                readiness_source: Arc::clone(&readiness_source),
                             }));
                         }
                         Err(target_error) => {
@@ -1191,27 +1151,30 @@ async fn start_recording(
         #[cfg(not(target_os = "windows"))]
         target,
         events,
-        #[cfg(target_os = "windows")]
-        readiness_source,
     } = startup;
     #[cfg(target_os = "windows")]
     let target = {
         crate::launch_readiness::wait(
             process,
-            readiness_source.as_ref(),
             || {
                 if original_process.has_ended()? {
-                    bail!("League process identity changed during readiness");
+                    return Ok(None);
                 }
-                capture_window_for_process(process.pid)
+                match capture_window_for_process(process.pid) {
+                    Ok(window) => Ok(Some(window)),
+                    Err(error) if error.is::<crate::platform::WindowUnavailable>() => Ok(None),
+                    Err(error) => Err(error),
+                }
             },
             capture_target_for_window,
             cancellation.clone(),
         )
         .await
+        .context("could not validate League capture window")
+        .terminal_startup()?
         .ok_or_else(|| {
             RecordingStartupFailure::cancelled(anyhow::anyhow!(
-                "League readiness wait was cancelled"
+                "League window readiness wait was cancelled"
             ))
         })?
     };

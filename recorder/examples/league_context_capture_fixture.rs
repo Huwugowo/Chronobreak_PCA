@@ -191,14 +191,9 @@ async fn main() -> anyhow::Result<()> {
     };
     let owner = ControlOwner::start(&namespace)?.context("fixture owner collision")?;
     let status = owner.status_sender();
-    // Only pre-capture readiness is generated. Active capture still uses the real,
-    // unavailable Live source, preserving this fixture's missing-data purpose.
+    // Use production window admission and the real, unavailable Live source.
     let sink = league_replay_recorder::control::event_sink(Some(status.clone()), sink);
-    let service = tokio::spawn(
-        league_replay_recorder::service::run_with_generated_readiness_fixture(
-            config, receiver, sink,
-        ),
-    );
+    let service = tokio::spawn(league_replay_recorder::service::run(config, receiver, sink));
     let exercise = async {
         let directory = tokio::time::timeout(Duration::from_secs(60), async {
             while let Some(event) = events.recv().await {
@@ -348,7 +343,7 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(all(windows, not(feature = "native-failure-injection")))]
 fn main() -> anyhow::Result<()> {
-    anyhow::bail!("generated readiness fixture requires --features native-failure-injection")
+    anyhow::bail!("capture fixture requires --features native-failure-injection")
 }
 
 #[cfg(all(test, windows, feature = "native-failure-injection"))]

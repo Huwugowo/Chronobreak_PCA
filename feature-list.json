@@ -954,7 +954,7 @@
       "id": "QB-CAP-006",
       "kind": "feature",
       "name": "Protect League launch before native capture startup",
-      "description": "Define and verify a conservative game-readiness policy before native graphics startup so automatic recording defers safely while League is loading or its capture window is unstable.",
+      "description": "Start recording after stable usable capture-window observations, independently of optional Live gameplay data, while preserving bounded native initialization and strict resource ownership.",
       "priority": "P1",
       "area": "capture",
       "status": "in-progress",
@@ -965,33 +965,34 @@
       "evidence": [
         "2026-10-29 source review confirms that a visible eligible League HWND immediately permits native startup; the current source/encode/mux readiness check occurs after graphics initialization. No diagnostic artifacts or controlled reproduction establish recorder causation for the reported Thresh loading-screen incident. Review evidence: docs/reviews/recorder-engineering-review-2026-10-29.md (L1).",
         "2026-10-29 implementation gates bundle/WGC/D3D11/NVENC creation on three fresh advancing local GameStats observations spanning >=4s plus stable visible process/window/size/adapter identity. Cancellation and native per-process suppression are covered. Recorder check/fmt/strict Clippy passed; 215 tests passed, nine hardware/profile fixtures ignored. Generated service evidence admitted at 4030ms then failed WGC support query (0x8007000E), with one attempt and no scheduled retry; no native capture pass or live League launch comparison claimed. Details and remaining acceptance gates: docs/execution/qb-cap-006.md.",
-        "2026-10-29 review corrections retain one WGC source with a shared absolute 15s startup deadline and 5s inactivity limit. Cancellation/deadline checks guard source creation and each later construction stage, with post-source errors routed through explicit callback-safe cleanup. Initial content must cover admitted client dimensions; terminal recovery preserves size/count/timing/reason evidence. Specific reported protocol errors precede generic timeout. Passive readiness uses lightweight window checks, DXGI only at admission and request-interval clock consistency. Recorder check/fmt/strict Clippy passed; 231 tests passed, nine hardware/profile fixtures ignored. Hardware/League compatibility and deeper QB-CAP-007 rollback injection remain pending; feature stays in-progress."
+        "2026-10-29 review corrections retain one WGC source with a shared absolute 15s startup deadline and 5s inactivity limit. Cancellation/deadline checks guard source creation and each later construction stage, with post-source errors routed through explicit callback-safe cleanup. Initial content must cover admitted client dimensions; terminal recovery preserves size/count/timing/reason evidence. Specific reported protocol errors precede generic timeout. Passive readiness uses lightweight window checks, DXGI only at admission and request-interval clock consistency. Recorder check/fmt/strict Clippy passed; 231 tests passed, nine hardware/profile fixtures ignored. Hardware/League compatibility and deeper QB-CAP-007 rollback injection remain pending; feature stays in-progress.",
+        "2026-11-01 v4: startup uses two matching usable physical-window observations over two seconds, independent of Live data; exact-process/native safety remains unchanged. Locked recorder check/tests/fmt/strict Clippy passed (262 library + 7 binary + 3 fixture tests; 12 ignored). Real generated service admitted at 2025 ms without Live API, created WGC, then NVENC NO_ENCODE_DEVICE failed safely with cleanup_ok=true, one attempt, zero retries and no publication. Real League behavior remains unverified; see docs/execution/qb-cap-006.md."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-cap-006-league-launch-safety-v3.md",
+        "plan": "docs/exec-plans/qb-cap-006-window-admission-v4.md",
         "progress": "docs/execution/qb-cap-006.md"
       },
       "acceptance_criteria": [
-        "An explicitly documented and independently tested positive game-readiness policy gates D3D11, WGC, and NVENC startup; a visible/sized HWND or a single LCU phase label alone is insufficient.",
-        "Missing readiness, unstable dimensions, PID/HWND replacement, and startup failure defer or suppress recording with a bounded per-process/session rearm policy and actionable diagnostics; Chronobreak never blocks, suspends, manipulates, or terminates League to obtain footage.",
-        "Transition diagnostics correlate monotonic time, process generation/PID, HWND identity, HWND/capture-item/frame dimensions, readiness decisions, startup milestones, retry disposition, and cleanup outcome without recording LCU credentials or tokens.",
-        "Deterministic fixtures cover readiness freshness/progression, unavailable signals, unstable/hidden/closed windows, PID/HWND replacement, startup cancellation/failure, and repeated game restarts without an aggressive initialization loop.",
-        "Repeated controlled Practice Tool launches compare recorder absent, process running passively, and native capture enabled with timestamped launch/first-render and recorder evidence. Historical incident causality remains unattributed unless actual diagnostics or a controlled reproduction establish it."
+        "Two usable identical PID/HWND/physical-size/DPI/monitor observations spanning at least two seconds gate bundle and native allocation; Live GameStats availability, progression and map/mode never gate video startup.",
+        "Unavailable, hidden, minimized or tiny windows defer startup; identity/geometry changes and observation gaps over five seconds require fresh stability. Final adapter resolution revalidates the snapshot and cancellation within 500 ms; real query/adapter failures remain explicit.",
+        "Exact original-process ownership, exit/restart cancellation, final identity checks, the native 15-second absolute/five-second inactivity limits, first-frame sizing, callback-safe cleanup, single native attempt per process and strict publication validation remain enforced.",
+        "Focused deterministic tests cover admission without Live data, changed/unavailable windows, resolution races/failures, freshness and cancellation. Existing process-generation and native failure/cleanup checks remain valid.",
+        "Report actual Rust checks and real League/hardware limitations truthfully. No claim that the black-screen cause is fixed or established; long controlled-launch/performance campaigns are not prerequisites to this focused implementation."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Test the chosen readiness reducer, bounded rearm policy, privacy-safe transition data, and startup cancellation/replacement cases using deterministic fixtures.",
-          "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features"
+          "description": "Paused-time admission regressions and existing process/native failure checks; locked recorder all-target/all-feature check/tests, fmt, strict Clippy and canonical state validation.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml --locked --all-targets --all-features"
         },
         {
           "type": "manual",
-          "description": "Use generated Windows targets for unstable startup/failure paths, then perform the repeated Practice Tool absent/passive/capture launch comparison on supported hardware; retain timestamped evidence without risking multiplayer matches for diagnostics.",
+          "description": "Real League loading/alt-tab/relaunch remains explicitly unverified until observed on supported hardware; no mandatory long session or launch campaign for this focused commit.",
           "command": null
         }
       ],
-      "notes": "Conservative policy approved 2026-10-29: three valid advancing local GameStats samples over at least four seconds, gameTime >=5s, matching map/mode and stable visible PID/HWND/physical dimensions/DPI/monitor, then full adapter validation. Clock-offset intervals include request timing and 250ms combined jitter; RTT <=2s, post-response admission <=500ms, no passive timeout fallback. Missing readiness can lose opening seconds or the entire recording. Native startup has one absolute 15s budget and 5s source inactivity limit; tiny progress cannot extend the absolute deadline. Initial content must cover admitted client dimensions before audio/encoding. Failures suppress that process; a new process earns fresh readiness. Hardware-only recovery/League compatibility remains pending; no hard driver-hang containment or incident-causality claim. Deeper rollback injection belongs to QB-CAP-007; QB-PERF-002 remains separate.",
+      "notes": "2026-11-01 user-requested startup correction supersedes the conservative GameStats policy. Two matching usable physical window observations span the existing two-second cadence; final DXGI resolution and exact-process revalidation precede native allocation. Preserve native construction deadlines, first-frame sizing, guarded cleanup and terminal per-process suppression. The first trial process was Alt+F4 closed after a black screen before relaunch; no overlapping-process evidence or speculative handoff redesign. User explicitly bypassed normal workflow stops and excessive validation gates. Historical evidence below describes earlier revisions, not current admission.",
       "user_value": 5,
       "differentiation": 4,
       "difficulty": 4,

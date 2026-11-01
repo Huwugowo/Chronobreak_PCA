@@ -1,20 +1,24 @@
 # QB-CAP-006 execution checkpoint
 
 Feature: `QB-CAP-006`
-ExecPlan: `docs/exec-plans/qb-cap-006-league-launch-safety-v3.md`
-Updated: 2026-10-29
+ExecPlan: `docs/exec-plans/qb-cap-006-window-admission-v4.md`
+Updated: 2026-11-01
 
 ## Current milestone
 
-Construction-boundary correction implemented and automatically verified. Hardware/League acceptance remains pending.
+V4 window-only admission implemented and automatically verified. The generated production-service run admitted capture without Live data after 2.025 seconds; real League behavior remains unverified.
 
 ## Active unit
 
-Correction complete. The existing v3 design remains authoritative; no design or sizing change was required.
+None. Focused implementation, independent review and automated verification are complete.
 
 ## Completed
 
 Required bootstrap, existing investigation and focused scout challenge. Plan reviewed for cancellation, descriptor-generation instability, PID reuse, fixture compatibility and unavailable-API behavior. User explicitly requested continuing through implementation, overriding the workflow's planning-only stop.
+
+- V4 (2026-11-01): replaced Live GameStats admission with two matching usable physical-window observations spanning two seconds. Window absence clears stability; identity/geometry changes and gaps over five seconds restart it. Final DXGI/snapshot/cancellation validation remains fresh within 500 ms. Real query/adapter failures propagate terminally instead of becoming silent retries.
+- Removed pre-capture HTTP/readiness source ownership and synthetic GameStats injection. The existing generated-window service fixture now uses production admission and unavailable Live polling. Exact process ownership, Alt+F4/restart boundaries, native deadlines/sizing/cleanup and publication validation are unchanged.
+- The following bullets and older verification sections describe predecessor implementations, retained as provenance rather than current gameplay admission policy.
 
 - Implemented passive readiness before bundle/native creation, returning the final revalidated target; missing data never grants admission. Three samples/four seconds, progressing gameTime ≥5 seconds, stable game/window identity and five-second maximum gap. Existing HTTP transport/parser reused.
 - Tiny/hidden/closed/replaced windows and unavailable/frozen/regressed/stale game signals reset evidence. Cancellation interrupts requests and sleeps. UI stays idle during waiting.
@@ -29,13 +33,20 @@ Required bootstrap, existing investigation and focused scout challenge. Plan rev
 
 ## In flight
 
-None for this focused correction.
+None.
 
 ## Remaining
 
-Run the unchanged repeated controlled Practice Tool absent/passive/native launch comparison on an interactive supported Windows setup. Obtain a successful generated native capture check there. No benchmark campaign was performed or claimed.
+Observe one ordinary League loading/alt-tab/exit/relaunch sequence on supported hardware. This is unverified behavior, not a long campaign or a prerequisite to committing the focused implementation. The black-screen cause remains unattributed.
 
 ## Verification
+
+V4 window admission (2026-11-01):
+
+- Locked recorder all-target/all-feature check, tests, fmt and strict Clippy passed. Tests: 262 library + 7 binary + 3 fixture (272 total), 12 hardware/runtime tests ignored. Nine admission regressions cover no-Live admission, a positive stability span, unavailable/tiny/wrong-process windows, geometry/identity/gap resets, final HWND/monitor races, slow resolution, process-exit cancellation/new-generation readiness, cancellation during sleep/resolution and query/adapter errors. Check log `.codex/logs/command-20261101-103454.log`, test log `.codex/logs/command-20261101-103511.log`, Clippy log `.codex/logs/command-20261101-103606.log`.
+- Both existing generated examples built. One isolated 10-second steady service fixture used production admission with Live API unavailable: Collecting at 0 ms, Ready after 2025 ms, WGC item created, NVENC returned `NO_ENCODE_DEVICE` after 195 ms of native initialization, `cleanup_ok=true`, one startup attempt, zero retries, no canonical publication and no remaining fixture child. End-to-end encoding failed; this establishes real window-only admission and safe failure, not playable video. Evidence: `build/qb-data-003/capture-fixtures/f99ba028-1bc4-486d-82eb-23f92f474f08/service.log`.
+- No real League launch, black-screen causality, successful NVENC encoding or capture-performance claim. Existing process/native tests pass unchanged.
+- Focused independent review found no actionable defects. Canonical validation passed (107 items, 27 plan/checkpoint pairs); formatting and diff whitespace checks passed.
 
 Construction-boundary correction:
 
@@ -66,18 +77,20 @@ Previous implementation (`ffc4c48`):
 
 ## Deviations
 
+2026-11-01: the October 31 recording demonstrates delayed Live-clock admission. The user explicitly requested fixing startup after the lifecycle audit and clarified that the first process was Alt+F4 closed before relaunch. Version 4 replaces gameplay readiness with two stable window observations, preserving the native safety boundary. No speculative overlap policy is introduced. The user's earlier override authorizes direct implementation, proportionate checks and commit.
+
 Review of `dcaaa0f` demonstrated that progress-based recovery lacked an absolute bound and crop convertibility admitted tiny surfaces. Version 3 supersedes that design while preserving earlier plans. The requested focused correction proceeds through implementation and commit; deeper failure injection stays under QB-CAP-007.
 
 Review of `962b1cb` exposed missing enforcement at native constructor boundaries. The correction implements the existing v3 cancellation/deadline contract and keeps its design, dimensions policy and artifact links unchanged.
 
 ## Decisions
 
-No failure-open fallback. Opening seconds or the entire recording may be lost. Native initialization failures suppress that process; readiness misses remain passive. Recovery retains one graph for at most the existing 15-second startup budget (five-second inactivity limit), delaying audio/encoding until content covers the admitted client size. The size policy uses even-rounded physical client dimensions, accepts larger border-inclusive content, and conservatively rejects shrinkage; no unverified percentage tolerance was added. The API does not atomically bind renderer readiness to an HWND: local signals, conservative progression/stability and immediate revalidation reduce exposure but cannot guarantee graphics-driver containment. OS creation time uses the existing second-resolution identity; HWND validation supplies the immediate window safeguard.
+Current policy is v4 window stability, independent of the Live clock. Retain the native 15-second absolute/five-second inactivity bounds, expected-client sizing, one native attempt per process, callback quiescence and exact FILETIME/OwnedHandle identity from CAP-009. Even-rounded physical client dimensions accept larger border-inclusive content and conservatively reject shrinkage during initial construction. There is no timeout admission fallback or GPU retry loop. A window change during native construction may still fail startup safely; replaceable-source recovery applies once the native graph is established. Window stability and revalidation do not prove driver safety or League compatibility.
 
 ## Blockers
 
-No implementation blocker. Required controlled League launches were not run. Generated native capture is unverified in the current execution context because Windows rejected its WGC support query. Keep the feature non-done pending live evidence.
+No implementation blocker. The current generated capture reaches WGC but NVENC returns NO_ENCODE_DEVICE. Real League behavior and successful capture are unverified; do not claim black-screen resolution.
 
 ## Next action
 
-Obtain the existing hardware/League acceptance evidence before marking QB-CAP-006 done. Keep deeper native rollback failure injection under QB-CAP-007.
+Observe ordinary real-League startup/alt-tab/exit/relaunch behavior on supported hardware before marking the feature done. The focused correction is implemented and verified without a long soak or benchmark gate.
