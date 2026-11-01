@@ -227,26 +227,6 @@ let mockGames: GameSummary[] = [
     video_available: true,
     league_result: null,
   },
-  {
-    timestamp: "1785700000",
-    media_id: null,
-    champion: "Unknown",
-    game_mode: "Unknown",
-    duration_ms: 0,
-    recorded_at: "",
-    kills: 0,
-    deaths: 0,
-    assists: 0,
-    summoner_spells: [],
-    keystone_id: null,
-    items: [],
-    participants: [],
-    saved: false,
-    incomplete: true,
-    video_size_bytes: 612_000_000,
-    video_available: true,
-    league_result: null,
-  },
 ];
 
 let mockClips: ClipSummary[] = [

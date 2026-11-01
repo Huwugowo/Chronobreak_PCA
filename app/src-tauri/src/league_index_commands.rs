@@ -52,53 +52,54 @@ mod catalog_tests {
     use std::fs;
 
     #[test]
-    fn unfinished_metadata_is_not_an_import_error_but_invalid_metadata_is() {
+    fn history_catalog_search_and_counts_exclude_recording_attempts() {
         let root = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
+        let invalid = library::tests::write_game(root.path(), "102", "2026-08-05T10:00:00Z", false);
+        let previous =
+            library::build_library_snapshot(root.path(), "", "previous".into(), || Ok(())).unwrap();
+        let old_page =
+            catalog_page(root.path(), cache.path(), &previous, None, 2, &|| Ok(())).unwrap();
+        assert_eq!(old_page.catalog_recordings, 1);
+        assert_eq!(old_page.items[0].game_timestamp, "102");
+        // A refresh must also evict a previously indexed recording that is no
+        // longer usable, rather than only exclude new recording attempts.
+        fs::write(invalid.join("metadata.json"), b"{").unwrap();
         library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
         let partial = root.path().join("games/101");
         fs::create_dir_all(&partial).unwrap();
         fs::write(partial.join("video.partial.mp4"), b"partial").unwrap();
-        let invalid = root.path().join("games/102");
-        fs::create_dir_all(&invalid).unwrap();
-        fs::write(invalid.join("metadata.json"), b"{").unwrap();
         let snapshot =
             library::build_library_snapshot(root.path(), "", "scan".into(), || Ok(())).unwrap();
         let page = catalog_page(root.path(), cache.path(), &snapshot, None, 2, &|| Ok(())).unwrap();
-        assert_eq!(page.catalog_recordings, 3);
-        assert_eq!(page.items.len(), 2);
-        let next = page.next.clone().unwrap();
-        let mut items = page.items;
-        items.extend(
-            catalog_page(root.path(), cache.path(), &snapshot, Some(next), 2, &|| {
-                Ok(())
-            })
-            .unwrap()
-            .items,
+        assert_eq!(page.catalog_recordings, 1);
+        assert_eq!(page.items.len(), 1);
+        assert!(page.next.is_none());
+        assert_eq!(page.items[0].game_timestamp, "100");
+        assert!(page.items[0].progress.is_some());
+        let index = Index::reader(cache.path(), root.path()).unwrap();
+        for search in [None, Some("Syndra".into()), Some("Unknown".into())] {
+            let expected = usize::from(search.as_deref() != Some("Unknown"));
+            let history = index
+                .history(
+                    &league_index::HistoryQuery {
+                        limit: 1,
+                        search,
+                        ..Default::default()
+                    },
+                    snapshot.games.len(),
+                )
+                .unwrap();
+            assert_eq!(history.catalog_recordings, 1);
+            assert_eq!(history.rows.len(), expected);
+            assert!(history.next.is_none());
+            assert!(history.rows.iter().all(|row| row.game.timestamp == "100"));
+        }
+        assert_eq!(
+            fs::read(partial.join("video.partial.mp4")).unwrap(),
+            b"partial"
         );
-        let unfinished = items
-            .iter()
-            .find(|item| item.game_timestamp == "101")
-            .unwrap();
-        assert!(unfinished.media_id.is_none());
-        assert!(unfinished.progress.is_none());
-        assert!(unfinished.error.is_none(), "{:?}", unfinished.error);
-        assert!(
-            items
-                .iter()
-                .find(|item| item.game_timestamp == "100")
-                .unwrap()
-                .progress
-                .is_some()
-        );
-        assert!(
-            items
-                .iter()
-                .find(|item| item.game_timestamp == "102")
-                .unwrap()
-                .error
-                .is_some()
-        );
+        assert_eq!(fs::read(invalid.join("metadata.json")).unwrap(), b"{");
     }
 
     #[test]
@@ -157,11 +158,34 @@ mod catalog_tests {
                 library::build_library_snapshot(root.path(), "", "scan".into(), || Ok(())).unwrap();
             let page =
                 catalog_page(root.path(), cache.path(), &snapshot, None, 4, &|| Ok(())).unwrap();
-            assert!(
-                page.items.iter().all(|item| item.error.is_some()),
-                "{case}: {:?}",
-                page.items
-            );
+            if matches!(case, "duplicate" | "corrupt_source" | "unsupported_source") {
+                assert!(!page.items.is_empty(), "{case}");
+                assert!(
+                    page.items.iter().all(|item| item.error.is_some()),
+                    "{case}: {:?}",
+                    page.items
+                );
+                // Optional data failures leave replay membership and basic
+                // history intact; only semantic facts are unavailable.
+                if case != "duplicate" {
+                    let index = Index::reader(cache.path(), root.path()).unwrap();
+                    let history = index
+                        .history(
+                            &league_index::HistoryQuery {
+                                limit: 10,
+                                ..Default::default()
+                            },
+                            snapshot.games.len(),
+                        )
+                        .unwrap();
+                    assert_eq!(history.rows.len(), 1, "{case}");
+                    assert_eq!(history.catalog_recordings, 1);
+                    selected_media(root.path(), &snapshot, "100").unwrap();
+                }
+            } else {
+                assert!(page.items.is_empty(), "{case}: {:?}", page.items);
+                assert_eq!(page.catalog_recordings, 0);
+            }
         }
     }
 }
@@ -232,15 +256,9 @@ fn catalog_page(
     let mut items = Vec::new();
     for game in snapshot.games.iter().skip(start).take(usize::from(limit)) {
         check()?;
-        let result = if game.metadata_missing {
-            // Unfinished bundles retain membership and pagination, with no
-            // projection to import. Present invalid metadata stays an error.
-            Ok(None)
-        } else {
-            accepted_game(snapshot, &game.timestamp)
-                .and_then(|game| index.recording(root, game, false, check))
-                .map(Some)
-        };
+        let result = accepted_game(snapshot, &game.timestamp)
+            .and_then(|game| index.recording(root, game, false, check))
+            .map(Some);
         check()?;
         let (progress, error) = match result {
             Ok(progress) => (progress, None),

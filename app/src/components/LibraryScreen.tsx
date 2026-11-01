@@ -61,7 +61,6 @@ const formatKdaRatio = (stats: HistoryStats): string => {
 };
 
 const displayedOutcome = (game: GameSummary): PreviewMatchOutcome | "unknown" | null => {
-  if (game.incomplete) return null;
   if (game.league_result) return game.league_result.outcome === "win" ? "victory" : game.league_result.outcome === "loss" ? "defeat" : "unknown";
   return previewMatchOutcomeFor(game.timestamp);
 };
@@ -82,7 +81,6 @@ const outcomeLabel = (outcome: PreviewMatchOutcome | "unknown"): string => {
 };
 
 const replayHealth = (game: GameSummary): string | null => {
-  if (game.incomplete) return game.video_available ? "INCOMPLETE" : "INCOMPLETE · UNAVAILABLE";
   if (!game.video_available) return "UNAVAILABLE";
   return null;
 };
@@ -217,9 +215,6 @@ function GamesLibrary(props: Props) {
     const rows = props.history?.page?.rows;
     if (rows) {
       const matches = rows.map(row => props.games.find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
-      if (!props.history?.laterPage && !semantic) {
-        matches.unshift(...props.games.filter(game => game.incomplete && basicMatch(game) && !matches.some(match => match.timestamp === game.timestamp)));
-      }
       return matches;
     }
     if (semantic) return [];
@@ -343,7 +338,7 @@ function GamesLibrary(props: Props) {
                 const time = game.recorded_at ? formattedTime(game.recorded_at) : "—";
 
                 return (
-                  <article class={matchStyles.matchItem} data-incomplete={game.incomplete} data-outcome={outcome ?? undefined}>
+                  <article class={matchStyles.matchItem} data-outcome={outcome ?? undefined}>
                     <button
                       class={matchStyles.matchOpen}
                       type="button"
@@ -552,19 +547,17 @@ function GamesLibrary(props: Props) {
                     </button>
 
                     <div class={matchStyles.matchActions}>
-                      <Show when={!game.incomplete}>
-                        <button
-                          class={matchStyles.starButton}
-                          type="button"
-                          onClick={() => props.onToggleSaved(game, props.snapshotOrigin)}
-                          disabled={props.busyId !== null || !props.actionable}
-                          aria-label={game.saved ? `Unsave ${game.champion} recording` : `Save ${game.champion} recording`}
-                          title={game.saved ? "Saved" : "Save"}
-                          data-saved={game.saved}
-                        >
-                          <StarIcon size={17} filled={game.saved} />
-                        </button>
-                      </Show>
+                      <button
+                        class={matchStyles.starButton}
+                        type="button"
+                        onClick={() => props.onToggleSaved(game, props.snapshotOrigin)}
+                        disabled={props.busyId !== null || !props.actionable}
+                        aria-label={game.saved ? `Unsave ${game.champion} recording` : `Save ${game.champion} recording`}
+                        title={game.saved ? "Saved" : "Save"}
+                        data-saved={game.saved}
+                      >
+                        <StarIcon size={17} filled={game.saved} />
+                      </button>
 
                       <Show when={!game.saved}>
                         <details class={matchStyles.moreMenu} data-busy={props.busyId === game.timestamp}>

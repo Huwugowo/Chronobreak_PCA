@@ -35,9 +35,6 @@ pub struct GameSummary {
     pub participants: Vec<ReplayParticipant>,
     pub saved: bool,
     pub incomplete: bool,
-    /// Scan-only classification: `incomplete` also covers invalid metadata.
-    #[serde(skip)]
-    pub(crate) metadata_missing: bool,
     pub video_size_bytes: u64,
     pub video_available: bool,
     pub league_result: Option<chronobreak_league_data::Summary>,
@@ -298,17 +295,18 @@ fn build_library_snapshot_with(
     check_current: impl Fn() -> Result<()>,
     read_summary: impl FnMut(&Path, String) -> GameSummary,
 ) -> Result<LibrarySnapshot> {
-    let games = scan_games(output_directory, &check_current, read_summary)?;
+    let inventory = scan_games(output_directory, &check_current, read_summary)?;
+    let mut usage = StorageUsage {
+        games_bytes: inventory.iter().map(|game| game.video_size_bytes).sum(),
+        game_count: inventory.len() as u64,
+        clips_bytes: 0,
+        clip_count: 0,
+    };
+    let games: Vec<_> = inventory.into_iter().filter(usable_recording).collect();
     let sources = games
         .iter()
         .map(|game| (game.timestamp.as_str(), game))
         .collect::<HashMap<_, _>>();
-    let mut usage = StorageUsage {
-        games_bytes: games.iter().map(|game| game.video_size_bytes).sum(),
-        game_count: games.len() as u64,
-        clips_bytes: 0,
-        clip_count: 0,
-    };
     let mut clips = Vec::new();
     check_current()?;
     let clips_directory = output_directory.join("clips");
@@ -367,7 +365,14 @@ fn read_library_directory(path: &Path) -> Result<Option<fs::ReadDir>> {
 }
 
 pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
-    scan_games(output_directory, || Ok(()), read_game_summary)
+    Ok(scan_games(output_directory, || Ok(()), read_game_summary)?
+        .into_iter()
+        .filter(usable_recording)
+        .collect())
+}
+
+fn usable_recording(game: &GameSummary) -> bool {
+    !game.incomplete && game.video_available && game.media_id.is_some()
 }
 
 fn scan_games(
@@ -411,17 +416,76 @@ pub(crate) fn replay_descriptor(
     }
     let directory = output_directory.join("games").join(timestamp);
     let metadata = read_metadata(&directory.join(METADATA_JSON))?;
-    let video =
-        fs::metadata(directory.join(VIDEO_MP4)).context("recording video is unavailable")?;
-    if !video.is_file() || video.len() == 0 {
-        bail!("recording video is unavailable");
-    }
+    recording_video_size(&directory)?;
     Ok(ReplayDescriptor {
         snapshot_token,
         game_timestamp: timestamp.to_owned(),
         video_url: format!("{origin}/games/{timestamp}/video.mp4"),
         media_timeline: metadata.media_timeline,
     })
+}
+
+/// Check the published MP4's opening structure without reading media payloads.
+/// Publication owns codec/sample validation; this rejects unreadable, non-media
+/// and truncated opening boxes, not arbitrary later bitstream corruption.
+fn recording_video_size(directory: &Path) -> Result<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file =
+        fs::File::open(directory.join(VIDEO_MP4)).context("recording video is unavailable")?;
+    let info = file
+        .metadata()
+        .context("could not inspect recording video")?;
+    anyhow::ensure!(
+        info.is_file() && info.len() > 0,
+        "recording video is unavailable"
+    );
+    let length = info.len();
+    let mut offset = 0_u64;
+    let mut movie = false;
+    let mut media = false;
+    // Native fragmented and conventional MP4 both expose these opening boxes
+    // with only a handful of header reads. Never walk an unbounded box chain.
+    for _ in 0..64 {
+        anyhow::ensure!(
+            length.saturating_sub(offset) >= 8,
+            "truncated recording MP4 header"
+        );
+        file.seek(SeekFrom::Start(offset))?;
+        let mut header = [0_u8; 8];
+        file.read_exact(&mut header)?;
+        let short_size = u32::from_be_bytes(header[..4].try_into()?);
+        let (size, header_size) = match short_size {
+            0 => (length - offset, 8),
+            1 => {
+                let mut extended = [0_u8; 8];
+                file.read_exact(&mut extended)?;
+                (u64::from_be_bytes(extended), 16)
+            }
+            size => (u64::from(size), 8),
+        };
+        anyhow::ensure!(
+            size >= header_size && size <= length - offset,
+            "invalid or truncated recording MP4 box"
+        );
+        let kind = &header[4..];
+        if offset == 0 {
+            anyhow::ensure!(
+                kind == b"ftyp" && size >= header_size + 8,
+                "recording is not MP4"
+            );
+        }
+        movie |= kind == b"moov" && size > header_size;
+        media |= kind == b"mdat" && size > header_size;
+        if movie && media {
+            return Ok(length);
+        }
+        offset += size;
+        if offset == length {
+            break;
+        }
+    }
+    bail!("recording MP4 has no usable opening movie/media boxes")
 }
 
 pub fn list_clips(
@@ -482,7 +546,8 @@ pub fn list_clips(
 }
 
 pub fn storage_usage(output_directory: &Path) -> Result<StorageUsage> {
-    let games = list_games(output_directory)?;
+    // Storage inventory includes retained attempts, independently of history.
+    let games = scan_games(output_directory, || Ok(()), read_game_summary)?;
     let games_bytes = games.iter().map(|game| game.video_size_bytes).sum();
     let clips_directory = output_directory.join("clips");
     let mut clips_bytes = 0;
@@ -602,17 +667,22 @@ fn run_auto_delete_at(
 
 fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     let video_size_bytes = fs::metadata(directory.join(VIDEO_MP4))
-        .map(|metadata| metadata.len())
+        .map(|metadata| {
+            if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            }
+        })
         .unwrap_or(0);
     let metadata_path = directory.join(METADATA_JSON);
     let Ok(metadata) = read_metadata(&metadata_path) else {
-        let mut game = incomplete_summary(timestamp, video_size_bytes);
-        game.metadata_missing = matches!(fs::symlink_metadata(metadata_path), Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound)
-            && directory.is_dir();
-        return game;
+        return incomplete_summary(timestamp, video_size_bytes);
     };
     let mut game = game_summary_from_bundle(video_size_bytes, timestamp, &metadata);
+    // Expected invalid/unfinished attempts remain in the private inventory only.
+    game.video_available = recording_video_size(directory).is_ok();
+    game.incomplete = !game.video_available;
     if game.video_available {
         let candidate = crate::league_match::read(directory, &metadata.media_id);
         if let Some(result) =
@@ -660,7 +730,6 @@ fn game_summary_from_bundle(
         participants: Vec::new(),
         saved: metadata.saved,
         incomplete: false,
-        metadata_missing: false,
         video_size_bytes,
         video_available: video_size_bytes > 0,
         league_result: None,
@@ -684,7 +753,6 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
         participants: Vec::new(),
         saved: false,
         incomplete: true,
-        metadata_missing: false,
         video_size_bytes,
         video_available: video_size_bytes > 0,
         league_result: None,
@@ -871,6 +939,7 @@ pub(crate) mod tests {
     use super::*;
 
     const MEDIA_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
+    const RECORDING_VIDEO: &[u8] = include_bytes!("../testdata/recording.mp4");
 
     fn timeline() -> MediaTimelineV2 {
         MediaTimelineV2 {
@@ -1104,7 +1173,7 @@ pub(crate) mod tests {
     ) -> PathBuf {
         let game = root.join("games").join(timestamp);
         fs::create_dir_all(&game).unwrap();
-        fs::write(game.join(VIDEO_MP4), b"video").unwrap();
+        fs::write(game.join(VIDEO_MP4), RECORDING_VIDEO).unwrap();
         let media_timeline = serde_json::to_value(timeline()).unwrap();
         fs::write(
             game.join(METADATA_JSON),
@@ -1201,7 +1270,7 @@ pub(crate) mod tests {
         assert_eq!(
             snapshot.usage,
             StorageUsage {
-                games_bytes: 10,
+                games_bytes: 2 * RECORDING_VIDEO.len() as u64,
                 clips_bytes: 31,
                 game_count: 2,
                 clip_count: 3
@@ -1235,7 +1304,7 @@ pub(crate) mod tests {
         assert!(serde_json::to_value(&snapshot).unwrap()["clips"][0]["duration_ms"].is_null());
         // A later explicit scan is rebuilt from disk, not the previous result.
         let rebuilt = core_snapshot(root.path()).unwrap();
-        assert!(rebuilt.games.iter().all(|game| game.incomplete));
+        assert!(rebuilt.games.is_empty());
         assert_eq!(rebuilt.usage.games_bytes, 40);
     }
 
@@ -1243,7 +1312,30 @@ pub(crate) mod tests {
     fn snapshot_requires_strict_media_without_reading_optional_source_data() {
         let root = tempdir().unwrap();
         write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
-        write_game(root.path(), "101", "2026-08-05T10:00:00Z", false);
+        let limited = write_game(root.path(), "101", "2026-08-05T10:00:00Z", true);
+        let mut limited_metadata: serde_json::Value =
+            read_json(&limited.join(METADATA_JSON)).unwrap();
+        for key in [
+            "local_player_summoner_name",
+            "local_player_champion",
+            "local_player_team",
+            "game_mode",
+        ] {
+            limited_metadata.as_object_mut().unwrap().remove(key);
+        }
+        fs::write(
+            limited.join(METADATA_JSON),
+            serde_json::to_vec(&limited_metadata).unwrap(),
+        )
+        .unwrap();
+        for leaf in [
+            "game_log.json",
+            "league_checkpoint.json",
+            "league_match.json",
+            "league_result.json",
+        ] {
+            fs::write(limited.join(leaf), b"invalid optional League data").unwrap();
+        }
         let invalid = write_game(root.path(), "102", "2026-08-05T10:00:00Z", false);
         fs::write(invalid.join(METADATA_JSON), b"invalid").unwrap();
         let v1 = write_game(root.path(), "103", "2026-08-05T10:00:00Z", false);
@@ -1258,24 +1350,42 @@ pub(crate) mod tests {
         let no_video = write_game(root.path(), "104", "2026-08-05T10:00:00Z", false);
         fs::remove_file(no_video.join(VIDEO_MP4)).unwrap();
         fs::create_dir(root.path().join("games/105")).unwrap();
+        let partial = root.path().join("games/105/video.partial.mp4");
+        let diagnostic = root.path().join("games/105/recorder.log");
+        fs::write(&partial, b"preserve recoverable media").unwrap();
+        fs::write(&diagnostic, b"preserve failure evidence").unwrap();
+        let empty = write_game(root.path(), "106", "2026-08-05T10:00:00Z", false);
+        fs::write(empty.join(VIDEO_MP4), []).unwrap();
+        let directory_video = write_game(root.path(), "107", "2026-08-05T10:00:00Z", false);
+        fs::remove_file(directory_video.join(VIDEO_MP4)).unwrap();
+        fs::create_dir(directory_video.join(VIDEO_MP4)).unwrap();
+        let junk = write_game(root.path(), "108", "2026-08-05T10:00:00Z", false);
+        fs::write(junk.join(VIDEO_MP4), b"junk").unwrap();
+        let truncated = write_game(root.path(), "109", "2026-08-05T10:00:00Z", false);
+        fs::write(truncated.join(VIDEO_MP4), &RECORDING_VIDEO[..64]).unwrap();
         let snapshot = core_snapshot(root.path()).unwrap();
-        assert_eq!(snapshot.usage.game_count, 6);
-        assert_eq!(snapshot.usage.games_bytes, 20);
-        assert_eq!(snapshot.games.iter().filter(|g| g.incomplete).count(), 3);
+        assert_eq!(snapshot.usage.game_count, 10);
+        assert_eq!(
+            snapshot.usage.games_bytes,
+            4 * RECORDING_VIDEO.len() as u64 + 68
+        );
+        assert_eq!(storage_usage(root.path()).unwrap(), snapshot.usage);
+        assert_eq!(snapshot.games.len(), 2);
+        assert!(snapshot.games.iter().all(usable_recording));
+        assert_eq!(list_games(root.path()).unwrap(), snapshot.games);
         assert!(
             snapshot
                 .games
                 .iter()
                 .find(|g| g.timestamp == "101")
-                .is_some_and(|g| !g.incomplete && g.video_available && g.participants.is_empty())
+                .is_some_and(|g| g.saved
+                    && g.champion == "Unknown"
+                    && g.game_mode == "Unknown"
+                    && g.participants.is_empty())
         );
-        assert!(
-            snapshot
-                .games
-                .iter()
-                .filter(|g| g.incomplete)
-                .all(|g| g.participants.is_empty())
-        );
+        assert!(snapshot.games.iter().all(|g| {
+            replay_descriptor(root.path(), "test-origin", &g.timestamp, "token".into()).is_ok()
+        }));
         assert!(
             snapshot
                 .games
@@ -1283,18 +1393,20 @@ pub(crate) mod tests {
                 .find(|g| g.timestamp == "100")
                 .is_some_and(|g| !g.incomplete && g.video_available)
         );
-        assert!(
-            snapshot
-                .games
-                .iter()
-                .find(|g| g.timestamp == "104")
-                .is_some_and(|g| !g.video_available)
-        );
-        for timestamp in ["102", "103", "104", "105"] {
+        for timestamp in ["102", "103", "104", "105", "106", "107", "108", "109"] {
             assert!(
                 replay_descriptor(root.path(), "test-origin", timestamp, "token".into()).is_err()
             );
         }
+        assert_eq!(core_snapshot(root.path()).unwrap().games, snapshot.games);
+        assert_eq!(fs::read(partial).unwrap(), b"preserve recoverable media");
+        assert_eq!(fs::read(diagnostic).unwrap(), b"preserve failure evidence");
+        assert_eq!(fs::read(invalid.join(METADATA_JSON)).unwrap(), b"invalid");
+        assert_eq!(fs::read(junk.join(VIDEO_MP4)).unwrap(), b"junk");
+        assert_eq!(
+            fs::read(truncated.join(VIDEO_MP4)).unwrap(),
+            &RECORDING_VIDEO[..64]
+        );
     }
 
     #[test]
@@ -1405,16 +1517,31 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn keeps_incomplete_bundles_at_the_bottom() {
+    fn excludes_incomplete_bundles_without_removing_them() {
         let root = tempdir().unwrap();
         write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
         let incomplete = root.path().join("games").join("1786000001");
         fs::create_dir_all(&incomplete).unwrap();
         fs::write(incomplete.join(VIDEO_MP4), b"partial").unwrap();
         let games = list_games(root.path()).unwrap();
-        assert_eq!(games.len(), 2);
+        assert_eq!(games.len(), 1);
         assert!(!games[0].incomplete);
-        assert!(games[1].incomplete);
+        assert_eq!(fs::read(incomplete.join(VIDEO_MP4)).unwrap(), b"partial");
+    }
+
+    #[test]
+    fn conventional_and_fragmented_recordings_share_replay_admission() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        for bytes in [
+            RECORDING_VIDEO,
+            include_bytes!("../testdata/recording-fragmented.mp4").as_slice(),
+        ] {
+            fs::write(game.join(VIDEO_MP4), bytes).unwrap();
+            assert_eq!(list_games(root.path()).unwrap().len(), 1);
+            replay_descriptor(root.path(), "origin", "100", "token".into()).unwrap();
+            assert_eq!(fs::read(game.join(VIDEO_MP4)).unwrap(), bytes);
+        }
     }
 
     #[test]
@@ -1427,8 +1554,7 @@ pub(crate) mod tests {
             for name in [METADATA_JSON, "league_match.json", "league_result.json"] {
                 fs::copy(fixtures.join(id).join(name), target.join(name)).unwrap();
             }
-            // This is a summary-only fixture, never opened as media.
-            fs::write(target.join(VIDEO_MP4), [0]).unwrap();
+            fs::write(target.join(VIDEO_MP4), RECORDING_VIDEO).unwrap();
             assert_eq!(
                 read_game_summary(target, id.into()).keystone_id,
                 Some(keystone)

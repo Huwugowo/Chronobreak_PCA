@@ -938,8 +938,8 @@ mod tests {
     async fn root_publication_rejects_blocked_scan_and_captures_new_pair_atomically() {
         let a = tempdir().unwrap();
         let b = tempdir().unwrap();
-        fs::create_dir_all(a.path().join("games/100")).unwrap();
-        fs::create_dir_all(b.path().join("games/200")).unwrap();
+        library::tests::write_game(a.path(), "100", "2026-08-05T10:00:00Z", false);
+        library::tests::write_game(b.path(), "200", "2026-08-05T10:00:00Z", false);
         let roots = Arc::new(MediaRoots::new(a.path().into()).unwrap());
         let coordinator = Arc::new(LibraryCoordinator::new());
         let original = coordinator.refresh(&roots, ORIGIN).await.unwrap();

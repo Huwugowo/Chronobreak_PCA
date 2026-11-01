@@ -50,6 +50,45 @@
       "notes": "User explicitly revised the plan and bypassed the normal planning/milestone workflow on 2026-11-01. Implement the coherent lifecycle directly, run proportionate checks, and commit. No five-minute lost-window cutoff, mandatory long soaks or new verification framework. Startup policy, audio and library UX remain separate features."
     },
     {
+      "id": "QB-LIB-024",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Show usable published replays in Match History",
+      "description": "Expose only completed usable canonical recordings as matches across library snapshots, history/search, filters and counts; preserve recording attempts, recovery and existing recorder error/status reporting.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "in-progress",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": [
+        "QB-LIB-008"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Library snapshots and game listings admit only strict valid core metadata plus usable regular nonempty canonical video through the shared replay-opening boundary; incomplete, missing and corrupted mandatory recording data cannot create match entries.",
+        "Missing or invalid optional League metadata, telemetry and EOG results do not hide an otherwise usable published replay or fabricate match facts.",
+        "History/search catalog membership, pagination, filters and match counts derive from the same eligible snapshot; the UI does not reintroduce incomplete attempt cards.",
+        "Existing storage/maintenance inventory, retention safeguards and recovery remain independent of history eligibility. Eligibility checks are read-only and never delete or rewrite partial recordings, metadata or diagnostic evidence.",
+        "Recording failures continue through the existing recorder error/status mechanism. No new notification subsystem or independent recording-health authority is introduced.",
+        "Focused dedicated-fixture regressions cover completed, incomplete, corrupted and optional-metadata-limited recordings, snapshot/search membership and preserved source bytes; applicable app/frontend and canonical checks pass."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Run focused backend library/replay/history eligibility and frontend history regressions using dedicated fixtures; run applicable Rust and frontend checks plus canonical validation. No soak or real League campaign is required.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-11-01 implementation: snapshots/listings and replay opening share strict core metadata plus a bounded readable canonical MP4 check; history/search/filter/count membership uses only eligible games and the UI no longer appends incomplete cards. Optional League-data failures preserve playback/basic history. Storage inventory, partials, diagnostics, recovery and existing recorder error/status remain intact.",
+        "Dedicated conventional/fragmented H.264/AAC fixtures fully decoded. Focused library tests: 17 passed, one opt-in ignored. Backend regression excluding the independently failing export-staging test: 163 passed, 10 ignored. Focused frontend library/API/history/recorder-status tests: 41 passed; TypeScript and production build passed. Strict app all-target Clippy and Rustfmt passed.",
+        "Full backend run exposed the pre-existing export_staging::tests::invalid_ownership_foreign_entries_and_locked_files_are_retained failure, also reproduced in isolation. Its one-pass retained-count assumption conflicts with cursor-based bounded recovery; export staging source/tests are unchanged (QB-CLIP-013). Implementation is complete; status remains non-done under the repository full-check gate until this separate baseline test is repaired. No production recovery behavior was changed to obtain a pass."
+      ],
+      "notes": "2026-11-01 explicit user scope and direct-execution instruction supersede the broader audit draft before implementation. Reuse current replay/media boundaries and recorder status; new publication refresh architecture, a new compact status surface and expanded storage accounting are outside this focused fix. Earlier incomplete-card completion evidence remains historical. Per-scan full decoding or external media-tool spawning is not appropriate; later bitstream corruption is not attested by the opening-structure scan and playback retains its existing error handling."
+    },
+    {
       "id": "QB-CAP-008",
       "kind": "feature",
       "stage": "ready",

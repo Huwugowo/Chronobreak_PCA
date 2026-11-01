@@ -379,7 +379,7 @@ async fn selected_tokens_reject_overlapping_roots_and_export_completion_uses_ori
     let a = tempdir().unwrap();
     let b = tempdir().unwrap();
     for root in [a.path(), b.path()] {
-        fs::create_dir_all(root.join("games/100")).unwrap();
+        library::tests::write_game(root, "100", "2026-08-05T10:00:00Z", false);
         clip_fixture(root);
     }
     let roots = Arc::new(MediaRoots::new(a.path().into()).unwrap());
@@ -500,7 +500,7 @@ async fn late_export_invalidates_returned_root_but_never_admits_old_response() {
     for switch_away in [false, true] {
         let a = tempdir().unwrap();
         let b = tempdir().unwrap();
-        fs::create_dir_all(a.path().join("games/100")).unwrap();
+        library::tests::write_game(a.path(), "100", "2026-08-05T10:00:00Z", false);
         let roots = Arc::new(MediaRoots::new(a.path().into()).unwrap());
         let coordinator = LibraryCoordinator::new();
         let snapshot = coordinator.refresh(&roots, ORIGIN).await.unwrap();

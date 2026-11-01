@@ -165,12 +165,12 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(opened).toHaveBeenCalledTimes(1);
   expect(saved).toHaveBeenCalledTimes(1);
   expect(deleted).toHaveBeenCalledTimes(1);
-  // A full SQL page must not displace filesystem entries that cannot be indexed.
+  // History must not add recording attempts outside the eligible SQL page.
   const complete = Array.from({length:50}, (_,i)=>({...game,timestamp:String(1000+i),media_id:`9c82b929-7c85-4c27-a6d0-${String(i).padStart(12,"0")}` as GameSummary["media_id"]}));
   setGames([...complete,{...game,timestamp:"incomplete",incomplete:true}]);
   setHistory({...history(),laterPage:false,page:{...history().page!,rows:complete.map(game=>({game,media_id:game.media_id!,stats,index_status:"ready"})),next:{recorded_at:game.recorded_at,media_id:complete[49].media_id!}}});
-  expect(host.querySelectorAll("article")).toHaveLength(51);
-  expect(host.textContent).toContain("INCOMPLETE");
+  expect(host.querySelectorAll("article")).toHaveLength(50);
+  expect(host.textContent).not.toContain("INCOMPLETE");
   setHistory({...history(),laterPage:true});
   expect(host.querySelectorAll("article")).toHaveLength(50);
   dispose();

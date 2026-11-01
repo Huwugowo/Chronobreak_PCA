@@ -30,8 +30,10 @@ Index schema v5 keeps producer event revisions/actor references unchanged. After
 
 The `refresh_library` backend builds a `LibrarySnapshot` with an opaque token,
 games, lightweight clips with unknown duration, and storage usage from one scan.
-Each accepted game summary and video size is read once; clip source labels and
-game totals reuse those summaries. Clips are enumerated once, including MP4s with
+One scan builds each recording summary and its storage size. A private inventory retains
+attempts for storage accounting; the public games list admits only valid core
+metadata and a readable canonical recording. Clip source labels reuse those
+eligible summaries. Clips are enumerated once, including MP4s with
 unrecognized names in storage totals while omitting them from displayed cards.
 The core scan never invokes a media probe. The frontend consumes this snapshot
 through one `LibraryController`, which owns the root, token, selections,
@@ -44,8 +46,8 @@ projection rather than the core snapshot's empty compatibility participant list.
 Exact recorded names are preserved; missing team knowledge stays neutral. No
 journal scan or additional file read occurs on a history page. Missing or invalid
 telemetry keeps healthy video and saved intent available.
-Unfiltered first pages also include incomplete filesystem entries alongside the
-bounded SQL page; subsequent SQL pages do not repeat those entries. Summoner
+History pages, search, filter choices and match counts share the eligible games
+snapshot. Recording attempts are never added back as incomplete cards. Summoner
 spells come from checked final facts or the selected recorded snapshot, preserving
 missing slots. The versioned Data Dragon summoner manifest resolves numeric IDs,
 internal keys and recorded display names to validated image filenames. An older
@@ -70,8 +72,13 @@ release its permit before the job exits.
 ReplayDescriptor and recording export authority read bounded strict `metadata.json`
 (64 KiB maximum) for the exact media timeline. Optional League telemetry, including
 an absent, malformed or unsupported `game_log.json`, cannot block these media-only
-reads. Descriptor still requires a nonempty regular video file; served bytes and
-export retain their existing opened-handle protection.
+reads. Descriptor and library membership share the same readable regular canonical-video
+check. It inspects at most 64 top-level MP4 opening headers, skipping payloads,
+and requires the file-type, complete movie and nonempty media boxes. This rejects
+non-media and truncated openings without a child process or full decode. Recorder
+publication owns codec/sample validation; arbitrary later bitstream corruption is
+not attested by a library scan. Served bytes and export retain their existing
+opened-handle protection. Older completed recordings need no publication receipt.
 Library summaries retain validated media metadata and saved intent when telemetry
 is unreadable, with an empty optional observation projection. Explicit deletion
 reads saved intent directly from strict metadata and fails if that metadata cannot
@@ -158,7 +165,10 @@ Event projection preserves `stolen` and `recipient`; playback reports observed g
 counts, uncommitted tail bytes, unmapped observations and unresolved actors. These
 counters do not establish complete coverage.
 
-The app treats malformed or incomplete entries conservatively: recognized bundles are parsed into summaries; playback requires mandatory properties such as a usable recording frame rate. Missing League data is represented as absent rather than inferred.
+Malformed or incomplete recording attempts stay in the private storage inventory,
+not the public match library. Eligible recordings require valid mandatory metadata
+and readable canonical media through the shared replay-opening check. Missing
+League data is represented as absent rather than inferred.
 
 The small recording-facts command reads optional `league_match.json`, within its
 owned replay-read slot after strict core bundle validation. The reader accepts a
@@ -182,9 +192,9 @@ video mounting do not read either optional sidecar.
 
 Result writing yields to existing deletion without adding a deletion protocol.
 A narrow delete/write race can leave an empty directory or stray sidecar. Existing
-scans can show timestamp-named directories without valid core data as incomplete
-entries; they cannot supply confirmed facts or playable media from a stray result.
-This is the existing library behavior, including the deliberate v2 race acceptance.
+scans retain timestamp-named directories without valid core data in storage
+inventory but exclude them from match history. A stray result cannot provide
+confirmed facts or authorize playback. The deliberate v2 race acceptance remains.
 
 ## League query cache and consumers
 
@@ -202,11 +212,11 @@ Event revisions retain evidence and exact `(media_id, run_id, epoch)` scope; act
 joins require stored participant references. Replay ticks are calculated from each
 observation's own calibration. A timing change invalidates the projection.
 
-The scan retains a private missing-metadata classification separately from its
-broad incomplete display flag. Catalog pages preserve unfinished bundles in
-membership, counts and cursors with null media identity/progress/error. Present
-invalid or unreadable metadata, invalid finalized video, duplicate media identity
-and corrupt/unsupported telemetry still fail strict admission/import.
+Catalog membership, counts and cursors derive exclusively from the eligible
+filesystem snapshot; unfinished or invalid core bundles are absent. Duplicate
+media identity and corrupt/unsupported optional telemetry still fail strict
+semantic import. Optional telemetry failures leave usable recordings available
+for playback and basic history/search with unavailable semantic facts.
 
 `LibraryController` owns one active frontend index write across screen lifetimes,
 with one latest pending intent each for history, replay and maintenance. Maintenance
@@ -339,7 +349,7 @@ duration; output frame and audio-alignment validation remain mandatory.
 
 ## Retention and deletion safety
 
-The app reports game-video and clip-MP4 bytes/counts and supports explicit game/clip deletion. Age-based `run_auto_delete` skips games whose metadata marks them saved. Settings changes update the app's media root; recorder use of the shared setting takes effect when its configuration is next loaded.
+The app reports recording-inventory video and clip-MP4 bytes/counts and supports explicit game/clip deletion. Storage inventory includes retained attempt directories independently of eligible Match History counts; its existing video-byte metric is unchanged. Age-based `run_auto_delete` skips games whose metadata marks them saved. Settings changes update the app's media root; recorder use of the shared setting takes effect when its configuration is next loaded.
 
 Destructive tests must use `tempfile` or a purpose-created test library. Real user recordings must never be used for retention, corruption, recovery, relocation, or deletion tests.
 
