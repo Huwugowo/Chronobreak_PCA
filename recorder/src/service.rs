@@ -1818,15 +1818,20 @@ async fn stop_recording_inner(
 
 fn log_capture_progress(evidence: &RecordingEvidence, elapsed: Duration, terminal: bool) {
     info!(
-        "queueback_capture_progress elapsed_ms={} source_frames_surfaced={} source_frames_superseded={} encoded_frames={} muxed_bytes={} latest_qpc_100ns={} cfr_duplicates={} cfr_discards={} pool_recreations={} terminal={}",
+        "queueback_capture_progress elapsed_ms={} source_frames_surfaced={} source_frames_superseded={} source_snapshot_copies={} source_worker_discards={} encoded_frames={} muxed_bytes={} latest_qpc_100ns={} latest_arrival_qpc_100ns={} cfr_duplicates={} cfr_discards={} cfr_catch_up_ticks={} cfr_maximum_source_age_100ns={} pool_recreations={} terminal={}",
         elapsed.as_millis(),
         evidence.source_frames_surfaced,
         evidence.source_frames_superseded,
+        evidence.source_snapshot_copies,
+        evidence.source_worker_discards,
         evidence.encoded_frames,
         evidence.muxed_bytes,
         evidence.latest_qpc.unwrap_or_default(),
+        evidence.latest_arrival_qpc.unwrap_or_default(),
         evidence.cfr_duplicates,
         evidence.cfr_discards,
+        evidence.cfr_catch_up_ticks,
+        evidence.cfr_maximum_source_age_100ns,
         evidence.pool_recreations,
         terminal,
     );

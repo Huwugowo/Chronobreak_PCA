@@ -21,7 +21,7 @@ revive a parallel capture backend.
 ```text
 League HWND
   -> WGC free-threaded frame pool (2 D3D11 BGRA frames)
-  -> nonblocking callback-to-worker latest-frame handoff (capacity 1)
+  -> nonblocking callback-to-worker handoff (capacity 1)
   -> one D3D11 GPU worker and one pending source frame
   -> D3D11 video-processor resize and BGRA-to-NV12 conversion
   -> four owned NV12/NVENC slots
@@ -30,7 +30,7 @@ League HWND
   -> fragmented MP4
 ```
 
-The WGC callback never waits for the GPU worker, encoder, muxer, disk, or runtime work. Newer surfaced frames supersede older unconsumed frames and increment a separate counter. Tick admission is transactional: a CFR tick commits only after successful NVENC submission. Scheduled, submitted, completed, and muxed frame accounting is reconciled before a successful final result.
+The WGC callback never waits for the GPU worker, encoder, muxer, disk, or runtime work. If the handoff is full, the incoming frame is closed and counted as a handoff drop. Tick admission is transactional: a CFR tick commits only after successful NVENC submission. Scheduled, submitted, completed, and muxed frame accounting is reconciled before a successful final result.
 
 Full video frames remain GPU-resident through acquisition, resize/color conversion, and encoder submission. There is no per-frame full-surface readback, CPU pixel conversion, or raw-frame transfer. WGC, conversion, and encoder surfaces may still require bounded GPU-to-GPU copies, so the path is described as GPU-resident rather than universally zero-copy.
 
@@ -66,9 +66,9 @@ Native ownership is explicit and bounded. A lifecycle owner supervises the GPU w
 
 Native construction checks the stop flag and shared absolute deadline before source creation, initial content recovery, conversion, mux and NVENC construction, and completion. A completed blocking call cannot authorize the next stage after cancellation or expiry. Every check after source creation stays inside the initialization result scope so dependent resources drop before explicit callback-safe source close. Reported protocol failures take precedence over a simultaneous generic startup timeout; cancellation retains priority.
 
-Startup is ready only after a real WGC frame with a positive `SystemRelativeTime`/QPC value, encoded output, mux progress, and a positive output timestamp. The first copied WGC source QPC timestamp maps to Rust monotonic and wall clocks and becomes both the recording epoch and Live Client poller anchor. Process-spawn time is not the video epoch. The one-frame worker pending slot retains the greatest source QPC timestamp, not merely the last callback arrival. Duplicate or older timestamps are closed and counted as worker discards; the CFR clock keeps the last good GPU snapshot rather than failing the recording or moving its source clock backwards. The watchdog and published recording QPC evidence use the CFR clock's first/latest successfully copied source timestamps, so incoming unusable frames cannot mask a frozen image. Sustained lack of copied source-QPC advancement still triggers the capture-progress watchdog when the target is visible.
+Startup is ready only after a real WGC frame with a positive `SystemRelativeTime`/QPC value, encoded output, mux progress, and a positive output timestamp. The first copied WGC source QPC timestamp maps to Rust monotonic and wall clocks and becomes both the recording epoch and Live Client poller anchor. Process-spawn time is not the video epoch. The one-frame worker pending slot selects the newest eligible timestamp among offered frames, otherwise the earliest future timestamp. Once pending is eligible, both pre-deadline waiting and tick polling leave the following frame in the existing handoff; delivery before its presentation timestamp must not cause its premature discard. The worker waits only until its next deadline. Duplicate or older timestamps are closed and counted as worker discards; the CFR clock keeps the last good GPU snapshot rather than failing the recording or moving its source clock backwards. The watchdog and published recording QPC evidence use the CFR clock's first/latest successfully copied source timestamps, so incoming unusable frames cannot mask a frozen image. Sustained lack of copied source-QPC advancement still triggers the capture-progress watchdog when the target is visible.
 
-Capture diagnostics separately expose surfaced and superseded source frames, CFR discards and duplications, encoded/completed/muxed frames, pool recreations, bounded depths, first/latest QPC, output progress, writer/flush timing, and terminal errors. Counters are monotonic and compositor frames never surfaced by Windows remain outside the claim.
+Capture diagnostics separately expose surfaced and superseded source frames, copied snapshots, worker discards, CFR discards (pending replacements) and duplications, catch-up ticks, maximum source age, encoded/completed/muxed frames, pool recreations, bounded depths, first/latest copied QPC and latest callback source QPC, output progress, writer/flush timing, and terminal errors. The callback QPC is the frame's source timestamp, not its wall receipt time; the source-only probe's `--timing-only` mode records both relative source and receipt times without requiring NVENC. Counters are monotonic and compositor frames never surfaced by Windows remain outside the claim.
 
 ## Window and failure behavior
 

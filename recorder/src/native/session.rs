@@ -865,14 +865,19 @@ impl NativeRecorderSession {
             source_frames_superseded: capture
                 .handoff_drops
                 .saturating_add(capture.pending_frame_replacements),
+            source_snapshot_copies: self.converter.telemetry().source_snapshot_copies,
+            source_worker_discards: capture.worker_frame_discards,
             pool_recreations: capture.recreations,
             first_qpc: Some(cfr.first_source_qpc_100ns),
             latest_qpc: Some(cfr.latest_source_qpc_100ns),
+            latest_arrival_qpc: capture.latest_arrival_qpc_100ns,
             encoded_frames: encode.completed_frames,
             muxed_bytes: mux.muxed_bytes.max(mux.output_file_bytes),
             output_time_us: mux.output_time_us,
             cfr_duplicates: cfr.duplicate_ticks,
             cfr_discards: cfr.source_discards,
+            cfr_catch_up_ticks: cfr.catch_up_ticks,
+            cfr_maximum_source_age_100ns: cfr.maximum_source_age_100ns,
             progress_end: terminal && mux.progress_end,
             protocol_error,
         })
@@ -1138,14 +1143,19 @@ impl NativeSessionTelemetrySnapshot {
                 .capture
                 .handoff_drops
                 .saturating_add(self.capture.pending_frame_replacements),
+            source_snapshot_copies: self.conversion.source_snapshot_copies,
+            source_worker_discards: self.capture.worker_frame_discards,
             pool_recreations: self.capture.recreations,
             first_qpc: Some(self.cfr.first_source_qpc_100ns),
             latest_qpc: Some(self.cfr.latest_source_qpc_100ns),
+            latest_arrival_qpc: self.capture.latest_arrival_qpc_100ns,
             encoded_frames: self.encode.completed_frames,
             muxed_bytes: self.mux.muxed_bytes.max(self.mux.output_file_bytes),
             output_time_us: self.mux.output_time_us,
             cfr_duplicates: self.cfr.duplicate_ticks,
             cfr_discards: self.cfr.source_discards,
+            cfr_catch_up_ticks: self.cfr.catch_up_ticks,
+            cfr_maximum_source_age_100ns: self.cfr.maximum_source_age_100ns,
             progress_end: self.mux.progress_end,
             protocol_error: native_protocol_error(self.capture, self.encode, self.mux),
         }

@@ -4,14 +4,64 @@ mod windows_probe {
 
     use anyhow::{Context, Result, bail};
     use league_replay_recorder::native::{NativeWgcSource, NvencDriverProbe};
-    use league_replay_recorder::platform::capture_target_for_process;
+    use league_replay_recorder::platform::{capture_target_for_process, instant_from_qpc_100ns};
+
+    // Short, source-only timestamp evidence. This deliberately bypasses NVENC
+    // capability probing and conversion so capture timing can be isolated.
+    fn trace_timing(source: NativeWgcSource, duration: Duration) -> Result<()> {
+        anyhow::ensure!(
+            (1..=60).contains(&duration.as_secs()),
+            "timing trace requires 1-60 seconds"
+        );
+        let deadline = Instant::now() + duration;
+        let mut anchor = None;
+        let mut consumed = 0_u64;
+        while Instant::now() < deadline {
+            if let Some(frame) = source.recv_timeout(Duration::from_millis(50))? {
+                let qpc = frame.qpc_100ns();
+                let (first_qpc, first_instant) = match anchor {
+                    Some(value) => value,
+                    None => {
+                        let value = (qpc, instant_from_qpc_100ns(qpc)?);
+                        anchor = Some(value);
+                        value
+                    }
+                };
+                let now = Instant::now();
+                let arrival_100ns = if now >= first_instant {
+                    now.duration_since(first_instant).as_nanos() as i128 / 100
+                } else {
+                    -(first_instant.duration_since(now).as_nanos() as i128 / 100)
+                };
+                let (width, height) = frame.dimensions();
+                consumed += 1;
+                println!(
+                    "WGC_TIMING index={consumed} arrival_100ns={arrival_100ns} source_100ns={} qpc_100ns={qpc} width={width} height={height}",
+                    qpc - first_qpc
+                );
+                frame.close()?;
+            }
+            if source.telemetry().closed {
+                break;
+            }
+        }
+        let telemetry = source.close()?;
+        println!("WGC_TIMING_END consumed={consumed} telemetry={telemetry:?}");
+        anyhow::ensure!(
+            consumed > 0 && telemetry.callback_errors == 0,
+            "source timing trace failed"
+        );
+        Ok(())
+    }
 
     pub fn run() -> Result<()> {
         let mut args = std::env::args().skip(1);
         let mut pid = None;
         let mut duration = Duration::from_secs(10);
+        let mut timing_only = false;
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--timing-only" => timing_only = true,
                 "--pid" => {
                     pid = Some(
                         args.next()
@@ -36,6 +86,9 @@ mod windows_probe {
         let target = capture_target_for_process(pid)
             .with_context(|| format!("could not resolve exact HWND for fixture PID {pid}"))?;
         let mut source = NativeWgcSource::start(&target)?;
+        if timing_only {
+            return trace_timing(source, duration);
+        }
         let nvenc = NvencDriverProbe::load()?;
         let h264 = nvenc.probe_h264_on_source(&source)?;
         let mut converter = source.create_nv12_converter(1920, 1080, 60)?;

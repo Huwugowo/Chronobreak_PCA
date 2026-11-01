@@ -2,7 +2,7 @@
 
 Feature: `QB-PERF-002`
 ExecPlan: `docs/exec-plans/qb-perf-002-low-overhead-native-windows-capture-v3.md`
-Updated: 2026-10-29
+Updated: 2026-11-01
 
 ## Current milestone
 
@@ -10,7 +10,9 @@ Superseding-plan Milestone 5: valid target League capped/uncapped performance pr
 
 ## Active unit
 
-No product-code unit is active. The fragmented-MP4 finalizer correction passed synthetic checks, temporary-copy validation/publication of both prior partials, the locked release rebuild, and the subsequent real Practice Tool run `1790670285`. That run finalized normally, passed full decode, and the user confirmed playback in the app. Previous timestamp/size/teardown fixes remain in place. The formal performance matrix remains outstanding and audio remains deferred. The 2026-10-29 source-review follow-ups are tracked separately in `QB-CAP-006`, `QB-CAP-007`, `QB-CAP-003`, and `QB-CAP-004`; this review did not resume product-code implementation.
+2026-11-01 focused duplication correction: reproduced and corrected premature worker discards of early-delivered future frames. Source-only timing evidence, ownership/CFR regressions and recorder checks are recorded below. This correction does not complete the outstanding formal performance matrix or establish every cause of the October 31 duplication rate. Existing unrelated app/audio edits are preserved.
+
+The earlier fragmented-MP4 finalizer correction passed synthetic checks, temporary-copy validation/publication of both prior partials, the locked release rebuild, and the subsequent real Practice Tool run `1790670285`. That run finalized normally, passed full decode, and the user confirmed playback in the app. Previous timestamp/size/teardown fixes remain in place. The formal performance matrix remains outstanding and audio remains deferred. The 2026-10-29 source-review follow-ups are tracked separately in `QB-CAP-006`, `QB-CAP-007`, `QB-CAP-003`, and `QB-CAP-004`; that review did not resume product-code implementation.
 
 Do not substitute current-workstation generated-window evidence, the historical native/external A/B, the accepted-invalid QB-PERF-001 report, or a different GPU/CPU target for that matrix.
 
@@ -28,7 +30,7 @@ Do not substitute current-workstation generated-window evidence, the historical 
 
 ## In flight
 
-None. Fragmented-MP4 correction, focused checks, release build, and real recording/app playback confirmation are complete. Prior partial recordings were not rewritten. Later QB-REPLAY-012 work may share recorder files but does not satisfy this feature's missing formal League matrix.
+None for the focused duplication correction; implementation, review, recorder checks and release build are complete. Fragmented-MP4 correction remains complete; real recordings remain untouched.
 
 ## Remaining
 
@@ -85,6 +87,17 @@ No valid League matrix, negligible-impact claim, AMD/Intel implementation or har
 - Canonical schema/dependency/lifecycle/linked-artifact validation passed for 104 roadmap items and 22 plan/checkpoint pairs; `git diff --check` passed after the documentation/tracking edits.
 - No League launch experiment, native hardware fixture, full project quality run, or formal performance matrix was run. The review does not change the feature's blocked status or establish the cause of the reported loading-screen incident.
 
+### 2026-11-01 excess CFR duplication investigation and correction
+
+- The October 31 incident reports 41,072 surfaced/admitted sources, 43,420 encoded frames and 25,481 CFR duplicates (58.7%); only 17,939 output ticks used a newly staged source. The 32 superseded frames and zero CFR discards do not exonerate selection: CFR discards count pending replacements, while worker discards were absent from the progress log. There is no logged backend exit or watchdog stall. This is not evidence that League rendered at 25 FPS.
+- Root cause reproduced: while waiting before a tick, `receive_pending_timeout` dequeued the next frame even when pending already served that tick. `offer_for_tick` correctly refused to replace eligible pending with a future timestamp, but the dequeue had already consumed and closed the future frame. Tick polling had a preservation guard; pre-deadline receiving did not. An existing ownership regression was extended through the actual receiving helper and failed before correction (`Some(Discarded)` instead of leaving the handoff untouched; `.codex/logs/command-20261101-111144.log`).
+- Both receiving and polling now preserve the existing handoff while pending is eligible. The worker sleeps for its caller's bounded wait to the next deadline, avoiding a busy loop. No additional thread, surface slot, timestamp offset, encode/mux lifecycle or publication rule was introduced. Ownership/drop accounting remains exact. The regression also exercises a real one-millisecond wait; a deterministic ten-second event test uses actual `PendingFrame` and `NativeCfrClock` with 57/59.94/60/144-Hz sources, 8/12/16-ms early delivery and small jitter, retaining nearly all rate-usable sources with bounded age and reconciled admitted ownership.
+- A ten-second generated-window source-only trace delivered 540 frames with zero callback errors, handoff drops or recreations. All source timestamps led receipt by 7.77-13.49 ms (median 11.71 ms), demonstrating that early delivery is real on this host. Evidence: `build/perf/cfr-duplication/20261101-110148/timing.log`. The existing source probe now supports `--timing-only`, bypassing NVENC/conversion and logging receipt versus source time for 1-60 seconds.
+- A numerical replay of those measured arrivals through the selection policy produced 599 ticks: old policy 365 copies/234 duplicates/171 worker discards; corrected policy 536 copies/63 duplicates/zero worker discards (39.1% to 10.5% duplicates, close to this trace's available source rate). This is a model replay of source timings, not an encoded-media or decoded-frame result. Local reproduction/summary: `build/cfr-duplication-replay.py` and `build/perf/cfr-duplication/20261101-110148/replay-summary.json`.
+- Progress evidence now includes copied snapshots, worker discards, latest callback source QPC, catch-up ticks and maximum source age in both live and terminal projections. Existing copied-QPC watchdog semantics, callback quiescence, failure precedence and final publication reconciliation are unchanged.
+- Limits: the original incident lacks raw arrival timestamps, copy/discard breakdown and decoded media in the committed evidence, so the fix cannot be claimed to account for all 58.7%. Its multi-second selected-QPC lag/recovery episodes remain unattributed. Synthetic source timestamps more than an output interval ahead (e.g. 25 ms at 60 Hz) can still exceed the current earliest-future coalescing policy's retention; that is outside the demonstrated 8-13-ms trace, not a newly expanded buffering claim. No NVENC/end-to-end decoded-media check was run in this unit; the environment's prior native startup returned `NO_ENCODE_DEVICE`. Formal League performance and negligible-impact claims remain blocked separately.
+- Recorder all-target/all-feature check passed (`command-20261101-111402.log`), strict Clippy passed (`command-20261101-111442.log`), and all-target/all-feature tests passed (263 library + 7 binary + 3 fixture tests; 12 opt-in tests ignored; `command-20261101-111443.log`). Focused capture tests passed 18/18 (`command-20261101-111310.log`). Formatting and the final bounded-wait ownership regression passed (`command-20261101-111741.log`); the locked release build passed (`command-20261101-111744.log`). A separate read-only review found no production blocker; it confirmed the bounded-wait and historical-attribution limits.
+
 ## Deviations
 
 The original approved plan retained a packaged external FFmpeg WGC backend as an explicit alternative and current AMF/QSV route. The 2026-09-01 product architecture decision and capability audit materially invalidated that design: the external path had no unique validated production obligation, duplicated capture/lifecycle ownership, and exposed only unvalidated codec/vendor combinations. The original plan remains unchanged as history; the versioned v3 plan is the current design.
@@ -104,5 +117,7 @@ The first 1,800-second wrapper discarded its in-memory resource samples after a 
 The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target has not been run. The combined release now has a successful real short-session finalization and user-confirmed app playback, but that is not the required sustained capture/performance matrix. Generated-window or short-session evidence cannot substitute for that matrix.
 
 ## Next action
+
+On a subsequent ordinary recording trial, inspect copied snapshots, worker discards, latest callback source QPC versus copied QPC, catch-up ticks and maximum source age. These distinguish remaining source delivery, selection and scheduling effects without another blanket timeout or a mandatory long validation campaign.
 
 When returning to QB-PERF-002, run the outstanding formal performance matrix under the approved v3 design and complete its remaining support/documentation/verification gates. Keep the separately tracked launch-safety, rollback, recovery, and media-validation work within their own feature scopes; do not reopen the verified fragmented-sample-count correction without new contradictory evidence. Audio remains deferred.

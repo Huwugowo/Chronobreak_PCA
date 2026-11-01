@@ -159,6 +159,27 @@ impl<T> PendingFrame<T> {
         }
     }
 
+    fn receive_for_tick(
+        &mut self,
+        receiver: &Receiver<T>,
+        timeout: Duration,
+        after: i64,
+        through: i64,
+        timestamp: impl Fn(&T) -> i64,
+    ) -> std::result::Result<Option<PendingOffer>, RecvTimeoutError> {
+        if self.has_through(through, &timestamp) {
+            // The pending surface already serves this tick. Keep the following
+            // surface in the bounded handoff instead of receiving and discarding
+            // it for being too early. The caller bounds this wait by its next
+            // deadline; sleeping also prevents a busy loop while frames arrive.
+            std::thread::sleep(timeout);
+            return Ok(None);
+        }
+        receiver
+            .recv_timeout(timeout)
+            .map(|frame| Some(self.offer_for_tick(frame, after, through, timestamp)))
+    }
+
     fn clear(&mut self) -> bool {
         self.value.take().is_some()
     }
@@ -707,14 +728,13 @@ impl NativeWgcCapture {
         after: i64,
         through: i64,
     ) -> Result<(bool, u64)> {
-        match self.receiver.recv_timeout(timeout) {
-            Ok(frame) => {
-                // Recheck the scheduler after one receive. An eager drain can
-                // run across the deadline and consume the following tick's frame.
-                let replacements = self.offer_pending(frame, after, through);
-                Ok((true, replacements))
-            }
-            Err(RecvTimeoutError::Timeout) => {
+        match self
+            .pending
+            .receive_for_tick(&self.receiver, timeout, after, through, |frame| {
+                frame.qpc_100ns
+            }) {
+            Ok(Some(outcome)) => Ok((true, self.account_pending_offer(outcome))),
+            Ok(None) | Err(RecvTimeoutError::Timeout) => {
                 self.refresh_closed_state();
                 Ok((false, 0))
             }
@@ -737,13 +757,6 @@ impl NativeWgcCapture {
                 bail!("native WGC callback handoff disconnected")
             }
         }
-    }
-
-    fn offer_pending(&mut self, frame: QueuedWgcFrame, after: i64, through: i64) -> u64 {
-        let outcome = self
-            .pending
-            .offer_for_tick(frame, after, through, |queued| queued.qpc_100ns);
-        self.account_pending_offer(outcome)
     }
 
     fn account_pending_offer(&mut self, outcome: PendingOffer) -> u64 {
@@ -1446,6 +1459,13 @@ mod tests {
         );
         assert!(sender.try_send(frame(110)).is_ok());
         assert_eq!(
+            pending
+                .receive_for_tick(&receiver, Duration::from_millis(1), 80, 100, |f| f.0)
+                .unwrap(),
+            None,
+            "waiting before the tick must preserve the following frame in the handoff"
+        );
+        assert_eq!(
             pending.poll_for_tick(&receiver, 80, 100, |f| f.0).unwrap(),
             None
         );
@@ -1511,6 +1531,96 @@ mod tests {
         assert_eq!(discards, 6);
         assert_eq!(11, 2 + pending.replacements + discards);
         assert_eq!(pending.high_water_mark, 1);
+    }
+
+    #[test]
+    fn early_delivery_does_not_halve_fresh_cfr_frames() {
+        use super::super::NativeCfrClock;
+
+        const DURATION_NS: i64 = 10_000_000_000;
+        const FIRST_QPC: i64 = 50_000_000;
+        for (rate_numerator, rate_denominator) in [(57, 1), (5994, 100), (60, 1), (144, 1)] {
+            for lead_ns in [8_000_000, 12_000_000, 16_000_000] {
+                let anchor = Instant::now();
+                let mut clock = NativeCfrClock::start(60, FIRST_QPC, anchor).unwrap();
+                let mut pending = PendingFrame::default();
+                let (sender, receiver) = sync_channel(NATIVE_WGC_HANDOFF_CAPACITY);
+                let mut events: Vec<_> = (0..600).map(|i| (i * 1_000_000_000 / 60, None)).collect();
+                let mut source_index = 1;
+                loop {
+                    let source_ns =
+                        source_index * 1_000_000_000 * rate_denominator / rate_numerator;
+                    // Actual WGC delivery need not coincide with presentation
+                    // time. Include small jitter around the measured early lead.
+                    let arrival_ns = source_ns - lead_ns + (source_index % 3) * 200_000;
+                    if arrival_ns >= DURATION_NS {
+                        break;
+                    }
+                    events.push((arrival_ns, Some(FIRST_QPC + source_ns / 100)));
+                    source_index += 1;
+                }
+                events.sort_unstable();
+                let mut copies = 1_u64;
+                let mut admitted = 1_u64;
+                let mut worker_discards = 0_u64;
+                for (now_ns, arrival) in events {
+                    if let Some(qpc) = arrival {
+                        match sender.try_send(qpc) {
+                            Ok(()) => admitted += 1,
+                            Err(TrySendError::Full(_)) => {}
+                            Err(TrySendError::Disconnected(_)) => panic!("handoff disconnected"),
+                        }
+                    } else {
+                        if clock.telemetry().scheduled_ticks > 0 {
+                            let outcome = pending
+                                .poll_for_tick(
+                                    &receiver,
+                                    clock.telemetry().latest_source_qpc_100ns,
+                                    clock.next_qpc_100ns().unwrap(),
+                                    |qpc| *qpc,
+                                )
+                                .unwrap();
+                            worker_discards += u64::from(outcome == Some(PendingOffer::Discarded));
+                            if let Some(qpc) =
+                                pending.take_through(clock.next_qpc_100ns().unwrap(), |qpc| *qpc)
+                            {
+                                clock.observe_source(qpc).unwrap();
+                                copies += 1;
+                            }
+                        }
+                        let now = anchor + Duration::from_nanos(now_ns as u64);
+                        let tick = clock.peek_due(now).unwrap().unwrap();
+                        clock.commit(tick, now).unwrap();
+                    }
+                    let outcome = pending.receive_for_tick(
+                        &receiver,
+                        Duration::ZERO,
+                        clock.telemetry().latest_source_qpc_100ns,
+                        clock.next_qpc_100ns().unwrap(),
+                        |qpc| *qpc,
+                    );
+                    match outcome {
+                        Ok(outcome) => {
+                            worker_discards += u64::from(outcome == Some(PendingOffer::Discarded));
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => panic!("handoff disconnected"),
+                    }
+                }
+                worker_discards += u64::from(pending.clear());
+                worker_discards += receiver.try_iter().count() as u64;
+                let telemetry = clock.telemetry();
+                let expected_fresh = (10 * rate_numerator / rate_denominator).min(600) as u64;
+                assert!(
+                    copies >= expected_fresh - 1,
+                    "{rate_numerator}/{rate_denominator} Hz, lead {lead_ns}: {copies} fresh frames"
+                );
+                assert_eq!(telemetry.duplicate_ticks, 600 - copies);
+                assert!(telemetry.maximum_source_age_100ns <= 400_000);
+                assert_eq!(admitted, copies + pending.replacements + worker_discards);
+                assert_eq!(pending.high_water_mark, 1);
+            }
+        }
     }
 
     #[test]
