@@ -71,6 +71,10 @@ export default function ReplayScoreboard(props: Props) {
         <For each={group.players}>{identity => {
           const player = createMemo(() => current().sample?.players.find(p => p.participant === identity.participant));
           const facts = createMemo(() => current().facts?.get(identity.participant));
+          const visionScore = () => {
+            const score = facts()?.ward_score;
+            return score == null ? "—" : Math.floor(score);
+          };
           const slots = createMemo(() => scoreboardSlots(facts()?.items ?? null));
           const name = () => identity.riot_id?.split("#", 1)[0] ?? "Player unavailable";
           return <div class={styles.row} data-testid="scoreboard-player" data-participant={identity.participant}
@@ -88,7 +92,7 @@ export default function ReplayScoreboard(props: Props) {
             </div>
             <span class={styles.kda} aria-label="Kills / Deaths / Assists">{value(facts()?.scores.kills)} / {value(facts()?.scores.deaths)} / {value(facts()?.scores.assists)}</span>
             <span class={styles.stat} aria-label="Creep score">{value(facts()?.scores.creep_score)}</span>
-            <span class={styles.stat} aria-label="Vision score">{value(facts()?.ward_score)}</span>
+            <span class={styles.stat} aria-label="Vision score">{visionScore()}</span>
             <span class={styles.items}><For each={[0, 1, 2, 3, 4, 5, 6]}>{slot => {
               const item = () => slots()[slot];
               const fact = () => { const current = item(); return current && current !== "empty" ? current : null; };

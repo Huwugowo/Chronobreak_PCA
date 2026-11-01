@@ -8,7 +8,7 @@ import type { ReplayTick } from "../replayTime";
 
 afterEach(() => document.body.replaceChildren());
 const facts = (item: number, count: number | null): ScoreboardFacts => ({ payload_id: item, scores: { kills: 0, deaths: null, assists: 3, creep_score: 12 },
-  ward_score: 1.5, items: [{ item_id: item, slot: 0, count }] });
+  ward_score: 43.987654321, items: [{ item_id: item, slot: 0, count }] });
 const sample = (seconds: number): OverlaySample => ({ replay_tick: seconds * 48_000_000 as ReplayTick,
   observation_id: seconds, game_tick: String(seconds * 1_000_000), local_scores: null,
   players: Array.from({ length: 10 }, (_, i) => ({ participant: i + 1, level: seconds, is_dead: null, respawn_timer: null, spells: ["Flash", null] })) });
@@ -17,10 +17,11 @@ it("shows ten fixed team rows, nullable stats and discrete inventories, reusing 
   const host = document.createElement("div"); document.body.append(host);
   let update!: (patch: Partial<ComponentProps<typeof ReplayScoreboard>>) => void;
   const early = sample(2), late = sample(20), before = facts(2003, 2), after = facts(1001, 1);
+  after.ward_score = 55.123456789;
   const dispose = render(() => {
     const [props, setProps] = createSignal<ComponentProps<typeof ReplayScoreboard>>({ open: true, assetBaseUrl: "http://assets.test/ddragon/16.20.1",
       identities: Array.from({ length: 10 }, (_, i) => ({ participant: i + 1, riot_id: `Player${i + 1}#TEST`, champion_name: "Ahri", team: i < 5 ? "ORDER" : "CHAOS" })),
-      localParticipant: 1, sample: early, snapshot: new Map([[1, before]]), status: "ready" });
+      localParticipant: 1, sample: early, snapshot: new Map([[1, before], [3, { ...before, ward_score: 0 }]]), status: "ready" });
     update = patch => setProps(p => ({ ...p, ...patch }));
     return <ReplayScoreboard {...props()} />;
   }, host);
@@ -31,18 +32,23 @@ it("shows ten fixed team rows, nullable stats and discrete inventories, reusing 
     expect(host.querySelectorAll('[aria-label="Red team"] [data-participant]')).toHaveLength(5);
     expect(rows[0].textContent).toContain("Player1"); expect(rows[0].textContent).not.toContain("#TEST");
     expect(rows[0].querySelector('[aria-label="Kills / Deaths / Assists"]')?.textContent).toBe("0 / — / 3");
-    expect(rows[0].querySelector('[aria-label="Vision score"]')?.textContent).toBe("1.5");
+    expect(rows[0].querySelector('[aria-label="Vision score"]')?.textContent).toBe("43");
+    expect(rows[1].querySelector('[aria-label="Vision score"]')?.textContent).toBe("—");
+    expect(rows[2].querySelector('[aria-label="Vision score"]')?.textContent).toBe("0");
+    expect(before.ward_score).toBe(43.987654321);
     const slot = rows[0].querySelector('[data-slot="0"]')!;
     expect(slot.getAttribute("aria-label")).toBe("Item 2003 × 2");
     const potion = slot.querySelector("img")!;
     expect(potion.getAttribute("src")).toBe("http://assets.test/ddragon/16.20.1/item/2003");
     expect(rows[1].querySelector('[data-slot="0"]')?.getAttribute("aria-label")).toContain("unavailable");
     update({ sample: late, snapshot: new Map([[1, after]]) });
+    expect(rows[0].querySelector('[aria-label="Vision score"]')?.textContent).toBe("55");
     expect(host.querySelector('[data-participant="1"]')).toBe(rows[0]);
     expect(potion.hidden).toBe(true);
     expect(slot.querySelectorAll("img")).toHaveLength(2);
     expect(slot.getAttribute("aria-label")).toBe("Item 1001 × 1");
     update({ sample: early, snapshot: new Map([[1, before]]) });
+    expect(rows[0].querySelector('[aria-label="Vision score"]')?.textContent).toBe("43");
     expect(slot.querySelector('img[src$="/2003"]')).toBe(potion);
     expect(potion.hidden).toBe(false);
     update({ open: false });
@@ -52,6 +58,7 @@ it("shows ten fixed team rows, nullable stats and discrete inventories, reusing 
     update({ open: true });
     expect(slot.getAttribute("aria-label")).toBe("Item 1001 × 1");
     update({ sample: null, snapshot: null });
+    expect(rows[0].querySelector('[aria-label="Vision score"]')?.textContent).toBe("—");
     expect(rows[0].querySelector('[aria-label="Level"]')?.textContent).toBe("—");
     expect(rows[0].querySelector('[aria-label="Kills / Deaths / Assists"]')?.textContent).toBe("— / — / —");
     expect(slot.getAttribute("aria-label")).toContain("unavailable");
