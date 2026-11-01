@@ -152,6 +152,7 @@ fn run_headless(config: Config, status: StatusSender) -> Result<()> {
             ServiceEvent::Recording { directory } => {
                 tracing::info!(directory = %directory.display(), "state: recording")
             }
+            ServiceEvent::SourceUnavailable { directory } => tracing::info!(directory = %directory.display(), "state: recording; waiting for window"),
             ServiceEvent::Error { message } => tracing::error!(%message, "state: error"),
             ServiceEvent::ShutdownComplete => tracing::info!("state: stopped"),
             ServiceEvent::Availability(event) => {

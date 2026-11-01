@@ -28,7 +28,7 @@ pub fn event_sink(status: StatusSender, downstream: EventSink) -> EventSink {
             ServiceEvent::Availability(event) => Some(*event),
             ServiceEvent::ShutdownComplete => Some(AvailabilityEvent::Stopped),
             // Text errors describe individual capture attempts, never service death.
-            ServiceEvent::Error { .. } => None,
+            ServiceEvent::Error { .. } | ServiceEvent::SourceUnavailable { .. } => None,
         };
         if let Some(event) = update {
             publish(&status, event);

@@ -127,6 +127,7 @@ struct TrayApplication {
 enum TrayState {
     Idle,
     Recording(PathBuf),
+    SourceUnavailable,
     Error(String),
 }
 
@@ -180,6 +181,10 @@ impl TrayApplication {
                     directory.display()
                 ))))?;
             }
+            TrayState::SourceUnavailable => {
+                tray.set_icon(Some(self.recording_icon.clone()))?;
+                tray.set_tooltip(Some("League Replay — Recording; waiting for League window"))?;
+            }
             TrayState::Error(message) => {
                 tray.set_icon(Some(self.error_icon.clone()))?;
                 tray.set_tooltip(Some(bounded_tooltip(&format!(
@@ -228,6 +233,10 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
             }
             UserEvent::Service(ServiceEvent::Recording { directory }) => {
                 self.state = TrayState::Recording(directory);
+                let _ = self.apply_state();
+            }
+            UserEvent::Service(ServiceEvent::SourceUnavailable { .. }) => {
+                self.state = TrayState::SourceUnavailable;
                 let _ = self.apply_state();
             }
             UserEvent::Service(ServiceEvent::Error { message }) => {

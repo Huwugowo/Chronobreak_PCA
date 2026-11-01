@@ -19,6 +19,15 @@ async fn main() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::sync::mpsc;
 
+    let scenario = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "steady".to_owned());
+    if !matches!(
+        scenario.as_str(),
+        "steady" | "close_window" | "recreate" | "minimize_restore"
+    ) {
+        bail!("unsupported lifecycle scenario");
+    }
     let seconds: u64 = std::env::args()
         .nth(1)
         .context("duration seconds required")?
@@ -67,10 +76,22 @@ async fn main() -> anyhow::Result<()> {
     let mut fixture = tokio::process::Command::new(fixture_exe)
         .args([
             "--scenario",
-            "steady",
+            &scenario,
             "--duration-seconds",
             &(seconds + 120).to_string(),
             "--always-on-top",
+            "--action-start-signal",
+            root.join("recording-started")
+                .to_str()
+                .context("signal path")?,
+            "--action-after-seconds",
+            "3",
+            "--restore-after-seconds",
+            if scenario == "minimize_restore" {
+                "21"
+            } else {
+                "7"
+            },
         ])
         .creation_flags(0x0800_0000) // no helper console; the generated capture window stays visible
         .stdout(std::process::Stdio::piped())
@@ -137,11 +158,12 @@ async fn main() -> anyhow::Result<()> {
                 match event {
                     ServiceEvent::Recording { directory } => return Ok(directory),
                     ServiceEvent::Error { .. } | ServiceEvent::ShutdownComplete => bail!("fixture startup failed"),
-                    ServiceEvent::Idle | ServiceEvent::Availability(_) => {}
+                    ServiceEvent::Idle | ServiceEvent::SourceUnavailable { .. } | ServiceEvent::Availability(_) => {}
                 }
             }
             bail!("fixture service event owner closed");
         }).await.context("fixture startup timeout")??;
+        std::fs::write(root.join("recording-started"), b"start")?;
         println!("fixture_recording_started output={}", root.display());
         let observer = query(&namespace, &std::env::current_exe()?).await?;
         if observer.service_state != ServiceState::Available || observer.capture_activity != CaptureActivity::Recording {
@@ -165,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {},
                 _ = tokio::signal::ctrl_c() => bail!("fixture interrupted"),
                 event = events.recv() => {
-                    if !matches!(event, Some(ServiceEvent::Idle | ServiceEvent::Recording { .. } | ServiceEvent::Availability(_))) {
+                    if !matches!(event, Some(ServiceEvent::Idle | ServiceEvent::Recording { .. } | ServiceEvent::SourceUnavailable { .. } | ServiceEvent::Availability(_))) {
                         bail!("fixture recording ended early");
                     }
                 }
@@ -175,6 +197,24 @@ async fn main() -> anyhow::Result<()> {
         if reopened.capture_activity != CaptureActivity::Recording { bail!("capture did not survive observer close/reopen"); }
         Ok::<_, anyhow::Error>((directory, samples))
     }.await;
+    if scenario != "steady"
+        && let Ok((directory, _)) = &exercise
+    {
+        // End the actual original process, then let the service observe its handle.
+        fixture.kill().await?;
+        fixture.wait().await?;
+        tokio::time::timeout(Duration::from_secs(45), async {
+            while !directory.join("metadata.json").exists() {
+                if failed.load(Ordering::SeqCst) {
+                    bail!("process-owned recording failed");
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .context("publication after process exit timed out")??;
+    }
     let _ = commands.send(ServiceCommand::Shutdown);
     let service_result = service.await;
     let fixture_cleanup = async {
@@ -202,7 +242,51 @@ async fn main() -> anyhow::Result<()> {
     if directory.join("league_match.json").exists() {
         bail!("unavailable-data fixture produced unexpected context");
     }
-    let report = serde_json::json!({"schema_version":1,"duration_seconds":seconds,
+    // Decode the entire short fixture; sample pixels distinguish a fresh source
+    // from a valid MP4 containing only repeated pre-loss images.
+    let ffmpeg = league_replay_recorder::encoder::Ffmpeg::resolve().await?;
+    let filter = if scenario == "recreate" {
+        "fps=1,crop=64:64:16:16,scale=16:16"
+    } else {
+        "fps=1,scale=16:16"
+    };
+    let decoded = tokio::process::Command::new(ffmpeg.path())
+        .args(["-v", "error", "-threads", "1", "-i"])
+        .arg(directory.join("video.mp4"))
+        .args([
+            "-vf", filter, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+        ])
+        .creation_flags(0x0800_0000)
+        .kill_on_drop(true)
+        .output()
+        .await?;
+    if !decoded.status.success() || !decoded.stderr.is_empty() {
+        bail!(
+            "fixture full decode failed: {}",
+            String::from_utf8_lossy(&decoded.stderr)
+        );
+    }
+    let frames: Vec<_> = decoded.stdout.chunks_exact(16 * 16 * 3).collect();
+    if frames.len() < seconds.saturating_sub(2) as usize {
+        bail!("recording timeline stopped before process exit");
+    }
+    if scenario == "recreate" {
+        let red = |frame: &&[u8]| frame[0] > 180 && frame[1] < 70;
+        let green = |frame: &&[u8]| frame[1] > 180 && frame[0] < 70;
+        if !frames.iter().take(5).any(red) || !frames.iter().rev().take(4).all(green) {
+            bail!("decoded recording did not resume the replacement window's fresh green epoch");
+        }
+    }
+    if scenario == "minimize_restore"
+        && frames
+            .iter()
+            .rev()
+            .take(4)
+            .all(|frame| *frame == *frames.last().unwrap())
+    {
+        bail!("decoded frames did not resume motion after restore");
+    }
+    let report = serde_json::json!({"schema_version":1,"duration_seconds":seconds,"scenario":scenario,
         "canonical_publication":true,"match_context_available":false,
         "lcu_delay_exercised":false,"resource_samples":samples});
     std::fs::write(

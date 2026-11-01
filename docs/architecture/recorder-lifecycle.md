@@ -13,8 +13,8 @@ League process presence remains the automatic lifecycle authority:
 
 1. appearance makes the process eligible while its visible capture HWND is discovered;
 2. an owned cancellable startup task starts the native recorder inside one 15-second deadline;
-3. watcher selection replacement cancels/reaps startup or stops the old session before a new generation can start; publication requires proof that the original process ended;
-4. process disappearance stops an active recording with the same original-process proof; enumeration failure or target closure alone never establishes termination;
+3. startup and capture retain the original process identity and limited-rights `OwnedHandle` in `Arc<OriginalProcess>`; watcher selection changes cannot replace a still-live owner;
+4. confirmed original-process termination stops the recording before a new generation can start; enumeration failure or target closure alone never establishes termination;
 5. application shutdown cancels startup and finalizes an active recording before emitting completion.
 
 Live Client readiness and `GameEnd` are not start/stop signals. A process with no ready window is retried on the next watcher tick. Retryable startup failures follow the bounded 2/5/10/30-second schedule only after cleanup, while terminal incompatibility and an unexpected active-backend exit suppress runaway retries for that process generation.
@@ -38,46 +38,38 @@ On Windows, the sole production video path is in-process exact-HWND Windows Grap
 
 The service owns one native implementation: a supervised GPU worker, bounded completion thread, four NVENC slots, diagnostics receiver, and one FFmpeg child restricted to audio encoding and fragmented-MP4 muxing. Startup is announced only after a real first WGC frame and advancing encode/mux evidence. Cooperative cleanup performs the blocking worker join off the async executor; child pipes are continuously drained and reaped under finite deadlines.
 
-The service validates the captured HWND/PID/adapter identity while active. WGC
-`Closed` or disappearance of the selected HWND ends capture and drains its owned
-resources, but neither signal proves the match ended. Before returning a candidate
-from any ordinary stop that observed target loss, the native lifecycle requires
-the service to confirm termination after the video worker joins. Before allocating
-native resources, the service retains a query/synchronize Win32 handle matching
-the original PID and exact creation FILETIME (without second-level rounding).
-Only a successful creation-identity query and a signaled retained process handle
-authorize publication. Missing enumeration records, query/access failures, wait
-failures, or uncertain identity fail closed. The retained handle survives process
-exit and pins the original kernel object rather than querying a reused PID.
-A worker error cannot be overridden by that confirmation. This also covers HWND
-loss observed before the worker reports `Closed`, target closure racing with
-shutdown, watcher replacement/disappearance, and a startup result racing with
-selection-change cancellation. Selecting a different process cannot publish an
-old recording whose original owner is still alive. A process ending during
-teardown permits normal media validation; a still-live or unknown original
-identity preserves partial output and reports failure. A replaced HWND or changed
-process/adapter identity remains a failed/partial outcome. Focus loss, occlusion,
-and temporary minimize do not change identity; WGC may pause while minimized and
-resume after restore.
+The original process owns the session, independently of its replaceable WGC window.
+The service retains a query/synchronize `OwnedHandle` matching the original PID and
+exact creation FILETIME before native allocation. The same handle is shared safely
+through startup and the GPU worker, survives process exit and pins the original
+kernel object rather than a reused PID. Query/wait errors fail closed. Watcher
+selection changes cannot stop or replace a still-live owner.
 
-There is no grace timer, restart or new polling owner. A legitimate HWND-first
-match end whose process remains alive beyond video teardown is indistinguishable
-from unexpected target loss with the existing signals and conservatively remains
-partial. Process termination is the existing lifecycle authority, not proof of a
-semantic `GameEnd` or normal-versus-crashed game outcome. Optional Live/LCU/EOG
-data does not gate video publication. Deferring publication until a later process
-exit cannot distinguish a normal delayed shutdown from premature window loss
-followed by eventual exit, so no delayed-success path is added. Video resources
-are joined/released promptly through existing teardown; footage is retained as
-partial when confirmation is unavailable. Preserving every legitimate delayed
-HWND-first ending as complete remains unproven and is an explicit product trade-off.
+WGC `Closed` or typed window disappearance retires only the WGC leaf after strict
+callback quiescence. One GPU worker retains the device/MTA, last image, converter,
+encoder, mux and CFR epoch. A same-process, same-adapter replacement can resume
+fresh frames, with attachment attempts at most once per two seconds. While no
+source is available, healthy last-image CFR output continues until the original
+process exits or the user stops; there is no elapsed-time cutoff. Disk consumption
+continues as for any active recording, and actual write/resource failures remain
+terminal. Window interruption alone does not invalidate publication. Other WGC,
+driver, callback, encoder and mux errors remain terminal, and later process exit
+cannot erase them. Unproven callback cleanup retains the entire guarded context
+and disables capture until recorder relaunch.
+
+Automatic stop requires confirmed original-process termination after joining the
+worker; intentional user stop is also a valid boundary. Existing final media and
+frame-accounting checks still decide whether a candidate can be published. Process
+termination and valid media do not prove complete gameplay coverage or a semantic
+`GameEnd`; optional Live/LCU/EOG data does not gate publication.
 
 Normal stop ends native capture, drains bounded GPU/encoder/mux work, flushes the muxer, and reaps every owned task/thread/child under finite deadlines. A clean result requires an intentional stop boundary, terminal WGC/encode/mux evidence, consistent frame accounting, successful mux exit, and nonempty output. The common finalizer validates the private candidate before renaming it to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixtures remain recoverable.
 
 The existing service watchdog requires copied source-QPC, completed encode and mux-byte
 advancement within 15 seconds under regular observation. Hidden/minimized windows
-pause only the source deadline; CFR encoding and muxing must continue. Restore
-rearms source freshness without extending encode/mux deadlines. A service observation
+and detached sources pause only the source deadline; CFR encoding and muxing must
+continue. Restore or a new attached-source generation rearms source freshness
+without extending encode/mux deadlines. A service observation
 gap longer than 15 seconds rearms one confirmation window, with aggregate diagnostics.
 Fresh required progress after the gap must be observed before clean stop is allowed;
 an unresolved confirmation preserves partial output. Explicit protocol errors still

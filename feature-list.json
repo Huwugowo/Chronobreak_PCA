@@ -6,6 +6,49 @@
   },
   "features": [
     {
+      "id": "QB-CAP-009",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Keep the recording session owned by the original League process",
+      "description": "Separate the lifetime of a process-owned recording session from its replaceable WGC window source, preserving one media timeline through ordinary window loss and same-process restoration before authoritative process exit requests finalization.",
+      "priority": "P0",
+      "area": "capture",
+      "status": "in-progress",
+      "parent_id": "EPIC-CAP-REL",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-CAP-004"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-cap-009-process-owned-recording.md",
+        "progress": "docs/execution/qb-cap-009.md"
+      },
+      "acceptance_criteria": [
+        "One service session pins the original League process generation with the existing authoritative Windows handle; selected-window closure and watcher selection changes alone never establish process termination.",
+        "Temporary source unavailability preserves the recording epoch and CFR/encoder/mux timeline using the last valid image; a same-process, same-supported-adapter replacement HWND can resume fresh source frames without replacing the encoder or media identity.",
+        "Window-first and process-first exit orderings reach the same joined validation/publication result when capture is otherwise healthy; later process exit never erases an earlier real encoder, mux, protocol or callback-cleanup failure.",
+        "Source detach/reattach retains safe worker-affine MTA/device ownership, one source at a time, callback quiescence, bounded resources/cadence and cancellation. Unprovable cleanup retains the whole guarded context and disables further capture in that recorder owner until Quit/relaunch; unsupported adapter transition fails explicitly. Neither outcome starts an uncontrolled reconstruction loop.",
+        "Recoverable window absence keeps healthy CFR output alive until the original process exits or the user stops. No arbitrary elapsed-time limit invalidates healthy footage. Reacquisition is bounded to one attempt per two seconds; resource/write failures are terminal and preserve partials. Recording status reports waiting for the window.",
+        "Existing downstream/source watchdog distinctions, frame accounting, strict media/timeline validation, partial preservation and canonical publication remain enforced; no additional persisted recording-health authority or gameplay GameEnd gate is introduced.",
+        "Focused existing fixtures/tests cover window-first exit, same-process recreation with decoded fresh frames, minimize/restore, exact process restart boundaries, and publication rejection after callback/encoder/mux errors.",
+        "Report actual validation and remaining real-League/hardware limitations truthfully; long soaks and formal performance investigations belong to their own features and do not block this implementation."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Focused Rust tests/checks plus short generated-window service runs; decode footage to check continuity and fresh frames after recreation. Reuse existing callback and encoder/mux negative checks.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-11-01: process-owned session implemented with shared limited-rights OwnedHandle, replaceable same-process/same-adapter WGC leaf, persistent GPU/encoder/mux/CFR context, typed window absence, bounded reacquisition and cumulative source accounting. Strict callback cleanup and publication validation remain enforced.",
+        "2026-11-01: recorder all-target/all-feature tests passed (266 library + 7 integration + 3 fixture tests; 12 hardware/runtime tests ignored); strict all-target/all-feature Clippy passed. Includes window-first finalization, failure precedence, detached-source watchdog, callback quiescence and exact process identity checks. Details: docs/execution/qb-cap-009.md.",
+        "Short existing-service recreate fixture attempted with generated media only: WGC item creation succeeded, NVENC returned NO_ENCODE_DEVICE and cleanup completed. Decoded recreation/minimize continuity and real League behavior remain unverified; implementation is committed without imposing long hardware gates."
+      ],
+      "notes": "User explicitly revised the plan and bypassed the normal planning/milestone workflow on 2026-11-01. Implement the coherent lifecycle directly, run proportionate checks, and commit. No five-minute lost-window cutoff, mandatory long soaks or new verification framework. Startup policy, audio and library UX remain separate features."
+    },
+    {
       "id": "QB-CAP-008",
       "kind": "feature",
       "stage": "ready",

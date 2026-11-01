@@ -64,6 +64,7 @@ mod windows_fixture {
         MinimizeRestore,
         Occlusion,
         CloseWindow,
+        Recreate,
     }
 
     struct Arguments {
@@ -74,6 +75,7 @@ mod windows_fixture {
         always_on_top: bool,
         marker_duration: Option<Duration>,
         marker_start_signal: Option<PathBuf>,
+        action_start_signal: Option<PathBuf>,
     }
 
     pub fn run() -> Result<()> {
@@ -140,6 +142,7 @@ mod windows_fixture {
         let mut always_on_top = false;
         let mut marker_duration = None;
         let mut marker_start_signal = None;
+        let mut action_start_signal = None;
         while let Some(argument) = values.next() {
             match argument.as_str() {
                 "--duration-seconds" => {
@@ -149,6 +152,13 @@ mod windows_fixture {
                             .context("--duration-seconds requires a value")?
                             .parse::<u64>()
                             .context("--duration-seconds must be an integer")?,
+                    ));
+                }
+                "--action-start-signal" => {
+                    action_start_signal = Some(PathBuf::from(
+                        values
+                            .next()
+                            .context("action start signal requires a path")?,
                     ));
                 }
                 "--scenario" => {
@@ -163,6 +173,7 @@ mod windows_fixture {
                         "minimize_restore" => Scenario::MinimizeRestore,
                         "occlusion" => Scenario::Occlusion,
                         "close_window" => Scenario::CloseWindow,
+                        "recreate" => Scenario::Recreate,
                         value => bail!("unsupported fixture scenario {value:?}"),
                     };
                 }
@@ -220,6 +231,7 @@ mod windows_fixture {
             always_on_top,
             marker_duration,
             marker_start_signal,
+            action_start_signal,
         })
     }
 
@@ -604,6 +616,8 @@ mod windows_fixture {
         second_action_done: bool,
         always_on_top: bool,
         marker: Option<MarkerOverlay>,
+        action_start_signal: Option<PathBuf>,
+        action_started_at: Option<Instant>,
     }
 
     impl Fixture {
@@ -626,6 +640,8 @@ mod windows_fixture {
                 second_action_done: false,
                 always_on_top: arguments.always_on_top,
                 marker,
+                action_start_signal: arguments.action_start_signal,
+                action_started_at: None,
             }
         }
 
@@ -664,7 +680,7 @@ mod windows_fixture {
                     self.occluder = Some(occluder);
                     println!("QUEUEBACK_WGC_ACTION occluder_shown_and_focused");
                 }
-                Scenario::CloseWindow => {
+                Scenario::CloseWindow | Scenario::Recreate => {
                     let window = self.window.take();
                     drop(window);
                     println!("QUEUEBACK_WGC_ACTION target_window_closed");
@@ -673,7 +689,13 @@ mod windows_fixture {
             io::stdout().flush().ok();
         }
 
-        fn run_second_action(&mut self) {
+        fn run_second_action(&mut self, event_loop: &ActiveEventLoop) {
+            if self.scenario == Scenario::Recreate {
+                self.resumed(event_loop);
+                println!("QUEUEBACK_WGC_ACTION recreated");
+                io::stdout().flush().ok();
+                return;
+            }
             let Some(window) = self.window.as_ref() else {
                 return;
             };
@@ -695,7 +717,7 @@ mod windows_fixture {
                     window.focus_window();
                     println!("QUEUEBACK_WGC_ACTION occluder_removed");
                 }
-                Scenario::CloseWindow => {}
+                Scenario::CloseWindow | Scenario::Recreate => {}
             }
             io::stdout().flush().ok();
         }
@@ -734,7 +756,12 @@ mod windows_fixture {
 
         fn draw_next_frame(&mut self) {
             if let Some(window) = &self.window {
-                draw_frame(window, self.frame, self.marker.as_mut());
+                draw_frame(
+                    window,
+                    self.frame,
+                    self.marker.as_mut(),
+                    self.scenario == Scenario::Recreate && self.second_action_done,
+                );
                 self.frame = self.frame.saturating_add(1);
                 window.request_redraw();
             }
@@ -820,13 +847,25 @@ mod windows_fixture {
                 event_loop.exit();
                 return;
             }
-            let elapsed = now.saturating_duration_since(self.started_at);
+            if self.action_started_at.is_none()
+                && self
+                    .action_start_signal
+                    .as_ref()
+                    .is_some_and(|path| path.is_file())
+            {
+                self.action_started_at = Some(now);
+            }
+            let elapsed = match (&self.action_start_signal, self.action_started_at) {
+                (None, _) => now.saturating_duration_since(self.started_at),
+                (_, Some(start)) => now.saturating_duration_since(start),
+                _ => Duration::ZERO,
+            };
             if !self.first_action_done && elapsed >= self.action_after {
                 self.run_first_action(event_loop);
                 self.first_action_done = true;
             }
             if !self.second_action_done && elapsed >= self.restore_after {
-                self.run_second_action();
+                self.run_second_action(event_loop);
                 self.second_action_done = true;
             }
             if now >= self.next_frame {
@@ -857,7 +896,7 @@ mod windows_fixture {
         Some(HWND(handle.hwnd.get() as *mut _))
     }
 
-    fn draw_frame(window: &Window, frame: u64, marker: Option<&mut MarkerOverlay>) {
+    fn draw_frame(window: &Window, frame: u64, marker: Option<&mut MarkerOverlay>, restored: bool) {
         let Some(hwnd) = hwnd(window) else {
             return;
         };
@@ -937,6 +976,20 @@ mod windows_fixture {
                 color,
             );
         }
+        fill(
+            device,
+            &RECT {
+                left: 0,
+                top: 0,
+                right: 120,
+                bottom: 120,
+            },
+            if restored {
+                rgb(20, 240, 20)
+            } else {
+                rgb(240, 20, 20)
+            },
+        );
         if let Some(saved) = clip_state {
             // SAFETY: `saved` is the state returned by `SaveDC` for this live
             // DC before drawing the background.

@@ -16,7 +16,7 @@ use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
 use windows::core::{IInspectable, Interface, Type, factory};
 
 use crate::platform::{CaptureTarget, validate_capture_target_identity};
@@ -242,7 +242,7 @@ struct NativeWgcTelemetry {
     closed: AtomicBool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct NativeWgcTelemetrySnapshot {
     pub arrivals: u64,
     pub admitted: u64,
@@ -258,6 +258,42 @@ pub struct NativeWgcTelemetrySnapshot {
     pub first_callback_error: Option<NativeWgcCallbackError>,
     pub recreations: u64,
     pub closed: bool,
+}
+
+impl NativeWgcTelemetrySnapshot {
+    /// Counts span all leaves; high-water marks remain maxima, not sums.
+    pub(crate) fn combine(self, next: Self) -> Self {
+        Self {
+            arrivals: self.arrivals.saturating_add(next.arrivals),
+            admitted: self.admitted.saturating_add(next.admitted),
+            handoff_drops: self.handoff_drops.saturating_add(next.handoff_drops),
+            pending_frame_replacements: self
+                .pending_frame_replacements
+                .saturating_add(next.pending_frame_replacements),
+            worker_frame_discards: self
+                .worker_frame_discards
+                .saturating_add(next.worker_frame_discards),
+            callback_errors: self.callback_errors.saturating_add(next.callback_errors),
+            recreations: self.recreations.saturating_add(next.recreations),
+            pending_frame_high_water_mark: self
+                .pending_frame_high_water_mark
+                .max(next.pending_frame_high_water_mark),
+            first_arrival_qpc_100ns: self
+                .first_arrival_qpc_100ns
+                .or(next.first_arrival_qpc_100ns),
+            latest_arrival_qpc_100ns: next
+                .latest_arrival_qpc_100ns
+                .or(self.latest_arrival_qpc_100ns),
+            first_accepted_qpc_100ns: self
+                .first_accepted_qpc_100ns
+                .or(next.first_accepted_qpc_100ns),
+            latest_accepted_qpc_100ns: next
+                .latest_accepted_qpc_100ns
+                .or(self.latest_accepted_qpc_100ns),
+            first_callback_error: self.first_callback_error.or(next.first_callback_error),
+            closed: self.closed || next.closed,
+        }
+    }
 }
 
 impl NativeWgcTelemetry {
@@ -470,6 +506,7 @@ pub(crate) struct NativeWgcCapture {
     session: GraphicsCaptureSession,
     item: GraphicsCaptureItem,
     target_hwnd: HWND,
+    target_pid: u32,
     frame_arrived_token: Option<i64>,
     item_closed_token: Option<i64>,
     receiver: Receiver<QueuedWgcFrame>,
@@ -566,6 +603,10 @@ impl NativeWgcCapture {
             session,
             item,
             target_hwnd: HWND(hwnd as usize as *mut _),
+            target_pid: match target.source {
+                crate::platform::CaptureSource::WindowsGraphicsCapture { pid, .. } => pid,
+                _ => 0,
+            },
             frame_arrived_token: None,
             item_closed_token: None,
             receiver,
@@ -741,10 +782,14 @@ impl NativeWgcCapture {
         if self.telemetry.closed.load(Ordering::Acquire) {
             return;
         }
-        // SAFETY: `target_hwnd` came from the validated CaptureTarget. IsWindow
-        // accepts stale HWND values and returns false rather than dereferencing
-        // application memory.
-        if !unsafe { IsWindow(Some(self.target_hwnd)).as_bool() } {
+        let mut pid = 0;
+        // SAFETY: both queries accept stale, opaque HWND values; only the local
+        // pid is written, and neither dereferences application memory.
+        let exists = unsafe {
+            GetWindowThreadProcessId(self.target_hwnd, Some(&mut pid));
+            IsWindow(Some(self.target_hwnd)).as_bool()
+        };
+        if !exists || pid != self.target_pid {
             self.telemetry.closed.store(true, Ordering::Release);
         }
     }
@@ -1153,6 +1198,58 @@ impl Drop for NativeWgcCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_source_accounting_preserves_totals_and_first_failure() {
+        let first_error = NativeWgcCallbackError {
+            category: NativeWgcCallbackErrorCategory::FrameAcquisition,
+            hresult: Some(-1),
+        };
+        let retired = NativeWgcTelemetrySnapshot {
+            arrivals: 10,
+            admitted: 7,
+            handoff_drops: 3,
+            worker_frame_discards: 2,
+            pending_frame_replacements: 1,
+            pending_frame_high_water_mark: 1,
+            callback_errors: 1,
+            first_callback_error: Some(first_error),
+            first_accepted_qpc_100ns: Some(100),
+            latest_accepted_qpc_100ns: Some(200),
+            closed: true,
+            ..Default::default()
+        };
+        let replacement = NativeWgcTelemetrySnapshot {
+            arrivals: 5,
+            admitted: 4,
+            handoff_drops: 1,
+            worker_frame_discards: 1,
+            pending_frame_replacements: 2,
+            pending_frame_high_water_mark: 1,
+            callback_errors: 1,
+            first_callback_error: Some(NativeWgcCallbackError {
+                category: NativeWgcCallbackErrorCategory::InvalidTimestamp,
+                hresult: None,
+            }),
+            first_accepted_qpc_100ns: Some(300),
+            latest_accepted_qpc_100ns: Some(400),
+            ..Default::default()
+        };
+        let total = retired.combine(replacement);
+        assert_eq!(
+            (total.arrivals, total.admitted, total.handoff_drops),
+            (15, 11, 4)
+        );
+        assert_eq!(total.worker_frame_discards, 3);
+        assert_eq!(total.pending_frame_replacements, 3);
+        assert_eq!(total.pending_frame_high_water_mark, 1);
+        assert_eq!(total.callback_errors, 2);
+        assert_eq!(total.first_callback_error, Some(first_error));
+        assert_eq!(total.first_accepted_qpc_100ns, Some(100));
+        assert_eq!(total.latest_accepted_qpc_100ns, Some(400));
+        assert!(total.closed);
+        assert_eq!(total.combine(Default::default()), total);
+    }
 
     #[test]
     fn pending_future_surface_stays_owned_until_its_presentation_tick() {

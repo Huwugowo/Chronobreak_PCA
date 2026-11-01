@@ -1,4 +1,5 @@
 use std::mem::ManuallyDrop;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -10,13 +11,22 @@ use super::convert::NativeNv12Converter;
 use super::d3d11::NativeD3d11Device;
 use super::winrt::WinRtMtaGuard;
 
+static CLEANUP_UNPROVEN: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn cleanup_unproven() -> bool {
+    CLEANUP_UNPROVEN.load(Ordering::Acquire)
+}
+
 /// Thread-affine owner of the complete native source stack.
 ///
 /// Explicit destruction releases capture/device/MTA in that order, only after
 /// callback release is proven. This also covers implicit drop and unwinding.
 /// The MTA guard is !Send/!Sync, preventing movement to another thread.
 pub struct NativeWgcSource {
-    capture: ManuallyDrop<NativeWgcCapture>,
+    capture: ManuallyDrop<Option<NativeWgcCapture>>,
+    retired: NativeWgcTelemetrySnapshot,
+    dimensions: (u32, u32),
+    cleanup_unproven: bool,
     device: ManuallyDrop<NativeD3d11Device>,
     _winrt: ManuallyDrop<WinRtMtaGuard>,
 }
@@ -42,12 +52,16 @@ impl NativeWgcSource {
         let device = NativeD3d11Device::for_luid(&winrt, adapter_luid)?;
         let capture = NativeWgcCapture::prepare(&winrt, target, &device)
             .context("native WGC preparation failed before callback registration")?;
+        let dimensions = capture.pool_dimensions();
         let mut source = Self {
-            capture: ManuallyDrop::new(capture),
+            capture: ManuallyDrop::new(Some(capture)),
+            retired: NativeWgcTelemetrySnapshot::default(),
+            dimensions,
+            cleanup_unproven: false,
             device: ManuallyDrop::new(device),
             _winrt: ManuallyDrop::new(winrt),
         };
-        if let Err(error) = source.capture.start(
+        if let Err(error) = source.capture.as_mut().expect("initial capture").start(
             #[cfg(test)]
             failure,
         ) {
@@ -59,11 +73,19 @@ impl NativeWgcSource {
     }
 
     pub fn try_recv(&self) -> Result<Option<CapturedWgcFrame<'_>>> {
-        self.capture.try_recv()
+        self.capture
+            .as_ref()
+            .map_or(Ok(None), NativeWgcCapture::try_recv)
     }
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<Option<CapturedWgcFrame<'_>>> {
-        self.capture.recv_timeout(timeout)
+        match self.capture.as_ref() {
+            Some(capture) => capture.recv_timeout(timeout),
+            None => {
+                std::thread::sleep(timeout);
+                Ok(None)
+            }
+        }
     }
 
     pub(crate) fn receive_pending_timeout(
@@ -72,34 +94,50 @@ impl NativeWgcSource {
         after: i64,
         through: i64,
     ) -> Result<(bool, u64)> {
-        self.capture
-            .receive_pending_timeout(timeout, after, through)
+        match self.capture.as_mut() {
+            Some(capture) => capture.receive_pending_timeout(timeout, after, through),
+            None => {
+                std::thread::sleep(timeout);
+                Ok((false, 0))
+            }
+        }
     }
 
     pub(crate) fn poll_pending_for_tick(&mut self, after: i64, through: i64) -> Result<u64> {
-        self.capture.poll_pending_for_tick(after, through)
+        self.capture.as_mut().map_or(Ok(0), |capture| {
+            capture.poll_pending_for_tick(after, through)
+        })
     }
 
     pub(crate) fn take_pending_through(&mut self, qpc_100ns: i64) -> Option<CapturedWgcFrame<'_>> {
-        self.capture.take_pending_through(qpc_100ns)
+        self.capture.as_mut()?.take_pending_through(qpc_100ns)
     }
 
     pub(crate) fn record_worker_frame_discard(&mut self) {
-        self.capture.record_worker_frame_discard();
+        if let Some(capture) = self.capture.as_mut() {
+            capture.record_worker_frame_discard();
+        }
     }
 
     pub fn telemetry(&self) -> NativeWgcTelemetrySnapshot {
-        self.capture.telemetry()
+        self.capture.as_ref().map_or(self.retired, |capture| {
+            self.retired.combine(capture.telemetry())
+        })
     }
 
     pub fn pool_dimensions(&self) -> (u32, u32) {
-        self.capture.pool_dimensions()
+        self.dimensions
     }
 
     /// Recreate the capacity-two WGC pool after the caller has consumed and
     /// closed the frame that reported a new content size.
     pub fn recreate_for_content_size(&mut self, width: u32, height: u32) -> Result<()> {
-        self.capture.recreate(&self.device, width, height)
+        self.capture
+            .as_mut()
+            .context("cannot resize detached source")?
+            .recreate(&self.device, width, height)?;
+        self.dimensions = (width, height);
+        Ok(())
     }
 
     pub fn adapter_index(&self) -> u32 {
@@ -141,21 +179,91 @@ impl NativeWgcSource {
         )
     }
 
-    pub fn close(mut self) -> Result<NativeWgcTelemetrySnapshot> {
-        match self.capture.shutdown() {
-            Ok(()) => Ok(self.capture.telemetry()),
-            Err(error) if !self.capture.shutdown_complete() => {
-                tracing::error!(
-                    error = %error,
-                    "retaining native WGC source after incomplete shutdown to protect late callbacks"
-                );
-                std::mem::forget(self);
-                Err(error)
-            }
-            Err(error) => Err(error.context(
-                "native WGC cleanup failed after callback release; source resources released",
-            )),
+    pub(crate) fn is_attached(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.capture
+            .as_ref()
+            .is_some_and(|capture| capture.telemetry().closed)
+    }
+
+    /// Retire only the replaceable leaf. The encoder's device and MTA remain live.
+    pub(crate) fn detach(&mut self) -> Result<()> {
+        if self.cleanup_unproven {
+            anyhow::bail!("native callback release remains unproven");
         }
+        if let Some(capture) = self.capture.as_mut() {
+            let result = capture.shutdown();
+            if !capture.shutdown_complete() {
+                self.cleanup_unproven = true;
+                CLEANUP_UNPROVEN.store(true, Ordering::Release);
+                return Err(result
+                    .err()
+                    .unwrap_or_else(|| anyhow::anyhow!("native callback release is unproven")));
+            }
+            self.retired = self.retired.combine(capture.telemetry());
+            self.capture.take();
+            result?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn attach(
+        &mut self,
+        target: &CaptureTarget,
+        allowed: impl FnOnce() -> Result<bool>,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            !self.cleanup_unproven && self.capture.is_none(),
+            "native source is not safely detached"
+        );
+        anyhow::ensure!(
+            target.windows_adapter_luid() == Some(self.adapter_luid()),
+            "replacement window changed graphics adapter"
+        );
+        let capture = NativeWgcCapture::prepare(&self._winrt, target, &self.device)?;
+        self.dimensions = capture.pool_dimensions();
+        *self.capture = Some(capture);
+        // Guard the leaf before callbacks; recheck process/window after preparation.
+        let started = (|| {
+            if !allowed()? {
+                return Ok(false);
+            }
+            crate::platform::validate_capture_target_identity(target)?;
+            self.capture.as_mut().expect("prepared capture").start(
+                #[cfg(test)]
+                None,
+            )?;
+            Ok(true)
+        })();
+        match started {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                self.detach()?;
+                Ok(false)
+            }
+            Err(error) => match self.detach() {
+                Ok(()) => Err(error),
+                // Never classify failed rollback as recoverable window absence.
+                Err(cleanup) => Err(anyhow::anyhow!(
+                    "replacement startup failed: {error:#}; cleanup failed: {cleanup:#}"
+                )),
+            },
+        }
+    }
+
+    pub fn close(mut self) -> Result<NativeWgcTelemetrySnapshot> {
+        let result = self.detach();
+        if self.cleanup_unproven {
+            std::mem::forget(self);
+            return Err(result
+                .err()
+                .unwrap_or_else(|| anyhow::anyhow!("native callback release is unproven")));
+        }
+        result?;
+        Ok(self.retired)
     }
 
     pub(crate) fn close_after_initialization_failure(
@@ -169,10 +277,9 @@ impl NativeWgcSource {
 
 impl Drop for NativeWgcSource {
     fn drop(&mut self) {
-        let cleanup = self.capture.shutdown();
-        if !self.capture.shutdown_complete() {
-            tracing::error!(error = ?cleanup.err(),
-                "retaining native WGC source on drop: callback release is unproven");
+        let cleanup = self.detach();
+        if self.cleanup_unproven {
+            tracing::error!(error = ?cleanup.err(), "retaining native context: callback release is unproven");
             return;
         }
         if let Err(error) = cleanup {

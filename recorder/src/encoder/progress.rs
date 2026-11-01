@@ -10,6 +10,8 @@ const MAX_LINE_BYTES: usize = 16 * 1024;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingEvidence {
     pub capture_ready: bool,
+    pub source_detached: bool,
+    pub source_generation: u64,
     pub capture_terminal: bool,
     pub frame_pool_capacity: Option<u32>,
     pub output_pool_capacity: Option<u32>,

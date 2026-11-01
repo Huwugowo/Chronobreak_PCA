@@ -55,6 +55,7 @@ pub enum ServiceEvent {
     Availability(AvailabilityEvent),
     Idle,
     Recording { directory: PathBuf },
+    SourceUnavailable { directory: PathBuf },
     Error { message: String },
     ShutdownComplete,
 }
@@ -68,7 +69,7 @@ pub type EventSink = Arc<dyn Fn(ServiceEvent) + Send + Sync>;
 
 struct ActiveRecording {
     #[cfg(target_os = "windows")]
-    original_process: OriginalProcess,
+    original_process: Arc<OriginalProcess>,
     media_id: MediaId,
     ffprobe_path: PathBuf,
     session: VideoRecordingSession,
@@ -77,6 +78,7 @@ struct ActiveRecording {
     diagnostics: watch::Receiver<RecordingEvidence>,
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
+    source_unavailable: bool,
     poller: Option<PollerSession>,
     match_context: Option<ContextSession>,
     match_directory: Option<DirectoryGuard>,
@@ -85,12 +87,16 @@ struct ActiveRecording {
 }
 
 struct StartingRecording {
+    #[cfg(windows)]
+    original_process: Option<Arc<OriginalProcess>>,
     process: LeagueProcess,
     cancellation: watch::Sender<bool>,
     task: JoinHandle<RecordingStartupResult<ActiveRecording>>,
 }
 
 struct RecordingStartup {
+    #[cfg(windows)]
+    original_process: Arc<OriginalProcess>,
     ffmpeg: Ffmpeg,
     recording_config: RecordingConfig,
     hevc_playback_supported: bool,
@@ -265,6 +271,12 @@ enum VideoRecordingSession {
 }
 
 impl VideoRecordingSession {
+    #[cfg(windows)]
+    fn update_target(&self, target: CaptureTarget) {
+        let Self::Native(session) = self;
+        session.update_target(target);
+    }
+
     fn directory(&self) -> &std::path::Path {
         match self {
             #[cfg(not(target_os = "windows"))]
@@ -361,6 +373,7 @@ struct CaptureProgressWatchdog {
     observed_at: Instant,
     confirmation_started_at: Option<Instant>,
     source_qpc: i64,
+    source_generation: u64,
     source_advanced_at: Instant,
     encoded_frames: u64,
     encoded_advanced_at: Instant,
@@ -390,6 +403,7 @@ impl CaptureProgressWatchdog {
             observed_at: now,
             confirmation_started_at: None,
             source_qpc: evidence.latest_qpc.unwrap_or_default(),
+            source_generation: evidence.source_generation,
             source_advanced_at: now,
             encoded_frames: evidence.encoded_frames,
             encoded_advanced_at: now,
@@ -421,6 +435,15 @@ impl CaptureProgressWatchdog {
             self.encoded_advanced_at = now;
             self.muxed_advanced_at = now;
         }
+        if evidence.source_generation != self.source_generation {
+            self.source_generation = evidence.source_generation;
+            self.source_advanced_at = now;
+        }
+        let visibility = if evidence.source_detached {
+            CaptureTargetVisibility::PausedByWindowVisibility
+        } else {
+            visibility
+        };
         self.observe_progress(evidence, now);
         let observation = match (self.state, visibility) {
             (_, CaptureTargetVisibility::PausedByWindowVisibility) => {
@@ -599,6 +622,8 @@ async fn run_inner(
     };
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    #[cfg(windows)]
+    let mut blocked_original: Option<Arc<OriginalProcess>> = None;
     loop {
         tokio::select! {
             command = commands.recv() => {
@@ -625,6 +650,17 @@ async fn run_inner(
             }
             _ = interval.tick() => {
                 let current_process = watcher.refresh();
+                #[cfg(windows)]
+                let current_process = {
+                    let owner = active.as_ref().map(|recording: &ActiveRecording| &recording.original_process)
+                        .or_else(|| starting.as_ref().and_then(|attempt: &StartingRecording| attempt.original_process.as_ref()))
+                        .or(blocked_original.as_ref());
+                    match owner {
+                        Some(original) if !original.has_ended()? => Some(original.identity()),
+                        Some(original) => current_process.filter(|process| *process != original.identity()),
+                        None => current_process,
+                    }
+                };
                 match transition(previous_process, current_process) {
                     ProcessTransition::Appeared(process) => {
                         startup_retry.reset();
@@ -790,33 +826,65 @@ async fn run_inner(
                             }
                         }
                         Err(target_error) => {
-                            control_telemetry.target_failures =
-                                control_telemetry.target_failures.saturating_add(1);
-                            let recording = active.take().expect("active recording exists");
-                            if is_closed_capture_target_error(&target_error) {
-                                // A closed HWND can also mean unexpected target loss.
-                                // Drain safely, then require process termination before
-                                // admitting the candidate to normal media validation.
-                                info!(error = %target_error, "the League capture target closed; checking process termination after teardown");
-                                if stop_recording_with_process_confirmation(recording, &events, &mut watcher).await {
-                                    events(ServiceEvent::Idle);
+                            #[cfg(windows)]
+                            if target_error.is::<crate::platform::WindowUnavailable>() {
+                                visibility = CaptureTargetVisibility::PausedByWindowVisibility;
+                                let candidate = capture_window_for_process(recording.original_process.identity().pid)
+                                    .and_then(|window| capture_target_for_window(&window));
+                                match candidate {
+                                    Ok(target) => {
+                                        recording.session.update_target(target.clone());
+                                        recording.target = target;
+                                        recording.target_state_cache = CaptureTargetStateCache::default();
+                                    }
+                                    Err(error) if error.is::<crate::platform::WindowUnavailable>() => {},
+                                    Err(error) => {
+                                        let recording = active.take().expect("active recording exists");
+                                        blocked_original = Some(Arc::clone(&recording.original_process));
+                                        stop_recording_with_failure(recording, &events, format!("capture rediscovery failed: {error:#}")).await;
+                                        startup_retry.block_active_process(current_process);
+                                    }
                                 }
                             } else {
-                                warn!(error = %target_error, "the active League capture target became invalid");
-                                stop_recording_with_failure(
-                                    recording,
-                                    &events,
-                                    format!("the exact League capture target became invalid: {target_error:#}"),
-                                )
-                                .await;
+                                let recording = active.take().expect("active recording exists");
+                                blocked_original = Some(Arc::clone(&recording.original_process));
+                                stop_recording_with_failure(recording, &events, format!("capture target failed: {target_error:#}")).await;
+                                startup_retry.block_active_process(current_process);
                             }
-                            startup_retry.block_active_process(current_process);
+                            #[cfg(not(windows))]
+                            {
+                                let recording = active.take().expect("active recording exists");
+                                stop_recording_with_failure(recording, &events, format!("capture target failed: {target_error:#}")).await;
+                                startup_retry.block_active_process(current_process);
+                            }
                         }
                     }
                 }
 
                 if let Some(recording) = active.as_mut() {
                     let evidence = recording.diagnostics.borrow().clone();
+                    #[cfg(windows)]
+                    if evidence.source_detached && visibility == CaptureTargetVisibility::Visible {
+                        match capture_window_for_process(recording.original_process.identity().pid).and_then(|window| capture_target_for_window(&window)) {
+                            Ok(target) => { recording.session.update_target(target.clone()); recording.target = target; recording.target_state_cache = CaptureTargetStateCache::default(); },
+                            Err(error) if error.is::<crate::platform::WindowUnavailable>() => {},
+                            Err(error) => {
+                                let recording = active.take().expect("active recording exists");
+                                blocked_original = Some(Arc::clone(&recording.original_process));
+                                stop_recording_with_failure(recording, &events, format!("capture rediscovery failed: {error:#}")).await;
+                                startup_retry.block_active_process(current_process);
+                                continue;
+                            }
+                        }
+                    }
+                    if evidence.source_detached && !recording.source_unavailable {
+                        recording.source_unavailable = true;
+                        events(ServiceEvent::SourceUnavailable { directory: recording.session.directory().to_path_buf() });
+                    } else if recording.source_unavailable && !evidence.source_detached
+                        && evidence.latest_qpc.unwrap_or_default() > recording.progress_watchdog.source_qpc {
+                        recording.source_unavailable = false;
+                        events(ServiceEvent::Recording { directory: recording.session.directory().to_path_buf() });
+                    }
                     let now = Instant::now();
                     match recording.progress_watchdog.observe(&evidence, now, visibility) {
                         CaptureProgressObservation::ObserverGap => {
@@ -828,6 +896,7 @@ async fn run_inner(
                             control_telemetry.watchdog_stalls =
                                 control_telemetry.watchdog_stalls.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
+                            #[cfg(windows)] { blocked_original = Some(Arc::clone(&recording.original_process)); }
                             warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
                             stop_recording_with_failure(recording, &events, stall_reason).await;
                             startup_retry.block_active_process(current_process);
@@ -857,6 +926,7 @@ async fn run_inner(
                             control_telemetry.backend_exits =
                                 control_telemetry.backend_exits.saturating_add(1);
                             let recording = active.take().expect("active recording exists");
+                            #[cfg(windows)] { blocked_original = Some(Arc::clone(&recording.original_process)); }
                             info!("recorder backend exited; checking its terminal result before publication");
                             if stop_recording(recording, &events, &mut watcher).await {
                                 events(ServiceEvent::Idle);
@@ -883,9 +953,18 @@ async fn run_inner(
                     let target = capture_target_for_process(process.pid);
                     match target {
                         Ok(_target) => {
+                            #[cfg(windows)]
+                            let original_process = match OriginalProcess::open(process) {
+                                Ok(original) => Arc::new(original),
+                                Err(error) => { events(ServiceEvent::Error { message: format!("Cannot observe League process: {error:#}") }); startup_retry.block_active_process(Some(process)); continue; }
+                            };
+                            #[cfg(windows)]
+                            if crate::native::cleanup_unproven() { continue; }
                             control_telemetry.startup_attempts =
                                 control_telemetry.startup_attempts.saturating_add(1);
                             starting = Some(spawn_recording_start(RecordingStartup {
+                                #[cfg(windows)]
+                                original_process,
                                 ffmpeg: ffmpeg.clone(),
                                 recording_config: config.recording.clone(),
                                 hevc_playback_supported: config.app.hevc_playback_supported,
@@ -967,6 +1046,8 @@ fn log_control_telemetry(
 fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     let (cancellation, receiver) = watch::channel(false);
     let process = startup.process;
+    #[cfg(windows)]
+    let original_process = Some(Arc::clone(&startup.original_process));
     let span = tracing::info_span!(
         "capture_startup",
         pid = process.pid,
@@ -974,6 +1055,8 @@ fn spawn_recording_start(startup: RecordingStartup) -> StartingRecording {
     );
     let task = tokio::spawn(start_recording(startup, receiver).instrument(span));
     StartingRecording {
+        #[cfg(windows)]
+        original_process,
         process,
         cancellation,
         task,
@@ -1097,6 +1180,8 @@ async fn start_recording(
     #[cfg(not(target_os = "windows"))]
     let mut cancellation = cancellation;
     let RecordingStartup {
+        #[cfg(windows)]
+        original_process,
         ffmpeg,
         recording_config,
         hevc_playback_supported: _hevc_playback_supported,
@@ -1115,7 +1200,7 @@ async fn start_recording(
             process,
             readiness_source.as_ref(),
             || {
-                if !process.is_current() {
+                if original_process.has_ended()? {
                     bail!("League process identity changed during readiness");
                 }
                 capture_window_for_process(process.pid)
@@ -1165,10 +1250,6 @@ async fn start_recording(
         )));
     }
     #[cfg(target_os = "windows")]
-    let original_process = OriginalProcess::open(process)
-        .context("cannot retain the original League process identity before native startup")
-        .terminal_startup()?;
-    #[cfg(target_os = "windows")]
     crate::storage::preflight_recording_storage(&output_path.join("games")).terminal_startup()?;
     events(ServiceEvent::Availability(AvailabilityEvent::Capture(
         CaptureActivity::Starting,
@@ -1199,6 +1280,7 @@ async fn start_recording(
             audio.clone(),
             cancellation.clone(),
             crate::native::NATIVE_STARTUP_TIMEOUT,
+            Some(Arc::clone(&original_process)),
         )
         .await;
         let session = match session_result {
@@ -1460,6 +1542,7 @@ async fn start_recording(
         identity_admission.send_replace(false);
     }
     Ok(ActiveRecording {
+        source_unavailable: false,
         #[cfg(target_os = "windows")]
         original_process,
         media_id,
@@ -1560,12 +1643,6 @@ async fn stop_recording_with_failure(
     let _ = stop_recording_inner(recording, events, Some(failure_reason), None, false).await;
 }
 
-fn is_closed_capture_target_error(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.to_string() == "the selected League HWND was closed")
-}
-
 async fn stop_recording_inner(
     recording: ActiveRecording,
     events: &EventSink,
@@ -1587,6 +1664,7 @@ async fn stop_recording_inner(
         diagnostics,
         mut progress_watchdog,
         progress_report_due: _,
+        source_unavailable: _,
         poller,
         match_context,
         match_directory,
@@ -2000,6 +2078,8 @@ mod tests {
             )))
         });
         let starting = StartingRecording {
+            #[cfg(windows)]
+            original_process: None,
             process: LeagueProcess {
                 pid: 42,
                 started_at: 100,
@@ -2037,15 +2117,13 @@ mod tests {
         assert!(retry.permits(process, now));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn only_an_exact_closed_league_hwnd_is_eligible_for_termination_confirmation() {
-        let closed = anyhow::anyhow!("the selected League HWND was closed")
-            .context("capture target query failed");
-        assert!(is_closed_capture_target_error(&closed));
-
-        let replaced =
-            anyhow::anyhow!("the selected League HWND now belongs to a different process");
-        assert!(!is_closed_capture_target_error(&replaced));
+    fn only_typed_window_absence_is_recoverable() {
+        let closed =
+            anyhow::Error::new(crate::platform::WindowUnavailable).context("capture query");
+        assert!(closed.is::<crate::platform::WindowUnavailable>());
+        assert!(!anyhow::anyhow!("driver failure").is::<crate::platform::WindowUnavailable>());
     }
 
     #[test]
@@ -2066,6 +2144,53 @@ mod tests {
         let bgra = 1920_u64 * 1080 * 4 * 10;
         let nv12 = 1920_u64 * 1080 * 3 / 2 * 48;
         assert_eq!(bytes, bgra + nv12);
+    }
+
+    #[test]
+    fn detached_source_pauses_only_source_watchdog_and_reattach_rearms_once() {
+        let now = Instant::now();
+        let mut evidence = RecordingEvidence {
+            latest_qpc: Some(1),
+            source_detached: true,
+            ..Default::default()
+        };
+        let mut watchdog = CaptureProgressWatchdog::new(&evidence, now);
+        for seconds in 1..=20 {
+            evidence.encoded_frames += 60;
+            evidence.muxed_bytes += 1000;
+            assert!(!matches!(
+                watchdog.observe(
+                    &evidence,
+                    now + Duration::from_secs(seconds),
+                    CaptureTargetVisibility::Visible
+                ),
+                CaptureProgressObservation::Stalled(_)
+            ));
+        }
+        evidence.source_detached = false;
+        evidence.source_generation = 1;
+        for seconds in 21..=35 {
+            evidence.encoded_frames += 60;
+            evidence.muxed_bytes += 1000;
+            assert!(!matches!(
+                watchdog.observe(
+                    &evidence,
+                    now + Duration::from_secs(seconds),
+                    CaptureTargetVisibility::Visible
+                ),
+                CaptureProgressObservation::Stalled(_)
+            ));
+        }
+        evidence.encoded_frames += 60;
+        evidence.muxed_bytes += 1000;
+        assert!(matches!(
+            watchdog.observe(
+                &evidence,
+                now + Duration::from_secs(36),
+                CaptureTargetVisibility::Visible
+            ),
+            CaptureProgressObservation::Stalled(_)
+        ));
     }
 
     #[test]

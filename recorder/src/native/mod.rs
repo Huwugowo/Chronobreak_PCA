@@ -30,6 +30,7 @@ pub use mux::{NativeMuxPlan, NativeMuxProcess, NativeMuxTelemetrySnapshot};
 pub use nvenc::{NvencApiVersion, NvencDriverProbe, NvencH264Capability};
 pub use session::{NativeRecorderSession, NativeSessionTelemetrySnapshot};
 pub use source::NativeWgcSource;
+pub(crate) use source::cleanup_unproven;
 
 /// WGC owns two source frames. The callback must never extend this into an
 /// unbounded software queue.

@@ -64,6 +64,7 @@ impl StartupDeadline {
 
 struct NativeWorker {
     stop: Arc<AtomicBool>,
+    target: Option<watch::Sender<CaptureTarget>>,
     thread: Option<JoinHandle<Result<NativeSessionTelemetrySnapshot>>>,
     #[cfg(test)]
     cleanup_observer: Option<Arc<NativeWorkerCleanupObserver>>,
@@ -76,6 +77,7 @@ impl NativeWorker {
     ) -> Self {
         Self {
             stop,
+            target: None,
             thread: Some(thread),
             #[cfg(test)]
             cleanup_observer: None,
@@ -90,6 +92,7 @@ impl NativeWorker {
     ) -> Self {
         Self {
             stop,
+            target: None,
             thread: Some(thread),
             cleanup_observer: Some(observer),
         }
@@ -212,6 +215,7 @@ impl NativeRecordingSession {
         audio: AudioSource,
         cancellation: watch::Receiver<bool>,
         startup_timeout: Duration,
+        original: Option<Arc<crate::watcher::OriginalProcess>>,
     ) -> NativeRecordingStartupResult<Self> {
         validate_capture_target(&target).map_err(|error| {
             NativeRecordingStartupFailure::retryable(
@@ -220,6 +224,7 @@ impl NativeRecordingSession {
         })?;
         let output = directory.join(VIDEO_PARTIAL_MP4);
         let worker_output = output.clone();
+        let (target_sender, target_receiver) = watch::channel(target.clone());
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let (evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
@@ -236,12 +241,19 @@ impl NativeRecordingSession {
                     &worker_output,
                     &worker_stop,
                     &evidence_sender,
-                    startup_deadline,
+                    NativeWorkerOptions {
+                        startup_deadline,
+                        control: original.map(|original| NativeSourceControl {
+                            original,
+                            target: target_receiver,
+                        }),
+                    },
                 )
             })
             .context("failed to start native recorder GPU worker")
             .map_err(NativeRecordingStartupFailure::terminal)?;
-        let worker = NativeWorker::new(stop, thread);
+        let mut worker = NativeWorker::new(stop, thread);
+        worker.target = Some(target_sender);
         Self::await_startup(
             directory,
             output,
@@ -365,6 +377,12 @@ impl NativeRecordingSession {
         self.evidence.clone()
     }
 
+    pub(crate) fn update_target(&self, target: CaptureTarget) {
+        if let Some(sender) = &self.worker.target {
+            sender.send_replace(target);
+        }
+    }
+
     pub(crate) fn has_exited(&self) -> bool {
         self.worker.is_finished()
     }
@@ -406,12 +424,12 @@ impl NativeRecordingSession {
                 output.display()
             );
         }
-        let snapshot = worker_result?;
-        // Target closure explains a worker exit, but does not prove League ended.
-        // The service must confirm the original process generation after joining.
-        if exited_before_stop && !snapshot.target_closed {
+        worker_result?;
+        // Window loss is handled inside the worker. Only an explicit stop may
+        // end a healthy recording; automatic stop also confirms its process below.
+        if exited_before_stop {
             bail!(
-                "native recorder worker exited without a stop request or target close; partial fragmented MP4 preserved at {}",
+                "native recorder worker exited without a stop request; partial fragmented MP4 preserved at {}",
                 output.display()
             );
         }
@@ -428,7 +446,7 @@ impl NativeRecordingSession {
                 output.display()
             );
         }
-        if (process_end_required || snapshot.target_closed) && !process_ended() {
+        if process_end_required && !process_ended() {
             bail!(
                 "recording stopped without confirmed League process termination; partial fragmented MP4 preserved at {}",
                 output.display()
@@ -452,6 +470,16 @@ impl NativeRecordingSession {
     }
 }
 
+pub(super) struct NativeSourceControl {
+    pub original: Arc<crate::watcher::OriginalProcess>,
+    pub target: watch::Receiver<CaptureTarget>,
+}
+
+struct NativeWorkerOptions {
+    startup_deadline: Instant,
+    control: Option<NativeSourceControl>,
+}
+
 fn run_native_worker(
     target: &CaptureTarget,
     ffmpeg: &Path,
@@ -459,7 +487,7 @@ fn run_native_worker(
     output: &Path,
     stop: &AtomicBool,
     evidence: &watch::Sender<RecordingEvidence>,
-    startup_deadline: Instant,
+    options: NativeWorkerOptions,
 ) -> Result<NativeSessionTelemetrySnapshot> {
     let started = Instant::now();
     tracing::info!(elapsed_ms = 0_u64, "initializing native capture resources");
@@ -470,7 +498,7 @@ fn run_native_worker(
         output,
         stop,
         Some(evidence),
-        startup_deadline,
+        options.startup_deadline,
     ) {
         Ok(session) => session,
         Err(error) => {
@@ -483,7 +511,7 @@ fn run_native_worker(
         elapsed_ms = started.elapsed().as_millis() as u64,
         "native WGC/D3D11/NVENC initialized"
     );
-    let run_result = session.run_until_stopped(stop, evidence);
+    let run_result = session.run_until_stopped(stop, evidence, options.control);
     let finish_result = session.finish();
     tracing::info!(
         elapsed_ms = started.elapsed().as_millis() as u64,
@@ -794,37 +822,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exited_target_close_with_confirmed_process_end_can_reach_candidate_validation() {
+    async fn window_first_close_with_confirmed_process_exit_reaches_candidate_validation() {
         let directory = tempfile::tempdir().unwrap();
         let mut snapshot = telemetry();
         snapshot.target_closed = true;
-        let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
+        let session = fake_session(directory.path(), snapshot);
 
-        let candidate = session.stop(false, || true).await.unwrap();
+        let candidate = session.stop(true, || true).await.unwrap();
         assert_eq!(candidate.expected_frame_count().get(), 120);
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
     }
 
     #[tokio::test]
-    async fn target_close_without_process_end_preserves_partial_before_or_after_worker_exit() {
-        for exited in [false, true] {
+    async fn user_stop_after_window_loss_is_healthy_but_unrequested_worker_exit_is_not() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut snapshot = telemetry();
+        snapshot.target_closed = true;
+        let candidate = fake_session(directory.path(), snapshot)
+            .stop(false, || false)
+            .await
+            .unwrap();
+        assert_eq!(candidate.expected_frame_count().get(), 120);
+        let error = exited_session(directory.path(), snapshot, Ok(snapshot))
+            .await
+            .stop(true, || true)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("worker exited without a stop request")
+        );
+    }
+
+    #[tokio::test]
+    async fn failures_after_window_loss_are_not_erased_by_process_exit() {
+        for reason in ["callback cleanup failed", "encoder failed", "mux failed"] {
             let directory = tempfile::tempdir().unwrap();
             let mut snapshot = telemetry();
             snapshot.target_closed = true;
-            let session = if exited {
-                exited_session(directory.path(), snapshot, Ok(snapshot)).await
-            } else {
-                fake_session(directory.path(), snapshot)
-            };
-
-            let error = session.stop(false, || false).await.unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("without confirmed League process termination")
-            );
-            assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
+            let session = exited_session(directory.path(), snapshot, Err(anyhow!(reason))).await;
+            let error = session.stop(true, || true).await.unwrap_err();
+            assert!(format!("{error:#}").contains(reason));
+            assert!(directory.path().join(VIDEO_PARTIAL_MP4).exists());
             assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
         }
     }
@@ -902,11 +943,7 @@ mod tests {
         let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
 
         let error = session.stop(false, || true).await.unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("without a stop request or target close")
-        );
+        assert!(error.to_string().contains("without a stop request"));
         assert!(directory.path().join(VIDEO_PARTIAL_MP4).is_file());
         assert!(!directory.path().join(crate::storage::VIDEO_MP4).exists());
     }
@@ -1252,6 +1289,7 @@ mod tests {
                 AudioSource::Silent,
                 cancellation,
                 Duration::from_secs(15),
+                None,
             ),
         )
         .await
@@ -1317,6 +1355,7 @@ mod tests {
             AudioSource::Silent,
             cancellation,
             Duration::from_secs(15),
+            None,
         )
         .await
         .unwrap();

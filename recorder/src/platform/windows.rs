@@ -103,10 +103,19 @@ pub(crate) fn capture_target_for_window(window: &CaptureWindowSnapshot) -> Resul
     })
 }
 
+#[derive(Debug)]
+pub(crate) struct WindowUnavailable;
+impl std::fmt::Display for WindowUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("League window is temporarily unavailable")
+    }
+}
+impl std::error::Error for WindowUnavailable {}
+
 /// Discovery/physical sizing only; adapter resolution belongs to admission.
 pub(crate) fn capture_window_for_process(pid: u32) -> Result<CaptureWindowSnapshot> {
     let _dpi_awareness = ThreadDpiAwarenessGuard::per_monitor_v2()?;
-    let candidate = find_largest_window(pid)?.context("League has no visible usable window")?;
+    let candidate = find_largest_window(pid)?.ok_or(WindowUnavailable)?;
     let monitor = monitor_with_largest_intersection(candidate.screen_rect)?;
     let mut current_pid = 0;
     // SAFETY: all calls synchronously query a non-owned EnumWindows HWND.
@@ -128,7 +137,7 @@ pub(crate) fn capture_window_for_process(pid: u32) -> Result<CaptureWindowSnapsh
         monitor: monitor.0 as usize as u64,
     };
     if !exists || !visible || minimized || !snapshot.usable_for(pid) {
-        anyhow::bail!("League window changed during passive discovery");
+        return Err(WindowUnavailable.into());
     }
     Ok(snapshot)
 }
@@ -176,7 +185,7 @@ pub fn capture_target_visibility(target: &CaptureTarget) -> Result<CaptureTarget
         )
     };
     if !exists {
-        anyhow::bail!("the selected League HWND was closed");
+        return Err(WindowUnavailable.into());
     }
     if minimized || !visible {
         return Ok(CaptureTargetVisibility::PausedByWindowVisibility);
@@ -223,10 +232,10 @@ pub fn query_capture_target_state(
         )
     };
     if !exists {
-        anyhow::bail!("the selected League HWND was closed");
+        return Err(WindowUnavailable.into());
     }
     if current_pid != *pid {
-        anyhow::bail!("the selected League HWND now belongs to a different process");
+        return Err(WindowUnavailable.into());
     }
     // A minimized/temporarily hidden exact window remains the same capture
     // identity. WGC may pause frames and resume after restore, so defer bounds
@@ -237,7 +246,9 @@ pub fn query_capture_target_state(
             adapter_validated: false,
         });
     }
-    let (x, y, width, height) = client_bounds(hwnd).context("League HWND has no client area")?;
+    // Bounds can disappear after the identity/visibility queries during an
+    // ordinary window transition. No usable client area is source absence.
+    let (x, y, width, height) = client_bounds(hwnd).ok_or(WindowUnavailable)?;
     let visible_bounds = WindowsVisibleBounds {
         x,
         y,

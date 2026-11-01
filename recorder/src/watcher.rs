@@ -77,6 +77,10 @@ pub(crate) struct OriginalProcess {
 
 #[cfg(target_os = "windows")]
 impl OriginalProcess {
+    pub(crate) fn identity(&self) -> LeagueProcess {
+        self.identity
+    }
+
     pub(crate) fn open(identity: LeagueProcess) -> anyhow::Result<Self> {
         use windows::Win32::System::Threading::{
             PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
@@ -96,7 +100,7 @@ impl OriginalProcess {
         Ok(process)
     }
 
-    fn has_ended(&self) -> anyhow::Result<bool> {
+    pub(crate) fn has_ended(&self) -> anyhow::Result<bool> {
         use std::os::windows::io::AsRawHandle;
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::Threading::WaitForSingleObject;

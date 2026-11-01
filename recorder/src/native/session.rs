@@ -86,6 +86,7 @@ pub struct NativeRecorderSession {
     injected_worker_stalls: u64,
     injected_worker_stall_100ns: u64,
     target_closed: bool,
+    source_generation: u64,
     #[cfg(feature = "native-failure-injection")]
     injected_nvenc_failure_after_ticks: Option<u64>,
     #[cfg(feature = "native-failure-injection")]
@@ -186,6 +187,7 @@ impl NativeRecorderSession {
             injected_worker_stalls: 0,
             injected_worker_stall_100ns: 0,
             target_closed: false,
+            source_generation: 0,
             #[cfg(feature = "native-failure-injection")]
             injected_nvenc_failure_after_ticks: None,
             #[cfg(feature = "native-failure-injection")]
@@ -331,15 +333,17 @@ impl NativeRecorderSession {
     /// Drive the native graph on its dedicated GPU worker until the lifecycle
     /// owner requests stop. Progress publication is bounded to four updates per
     /// second so service observability does not add per-frame synchronization.
-    pub(crate) fn run_until_stopped(
+    pub(super) fn run_until_stopped(
         &mut self,
         stop: &AtomicBool,
         evidence: &watch::Sender<RecordingEvidence>,
+        control: Option<super::lifecycle::NativeSourceControl>,
     ) -> Result<()> {
         if stop.load(Ordering::Acquire) {
             return Ok(());
         }
 
+        let mut next_attach = Instant::now();
         let mut evidence_due = Instant::now();
         let mut stop_at = None;
         let mut catch_up_deadline = None;
@@ -352,17 +356,8 @@ impl NativeRecorderSession {
                         "native stop catch-up deadline exceeded the monotonic clock range",
                     )?);
             }
-            if self.target_closed && stop_at.is_none() {
-                // WGC reports the game HWND closing before the process watcher
-                // necessarily observes the League process disappearing. This
-                // sets only the capture/drain boundary; the lifecycle still needs
-                // independent process-end confirmation before returning a candidate.
-                let observed_stop = Instant::now();
-                stop_at = Some(observed_stop);
-                catch_up_deadline =
-                    Some(observed_stop.checked_add(FINAL_CATCH_UP_TIMEOUT).context(
-                        "native target-close catch-up deadline exceeded the monotonic clock range",
-                    )?);
+            if stop_at.is_none() {
+                self.recover_source(stop, control.as_ref(), &mut next_attach)?;
             }
             let next_deadline = self.clock.next_deadline()?;
             if stop_at.is_some_and(|deadline| next_deadline >= deadline) {
@@ -396,6 +391,64 @@ impl NativeRecorderSession {
             }
         }
         self.publish_evidence(evidence)
+    }
+
+    fn recover_source(
+        &mut self,
+        stop: &AtomicBool,
+        control: Option<&super::lifecycle::NativeSourceControl>,
+        next_attach: &mut Instant,
+    ) -> Result<()> {
+        let source = self.source.as_mut().context("native context is closed")?;
+        if source.is_closed() {
+            source.detach()?;
+            self.target_closed = true;
+            self.pending_resize = None;
+            tracing::info!("capture window closed; retaining recording timeline");
+        }
+        if source.is_attached() || Instant::now() < *next_attach {
+            return Ok(());
+        }
+        *next_attach = Instant::now() + Duration::from_secs(2);
+        let Some(control) = control else {
+            return Ok(());
+        };
+        if stop.load(Ordering::Acquire) || control.original.has_ended()? {
+            return Ok(());
+        }
+        let target = control.target.borrow().clone();
+        ensure!(
+            matches!(target.source, crate::platform::CaptureSource::WindowsGraphicsCapture { pid, .. } if pid == control.original.identity().pid),
+            "replacement belongs to a different process"
+        );
+        match crate::platform::validate_capture_target_identity(&target) {
+            Ok(()) => {}
+            Err(error) if error.is::<crate::platform::WindowUnavailable>() => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        if stop.load(Ordering::Acquire) || control.original.has_ended()? {
+            return Ok(());
+        }
+        // Preparation errors are terminal, except the typed pre-callback target-gone race.
+        match source.attach(&target, || {
+            Ok(!stop.load(Ordering::Acquire) && !control.original.has_ended()?)
+        }) {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) if error.is::<crate::platform::WindowUnavailable>() => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        if stop.load(Ordering::Acquire) || control.original.has_ended()? {
+            source.detach()?;
+            return Ok(());
+        }
+        self.source_generation = self.source_generation.saturating_add(1);
+        self.pending_resize = Some(source.pool_dimensions());
+        tracing::info!(
+            generation = self.source_generation,
+            "replacement capture source attached on original device"
+        );
+        Ok(())
     }
 
     pub fn finish(mut self) -> Result<NativeSessionTelemetrySnapshot> {
@@ -517,7 +570,7 @@ impl NativeRecorderSession {
         // Catch-up and full encoder slots need submission progress, not more
         // coalescing. Keep both existing WGC slots intact for tick selection.
         if Instant::now() >= self.clock.next_deadline()? {
-            self.target_closed = source.telemetry().closed;
+            self.target_closed = source.is_closed();
             if !timeout.is_zero() && !self.converter.has_free_slot() {
                 std::thread::sleep(timeout.min(NO_SLOT_RETRY_WAIT));
             }
@@ -529,7 +582,7 @@ impl NativeRecorderSession {
             self.clock.next_qpc_100ns()?,
         )?;
         if !received {
-            self.target_closed = source.telemetry().closed;
+            self.target_closed = source.is_closed();
         }
         self.clock.record_source_discards(replacements);
         Ok(())
@@ -563,7 +616,7 @@ impl NativeRecorderSession {
         // Catch-up ticks describe the past. Leave a future capture in the
         // existing pending slot and repeat the last eligible GPU snapshot.
         let Some(frame) = source.take_pending_through(clock.next_qpc_100ns()?) else {
-            *target_closed = source.telemetry().closed;
+            *target_closed = source.is_closed();
             return Ok(());
         };
         let dimensions = frame.dimensions();
@@ -797,6 +850,11 @@ impl NativeRecorderSession {
         let protocol_error = native_protocol_error(capture, encode, mux);
         Ok(RecordingEvidence {
             capture_ready: true,
+            source_detached: self
+                .source
+                .as_ref()
+                .is_none_or(|source| !source.is_attached()),
+            source_generation: self.source_generation,
             capture_terminal: terminal,
             frame_pool_capacity: Some(
                 u32::try_from(NATIVE_WGC_FRAME_POOL_CAPACITY)
@@ -1067,6 +1125,8 @@ impl NativeSessionTelemetrySnapshot {
     pub(crate) fn recording_evidence(self) -> RecordingEvidence {
         RecordingEvidence {
             capture_ready: true,
+            source_detached: false,
+            source_generation: 0,
             capture_terminal: true,
             frame_pool_capacity: Some(
                 u32::try_from(NATIVE_WGC_FRAME_POOL_CAPACITY)
