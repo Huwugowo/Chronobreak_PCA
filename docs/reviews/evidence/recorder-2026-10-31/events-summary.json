@@ -1,0 +1,42 @@
+{
+  "event_revision_counts": {
+    "GameStart": 1,
+    "MinionsSpawning": 1,
+    "ChampionKill": 51,
+    "FirstBlood": 1,
+    "TurretKilled": 9,
+    "FirstBrick": 1,
+    "Multikill": 7,
+    "DragonKill": 1,
+    "InhibKilled": 2,
+    "Ace": 1
+  },
+  "last_six_event_revisions": [
+    {
+      "game_tick": "737494995",
+      "name": "ChampionKill"
+    },
+    {
+      "game_tick": "737494995",
+      "name": "Multikill"
+    },
+    {
+      "game_tick": "738560486",
+      "name": "ChampionKill"
+    },
+    {
+      "game_tick": "738560486",
+      "name": "Multikill"
+    },
+    {
+      "game_tick": "738560486",
+      "name": "Ace"
+    },
+    {
+      "game_tick": "740728271",
+      "name": "TurretKilled"
+    }
+  ],
+  "game_end_observed": false,
+  "note": "Sanitized event names and ticks only; absence of GameEnd does not prove a crash."
+}

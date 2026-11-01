@@ -1,0 +1,49 @@
+{
+  "captured_at_utc": "2026-10-31T22:16:53.873368+00:00",
+  "source_commit": "a6a3068f23a2386a385c1eae3f1ab04a8d6ab36e",
+  "recorder_executable": {
+    "path": "<REPOSITORY>/recorder/target/release/recorder.exe",
+    "size": 8994816,
+    "sha256": "bfcabbbe089bc4582e0c6e994753d8a20388561b80176161a035509cd285b491",
+    "identity_limit": "Hash identifies the running image path; no reproducible-build/source equivalence claim."
+  },
+  "source_log": {
+    "path": "<REPOSITORY>/build/recorder-launch-20261031/stderr.log",
+    "snapshot_bytes": 39194,
+    "snapshot_sha256": "d7fc3db8bddda33ee806078714022ef5aa2301dcb38cc447d4f1067967d873f2",
+    "sanitization": "Repository and user-profile prefixes replaced; timestamps, PIDs, decisions, counters and errors retained. Source remains an append-only local runtime artifact."
+  },
+  "source_stdout_bytes": 0,
+  "media": {
+    "path": "<PROFILE>/LeagueReplays/games/1793484051/video.partial.mp4",
+    "bytes": 1098648666,
+    "modified": false,
+    "included_in_commit": false
+  },
+  "probe_command": [
+    "<REPOSITORY>\\recorder\\target\\release\\resources\\media-runtime\\bin\\ffprobe.exe",
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration,size:stream=index,codec_type,codec_name,width,height,avg_frame_rate,duration",
+    "-of",
+    "json",
+    "<PROFILE>\\LeagueReplays\\games\\1793484051\\video.partial.mp4"
+  ],
+  "probe_exit_code": 0,
+  "probe_stderr": "",
+  "verification_limits": [
+    "No full video decode.",
+    "No canonical publication or recovery.",
+    "No product-code changes or new test-suite run.",
+    "No controlled absent/passive/capture League launch comparison.",
+    "Original game journal, player identities and media are excluded from the commit."
+  ],
+  "artifact_sha256": {
+    "events-summary.json": "7290bf8eeb998fdeef4ea5ad3e4d68b5f5b347430407a0209ecfbdc8dc59da68",
+    "media-probe.json": "9422a660f9fd581a95c37274db77ceb1ba83995ee1a6b98fbe3f3869f4be0184",
+    "process-observations.json": "f18414e04e74264ec5b79fe262b6b09659676da17524b0b946bb893e366b89da",
+    "recorder.log": "5d50e2021e0a321af9c490cb55ee354819f2d2f6e9bb8657758aa98967fd3a0b"
+  },
+  "artifact_hash_basis": "UTF-8 text with LF line endings, matching Git blob bytes; Windows checkouts may convert line endings."
+}

@@ -48,6 +48,10 @@ V4 window admission (2026-11-01):
 - No real League launch, black-screen causality, successful NVENC encoding or capture-performance claim. Existing process/native tests pass unchanged.
 - Focused independent review found no actionable defects. Canonical validation passed (107 items, 27 plan/checkpoint pairs); formatting and diff whitespace checks passed.
 
+Live observation, 2026-10-31:
+
+- One ordinary League session deferred on aggregate clock/window readiness, admitted at gameTime 36.624569s and began recording at 23:00:54 Europe/Paris. Native capture advanced until selected-HWND closure; the later process-end confirmation failure is tracked under QB-CAP-002. Sanitized runtime log, image identity, probe and diagnostic limits: `docs/reviews/recorder-live-incident-2026-10-31.md`. This is neither the controlled repeated launch comparison nor a finalized recording pass; remaining acceptance gates are unchanged. No product-code change or new test-suite run.
+
 Construction-boundary correction:
 
 - Locked recorder all-target/all-feature check and tests passed: 224 library + 4 binary + 3 fixture (231 total), nine hardware/profile fixtures ignored. Four new regressions cover already-cancelled/expired session entry, cancellation between constructors with dependent destruction, a constructor exceeding its deadline preventing mux/NVENC entry, and protocol-error precedence with explicit worker join. Tests exercise the real session entry and shared stage helper; they do not simulate proof of native driver or COM rollback behavior. Log: `.codex/logs/command-20261029-163834.log`.
