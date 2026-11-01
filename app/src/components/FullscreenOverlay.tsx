@@ -27,6 +27,8 @@ import styles from "./FullscreenOverlay.module.css";
 import type { ParticipantSpellAssets, RecordedParticipantState, RecordedReplayState } from "../replayProjection";
 
 type Props = {
+  scoreboardOpen?: boolean;
+  onToggleScoreboard?: () => void;
   ddragonAssetBaseUrl?: string | null;
   champion: string;
   recordedState?: RecordedReplayState | null;
@@ -275,6 +277,12 @@ function FullscreenOverlay(props: Props) {
             onMuted={props.onMuted}
             onVolume={props.onVolume}
           />
+          <Show when={props.onToggleScoreboard}>
+            <button class={styles.cancelClipControl} type="button" aria-label="Toggle scoreboard" aria-keyshortcuts="Tab"
+              aria-pressed={props.scoreboardOpen ?? false} title="Scoreboard (Tab)" onClick={() => props.onToggleScoreboard?.()}>
+              TAB
+            </button>
+          </Show>
 
           <span class={styles.fullscreenTime} data-testid="time-readout">
             <strong class={styles.fullscreenTimeCurrent}>

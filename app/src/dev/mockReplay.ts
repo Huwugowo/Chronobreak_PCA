@@ -81,7 +81,10 @@ export function mockOverlayPage(game: GameSummary, query: OverlayQuery, riotId: 
     return { replay_tick: seconds * REPLAY_TICKS_PER_SECOND as ReplayTick, observation_id: index + 1,
       game_tick: String(seconds * 1_000_000), local_scores: players[0]?.scores ?? null,
       players: players.map(player => ({ participant: player.participant, level: player.level,
-        is_dead: null, respawn_timer: null, spells: [null, null] as [null, null] })) };
+        is_dead: null, respawn_timer: null, spells: [null, null] as [null, null],
+        ...(query.include_scoreboard ? { scoreboard: { payload_id: index * 64 + player.participant,
+          scores: player.scores, ward_score: null,
+          items: player.items.map(item => ({ item_id: item.item_id ?? null, slot: item.slot ?? null, count: null })) } } : {}) })) };
   });
   const last = samples[samples.length - 1];
   return { source: query.scope, local_participant: 1, revision, samples,

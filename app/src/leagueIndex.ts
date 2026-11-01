@@ -60,9 +60,11 @@ export type ReplayRoster = SourceScope & { game_tick: string; observed_replay_ti
 export type ReplayIdentity = { participant: number; riot_id: string | null; champion_name: string | null; team: string | null };
 export type ReplayWindow = SourceScope & { events: IndexedEvent[]; next: ReplayCursor | null; roster: ReplayRoster | null; identities: ReplayIdentity[]; coverage: QueryCoverage };
 export type OverlayCursor = { replay_tick: ReplayTick; observation_id: number };
-export type OverlayQuery = { scope: SourceEpoch; after: OverlayCursor | null; revision: Position | null; limit: number };
+export type OverlayQuery = { scope: SourceEpoch; after: OverlayCursor | null; revision: Position | null; limit: number; include_scoreboard?: boolean };
+export type ScoreboardItem = { item_id: number | null; slot: number | null; count: number | null };
+export type ScoreboardFacts = { payload_id: number; scores: OverlayScores; ward_score: number | null; items: ScoreboardItem[] | null };
 export type OverlayPlayer = { participant: number; level: number | null; is_dead: boolean | null; respawn_timer: number | null;
-  spells: [string | null, string | null] };
+  spells: [string | null, string | null]; scoreboard?: ScoreboardFacts };
 export type OverlayScores = { kills: number | null; deaths: number | null; assists: number | null; creep_score: number | null };
 export type OverlaySample = OverlayCursor & { game_tick: string; players: OverlayPlayer[]; local_scores: OverlayScores | null };
 export type OverlayPage = SourceScope & { revision: Position; identities: ReplayIdentity[] | null; samples: OverlaySample[]; next: OverlayCursor | null };
@@ -285,13 +287,25 @@ export function decodeOverlayPage(value: unknown, query: OverlayQuery): OverlayP
     if (previous && compareOverlayCursor(key, previous) <= 0) throw new Error("Overlay sample order");
     previous = key;
     const players = array(s.players, 64).map(value => {
-      const p = exact(value, ["participant", "level", "is_dead", "respawn_timer", "spells"]);
+      const p = exact(value, ["participant", "level", "is_dead", "respawn_timer", "spells", ...(query.include_scoreboard ? ["scoreboard"] : [])]);
       if (p.is_dead !== null && typeof p.is_dead !== "boolean") throw new Error("Overlay death state");
       if (p.respawn_timer !== null && (typeof p.respawn_timer !== "number" || !Number.isFinite(p.respawn_timer) || p.respawn_timer < 0)) throw new Error("Overlay respawn timer");
       const spells = array(p.spells, 2).map(v => v === null ? null : text(v));
       if (spells.length !== 2) throw new Error("Overlay spell slots");
+      let scoreboard: ScoreboardFacts | undefined;
+      if (query.include_scoreboard) {
+        const f = exact(p.scoreboard, ["payload_id", "scores", "ward_score", "items"]);
+        const scores = exact(f.scores, ["kills", "deaths", "assists", "creep_score"]);
+        if (f.ward_score !== null && (typeof f.ward_score !== "number" || !Number.isFinite(f.ward_score) || f.ward_score < 0)) throw new Error("Scoreboard vision score");
+        scoreboard = { payload_id: integer(f.payload_id), scores: { kills: nullableInteger(scores.kills), deaths: nullableInteger(scores.deaths),
+          assists: nullableInteger(scores.assists), creep_score: nullableInteger(scores.creep_score) }, ward_score: f.ward_score as number | null,
+          items: f.items === null ? null : array(f.items, 32).map(value => {
+            const item = exact(value, ["item_id", "slot", "count"]);
+            return { item_id: nullableInteger(item.item_id), slot: nullableInteger(item.slot), count: nullableInteger(item.count) };
+          }) };
+      }
       return { participant: integer(p.participant, 1), level: nullableInteger(p.level), is_dead: p.is_dead as boolean | null,
-        respawn_timer: p.respawn_timer as number | null, spells: spells as [string | null, string | null] };
+        respawn_timer: p.respawn_timer as number | null, spells: spells as [string | null, string | null], ...(scoreboard ? { scoreboard } : {}) };
     });
     if (new Set(players.map(p => p.participant)).size !== players.length) throw new Error("Duplicate overlay participant");
     const scores = s.local_scores === null ? null : exact(s.local_scores, ["kills", "deaths", "assists", "creep_score"]);

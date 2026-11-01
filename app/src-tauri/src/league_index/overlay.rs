@@ -19,6 +19,8 @@ pub(crate) struct OverlayQuery {
     pub after: Option<OverlayCursor>,
     pub revision: Option<journal::Position>,
     pub limit: u16,
+    #[serde(default)]
+    pub include_scoreboard: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -28,14 +30,31 @@ pub(crate) struct OverlayPlayer {
     pub is_dead: Option<bool>,
     pub respawn_timer: Option<f64>,
     pub spells: [Option<String>; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scoreboard: Option<ScoreboardFacts>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct OverlayScores {
     pub kills: Option<u64>,
     pub deaths: Option<u64>,
     pub assists: Option<u64>,
     pub creep_score: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct ScoreboardItem {
+    pub item_id: Option<u64>,
+    pub slot: Option<u64>,
+    pub count: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScoreboardFacts {
+    pub payload_id: u64,
+    pub scores: OverlayScores,
+    pub ward_score: Option<f64>,
+    pub items: Option<Vec<ScoreboardItem>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,8 +143,8 @@ impl Index {
                 .transpose()?,
             u32::from(query.limit) + 1,
         ])?;
-        // Project only overlay fields in SQLite, avoiding raw descriptions and
-        // item payload parsing for every member of every sample.
+        // The ordinary overlay never extracts inventory. TAB opts into compact
+        // item facts; descriptions/prices never cross this boundary.
         let mut members = self.db.prepare("SELECT m.participant_id,
             json_extract(p.data,'$.level'),json_extract(p.data,'$.is_dead'),json_extract(p.data,'$.respawn_timer'),
             COALESCE(CAST(NULLIF(json_extract(p.data,'$.summoner_spells.one.id'),0) AS TEXT),
@@ -133,11 +152,18 @@ impl Index {
             COALESCE(CAST(NULLIF(json_extract(p.data,'$.summoner_spells.two.id'),0) AS TEXT),
                 NULLIF(json_extract(p.data,'$.summoner_spells.two.display_name'),''),NULLIF(json_extract(p.data,'$.summoner_spells.two.raw_display_name'),'')),
             json_type(p.data,'$.scores') IS NOT NULL,json_extract(p.data,'$.scores.kills'),json_extract(p.data,'$.scores.deaths'),
-            json_extract(p.data,'$.scores.assists'),json_extract(p.data,'$.scores.creep_score')
+            json_extract(p.data,'$.scores.assists'),json_extract(p.data,'$.scores.creep_score'),
+            m.payload_id,CASE WHEN ?5 THEN json_extract(p.data,'$.scores.ward_score') END,
+            CASE WHEN ?5 THEN CASE WHEN json_type(p.data,'$.items')='array' THEN
+                (SELECT json_group_array(json_object('item_id',json_extract(value,'$.item_id'),
+                    'slot',json_extract(value,'$.slot'),'count',json_extract(value,'$.count')))
+                 FROM json_each(p.data,'$.items')) END END
             FROM roster_members m JOIN roster_payloads p
             ON p.media_id=m.media_id AND p.run_id=m.run_id AND p.epoch=m.epoch AND p.payload_id=m.payload_id
             WHERE m.media_id=?1 AND m.run_id=?2 AND m.epoch=?3 AND m.observation_id=?4
             ORDER BY m.ordinal LIMIT 65")?;
+        // Intern repeated payloads within a page, avoiding repeated item parsing.
+        let mut scoreboard_payloads = std::collections::HashMap::new();
         while let Some(row) = rows.next()? {
             if output.samples.len() == usize::from(query.limit) {
                 output.next = output.samples.last().map(|s| OverlayCursor {
@@ -158,7 +184,8 @@ impl Index {
                 scope.media_id.as_str(),
                 scope.run_id.as_str(),
                 sql_u64(scope.epoch)?,
-                sql_u64(id)?
+                sql_u64(id)?,
+                query.include_scoreboard,
             ])?;
             let mut count = 0;
             while let Some(player_row) = player_rows.next()? {
@@ -168,20 +195,48 @@ impl Index {
                     continue;
                 };
                 let participant = obs::ParticipantId(participant);
-                if Some(participant) == local && player_row.get::<_, bool>(6)? {
-                    sample.local_scores = Some(OverlayScores {
+                let scores = || -> Result<OverlayScores> {
+                    Ok(OverlayScores {
                         kills: optional_unsigned(player_row, 7)?,
                         deaths: optional_unsigned(player_row, 8)?,
                         assists: optional_unsigned(player_row, 9)?,
                         creep_score: optional_unsigned(player_row, 10)?,
-                    });
+                    })
+                };
+                if Some(participant) == local && player_row.get::<_, bool>(6)? {
+                    sample.local_scores = Some(scores()?);
                 }
+                let scoreboard = if query.include_scoreboard {
+                    let payload_id = unsigned(player_row, 11)?;
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        scoreboard_payloads.entry(payload_id)
+                    {
+                        let items: Option<String> = player_row.get(13)?;
+                        let items = items
+                            .map(|json| serde_json::from_str::<Vec<ScoreboardItem>>(&json))
+                            .transpose()?;
+                        ensure!(
+                            items.as_ref().is_none_or(|items| items.len() <= 32),
+                            "scoreboard item capacity"
+                        );
+                        entry.insert(ScoreboardFacts {
+                            payload_id,
+                            scores: scores()?,
+                            ward_score: player_row.get(12)?,
+                            items,
+                        });
+                    }
+                    Some(scoreboard_payloads[&payload_id].clone())
+                } else {
+                    None
+                };
                 sample.players.push(OverlayPlayer {
                     participant,
                     level: optional_unsigned(player_row, 1)?,
                     is_dead: player_row.get(2)?,
                     respawn_timer: player_row.get(3)?,
                     spells: [player_row.get(4)?, player_row.get(5)?],
+                    scoreboard,
                 });
             }
             let size = serde_json::to_vec(&sample)?.len() + 1;

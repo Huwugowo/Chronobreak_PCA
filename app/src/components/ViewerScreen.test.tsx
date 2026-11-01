@@ -92,6 +92,89 @@ const setFixture = (probe: ReplayFixture, epochs = [0]) => {
   return { scopes, facts };
 };
 
+it("toggles TAB without driving media, follows observed frames through seeks, and preserves control navigation", async () => {
+  const probe = replayProbe(); setFixture(probe);
+  const early = overlayFor(resolvedWindow(probe));
+  const late = { ...early.samples[0], replay_tick: 20 * 48_000_000 as ReplayTick, observation_id: 2, game_tick: "20000000" };
+  const base = { ...early, samples: [early.samples[0], late] };
+  const detail: OverlayPage = { ...base, samples: base.samples.map((s, index) => ({ ...s, players: s.players.map(p => ({ ...p,
+    scoreboard: { payload_id: index * 10 + p.participant, scores: { kills: index, deaths: null, assists: 0, creep_score: 20 },
+      ward_score: 0.5, items: [{ item_id: index ? 1001 : 2003, slot: 0, count: index ? 1 : 2 }] } })) })) };
+  let finish!: (page: OverlayPage) => void;
+  vi.mocked(queryOverlayPage).mockImplementation(async (_token, _game, q) => q.include_scoreboard
+    ? new Promise(resolve => { finish = resolve; }) : base);
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.mocked(loadServerMetrics).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const names = ["requestVideoFrameCallback", "cancelVideoFrameCallback"];
+  const originals = names.map(name => Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, name));
+  let frame!: VideoFrameRequestCallback;
+  Object.defineProperty(HTMLVideoElement.prototype, names[0], { configurable: true, value: (callback: VideoFrameRequestCallback) => { frame = callback; return 1; } });
+  Object.defineProperty(HTMLVideoElement.prototype, names[1], { configurable: true, value: () => {} });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
+    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  const key = (key: string, options: KeyboardEventInit = {}) => window.dispatchEvent(new KeyboardEvent("keydown", { key, cancelable: true, ...options }));
+  try {
+    await vi.waitFor(() => expect(queryOverlayPage).toHaveBeenCalledOnce());
+    const primary = host.querySelector("video")!;
+    Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
+    primary.dispatchEvent(new Event("loadstart")); primary.dispatchEvent(new Event("loadedmetadata")); primary.dispatchEvent(new Event("canplay"));
+    frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
+    expect(host.querySelector('[data-testid="replay-scoreboard"]')).toBeNull();
+    const pausedCalls = vi.mocked(primary.pause).mock.calls.length;
+    key("Tab");
+    const panel = host.querySelector('[data-testid="replay-scoreboard"]') as HTMLElement;
+    expect(panel.hidden).toBe(false);
+    expect(vi.mocked(primary.pause).mock.calls).toHaveLength(pausedCalls);
+    expect(primary.currentTime).toBe(0);
+    expect(finish).toBeTypeOf("function");
+    key("ArrowRight"); // Lazy optional SQL has no authority over this seek.
+    expect(primary.currentTime).toBe(15);
+    finish(detail);
+    await vi.waitFor(() => expect(panel.textContent).not.toContain("Loading recorded"));
+    const slot = panel.querySelector('[data-participant="1"] [data-slot="0"]')!;
+    expect(slot.getAttribute("aria-label")).toBe("Item 2003 × 2");
+    frame(performance.now(), { mediaTime: 15 } as VideoFrameCallbackMetadata);
+    primary.dispatchEvent(new Event("seeked")); primary.dispatchEvent(new Event("canplay"));
+    key("ArrowRight");
+    await vi.waitFor(() => expect(primary.currentTime).toBe(30));
+    expect(slot.getAttribute("aria-label")).toBe("Item 2003 × 2"); // Requested time is not presented time.
+    frame(performance.now(), { mediaTime: 30 } as VideoFrameCallbackMetadata);
+    primary.dispatchEvent(new Event("seeked")); primary.dispatchEvent(new Event("canplay"));
+    expect(slot.getAttribute("aria-label")).toBe("Item 1001 × 1");
+    key("ArrowLeft");
+    await vi.waitFor(() => expect(primary.currentTime).toBe(15));
+    frame(performance.now(), { mediaTime: 15 } as VideoFrameCallbackMetadata);
+    primary.dispatchEvent(new Event("seeked")); primary.dispatchEvent(new Event("canplay"));
+    expect(slot.getAttribute("aria-label")).toBe("Item 2003 × 2");
+    const mutations = new MutationObserver(() => {});
+    mutations.observe(panel, { subtree: true, attributes: true, childList: true, characterData: true });
+    for (let i = 0; i < 100; i++) frame(performance.now(), { mediaTime: 16 + i / 100 } as VideoFrameCallbackMetadata);
+    expect(mutations.takeRecords()).toHaveLength(0); // Frames within one observation do not reconstruct TAB.
+    mutations.disconnect();
+    key("Tab", { repeat: true }); expect(panel.hidden).toBe(false);
+    expect(key("Tab", { shiftKey: true })).toBe(true); expect(panel.hidden).toBe(false);
+    const toggle = host.querySelector('[aria-label="Toggle scoreboard"]')!;
+    expect(toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }))).toBe(true);
+    expect(panel.hidden).toBe(false);
+    key("f"); key("Escape");
+    expect(panel.hidden).toBe(true);
+    expect(host.querySelector('[data-testid="video-frame"]')?.getAttribute("data-fullscreen")).toBe("true");
+    key("Tab"); expect(panel.hidden).toBe(false);
+    expect(host.querySelector("video")).toBe(primary);
+    expect(queryOverlayPage).toHaveBeenCalledTimes(2);
+    expect(queryReplayWindow).toHaveBeenCalledOnce();
+  } finally {
+    dispose(); names.forEach((name, i) => {
+      if (originals[i]) Object.defineProperty(HTMLVideoElement.prototype, name, originals[i]!);
+      else Reflect.deleteProperty(HTMLVideoElement.prototype, name);
+    });
+  }
+});
+
 it.each(["quick", "slow", "unavailable", "disposed"] as const)("delays only the loading notice and cancels it when details settle (%s)", async scenario => {
   vi.useFakeTimers();
   vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => window.setTimeout(() => callback(performance.now()), 16));
@@ -160,6 +243,12 @@ it.each([false, true])("settles unavailable details without raw text, retry cont
     expect(host.querySelector("video")).toBe(primary);
     expect(host.querySelector('[aria-label="Replay speed"]')).not.toBeNull();
     expect(sourceScopes).not.toHaveBeenCalled(); expect(indexRecording).toHaveBeenCalledOnce();
+    (host.querySelector('[aria-label="Toggle scoreboard"]') as HTMLButtonElement).click();
+    const scoreboard = host.querySelector('[data-testid="replay-scoreboard"]');
+    expect(scoreboard?.textContent).toContain("Recorded scores and inventory unavailable.");
+    expect(scoreboard?.querySelectorAll('[data-testid="scoreboard-player"]')).toHaveLength(0);
+    expect(queryOverlayPage).not.toHaveBeenCalled();
+    expect(host.querySelector("video")).toBe(primary);
   } finally { dispose(); }
 });
 

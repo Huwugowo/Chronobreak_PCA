@@ -84,6 +84,19 @@ Every native candidate also passes an independent empty-moov fragmented-MP4 timi
 
 The reader shares the five-second probe deadline, retains the million-box-visit limit and 24-hour video bound, reads sample tables in 4-KiB chunks, and seeks past encoded payload. Work is O(box visits + explicit sample-table entries), with O(1) memory; inherited constant-duration runs are checked algebraically. For the observed native layout, sample sizes cost four table bytes per frame (about 0.864 MB/hour at 60 FPS), plus fragment/header reads. Payload size alone does not increase scan bytes; a synthetic 8-GiB `mdat` is tested without reading its contents. The blocking reader remains owned until joined; OS I/O can outlast a cooperative deadline. No decoding, extra process, GPU work or background finalization is added. Existing inline finalization scheduling is retained by explicit product direction. This proves the container presentation grid and observed stream format, not decoded-frame correctness, frozen-picture absence, later in-band parameter changes, or full payload integrity.
 
+The replay TAB scoreboard lazily enriches that same overlay timeline through
+`include_scoreboard` pages, only after the panel is first opened. Ordinary overlay
+queries do not inspect inventory. The controller serializes small enrichment
+pages, checks the original committed revision and every observation cursor, and
+joins nullable scores, vision and item slot/count facts to existing source-scoped
+participants. Payloads and repeated roster variants are interned in memory;
+closing pauses further reads and retains the bounded cache until source disposal.
+Seeks never query or parse scoreboard data. The panel follows the existing
+observed-position sample, freezes while closed, and updates only on snapshot
+changes. Only visited icon variants mount asynchronously through the existing
+Data Dragon cache and keep their image nodes for backward seeks. Missing values
+remain unavailable, empty inventories remain distinct, and gold is omitted.
+
 ## Viewer synchronization
 
 The viewer tracks four distinct facts: requested preview target, dispatched seek, seeked observation, and presented frame. Every dispatched seek has a monotonically increasing epoch within a media generation. Recovery increments the generation and invalidates every older event. A qualifying RVFC frame settles only its current generation/epoch; a stale or off-target callback cannot overwrite presentation state.

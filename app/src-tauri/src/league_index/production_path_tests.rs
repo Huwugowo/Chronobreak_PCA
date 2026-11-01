@@ -175,6 +175,68 @@ async fn simulated_live_responses_reach_durable_sql_and_application_queries() {
     assert_eq!(dummy.issues["items"], obs::FieldIssue::SourceError);
     assert_eq!(dummy.scores.as_ref().unwrap().kills, None);
 
+    let mut overlay_query = OverlayQuery {
+        scope: scope.clone(),
+        after: None,
+        revision: None,
+        limit: 32,
+        include_scoreboard: false,
+    };
+    let compact = index.overlay_page(&overlay_query, &timeline).unwrap();
+    assert!(!compact.samples.is_empty());
+    let compact_json = serde_json::to_string(&compact).unwrap();
+    assert!(!compact_json.contains("scoreboard"));
+    assert!(!compact_json.contains("items"));
+    overlay_query.include_scoreboard = true;
+    let detailed = index.overlay_page(&overlay_query, &timeline).unwrap();
+    assert_eq!(detailed.revision, compact.revision);
+    assert_eq!(detailed.samples.len(), compact.samples.len());
+    for (sample, original) in detailed.samples.iter().zip(&compact.samples) {
+        assert_eq!(sample.observation_id, original.observation_id);
+        assert_eq!(sample.replay_tick, original.replay_tick);
+        let local_facts = sample
+            .players
+            .iter()
+            .find(|p| p.participant == local)
+            .unwrap()
+            .scoreboard
+            .as_ref()
+            .unwrap();
+        assert_eq!(local_facts.scores.kills, Some(0));
+        assert_eq!(local_facts.ward_score, Some(0.5));
+        let item = &local_facts.items.as_ref().unwrap()[0];
+        assert_eq!(
+            (item.item_id, item.slot, item.count),
+            (Some(2003), Some(0), Some(2))
+        );
+        // This source-error player lacks a Riot identity and is deliberately
+        // absent from the identity-joined overlay, rather than given a new ID.
+        assert!(dummy.participant.is_none());
+        assert_eq!(sample.players.len(), 2);
+        let other = sample
+            .players
+            .iter()
+            .find(|p| p.participant != local)
+            .unwrap()
+            .scoreboard
+            .as_ref()
+            .unwrap();
+        assert!(other.scores.kills.is_none());
+        assert!(other.ward_score.is_none());
+        assert!(sample.players.iter().any(|p| {
+            p.scoreboard
+                .as_ref()
+                .unwrap()
+                .items
+                .as_ref()
+                .is_some_and(Vec::is_empty)
+        }));
+    }
+    let detailed_json = serde_json::to_string(&detailed).unwrap();
+    for excluded in ["price", "raw_description", "display_name", "gold"] {
+        assert!(!detailed_json.contains(excluded));
+    }
+
     let query = WindowQuery {
         scope: scope.clone(),
         start: GameTick::new(120_000_000).unwrap(),

@@ -56,6 +56,7 @@ import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
 import { createPlaybackDiagnostics } from "../playbackDiagnostics";
 import { createBenchmarkViewer, benchmarkViewerOpening, type BenchmarkViewer } from "../benchmarkViewer";
 import FullscreenOverlay from "./FullscreenOverlay";
+import ReplayScoreboard from "./ReplayScoreboard";
 import styles from "./ViewerScreen.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
 import { indexRecording, loadRecordingFacts, queryOverlayPage, queryReplayWindow, sourceScopes } from "../leagueIndex";
@@ -194,6 +195,10 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const [overlay, setOverlay] = createSignal(overlayData.value);
   const unsubscribeOverlay = overlayData.subscribe(setOverlay);
   const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
+  const [scoreboardOpen, setScoreboardOpen] = createSignal(false);
+  const [scoreboardMounted, setScoreboardMounted] = createSignal(false);
+  const toggleScoreboard = () => { setScoreboardMounted(true); setScoreboardOpen(open => !open); };
+  createEffect(() => overlayData.setScoreboardOpen(scoreboardOpen()));
   const activeScope = createMemo(() => data().scopes.find(scope => sourceKey(scope.source) === selectedSource())
     ?? data().scopes[data().scopes.length - 1]);
   const activeWindow = createMemo(() => {
@@ -338,6 +343,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const overlaySample = createMemo(() => {
     overlay(); // Page arrivals can make the current presented position complete.
     return overlayData.sampleAt(observedPosition());
+  });
+  const scoreboardSnapshot = createMemo(() => {
+    if (!scoreboardOpen()) return null;
+    overlay().scoreboardVersion;
+    return overlayData.scoreboardFor(overlaySample());
   });
   const recordedScores = () => overlaySample()?.local_scores;
   const recordedState = createMemo(() => {
@@ -767,6 +777,12 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         if (!event.repeat) void togglePlayback();
         return;
       }
+      if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+        && !(target instanceof Element && target.closest("button, a, [role=button], [role=slider]"))) {
+        event.preventDefault();
+        if (!event.repeat) toggleScoreboard();
+        return;
+      }
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
         if (event.repeat) return;
@@ -783,6 +799,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         return;
       }
       if (event.repeat) return;
+      if (event.key === "Escape" && scoreboardOpen()) {
+        event.preventDefault();
+        setScoreboardOpen(false);
+        return;
+      }
       if (event.key === "Escape" && isFullscreen()) {
         event.preventDefault();
         exitFullscreen();
@@ -937,7 +958,20 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
               <button type="button" onClick={() => void controller.play()}>Click to resume playback</button>
             </Show>
 
+            <Show when={scoreboardMounted()}>
+              <Show when={overlay().scope} keyed fallback={
+                <ReplayScoreboard open={scoreboardOpen()} identities={[]} localParticipant={null}
+                  sample={null} snapshot={null} status={detailsLoading() ? "loading" : "error"} />
+              }>{scope =>
+                <ReplayScoreboard open={scoreboardOpen()} assetBaseUrl={props.ddragonAssetBaseUrl}
+                  identities={overlay().identities} localParticipant={scope.local_participant}
+                  sample={overlaySample()} snapshot={scoreboardSnapshot()}
+                  status={overlay().status === "error" ? "error" : overlay().scoreboardStatus} />
+              }</Show>
+            </Show>
             <FullscreenOverlay
+                scoreboardOpen={scoreboardOpen()}
+                onToggleScoreboard={toggleScoreboard}
                 spellAssets={overlay().spellAssets}
                 participantStates={participantStates()}
                 ddragonAssetBaseUrl={props.ddragonAssetBaseUrl ?? null}
