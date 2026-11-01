@@ -760,7 +760,10 @@ mod windows_fixture {
                     window,
                     self.frame,
                     self.marker.as_mut(),
-                    self.scenario == Scenario::Recreate && self.second_action_done,
+                    matches!(
+                        self.scenario,
+                        Scenario::Recreate | Scenario::MinimizeRestore
+                    ) && self.second_action_done,
                 );
                 self.frame = self.frame.saturating_add(1);
                 window.request_redraw();
