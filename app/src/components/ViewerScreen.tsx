@@ -275,6 +275,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const [presentedPosition, setPresentedPosition] = createSignal<ReplayTick | null>(null);
   const [observedPosition, setObservedPosition] = createSignal<ReplayTick | null>(null);
   const [playback, setPlayback] = createSignal<PlaybackSnapshot>();
+  const scoreboardBusy = createMemo(() => {
+    const snapshot = playback();
+    return !snapshot || snapshot.readiness !== "ready" || snapshot.queue !== "IDLE" || snapshot.media.seeking;
+  });
+  createEffect(() => overlayData.setScoreboardBusy(scoreboardBusy()));
   const [replayPosition, setReplayPosition] = createSignal<ReplayTick>(0 as ReplayTick);
   const [timelineViewport, setTimelineViewport] = createSignal<TimelineViewport>(
     wholeTimelineViewport(replayEnd as ReplayTick),
@@ -965,6 +970,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
               }>{scope =>
                 <ReplayScoreboard open={scoreboardOpen()} assetBaseUrl={props.ddragonAssetBaseUrl}
                   identities={overlay().identities} localParticipant={scope.local_participant}
+                  preloadItemIds={overlay().scoreboardItemIds} spellAssets={overlay().spellAssets} backgroundBusy={scoreboardBusy()}
                   sample={overlaySample()} snapshot={scoreboardSnapshot()}
                   status={overlay().status === "error" ? "error" : overlay().scoreboardStatus} />
               }</Show>

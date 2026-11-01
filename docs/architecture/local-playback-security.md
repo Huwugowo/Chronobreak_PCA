@@ -49,8 +49,11 @@ may grant access to other recognized library routes to a client able to use it.
 Do not log request URLs, headers, capability values or imported tokens, persist
 them in library metadata, or send them to remote services. Native decoder binding
 uses the URL only in trusted in-memory IPC/CDP state. Benchmark events retain route
-labels and counters. Responses use no-store, nosniff and no-referrer and never
-redirect. Exiting the process closes the listener and invalidates its URLs; the
+labels and counters. Media and error responses use no-store. Successful versioned
+Data Dragon icon responses allow private immutable browser caching (one year),
+so background icon loads can serve later scoreboard positions without another
+local request. All responses retain nosniff and no-referrer and never redirect.
+Exiting the process closes the listener and invalidates its URLs; the
 next instance generates an independent capability. This is not revocation of a
 copy of bytes that a client already obtained.
 

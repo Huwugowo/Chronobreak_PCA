@@ -30,7 +30,7 @@ function setup(overrides: Partial<ConstructorParameters<typeof ReplayDataControl
 describe("ReplayDataController", () => {
   it("presents pending, useful partial, unavailable and ready details independently of coverage gaps", () => {
     const { controller } = setup();
-    const idle: OverlayState = { scope: null, status: "idle", error: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, scoreboardStatus: "idle", scoreboardVersion: 0 };
+    const idle: OverlayState = { scope: null, status: "idle", error: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, scoreboardStatus: "idle", scoreboardVersion: 0, scoreboardItemIds: [] };
     const data = { ...controller.value, indexing: "ready" as const };
     expect(replayDetailsStatus(data, idle, undefined, null, true)).toBe("loading");
     expect(replayDetailsStatus(data, idle, undefined, null)).toBe("unavailable");

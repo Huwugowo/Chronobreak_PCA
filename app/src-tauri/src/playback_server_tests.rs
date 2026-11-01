@@ -118,10 +118,16 @@ async fn every_route_enforces_the_same_capability_and_http_contract() {
             playback_policy::PRODUCTION_ORIGIN
         );
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
-        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        let cache_policy = if *label == "ddragon" {
+            "private, max-age=31536000, immutable"
+        } else {
+            "no-store"
+        };
+        assert_eq!(response.headers()[CACHE_CONTROL], cache_policy);
         let bytes = response.bytes().await.unwrap();
         let head = client.head(&url).send().await.unwrap();
         assert_eq!(head.status(), StatusCode::OK, "{label}");
+        assert_eq!(head.headers()[CACHE_CONTROL], cache_policy);
         // reqwest::content_length reports the body size hint (zero for HEAD),
         // while the wire header must describe the corresponding GET resource.
         assert_eq!(head.headers()[CONTENT_LENGTH], bytes.len().to_string());
@@ -134,6 +140,7 @@ async fn every_route_enforces_the_same_capability_and_http_contract() {
                 .await
                 .unwrap();
             assert_eq!(range.status(), StatusCode::PARTIAL_CONTENT, "{label}");
+            assert_eq!(range.headers()[CACHE_CONTROL], cache_policy);
             assert_eq!(
                 range.headers()[CONTENT_RANGE],
                 format!("bytes 1-3/{}", bytes.len())
@@ -156,6 +163,7 @@ async fn every_route_enforces_the_same_capability_and_http_contract() {
             StatusCode::RANGE_NOT_SATISFIABLE,
             "{label}"
         );
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
         assert_eq!(
             response.headers()[CONTENT_RANGE],
             format!("bytes */{}", bytes.len())

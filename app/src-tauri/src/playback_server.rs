@@ -874,7 +874,7 @@ async fn ddragon_asset(
         }
     };
     let root = state.ddragon_root.clone();
-    serve_file(
+    let mut response = serve_file(
         state,
         request,
         &path,
@@ -882,7 +882,17 @@ async fn ddragon_asset(
         "image/png",
         RouteClass::Ddragon,
     )
-    .await
+    .await;
+    // Versioned icons are immutable. Browser reuse avoids repeated local requests
+    // and lets low-priority preloads serve later scoreboard positions directly.
+    // Errors remain uncached so a later download/cache repair can recover.
+    if response.status().is_success() {
+        response.headers_mut().insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("private, max-age=31536000, immutable"),
+        );
+    }
+    response
 }
 
 async fn serve_embedded(

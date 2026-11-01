@@ -136,7 +136,9 @@ fn single_header(headers: &HeaderMap, name: axum::http::header::HeaderName) -> O
 
 pub(crate) fn response_headers(response: &mut Response<Body>, origin: Option<HeaderValue>) {
     let headers = response.headers_mut();
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers
+        .entry(CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store"));
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     headers.insert(VARY, HeaderValue::from_static("Origin"));

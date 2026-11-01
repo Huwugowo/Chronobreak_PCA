@@ -41,8 +41,11 @@ it("shows ten fixed team rows, nullable stats and discrete inventories, reusing 
     const potion = slot.querySelector("img")!;
     expect(potion.getAttribute("src")).toBe("http://assets.test/ddragon/16.20.1/item/2003");
     expect(rows[1].querySelector('[data-slot="0"]')?.getAttribute("aria-label")).toContain("unavailable");
-    update({ sample: late, snapshot: new Map([[1, after]]) });
+    update({ backgroundBusy: true, sample: late, snapshot: new Map([[1, after]]) });
     expect(rows[0].querySelector('[aria-label="Vision score"]')?.textContent).toBe("55");
+    expect(slot.querySelectorAll("img")).toHaveLength(1); // A seek cannot start a newly visited icon.
+    expect(potion.hidden).toBe(true);
+    update({ backgroundBusy: false });
     expect(host.querySelector('[data-participant="1"]')).toBe(rows[0]);
     expect(potion.hidden).toBe(true);
     expect(slot.querySelectorAll("img")).toHaveLength(2);

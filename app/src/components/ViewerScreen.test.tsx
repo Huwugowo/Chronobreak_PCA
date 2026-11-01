@@ -130,7 +130,7 @@ it("toggles TAB without driving media, follows observed frames through seeks, an
     expect(panel.hidden).toBe(false);
     expect(vi.mocked(primary.pause).mock.calls).toHaveLength(pausedCalls);
     expect(primary.currentTime).toBe(0);
-    expect(finish).toBeTypeOf("function");
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     key("ArrowRight"); // Lazy optional SQL has no authority over this seek.
     expect(primary.currentTime).toBe(15);
     finish(detail);

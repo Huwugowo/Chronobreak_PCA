@@ -89,12 +89,22 @@ The replay TAB scoreboard lazily enriches that same overlay timeline through
 queries do not inspect inventory. The controller serializes small enrichment
 pages, checks the original committed revision and every observation cursor, and
 joins nullable scores, vision and item slot/count facts to existing source-scoped
-participants. Payloads and repeated roster variants are interned in memory;
-closing pauses further reads and retains the bounded cache until source disposal.
+participants. Payloads and repeated roster variants are interned in memory.
+After the first open, enrichment continues while closed, one small page per idle
+admission, retaining the bounded cache until source disposal. Pending seeks,
+frame settlement and media loading/recovery pause new optional work; a 150 ms
+quiet period follows settlement. An already admitted page/image may finish.
 Seeks never query or parse scoreboard data. The panel follows the existing
 observed-position sample, freezes while closed, and updates only on snapshot
 changes. Only visited icon variants mount asynchronously through the existing
-Data Dragon cache and keep their image nodes for backward seeks. Missing values
+Data Dragon cache and keep their image nodes for backward seeks. New icon nodes
+wait for seek settlement. Source identities, known spell variants and unique
+item IDs collected once per interned payload feed a source-owned background warm
+cache after the first TAB open, including while closed. It loads/decodes one
+low-priority image at a time in idle callbacks, retains at most 512 images and
+releases them on source/base-URL change or disposal. It never selects inventory
+or reads snapshots on the frame clock. Successful versioned icon responses allow
+private immutable browser caching; media and errors remain uncached. Missing values
 remain unavailable, empty inventories remain distinct, and gold is omitted.
 
 ## Viewer synchronization

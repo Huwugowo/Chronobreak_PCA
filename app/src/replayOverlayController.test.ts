@@ -37,6 +37,7 @@ it("loads scoreboard only on demand, interns payloads and reuses exact samples t
   const first = controller.scoreboardFor(controller.sampleAt(tick(2)));
   expect(first?.get(1)?.items?.[0].count).toBe(2);
   expect(first?.get(1)?.ward_score).toBe(2.25);
+  expect(controller.value.scoreboardItemIds).toEqual([2003]);
   expect(controller.scoreboardFor(controller.sampleAt(tick(1)))).toBeNull();
   expect(controller.scoreboardFor(controller.sampleAt(tick(20)))).toBe(first);
   controller.setScoreboardOpen(false); controller.setScoreboardOpen(true);
@@ -46,19 +47,26 @@ it("loads scoreboard only on demand, interns payloads and reuses exact samples t
   expect(controller.scoreboardFor(early)).toBeNull();
 });
 
-it("pauses enrichment on close, resumes its cursor and keeps incomplete observations unavailable", async () => {
+it("warms after first open even while closed, pauses during seeks and keeps incomplete observations unavailable", async () => {
   const early = sample(2), late = sample(20), tail = deferred<OverlayPage>();
   const query = vi.fn().mockResolvedValueOnce(page([early, late])).mockReturnValueOnce(tail.promise)
     .mockResolvedValueOnce({ ...page([enriched(late)]), identities: null });
   const controller = setup(query); controller.select(scope);
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
-  controller.setScoreboardOpen(true); controller.setScoreboardOpen(false);
+  controller.setScoreboardOpen(true);
+  await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+  controller.setScoreboardOpen(false); controller.setScoreboardBusy(true);
   tail.resolve(page([enriched(early)], early));
   await vi.waitFor(() => expect(controller.value.scoreboardVersion).toBe(1));
   expect(query).toHaveBeenCalledTimes(2);
   expect(controller.scoreboardFor(late)).toBeNull();
   expect(controller.sampleAt(tick(20))).toBe(late); // Existing rails never wait for TAB.
-  controller.setScoreboardOpen(true);
+  controller.setScoreboardBusy(false);
+  // Repeated scrubs cancel the quiet-period admission without driving a read.
+  controller.setScoreboardBusy(true);
+  await new Promise(resolve => setTimeout(resolve, 180));
+  expect(query).toHaveBeenCalledTimes(2);
+  controller.setScoreboardBusy(false);
   await vi.waitFor(() => expect(controller.value.scoreboardStatus).toBe("ready"));
   expect(query.mock.calls[2][2]).toMatchObject({ after: { replay_tick: early.replay_tick, observation_id: early.observation_id }, revision });
   expect(controller.scoreboardFor(late)?.get(1)?.scores.kills).toBe(20);
@@ -75,11 +83,13 @@ it("isolates changed revisions and stale scoreboard completions from the existin
   await vi.waitFor(() => expect(controller.value.scoreboardStatus).toBe("error"));
   expect(controller.sampleAt(tick(2))).toBe(s);
   expect(controller.value.error).toBeNull();
+  expect(controller.value.scoreboardItemIds).toEqual([]);
   controller.setScoreboardOpen(false);
   query.mockResolvedValueOnce(page([s])).mockReturnValueOnce(pending.promise);
   controller.select(scope, true);
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
   controller.setScoreboardOpen(true);
+  await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(4));
   const replacement = { ...scope, source: { ...source, epoch: 1 } };
   query.mockResolvedValueOnce({ ...page([s]), source: replacement.source });
   controller.select(replacement); controller.setScoreboardOpen(false);
@@ -87,6 +97,7 @@ it("isolates changed revisions and stale scoreboard completions from the existin
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
   expect(controller.value.scope).toEqual(replacement);
   expect(controller.scoreboardFor(s)).toBeNull();
+  expect(controller.value.scoreboardItemIds).toEqual([]);
   controller.dispose();
 });
 

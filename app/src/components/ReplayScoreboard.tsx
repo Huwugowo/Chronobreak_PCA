@@ -1,7 +1,9 @@
-import { For, Show, createEffect, createMemo, createSignal, untrack } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { OverlaySample, ReplayIdentity, ScoreboardItem } from "../leagueIndex";
 import type { ScoreboardSnapshot } from "../replayOverlayController";
 import { recordedGameClock } from "../replayProjection";
+import type { ParticipantSpellAssets } from "../replayProjection";
+import { ScoreboardAssetPreloader } from "../scoreboardPreload";
 import styles from "./ReplayScoreboard.module.css";
 
 type Props = {
@@ -12,6 +14,9 @@ type Props = {
   sample: OverlaySample | null;
   snapshot: ScoreboardSnapshot | null;
   status: "idle" | "loading" | "ready" | "error";
+  preloadItemIds?: readonly number[];
+  spellAssets?: ParticipantSpellAssets;
+  backgroundBusy?: boolean;
 };
 
 /** Null inventory is unavailable; an observed empty collection has empty slots.
@@ -29,20 +34,39 @@ export function scoreboardSlots(items: readonly ScoreboardItem[] | null): (Score
 
 /** Only assets actually visited while open are mounted. Retained decoded nodes
  * make backward seeks/toggles reuse images; all are released with this source. */
-function CachedIcon(props: { url: string | null; fallback?: string }) {
+function CachedIcon(props: { url: string | null; fallback?: string; busy?: boolean }) {
   const [visited, setVisited] = createSignal<string[]>([]);
   createEffect(() => {
+    if (props.busy) return;
     const url = props.url;
     if (url && !untrack(visited).includes(url)) setVisited(previous => [...previous, url]);
   });
   return <>
     <span class={styles.fallback} aria-hidden="true">{props.fallback}</span>
-    <For each={visited()}>{url => <img src={url} alt="" hidden={props.url !== url} decoding="async" draggable={false}
+    <For each={visited()}>{url => <img src={url} alt="" hidden={props.url !== url} decoding="async" fetchpriority="low" draggable={false}
       onError={event => { event.currentTarget.style.visibility = "hidden"; }} />}</For>
   </>;
 }
 
 export default function ReplayScoreboard(props: Props) {
+  const [activated, setActivated] = createSignal(false);
+  createEffect(() => { if (props.open) setActivated(true); });
+  createEffect(() => {
+    const base = props.assetBaseUrl;
+    if (!activated() || !base) return;
+    const preloader = new ScoreboardAssetPreloader();
+    onCleanup(() => preloader.dispose());
+    createEffect(() => preloader.setPaused(props.backgroundBusy ?? false));
+    createEffect(() => {
+      // Source context and page arrivals only: never scan snapshots on the frame clock.
+      const champions = props.identities, spells = props.spellAssets, items = props.preloadItemIds;
+      preloader.add((function* () {
+        for (const identity of champions) if (identity.champion_name) yield `${base}/champion/${encodeURIComponent(identity.champion_name)}`;
+        for (const slots of spells?.values() ?? []) for (const labels of slots) for (const label of labels) yield `${base}/spell/${encodeURIComponent(label)}`;
+        for (const item of items ?? []) yield `${base}/item/${item}`;
+      })());
+    });
+  });
   // A closed panel has no frame/snapshot dependency. Keep its last view and
   // decoded assets until reopened rather than building rows on the frame clock.
   const current = createMemo<{ sample: OverlaySample | null; facts: ScoreboardSnapshot | null }>(previous => props.open ? { sample: props.sample, facts: props.snapshot }
@@ -81,12 +105,12 @@ export default function ReplayScoreboard(props: Props) {
             data-local={identity.participant === props.localParticipant || undefined}>
             <div class={styles.identity}>
               <span class={styles.portrait} title={identity.champion_name ?? "Champion unavailable"}>
-                <CachedIcon url={asset("champion", identity.champion_name)} fallback={identity.champion_name?.slice(0, 2).toUpperCase() ?? "?"} />
+                <CachedIcon url={asset("champion", identity.champion_name)} busy={props.backgroundBusy} fallback={identity.champion_name?.slice(0, 2).toUpperCase() ?? "?"} />
                 <span class={styles.level} aria-label="Level">{value(player()?.level)}</span>
               </span>
               <span class={styles.spells}><For each={[0, 1] as const}>{slot => <span class={styles.spell}
                 title={player()?.spells[slot] ?? "Summoner spell unavailable"}>
-                <CachedIcon url={asset("spell", player()?.spells[slot])} fallback="?" />
+                <CachedIcon url={asset("spell", player()?.spells[slot])} busy={props.backgroundBusy} fallback="?" />
               </span>}</For></span>
               <span class={styles.name} title={identity.riot_id ?? name()}>{name()}</span>
             </div>
@@ -100,7 +124,7 @@ export default function ReplayScoreboard(props: Props) {
                 ? `Item ${fact()!.item_id}${fact()?.count === null ? ", quantity unavailable" : ` × ${fact()!.count}`}` : `Slot ${slot + 1}: unavailable`;
               return <span class={styles.item} data-slot={slot} data-unavailable={item() === null || fact()?.item_id === null || undefined}
                 title={label()} aria-label={label()}>
-                <CachedIcon url={asset("item", fact()?.item_id)} fallback={item() === "empty" ? "" : "?"} />
+                <CachedIcon url={asset("item", fact()?.item_id)} busy={props.backgroundBusy} fallback={item() === "empty" ? "" : "?"} />
                 <Show when={fact()?.count !== null && fact()?.count !== undefined && fact()?.count !== 1}>
                   <span class={styles.quantity}>{fact()?.count}</span>
                 </Show>
