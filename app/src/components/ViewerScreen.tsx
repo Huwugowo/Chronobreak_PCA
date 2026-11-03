@@ -880,7 +880,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
           }</Show>
           <Show when={details()?.league_result}>{(result) =>
             <p data-testid="league-result">
-              EOG · {result().outcome === "win" ? "WIN" : result().outcome === "loss" ? "LOSS" : "Outcome unknown"}
+              {result().source === "lcu_match_history" ? "Match history" : "Final result"} · {result().outcome === "win" ? "WIN" : result().outcome === "loss" ? "LOSS" : "Outcome unknown"}
               {Object.values(result().coverage).some(v => v !== "present") ? " · Partial final facts" : " · Final facts complete"}
               {result().ended_early ? " · Ended early" : ""}
             </p>
@@ -889,7 +889,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         <dl>
           <Show when={details()?.league_result?.local_player}>{(player) =>
             <div>
-              <dt>FINAL EOG K / D / A</dt>
+              <dt>FINAL K / D / A</dt>
               <dd>{player().stats.kills ?? "—"} / {player().stats.deaths ?? "—"} / {player().stats.assists ?? "—"}</dd>
             </div>
           }</Show>

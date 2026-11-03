@@ -365,10 +365,30 @@ fn read_library_directory(path: &Path) -> Result<Option<fs::ReadDir>> {
 }
 
 pub fn list_games(output_directory: &Path) -> Result<Vec<GameSummary>> {
-    Ok(scan_games(output_directory, || Ok(()), read_game_summary)?
+    published_games(output_directory, || Ok(()))
+}
+
+pub(crate) fn published_games(
+    output_directory: &Path,
+    check: impl Fn() -> Result<()>,
+) -> Result<Vec<GameSummary>> {
+    Ok(scan_games(output_directory, check, read_game_summary)?
         .into_iter()
         .filter(usable_recording)
         .collect())
+}
+
+/// Reread one published bundle using the same admission rules as a catalog scan.
+pub(crate) fn published_game(root: &Path, timestamp: &str) -> Option<GameSummary> {
+    if !valid_game_id(timestamp) {
+        return None;
+    }
+    let directory = root.join("games").join(timestamp);
+    if !directory.is_dir() {
+        return None;
+    }
+    let game = read_game_summary(&directory, timestamp.into());
+    usable_recording(&game).then_some(game)
 }
 
 fn usable_recording(game: &GameSummary) -> bool {

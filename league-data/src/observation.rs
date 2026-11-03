@@ -208,12 +208,13 @@ payload!(#[derive(Eq)] FinalPlayer {
     spell1_id: u64, spell2_id: u64, selected_position: String, detected_team_position: String,
     items: Vec<Option<u64>>, stats: FinalStats,
 });
-payload!(#[derive(Eq)] FinalTeam { team_id: u64, is_winning_team: bool, players: Vec<FinalPlayer>, stats: FinalStats });
+payload!(#[derive(Eq)] FinalTeam { team_id: u64, is_winning_team: bool, first_blood: bool, first_tower: bool, first_inhibitor: bool,
+    first_baron: bool, first_dragon: bool, players: Vec<FinalPlayer>, stats: FinalStats });
 payload!(#[derive(Eq)] FinalFacts {
     game_id: String, local_player: FinalPlayer, teams: Vec<FinalTeam>,
     game_length: u64, end_of_game_timestamp: u64, game_mode: String, game_version: String,
     game_type: String, queue_type: String, queue_id: u64, map_id: u64,
-    invalid: bool, game_ended_in_early_surrender: bool, team_early_surrendered: bool,
+    invalid: bool, game_ended_in_surrender: bool, game_ended_in_early_surrender: bool, team_early_surrendered: bool,
     caused_early_surrender: bool, early_surrender_accomplice: bool,
 });
 

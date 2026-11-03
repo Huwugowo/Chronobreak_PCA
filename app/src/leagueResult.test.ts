@@ -34,13 +34,13 @@ it("keeps the summary compact and explicit about unknown/partial outcomes", () =
 
 it("retains source identifiers, aliases, missingness and request provenance through the v2 consumer", () => {
   const result = fixture();
-  result.source_facts = { game_id: candidate.game_id, invalid: false, team_early_surrendered: true,
+  result.source_facts = { game_id: candidate.game_id, invalid: false, game_ended_in_surrender: true, team_early_surrendered: true,
     local_player: { game_id: candidate.game_id, puuid: "synthetic", riot_id_game_name: "Synthetic", riot_id_tag_line: "TEST", is_local_player: true,
       items: [0, null], issues: { "items/1": { state: "unavailable" } }, stats: {
         stats: { ...Object.fromEntries(STAT_KEYS.map(key => [key, null])) as FinalStats, gold_earned: 0 },
         extras: { WIN: 0, PLAYER_SUBTEAM: 7 }, aliases: { kills: ["CHAMPIONS_KILLED", "kills"], gold_earned: ["GOLD_EARNED", "goldEarned"] },
         issues: { kills: { state: "conflict" }, deaths: { state: "unavailable" }, assists: { state: "source_error" } } } },
-    teams: [{ team_id: 300, players: [{ issues: { $: { state: "invalid" } } }] }],
+    teams: [{ team_id: 300, first_blood: false, first_dragon: true, players: [{ issues: { $: { state: "invalid" } } }] }],
     issues: { caused_early_surrender: { state: "unavailable" } } };
   result.evidence = { run_id: media, timing: { start_us: 10, end_us: 20, received_at: "2026-10-16T00:00:00Z" } };
   expect(decodeLeagueResult(JSON.parse(JSON.stringify(result)), media, candidate)).toEqual(result);

@@ -549,6 +549,12 @@ fn final_team(value: &mut Value) -> FinalTeam {
     FinalTeam {
         team_id: f.uint("teamId", "team_id"),
         is_winning_team: f.boolean("isWinningTeam", "is_winning_team"),
+        first_blood: f.boolean("firstBlood", "first_blood"),
+        first_tower: f.boolean("firstTower", "first_tower"),
+        first_inhibitor: f.boolean("firstInhibitor", "first_inhibitor"),
+        first_baron: f.boolean("firstBaron", "first_baron"),
+        // This spelling is part of the LCU match-history schema.
+        first_dragon: f.boolean("firstDargon", "first_dragon"),
         players: f.get("players", "players", |v| {
             v.as_array_mut()
                 .filter(|v| v.len() <= MAX_ROSTER)
@@ -579,6 +585,7 @@ fn final_facts(source: &mut Map<String, Value>) -> FinalFacts {
         queue_id: f.uint("queueId", "queue_id"),
         map_id: f.uint("mapId", "map_id"),
         invalid: f.boolean("invalid", "invalid"),
+        game_ended_in_surrender: f.boolean("gameEndedInSurrender", "game_ended_in_surrender"),
         game_ended_in_early_surrender: f
             .boolean("gameEndedInEarlySurrender", "game_ended_in_early_surrender"),
         team_early_surrendered: f.boolean("teamEarlySurrendered", "team_early_surrendered"),

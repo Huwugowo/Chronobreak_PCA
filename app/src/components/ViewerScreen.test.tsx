@@ -315,16 +315,16 @@ it("shows opening spell icons without a video or timeline interaction and omits 
   } finally { dispose(); }
 });
 
-it("shows confirmed partial EOG facts alongside recorded totals without replacing the video", async () => {
+it.each(["lcu_eog", "lcu_match_history"] as const)("shows confirmed partial %s facts alongside recorded totals without replacing the video", async (source) => {
   const probe=replayProbe();
   probe.league_match={media_id:probe.media_timeline.mediaId,status:"provisional",game_id:"9007199254740993",queue_id:400,map_id:11,local_riot_id:"Synthetic#TEST",game_mode:"CLASSIC"};
-  probe.league_result={schema_version:2,source:"lcu_eog",confirmed:true,media_id:probe.media_timeline.mediaId,game_id:probe.league_match.game_id,source_facts:{game_id:probe.league_match.game_id},evidence:null,outcome:"win",ended_early:false,
+  probe.league_result={schema_version:2,source,confirmed:true,media_id:probe.media_timeline.mediaId,game_id:probe.league_match.game_id,source_facts:{game_id:probe.league_match.game_id},evidence:null,outcome:"win",ended_early:false,
     coverage:{combat:"partial",economy:"missing",damage:"missing",support:"missing",vision:"missing",objectives:"missing",loadout:"missing",runes:"missing"},duration_seconds:600,end_timestamp_ms:null,queue_id:null,map_id:null,game_version:null,game_mode:"CLASSIC",game_type:null,queue_type:null,label_mismatch:false,
     local_player:{team_id:100,champion_id:103,champion_name:"Ahri",riot_id:"Synthetic#TEST",is_local:true,spell1_id:null,spell2_id:null,position:null,detected_position:null,items:[],perks:[],primary_style:null,secondary_style:null,augments:[null,null,null,null],subteam_id:null,subteam_placement:null,stats:{...Object.fromEntries(STAT_KEYS.map(k=>[k,null])) as FinalStats,kills:6,deaths:2,assists:9}},teams:[]};
   setFixture(probe);vi.mocked(loadReplayDescriptor).mockResolvedValue({snapshot_token:"snapshot",game_timestamp:"1",video_url:probe.video_url,media_timeline:probe.media_timeline});vi.mocked(loadServerMetrics).mockReturnValue(new Promise(()=>{}));
   vi.spyOn(HTMLMediaElement.prototype,"pause").mockImplementation(()=>{});vi.spyOn(HTMLMediaElement.prototype,"load").mockImplementation(()=>{});
   const host=document.createElement("div");document.body.append(host);const dispose=render(()=><ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work=>work("snapshot")} onBack={()=>{}} onExportClip={()=>{}}/>,host);
-  try{await vi.waitFor(()=>expect(host.querySelector('[data-testid="league-result"]')?.textContent).toContain("WIN · Partial final facts"));expect(host.querySelector('[data-testid="replay-coverage"]')).toBeNull();expect(host.textContent).toContain("RECORDED K / D / A— / — / —");expect(host.textContent).toContain("Match confirmed");expect(host.textContent).toContain("FINAL EOG K / D / A6 / 2 / 9");expect(host.querySelectorAll("video")).toHaveLength(1);}finally{dispose();}
+  try{await vi.waitFor(()=>expect(host.querySelector('[data-testid="league-result"]')?.textContent).toContain(`${source === "lcu_match_history" ? "Match history" : "Final result"} · WIN · Partial final facts`));expect(host.querySelector('[data-testid="replay-coverage"]')).toBeNull();expect(host.textContent).toContain("RECORDED K / D / A— / — / —");expect(host.textContent).toContain("Match confirmed");expect(host.textContent).toContain("FINAL K / D / A6 / 2 / 9");expect(host.querySelectorAll("video")).toHaveLength(1);}finally{dispose();}
 });
 
 it("marks only the persistent primary video across layout and recovery, then releases it", async () => {

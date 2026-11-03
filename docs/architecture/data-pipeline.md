@@ -6,8 +6,8 @@ Precise media/game clock calibration remains independent of event precision.
 
 ## Acquisition
 
-Live polling is retained during the initial comparison period. In particular,
-clock calibration, match/account association, timestamped events (including
+Live `gamestats`, `playerlist`, and `eventdata` polling is deliberately retained.
+Clock calibration, match/account association, timestamped events (including
 multikills), and player snapshots with dead/alive and respawn state still come
 from the existing Live Client collector. This change does not replace those
 facts with minute-spaced match-history timeline frames. Replay APIs are unused.
@@ -20,14 +20,18 @@ to two independent acquisition paths:
 - The history collector requests `/lol-match-history/v1/games/{gameId}`. It joins
   participants to identities by participant ID, requires the exact game ID and
   local PUUID, and normalizes accepted final facts into
-  `league_history_result.json`. Boolean player wins determine the outcome.
+  `league_history_result.json`. Boolean player wins determine the outcome, with a
+  recognized team result as fallback. Conflicting local player/team results are rejected. Team wins,
+  objective totals/first-objective flags, and available surrender indicators are
+  retained. Missing values stay unknown; early-ending flags do not prove a remake.
 
 History retries at 2, 5, 15, 30, 60, 120, then 300 second intervals. The bounded
 24-job ledger `league_history_jobs.json` persists admission, the next attempt,
 accepted results, and installation completion. It is written on transitions,
-not every idle tick. Completed jobs make room for later games. Pending work
-survives a service restart; fetched facts can be shared across recording splits
-of the same match/account. Credentials are never persisted. Requests are bounded
+not every idle tick. Completed jobs make room for later games. If all 24 jobs are
+still pending, the oldest is evicted so permanently unavailable matches cannot block new games.
+The retained admission order and pending work survive a service restart; fetched
+facts can be shared across recording splits of the same match/account. Credentials are never persisted. Requests are bounded
 and use the existing single LCU HTTP permit.
 
 Facts install atomically into the original directory allocation only after its
@@ -53,8 +57,17 @@ An app-owned preparation task also observes the configured library. Both paths
 share a local, disposable SQLite cache and a cross-process writer lock. WAL
 readers remain independent. Each preparation unit imports at most four committed
 journal batches or reconstructs one bounded overlay page, then yields. The
-preparer checks for new publications and changed sources every five seconds.
-A bad recording does not prevent later recordings from being prepared.
+preparer uses native filesystem notifications, coalesced over one second, to
+refresh and prepare only affected published recordings. Idle ticks do not scan
+the library, hash sources, or open SQLite. Unpublished live journal/manifest
+writes require no preparation. Clip inventory is never scanned by this worker.
+Startup, root/cache replacement and notification errors/overflow request an
+authoritative games scan. A five-minute recovery scan catches missed events or
+filesystems without notifications. Transient writer contention retains the dirty
+work with a five-second backoff; each bounded page checks ownership independently
+without repeating catalog reconciliation. Unchanged summaries keep their search
+facts current when other recordings enter/leave the catalog. A bad recording
+settles as unavailable for its source version without blocking later recordings.
 
 Catalog identity depends on actual library membership/basic metadata, rather
 than a window-specific admission token. Source fingerprints include both final
@@ -95,8 +108,11 @@ impact still need observation in real games. No live-game performance or instant
 availability claim follows from these fixture checks. Cold/new libraries can
 still need initial preparation; UI reads do not cause that preparation.
 
-Verification on 2026-11-03: all 572 frontend tests passed; the complete app backend
-suite passed (167 tests, 10 explicitly ignored), as did the recorder all-target,
-all-feature suite and 33 shared League-data tests. Type checking, frontend
-production build, Rust formatting and Clippy with warnings denied passed.
-Hardware/packaged-runtime checks marked ignored by those suites were not run.
+Verification after the targeted review on 2026-11-03: all 573 frontend tests
+passed; the app backend suite passed (172 tests, 10 explicitly ignored), as did
+the recorder all-target/all-feature suite (270 library tests plus 13 binary/example
+tests, 12 explicitly ignored) and 33 shared League-data tests. Fixtures include
+native sidecar notifications, unchanged/unpublished idle behavior, targeted
+preparation, writer contention/backoff and bounded history overflow after restart.
+Type checking, frontend production build, Rust formatting and Clippy with warnings
+denied passed. Hardware/packaged-runtime checks marked ignored were not run.

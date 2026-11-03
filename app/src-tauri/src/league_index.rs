@@ -209,7 +209,8 @@ impl Index {
         {
             let mut update = tx.prepare_cached("INSERT INTO recordings(bundle,media_id,recorded_at,champion,mode,saved,summary_json,outcome)
             VALUES (?1,?2,?3,?4,?5,?6,?7,'unknown') ON CONFLICT(media_id) DO UPDATE SET
-            recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,summary_json=excluded.summary_json,facts_current=0")?;
+            recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,summary_json=excluded.summary_json,
+            facts_current=CASE WHEN recordings.summary_json=excluded.summary_json THEN recordings.facts_current ELSE 0 END")?;
             for game in games {
                 if let Some(media) = &game.media_id
                     && counts.get(media) == Some(&1)

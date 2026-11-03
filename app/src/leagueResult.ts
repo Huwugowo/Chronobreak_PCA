@@ -5,7 +5,7 @@ export type Outcome = "win" | "loss" | "unknown";
 export type Coverage = "present" | "partial" | "missing";
 export type LeagueResultSummary = { outcome: Outcome; ended_early: boolean; partial: boolean };
 // Fixed allowlist matches chronobreak-league-data::Stats.
-export const STAT_KEYS = ["kills", "deaths", "assists", "level", "minions", "jungle_minions", "ally_jungle_minions", "enemy_jungle_minions", "gold_earned", "gold_spent", "damage", "champion_damage", "objective_damage", "turret_damage", "physical_damage", "physical_champion_damage", "magic_damage", "magic_champion_damage", "true_damage", "true_champion_damage", "damage_taken", "physical_damage_taken", "magic_damage_taken", "true_damage_taken", "mitigated", "shielding", "healing", "teammate_healing", "crowd_control", "total_crowd_control", "time_dead", "units_healed", "vision", "wards_killed", "wards_placed", "control_wards_bought", "detector_wards_placed", "critical_strike", "killing_spree", "multi_kill", "double_kills", "triple_kills", "quadra_kills", "penta_kills", "turrets", "inhibitors", "barons", "dragons", "objectives_stolen", "objectives_stolen_assists", "first_blood", "first_blood_assist", "first_tower", "first_tower_assist", "spell1_casts", "spell2_casts", "spell3_casts", "spell4_casts", "summoner1_casts", "summoner2_casts"] as const;
+export const STAT_KEYS = ["kills", "deaths", "assists", "level", "minions", "jungle_minions", "ally_jungle_minions", "enemy_jungle_minions", "gold_earned", "gold_spent", "damage", "champion_damage", "objective_damage", "turret_damage", "physical_damage", "physical_champion_damage", "magic_damage", "magic_champion_damage", "true_damage", "true_champion_damage", "damage_taken", "physical_damage_taken", "magic_damage_taken", "true_damage_taken", "mitigated", "shielding", "healing", "teammate_healing", "crowd_control", "total_crowd_control", "time_dead", "units_healed", "vision", "wards_killed", "wards_placed", "control_wards_bought", "detector_wards_placed", "critical_strike", "killing_spree", "multi_kill", "double_kills", "triple_kills", "quadra_kills", "penta_kills", "turrets", "inhibitors", "barons", "dragons", "rift_heralds", "void_grubs", "vilemaws", "objectives_stolen", "objectives_stolen_assists", "first_blood", "first_blood_assist", "first_tower", "first_tower_assist", "spell1_casts", "spell2_casts", "spell3_casts", "spell4_casts", "summoner1_casts", "summoner2_casts"] as const;
 export type FinalStats = Record<(typeof STAT_KEYS)[number], number | null>;
 const STAT_SOURCE_ALIASES: Record<string, readonly string[]> = {
   kills: ["CHAMPIONS_KILLED", "kills"],
@@ -52,10 +52,13 @@ const STAT_SOURCE_ALIASES: Record<string, readonly string[]> = {
   triple_kills: ["tripleKills"],
   quadra_kills: ["quadraKills"],
   penta_kills: ["pentaKills"],
-  turrets: ["TURRETS_KILLED", "turretKills"],
+  turrets: ["TURRETS_KILLED", "turretKills", "towerKills"],
   inhibitors: ["BARRACKS_KILLED", "inhibitorKills"],
   barons: ["baronKills"],
   dragons: ["dragonKills"],
+  rift_heralds: ["riftHeraldKills"],
+  void_grubs: ["hordeKills"],
+  vilemaws: ["vilemawKills"],
   objectives_stolen: ["objectivesStolen"],
   objectives_stolen_assists: ["objectivesStolenAssists"],
   first_blood: ["firstBloodKill"],
@@ -97,12 +100,12 @@ export type SourceFinalPlayer = {
   spell1_id?: number; spell2_id?: number; selected_position?: string; detected_team_position?: string;
   items?: (number | null)[]; stats?: SourceFinalStats; issues?: FieldIssues;
 };
-export type SourceFinalTeam = { team_id?: number; is_winning_team?: boolean; players?: SourceFinalPlayer[]; stats?: SourceFinalStats; issues?: FieldIssues };
+export type SourceFinalTeam = { team_id?: number; is_winning_team?: boolean; first_blood?: boolean; first_tower?: boolean; first_inhibitor?: boolean; first_baron?: boolean; first_dragon?: boolean; players?: SourceFinalPlayer[]; stats?: SourceFinalStats; issues?: FieldIssues };
 export type SourceFinalFacts = {
   game_id: string; local_player?: SourceFinalPlayer; teams?: SourceFinalTeam[];
   game_length?: number; end_of_game_timestamp?: number; game_mode?: string; game_version?: string;
   game_type?: string; queue_type?: string; queue_id?: number; map_id?: number;
-  invalid?: boolean; game_ended_in_early_surrender?: boolean; team_early_surrendered?: boolean;
+  game_ended_in_surrender?: boolean; invalid?: boolean; game_ended_in_early_surrender?: boolean; team_early_surrendered?: boolean;
   caused_early_surrender?: boolean; early_surrender_accomplice?: boolean; issues?: FieldIssues;
 };
 export type ResultEvidence = { run_id: MediaId; timing: { start_us: number; end_us: number; received_at: string } };
@@ -189,10 +192,12 @@ function sourceFacts(v: unknown, game: string): void {
   let players = 0;
   const facts = fields(v, { game_id: sourceGameId, local_player: v => sourcePlayer(v, game),
     teams: v => array(v, 16, t => fields(t, { team_id: sourceNumber, is_winning_team: v => typeof v === "boolean", stats: sourceStats,
+      first_blood: v => typeof v === "boolean", first_tower: v => typeof v === "boolean", first_inhibitor: v => typeof v === "boolean",
+      first_baron: v => typeof v === "boolean", first_dragon: v => typeof v === "boolean",
       players: v => { array(v, 64, p => sourcePlayer(p, game)); players += (v as unknown[]).length; } }, true)),
     game_length: sourceNumber, end_of_game_timestamp: sourceNumber, game_mode: sourceText, game_version: sourceText,
     game_type: sourceText, queue_type: sourceText, queue_id: sourceNumber, map_id: sourceNumber,
-    invalid: v => typeof v === "boolean", game_ended_in_early_surrender: v => typeof v === "boolean", team_early_surrendered: v => typeof v === "boolean",
+    game_ended_in_surrender: v => typeof v === "boolean", invalid: v => typeof v === "boolean", game_ended_in_early_surrender: v => typeof v === "boolean", team_early_surrendered: v => typeof v === "boolean",
     caused_early_surrender: v => typeof v === "boolean", early_surrender_accomplice: v => typeof v === "boolean" });
   if (facts.game_id !== game || players > 64) throw new Error("source binding");
 }

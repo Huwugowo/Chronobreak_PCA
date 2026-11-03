@@ -48,6 +48,7 @@ const FACT_FIELDS: &[&str] = &[
     "queue_id",
     "map_id",
     "invalid",
+    "game_ended_in_surrender",
     "game_ended_in_early_surrender",
     "team_early_surrendered",
     "caused_early_surrender",
@@ -69,7 +70,17 @@ const PLAYER_FIELDS: &[&str] = &[
     "items",
     "stats",
 ];
-const TEAM_FIELDS: &[&str] = &["team_id", "is_winning_team", "players", "stats"];
+const TEAM_FIELDS: &[&str] = &[
+    "team_id",
+    "is_winning_team",
+    "first_blood",
+    "first_tower",
+    "first_inhibitor",
+    "first_baron",
+    "first_dragon",
+    "players",
+    "stats",
+];
 
 fn payload_issues(
     value: &impl serde::Serialize,

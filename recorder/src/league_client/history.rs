@@ -70,6 +70,8 @@ struct IdentityPlayer {
 struct MatchTeam {
     team_id: u64,
     win: Option<String>,
+    #[serde(flatten)]
+    facts: serde_json::Map<String, Value>,
 }
 impl Match {
     pub(super) fn set_receipt(&mut self, start: std::time::Instant) -> Result<(), &'static str> {
@@ -115,6 +117,12 @@ impl Match {
             return Err("history_duplicate_participant");
         }
         let mut teams = BTreeMap::<u64, Vec<Value>>::new();
+        for team in &self.teams {
+            if teams.insert(team.team_id, Vec::new()).is_some() {
+                return Err("history_duplicate_team");
+            }
+        }
+        let mut flags = serde_json::Map::new();
         let mut local = None;
         let mut outcome = Outcome::Unknown;
         for p in &self.participants {
@@ -161,7 +169,28 @@ impl Match {
                 if local.is_some() {
                     return Err("history_local_ambiguous");
                 }
-                outcome = match win {
+                for key in [
+                    "invalid",
+                    "gameEndedInEarlySurrender",
+                    "gameEndedInSurrender",
+                    "teamEarlySurrendered",
+                    "causedEarlySurrender",
+                    "earlySurrenderAccomplice",
+                ] {
+                    if let Some(value) = p.stats.get(key) {
+                        flags.insert(key.into(), value.clone());
+                    }
+                }
+                let team_win = self
+                    .teams
+                    .iter()
+                    .find(|t| t.team_id == p.team_id)
+                    .and_then(|t| match t.win.as_deref() {
+                        Some("Win") => Some(true),
+                        Some("Fail") => Some(false),
+                        _ => None,
+                    });
+                outcome = match win.or(team_win) {
                     Some(true) => Outcome::Win,
                     Some(false) => Outcome::Loss,
                     None => Outcome::Unknown,
@@ -180,7 +209,56 @@ impl Match {
             teams.entry(p.team_id).or_default().push(player);
         }
         let local = local.ok_or("history_local_missing")?;
-        let mut eog: Eog = serde_json::from_value(json!({"gameId":self.game_id,"localPlayer":local,"teams":teams.into_iter().map(|(id,players)|json!({"teamId":id,"players":players})).collect::<Vec<_>>(),"gameLength":self.game_duration,"endOfGameTimestamp":null,"queueId":self.queue_id,"mapId":self.map_id,"gameVersion":self.game_version,"gameMode":self.game_mode,"gameType":self.game_type})).map_err(|_|"history_decode")?;
+        let teams = teams
+            .into_iter()
+            .map(|(id, players)| {
+                let mut mapped = json!({"teamId":id,"players":players});
+                if let Some(team) = self.teams.iter().find(|t| t.team_id == id) {
+                    if let Some(win) = &team.win {
+                        mapped["isWinningTeam"] = match win.as_str() {
+                            "Win" => true.into(),
+                            "Fail" => false.into(),
+                            _ => win.clone().into(),
+                        };
+                    }
+                    let mut stats = serde_json::Map::new();
+                    for key in [
+                        "towerKills",
+                        "inhibitorKills",
+                        "baronKills",
+                        "dragonKills",
+                        "riftHeraldKills",
+                        "hordeKills",
+                        "vilemawKills",
+                    ] {
+                        if let Some(value) = team.facts.get(key) {
+                            stats.insert(key.into(), value.clone());
+                        }
+                    }
+                    mapped["stats"] = stats.into();
+                    for key in [
+                        "firstBlood",
+                        "firstTower",
+                        "firstInhibitor",
+                        "firstBaron",
+                        "firstDargon",
+                    ] {
+                        if let Some(value) = team.facts.get(key) {
+                            mapped[key] = value.clone();
+                        }
+                    }
+                }
+                mapped
+            })
+            .collect::<Vec<_>>();
+        let mut mapped = json!({"gameId":self.game_id,"localPlayer":local,"teams":teams,
+            "gameLength":self.game_duration,"endOfGameTimestamp":null,"queueId":self.queue_id,
+            "mapId":self.map_id,"gameVersion":self.game_version,"gameMode":self.game_mode,"gameType":self.game_type});
+        mapped
+            .as_object_mut()
+            .ok_or("history_decode")?
+            .extend(flags);
+        let mut eog: Eog = serde_json::from_value(mapped).map_err(|_| "history_decode")?;
         eog.evidence = self.evidence.clone();
         let mut result = eog.confirm(binding).map_err(|_| "history_association")?;
         result.source = "lcu_match_history".into();
@@ -264,12 +342,13 @@ fn admit(jobs: &mut Vec<Job>, job: Job) -> bool {
         return false;
     }
     if jobs.len() == 24 {
-        if let Some(i) = jobs.iter().position(|j| j.done) {
-            jobs.remove(i);
-        } else {
-            tracing::warn!("history pending capacity reached");
-            return false;
-        }
+        // Keep recent recovery useful even when old matches never become available.
+        // Admission order is persisted, so overflow behaves the same after restart.
+        let oldest = jobs.iter().position(|j| j.done).unwrap_or_else(|| {
+            tracing::warn!("history pending overflow; evicting oldest job");
+            0
+        });
+        jobs.remove(oldest);
     }
     jobs.push(job);
     true
@@ -483,6 +562,119 @@ mod tests {
             },
         });
         assert!(r.confirm(&binding()).is_err());
+    }
+    #[test]
+    fn history_preserves_team_objectives_results_and_surrender_facts() {
+        let mut history = response(false);
+        history.participants[0].stats.extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
+            "gameEndedInEarlySurrender":true, "gameEndedInSurrender":true,
+            "teamEarlySurrendered":false, "causedEarlySurrender":null, "earlySurrenderAccomplice":"invalid"
+        })).unwrap());
+        history.teams[0].facts = serde_json::from_value(json!({
+            "towerKills":0, "inhibitorKills":null, "baronKills":1, "dragonKills":2,
+            "riftHeraldKills":1, "hordeKills":6, "vilemawKills":null,
+            "firstBlood":false, "firstTower":true, "firstBaron":true, "firstDargon":false
+        }))
+        .unwrap();
+        let result = history.confirm(&binding()).unwrap();
+        assert!(result.ended_early);
+        assert_eq!(result.teams[0].is_winning, Some(false));
+        let stats = &result.teams[0].stats;
+        assert_eq!(
+            (stats.turrets, stats.inhibitors, stats.barons, stats.dragons),
+            (Some(0), None, Some(1), Some(2))
+        );
+        assert_eq!(
+            (stats.rift_heralds, stats.void_grubs, stats.vilemaws),
+            (Some(1), Some(6), None)
+        );
+        let facts = &result.source_facts;
+        assert_eq!(facts.game_ended_in_surrender, Some(true));
+        assert_eq!(facts.team_early_surrendered, Some(false));
+        assert_eq!(facts.invalid, None);
+        assert_eq!(
+            facts.issues["caused_early_surrender"],
+            chronobreak_league_data::observation::FieldIssue::Unavailable
+        );
+        assert_eq!(
+            facts.issues["early_surrender_accomplice"],
+            chronobreak_league_data::observation::FieldIssue::Invalid
+        );
+        let team = &facts.teams.as_ref().unwrap()[0];
+        assert_eq!(
+            (
+                team.first_blood,
+                team.first_tower,
+                team.first_inhibitor,
+                team.first_dragon
+            ),
+            (Some(false), Some(true), None, Some(false))
+        );
+        assert_eq!(
+            team.stats.as_ref().unwrap().aliases["turrets"],
+            ["towerKills"]
+        );
+        assert!(result.valid_for(&result.media_id, "42"));
+    }
+    #[test]
+    fn history_keeps_unknowns_unknown_and_uses_available_team_outcome() {
+        let mut history = response(true);
+        history.participants[0].stats.remove("win");
+        let result = history.confirm(&binding()).unwrap();
+        assert_eq!(result.outcome, Outcome::Win);
+        assert!(!result.ended_early);
+        assert_eq!(result.source_facts.game_ended_in_early_surrender, None);
+        assert_eq!(result.teams[0].stats.turrets, None);
+        history.teams[0].win = None;
+        let result = history.confirm(&binding()).unwrap();
+        assert_eq!(result.outcome, Outcome::Unknown);
+        assert_eq!(result.teams[0].is_winning, None);
+        history.participants[0]
+            .stats
+            .insert("gameEndedInSurrender".into(), true.into());
+        assert!(!history.confirm(&binding()).unwrap().ended_early);
+    }
+    fn job() -> Job {
+        let binding = binding();
+        Job {
+            directory: DirectoryLocator {
+                path: PathBuf::from("games/100"),
+                media_id: binding.media_id.clone(),
+                volume: 0,
+                file_id: [0; 16],
+            },
+            binding,
+            attempts: 1,
+            next_ms: i64::MAX,
+            result: None,
+            done: false,
+        }
+    }
+    #[test]
+    fn unavailable_history_cannot_block_new_matches_after_restart() {
+        let jobs = (0..24).map(|_| job()).collect::<Vec<_>>();
+        let mut jobs: Vec<Job> =
+            serde_json::from_slice(&serde_json::to_vec(&jobs).unwrap()).unwrap();
+        let oldest = jobs[0].binding.media_id.clone();
+        let retained = jobs[1].binding.media_id.clone();
+        let newest = job();
+        assert!(admit(&mut jobs, newest.clone()));
+        assert_eq!(jobs.len(), 24);
+        assert!(!jobs.iter().any(|j| j.binding.media_id == oldest));
+        assert_eq!(jobs[0].binding.media_id, retained);
+        assert_eq!(jobs[23].binding.media_id, newest.binding.media_id);
+        assert!(!admit(&mut jobs, newest));
+    }
+    #[test]
+    fn history_overflow_prefers_completed_jobs() {
+        let mut jobs = (0..24).map(|_| job()).collect::<Vec<_>>();
+        let oldest = jobs[0].binding.media_id.clone();
+        let completed = jobs[12].binding.media_id.clone();
+        jobs[12].done = true;
+        assert!(admit(&mut jobs, job()));
+        assert_eq!(jobs.len(), 24);
+        assert_eq!(jobs[0].binding.media_id, oldest);
+        assert!(!jobs.iter().any(|j| j.binding.media_id == completed));
     }
     #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
