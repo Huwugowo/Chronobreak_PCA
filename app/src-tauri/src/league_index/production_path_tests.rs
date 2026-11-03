@@ -182,6 +182,7 @@ async fn simulated_live_responses_reach_durable_sql_and_application_queries() {
         limit: 32,
         include_scoreboard: false,
     };
+    while !index.prepare_overlay(&timeline).unwrap() {}
     let compact = index.overlay_page(&overlay_query, &timeline).unwrap();
     assert!(!compact.samples.is_empty());
     let compact_json = serde_json::to_string(&compact).unwrap();

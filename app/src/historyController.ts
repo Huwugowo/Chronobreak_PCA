@@ -24,7 +24,7 @@ type Dependencies = {
 };
 const key = (origin: LibraryOrigin) => JSON.stringify(origin);
 
-/** One idle import and one short query at a time, independent of media reads. */
+/** Read-only preparation status and short queries; the backend owns all imports. */
 export class HistoryController {
   private context: Context | null = null;
   private state: HistoryState = { page: null, loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false };
@@ -67,6 +67,11 @@ export class HistoryController {
     this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
     this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexIssue: null, laterPage: false });
     this.schedule();
+  }
+  prepared() {
+    if (!this.context || !this.current(this.context)) return;
+    this.context.revision++;
+    this.refreshQuery();
   }
   setQuery(query: HistoryQuery, actionId?: string) {
     this.query = { ...query, after: null, limit: 50 };
@@ -134,9 +139,9 @@ export class HistoryController {
   private schedule() {
     if (this.closed || this.importActive || !this.context || (!this.catalogPending && !this.pending.size)) return;
     clearTimeout(this.timer);
-    // Yield to input/rendering between bounded worker calls without adding
-    // 100 ms for every four journal commits in a long recording.
-    this.timer = setTimeout(() => this.pumpImport(), 4);
+    // Catalog pages are cheap local reads. Recheck pending background work
+    // at a human-scale cadence without delaying the first display.
+    this.timer = setTimeout(() => this.pumpImport(), this.catalogPending ? 4 : 500);
   }
   private pumpImport() {
     const context = this.context;

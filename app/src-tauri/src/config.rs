@@ -276,6 +276,12 @@ fn expand_user_path(value: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(value))
 }
 
+/// Shared by desktop and the recorder-owned headless preparation process.
+pub(crate) fn preparation_data_directory() -> Result<PathBuf> {
+    let base = BaseDirs::new().context("local data directory unavailable")?;
+    app_data_path(base.data_local_dir().join("com.leaguereplay.desktop"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

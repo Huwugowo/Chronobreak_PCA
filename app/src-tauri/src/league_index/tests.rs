@@ -222,7 +222,9 @@ fn pages_commits_atomically_and_skips_unchanged_sources() {
         0
     );
     let reader = Index::reader(f.cache.path(), f.root.path()).unwrap();
-    reader.require_catalog("accepted").unwrap();
+    reader
+        .require_catalog(&catalog_key(std::slice::from_ref(&f.summary)).unwrap())
+        .unwrap();
     assert!(reader.require_catalog("old").is_err());
     assert_eq!(
         reader
@@ -829,7 +831,7 @@ fn catalog_is_queryable_before_import_and_missing_events_are_unknown() {
 }
 
 #[test]
-fn refresh_marks_history_facts_unknown_until_each_source_is_checked() {
+fn ui_refresh_keeps_unchanged_prepared_history_current() {
     let f = Fixture::new(1);
     let mut index = f.index();
     f.ready(&mut index);
@@ -843,7 +845,7 @@ fn refresh_marks_history_facts_unknown_until_each_source_is_checked() {
         .reconcile(std::slice::from_ref(&f.summary), "refreshed")
         .unwrap();
     let pending = index.history(&query, 1).unwrap();
-    assert!(pending.rows.is_empty());
+    assert_eq!(pending.rows.len(), 1);
     assert_eq!(pending.unknown_recordings, 1);
     let basic = index
         .history(
@@ -854,11 +856,7 @@ fn refresh_marks_history_facts_unknown_until_each_source_is_checked() {
             1,
         )
         .unwrap();
-    assert_eq!(basic.rows[0].index_status, "pending");
-    assert!(matches!(
-        basic.rows[0].stats.source,
-        StatsSource::Unavailable
-    ));
+    assert_eq!(basic.rows[0].index_status, "ready");
     let progress = index
         .recording(f.root.path(), &f.summary, false, &|| Ok(()))
         .unwrap();
@@ -947,7 +945,9 @@ fn reader_snapshot_and_source_stamp_reject_stale_changes() {
         .require_source(f.root.path(), "100", &f.source.media_id)
         .unwrap();
     index.reconcile(&[], "new-membership").unwrap();
-    reader.require_catalog("accepted").unwrap();
+    reader
+        .require_catalog(&catalog_key(std::slice::from_ref(&f.summary)).unwrap())
+        .unwrap();
     assert_eq!(
         reader
             .history(

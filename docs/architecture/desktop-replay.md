@@ -126,8 +126,8 @@ A new library origin clears retained history; pending text timers are cancelled 
 origin changes or disposal. Origin comparison uses its values, not object identity.
 History queries submitted before initial catalog admission remain queued, with
 only the latest input retained. The controller releases that input after the
-catalog token is committed, preserving its action identity; per-recording imports
-then continue independently of foreground queries.
+stable catalog is available, preserving its action identity; background
+preparation then continues independently of foreground queries.
 
 History initialization spans current catalog/import work and a final query that
 observes its latest completed import revision. A current foreground query can
@@ -151,7 +151,7 @@ A single persistent video element is shared between windowed and fullscreen layo
 changing layout does not remount the decoder.
 
 After two animation frames provide a paint opportunity, the viewer loads optional
-recording facts, resumes bounded index work, then requests source scopes and bounded
+recording facts, reads background preparation status, then requests source scopes and bounded
 event/overlay pages. Pending work includes scheduled viewport reads. Useful
 same-source facts and pages remain visible while replacement work runs. A compact
 header outside the picture shows loading, limited details or unavailable details;
@@ -312,3 +312,5 @@ the same embedded lock. There is no PATH fallback. See
 Windows resource mapping includes this runtime; inclusion and supervision of the
 standalone recorder and clean-machine installer certification remain distribution
 work.
+
+The acquisition and preparation owners are described in [Data pipeline](data-pipeline.md).

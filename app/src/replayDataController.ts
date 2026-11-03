@@ -50,7 +50,7 @@ export function replayDetailsStatus(data: ReplayDataState, overlay: OverlayState
 type WindowIntent = { id: number; query: ReplayWindowRequest };
 const PAGE_SIZE = 512;
 const CACHE_WINDOWS = 4;
-const IMPORT_PAUSE_MS = 100;
+const IMPORT_PAUSE_MS = 500;
 const VIEWPORT_DEBOUNCE_MS = 120;
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -120,6 +120,12 @@ export class ReplayDataController {
     return this.initPromise;
   }
 
+  /** A late result can arrive after facts were read but before initialization settles. */
+  prepared(): Promise<void> {
+    const active = this.initPromise;
+    return active ? active.then(() => this.closed ? undefined : this.retry()) : this.retry();
+  }
+
   /** Explicit retry only; background failures never restart their own IPC work. */
   retry(): Promise<void> {
     if (this.initPromise) return this.initPromise;
@@ -148,7 +154,7 @@ export class ReplayDataController {
     this.setLoading("index", true);
     this.publish({ indexing: "pending" });
     try {
-      // A pending import is deliberately resumed at a human-scale cadence.
+      // Read preparation status only. The backend advances work without a mounted viewer.
       for (;;) {
         const progress = await this.read(token => this.api.indexRecording(token, this.api.gameTimestamp));
         if (!this.currentInit(generation)) return;

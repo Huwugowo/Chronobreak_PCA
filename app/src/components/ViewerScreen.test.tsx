@@ -123,7 +123,7 @@ it("toggles TAB without driving media, follows observed frames through seeks, an
     Object.defineProperties(primary, { currentSrc: { get: () => primary.src }, readyState: { get: () => 4 } });
     primary.dispatchEvent(new Event("loadstart")); primary.dispatchEvent(new Event("loadedmetadata")); primary.dispatchEvent(new Event("canplay"));
     frame(performance.now(), { mediaTime: 0 } as VideoFrameCallbackMetadata);
-    expect(host.querySelector('[data-testid="replay-scoreboard"]')).toBeNull();
+    expect(host.querySelector('[data-testid="replay-scoreboard"]')?.hasAttribute("hidden")).toBe(true);
     const pausedCalls = vi.mocked(primary.pause).mock.calls.length;
     key("Tab");
     const panel = host.querySelector('[data-testid="replay-scoreboard"]') as HTMLElement;
@@ -736,7 +736,7 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
     expect([...champion.querySelectorAll('[class*="spell"] img')]).toEqual(spellImages);
     await new Promise(resolve => setTimeout(resolve, 150));
     expect(vi.mocked(queryReplayWindow).mock.calls.length).toBe(queryCount);
-    expect(queryOverlayPage).toHaveBeenCalledTimes(1);
+    expect(queryOverlayPage).toHaveBeenCalledTimes(2);
   } finally {
     dispose();
     ["requestVideoFrameCallback", "cancelVideoFrameCallback"].forEach((name, index) => {

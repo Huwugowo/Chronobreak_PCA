@@ -262,13 +262,15 @@ enum Endpoint {
     Summoner,
     Gameflow,
     Eog,
+    History(u64),
 }
 impl Endpoint {
-    fn path(&self) -> &'static str {
+    fn path(&self) -> String {
         match self {
-            Self::Summoner => "/lol-summoner/v1/current-summoner",
-            Self::Gameflow => "/lol-gameflow/v1/session",
-            Self::Eog => "/lol-end-of-game/v1/eog-stats-block",
+            Self::Summoner => "/lol-summoner/v1/current-summoner".into(),
+            Self::Gameflow => "/lol-gameflow/v1/session".into(),
+            Self::Eog => "/lol-end-of-game/v1/eog-stats-block".into(),
+            Self::History(id) => format!("/lol-match-history/v1/games/{id}"),
         }
     }
 }
@@ -303,6 +305,19 @@ impl Transport {
                     .map_err(|_| "lcu_clock")?,
             },
         });
+        Ok(result)
+    }
+    pub(super) async fn history(
+        &self,
+        discovered: &Discovered,
+        metrics: &mut Metrics,
+        id: u64,
+    ) -> Result<super::history::Match, &'static str> {
+        let start = std::time::Instant::now();
+        let mut result: super::history::Match = self
+            .get(&discovered.credentials, Endpoint::History(id), metrics)
+            .await?;
+        result.set_receipt(start)?;
         Ok(result)
     }
     pub(super) fn new() -> Result<Self, &'static str> {
@@ -354,7 +369,12 @@ impl Transport {
             return Err("lcu_admission_closed");
         }
         metrics.requests += 1;
-        metrics.last_endpoint = Some(endpoint.path());
+        metrics.last_endpoint = Some(match endpoint {
+            Endpoint::Summoner => "summoner",
+            Endpoint::Gameflow => "gameflow",
+            Endpoint::Eog => "eog",
+            Endpoint::History(_) => "match_history",
+        });
         metrics.last_http_status = None;
         // No public URL/method override and no reqwest/serde error strings escape.
         let mut response = self
@@ -372,16 +392,21 @@ impl Transport {
         if !response.status().is_success() {
             return Err("lcu_http_status");
         }
+        let response_limit = if matches!(endpoint, Endpoint::History(_)) {
+            2 * 1024 * 1024
+        } else {
+            RESPONSE_LIMIT
+        };
         if response
             .content_length()
-            .is_some_and(|n| n > RESPONSE_LIMIT as u64)
+            .is_some_and(|n| n > response_limit as u64)
         {
             return Err("lcu_body_size");
         }
         let mut body = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|_| "lcu_transport")? {
             metrics.response_bytes += chunk.len() as u64;
-            if chunk.len() > RESPONSE_LIMIT - body.len() {
+            if chunk.len() > response_limit - body.len() {
                 return Err("lcu_body_size");
             }
             body.extend_from_slice(&chunk);

@@ -172,6 +172,44 @@ impl DirectoryGuard {
             Err("context_non_windows")
         }
     }
+    pub(super) fn install_history(
+        &self,
+        result: &chronobreak_league_data::ResultFile,
+    ) -> Result<(), &'static str> {
+        if result.source != "lcu_match_history"
+            || !result.valid_for(&result.media_id, &result.game_id)
+        {
+            return Err("history_identity");
+        }
+        let bytes = serde_json::to_vec(result).map_err(|_| "history_encode")?;
+        if bytes.len() > chronobreak_league_data::MAX_RESULT_BYTES {
+            return Err("history_size");
+        }
+        #[cfg(windows)]
+        {
+            self.inner.validate_result_core(&result.game_id)?;
+            self.inner
+                .replace_telemetry(chronobreak_league_data::HISTORY_RESULT_FILE, &bytes)
+        }
+        #[cfg(not(windows))]
+        {
+            Err("context_non_windows")
+        }
+    }
+    pub(super) fn replace_history_jobs(&self, bytes: &[u8]) -> Result<(), &'static str> {
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err("history_jobs_size");
+        }
+        #[cfg(windows)]
+        {
+            self.inner
+                .replace_telemetry("league_history_jobs.json", bytes)
+        }
+        #[cfg(not(windows))]
+        {
+            Err("context_non_windows")
+        }
+    }
     pub fn capture(path: &Path, media_id: MediaId) -> Result<Self, &'static str> {
         #[cfg(windows)]
         {

@@ -20,6 +20,7 @@ pub(crate) fn reset(
 ) -> Result<ResetResult> {
     check()?;
     ensure_cache_directory(cache)?;
+    let _writer = Index::writer_lock(cache, root)?;
     let database = cache_path(cache, root);
     let nonce = crate::playback_policy::random_capability().context("cache reset nonce")?;
     let components = cache_components(&database);
@@ -27,7 +28,7 @@ pub(crate) fn reset(
 
     let rebuilt = (|| {
         check()?;
-        let mut index = Index::open(cache, root)?;
+        let mut index = Index::open_locked(cache, root, None)?;
         check()?;
         index.reconcile(games, token)?;
         check()?;
@@ -166,7 +167,9 @@ mod tests {
         assert_eq!(result.catalog_recordings, 1);
         assert_eq!(fs::read(authored_path).unwrap(), authored);
         let reader = Index::reader(cache.path(), root.path()).unwrap();
-        reader.require_catalog("accepted").unwrap();
+        reader
+            .require_catalog(&super::super::catalog_key(&games).unwrap())
+            .unwrap();
         let recordings: i64 = reader
             .db
             .query_row("SELECT COUNT(*) FROM recordings", [], |row| row.get(0))

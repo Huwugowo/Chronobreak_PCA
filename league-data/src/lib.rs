@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub mod observation;
 
 pub const RESULT_FILE: &str = "league_result.json";
+pub const HISTORY_RESULT_FILE: &str = "league_history_result.json";
 pub const RESULT_SCHEMA_VERSION: u32 = 2;
 pub const MAX_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_PLAYERS: usize = 64;
@@ -210,7 +211,7 @@ pub struct ResultFile {
 impl ResultFile {
     pub fn valid_for(&self, media: &MediaId, game: &str) -> bool {
         self.schema_version == RESULT_SCHEMA_VERSION
-            && self.source == "lcu_eog"
+            && matches!(self.source.as_str(), "lcu_eog" | "lcu_match_history")
             && self.confirmed
             && &self.media_id == media
             && self.game_id == game

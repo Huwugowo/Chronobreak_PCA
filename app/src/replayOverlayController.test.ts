@@ -22,7 +22,7 @@ const enriched = (s: OverlaySample, payload = s.observation_id): OverlaySample =
   scoreboard: { payload_id: payload, scores: { kills: payload, deaths: 0, assists: null, creep_score: 15 }, ward_score: 2.25,
     items: [{ item_id: 2003, slot: 0, count: 2 }] } })) });
 
-it("loads scoreboard only on demand, interns payloads and reuses exact samples through scrubbing and toggles", async () => {
+it("prepares scoreboard during idle time, interns payloads and reuses exact samples through scrubbing and toggles", async () => {
   const early = sample(2), late = sample(20);
   const query = vi.fn(async (_token, _game, q: OverlayQuery) => page(q.include_scoreboard
     ? [enriched(early, 7), enriched(late, 7)] : [early, late]));
@@ -47,13 +47,12 @@ it("loads scoreboard only on demand, interns payloads and reuses exact samples t
   expect(controller.scoreboardFor(early)).toBeNull();
 });
 
-it("warms after first open even while closed, pauses during seeks and keeps incomplete observations unavailable", async () => {
+it("warms before first open, pauses during seeks and keeps incomplete observations unavailable", async () => {
   const early = sample(2), late = sample(20), tail = deferred<OverlayPage>();
   const query = vi.fn().mockResolvedValueOnce(page([early, late])).mockReturnValueOnce(tail.promise)
     .mockResolvedValueOnce({ ...page([enriched(late)]), identities: null });
   const controller = setup(query); controller.select(scope);
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
-  controller.setScoreboardOpen(true);
   await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
   controller.setScoreboardOpen(false); controller.setScoreboardBusy(true);
   tail.resolve(page([enriched(early)], early));

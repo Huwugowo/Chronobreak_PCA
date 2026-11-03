@@ -79,7 +79,7 @@ export type FinalPlayer = {
   subteam_id: number | null; subteam_placement: number | null; stats: FinalStats;
 };
 export type LeagueResult = {
-  schema_version: 2; source: "lcu_eog"; confirmed: true; media_id: MediaId; game_id: string;
+  schema_version: 2; source: "lcu_eog" | "lcu_match_history"; confirmed: true; media_id: MediaId; game_id: string;
   source_facts: SourceFinalFacts; evidence: ResultEvidence | null;
   outcome: Outcome; ended_early: boolean; coverage: Record<(typeof FAMILY_KEYS)[number], Coverage>;
   duration_seconds: number | null; end_timestamp_ms: number | null;
@@ -217,7 +217,7 @@ export function decodeLeagueResultSummary(v: unknown): LeagueResultSummary | nul
 export function decodeLeagueResult(v: unknown, media: MediaId, candidate: LeagueMatch | null): LeagueResult | null {
   try {
     const r = record(v, ["schema_version", "source", "confirmed", "media_id", "game_id", "source_facts", "evidence", "outcome", "ended_early", "coverage", "duration_seconds", "end_timestamp_ms", "queue_id", "map_id", "game_version", "game_mode", "game_type", "queue_type", "label_mismatch", "local_player", "teams"]);
-    if (!candidate || r.schema_version !== 2 || r.source !== "lcu_eog" || r.confirmed !== true || r.media_id !== media || r.game_id !== candidate.game_id
+    if (!candidate || r.schema_version !== 2 || !["lcu_eog", "lcu_match_history"].includes(String(r.source)) || r.confirmed !== true || r.media_id !== media || r.game_id !== candidate.game_id
         || !["win", "loss", "unknown"].includes(r.outcome as string) || typeof r.ended_early !== "boolean" || typeof r.label_mismatch !== "boolean"
         || ![r.duration_seconds,r.end_timestamp_ms,r.queue_id,r.map_id].every(numeric) || ![r.game_version,r.game_mode,r.game_type,r.queue_type].every(textual)) return null;
     if (!Object.values(record(r.coverage, FAMILY_KEYS)).every(v => ["present", "partial", "missing"].includes(v as string))) return null;

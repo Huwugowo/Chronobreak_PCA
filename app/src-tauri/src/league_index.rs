@@ -35,13 +35,14 @@ pub(crate) use query::{
     EventWindow, HistoryPage, HistoryQuery, RosterAt, ScopeQuery, SourceScope, WindowQuery,
 };
 
-const VERSION: i64 = 5;
+const VERSION: i64 = 6;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 const IMPORT_BATCHES: usize = 4;
 
 pub(crate) struct Index {
     db: Connection,
+    _writer: Option<fs::File>,
 }
 
 /// The cache stays on the app's local data volume, even for a network library.
@@ -81,11 +82,32 @@ impl Index {
             identity.0 == root.to_str().context("index root encoding")? && identity.1 == VERSION,
             "index identity/version"
         );
-        Ok(Self { db })
+        Ok(Self { db, _writer: None })
     }
 
     pub(crate) fn open(cache: &Path, root: &Path) -> Result<Self> {
+        let writer = Self::writer_lock(cache, root)?;
+        Self::open_locked(cache, root, Some(writer))
+    }
+
+    pub(super) fn writer_lock(cache: &Path, root: &Path) -> Result<fs::File> {
         fs::create_dir_all(cache)?;
+        let path = cache_path(cache, root).with_extension("lock");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        ensure!(
+            lock.metadata()?.is_file() && !fs::symlink_metadata(&path)?.is_symlink(),
+            "index lock type"
+        );
+        lock.try_lock().context("index preparation already owned")?;
+        Ok(lock)
+    }
+
+    pub(super) fn open_locked(cache: &Path, root: &Path, writer: Option<fs::File>) -> Result<Self> {
         let path = cache_path(cache, root);
         if let Ok(meta) = fs::symlink_metadata(&path) {
             ensure!(
@@ -126,7 +148,10 @@ impl Index {
         }
         let mode: String = db.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
         ensure!(mode == "wal", "index requires WAL mode");
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            _writer: writer,
+        })
     }
 
     pub(crate) fn require_catalog(&self, token: &str) -> Result<()> {
@@ -154,7 +179,9 @@ impl Index {
         Ok(())
     }
 
-    pub(crate) fn reconcile(&mut self, games: &[GameSummary], token: &str) -> Result<()> {
+    pub(crate) fn reconcile(&mut self, games: &[GameSummary], _token: &str) -> Result<()> {
+        let token = catalog_key(games)?;
+        let token = token.as_str();
         self.refresh_authored(self.root_path()?.as_path())?;
         if self.require_catalog(token).is_ok() {
             return Ok(());
@@ -233,6 +260,9 @@ impl Index {
             "recording identity changed since accepted scan"
         );
         let directory = root.join("games").join(&summary.timestamp);
+        // Fingerprint before decoding facts. A result arriving during this read
+        // must invalidate this version, rather than bless older decoded facts.
+        let stamp = source_stamp(&directory)?;
         let candidate = crate::league_match::read(&directory, &media);
         let result = crate::league_result::read(&directory, &media, candidate.as_ref());
         // Same media ID in two bundles is ambiguous and must never silently move.
@@ -288,7 +318,6 @@ impl Index {
                 params![media.as_str(), result_json],
             )?;
         }
-        let stamp = source_stamp(&directory)?;
         let timeline_json = serde_json::to_string(&descriptor.media_timeline)?;
         let old_timeline: Option<String> = self.db.query_row(
             "SELECT timeline_json FROM recordings WHERE media_id=?1",
@@ -326,7 +355,7 @@ impl Index {
         result
     }
 
-    fn progress(&self, media: &MediaId, batches: u32) -> Result<ImportProgress> {
+    pub(crate) fn progress(&self, media: &MediaId, batches: u32) -> Result<ImportProgress> {
         self.db.query_row("SELECT telemetry_status,position_json,tail_bytes FROM recordings WHERE media_id=?1", [media.as_str()], |r| {
             let position: Option<String> = r.get(1)?;
             Ok(ImportProgress { media_id: media.clone(), status: r.get(0)?, batches,
@@ -334,9 +363,58 @@ impl Index {
         }).map_err(Into::into)
     }
 
+    pub(crate) fn prepared_progress(
+        &self,
+        root: &Path,
+        summary: &GameSummary,
+    ) -> Result<ImportProgress> {
+        let media = summary
+            .media_id
+            .as_ref()
+            .context("recording media unavailable")?;
+        let mut progress = self.progress(media, 0)?;
+        if self
+            .require_source(root, &summary.timestamp, media)
+            .is_err()
+        {
+            progress.status = "pending".into();
+            return Ok(progress);
+        }
+        if progress.status == "ready" {
+            for source in self.scopes(media)? {
+                let scope = ScopeQuery {
+                    media_id: source.source.media_id,
+                    run_id: source.source.run_id,
+                    epoch: source.source.epoch,
+                };
+                let expected = serde_json::to_string(
+                    &self
+                        .whole_source_coverage(&scope)?
+                        .committed
+                        .context("source revision")?,
+                )?;
+                let ready:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM prepared_overlay_sources WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND complete=1 AND revision=?4)",params![scope.media_id.as_str(),scope.run_id.as_str(),sql_u64(scope.epoch)?,expected],|r|r.get(0))?;
+                if !ready {
+                    progress.status = "pending".into();
+                    break;
+                }
+            }
+        }
+        Ok(progress)
+    }
+
+    pub(crate) fn preparation_failed(&mut self, root: &Path, game: &GameSummary) -> Result<()> {
+        let media = game.media_id.as_ref().context("preparation media")?;
+        let stamp = source_stamp(&root.join("games").join(&game.timestamp))?;
+        self.db.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1",params![media.as_str(),stamp])?;
+        Ok(())
+    }
+
     fn clear_telemetry(&mut self, media: &MediaId) -> Result<()> {
         let tx = self.db.transaction()?;
         for table in [
+            "prepared_overlay_samples",
+            "prepared_overlay_sources",
             "commits",
             "source_coverage",
             "scopes",
@@ -421,7 +499,7 @@ fn bounded(path: &Path, cap: usize) -> Result<Vec<u8>> {
     ensure!(bytes.len() <= cap, "optional source size");
     Ok(bytes)
 }
-fn source_stamp(directory: &Path) -> Result<String> {
+pub(crate) fn source_stamp(directory: &Path) -> Result<String> {
     let mut hash = Sha256::new();
     // Small manifests/sidecars are cheap content fingerprints. The append-only
     // journal's size/change time avoids rereading unchanged history; explicit
@@ -432,6 +510,10 @@ fn source_stamp(directory: &Path) -> Result<String> {
         ("league_match.json", 64 * 1024),
         (
             chronobreak_league_data::RESULT_FILE,
+            chronobreak_league_data::MAX_RESULT_BYTES,
+        ),
+        (
+            chronobreak_league_data::HISTORY_RESULT_FILE,
             chronobreak_league_data::MAX_RESULT_BYTES,
         ),
     ] {
@@ -456,4 +538,26 @@ fn source_stamp(directory: &Path) -> Result<String> {
         }
     }
     Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Stable across headless preparation and UI refreshes; admission tokens remain separate.
+pub(crate) fn catalog_key(games: &[GameSummary]) -> Result<String> {
+    let mut rows = games
+        .iter()
+        .map(|g| {
+            (
+                g.timestamp.as_str(),
+                g.media_id.as_ref().map(MediaId::as_str),
+                serde_json::to_string(&(&g.recorded_at, &g.champion, &g.game_mode, g.saved)),
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    let mut hash = Sha256::new();
+    for (bundle, media, json) in rows {
+        hash.update(bundle.as_bytes());
+        hash.update(media.unwrap_or("").as_bytes());
+        hash.update(json?.as_bytes());
+    }
+    Ok(format!("{:x}", hash.finalize()))
 }

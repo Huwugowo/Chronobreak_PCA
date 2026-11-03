@@ -10,6 +10,8 @@ mod export_staging;
 mod league_authored;
 mod league_index;
 mod league_index_commands;
+mod league_preparation;
+pub use league_preparation::headless as prepare_library_headless;
 mod league_match;
 mod league_result;
 mod library;
@@ -64,6 +66,7 @@ struct AppState {
     hevc_probe_path: PathBuf,
     ddragon_cache: PathBuf,
     league_index_cache: PathBuf,
+    preparation: Mutex<Option<league_preparation::Owner>>,
     ddragon_status: Arc<RwLock<DdragonStatus>>,
     music_directory: PathBuf,
     media_runtime: MediaRuntimeState,
@@ -126,10 +129,26 @@ async fn refresh_library(
     };
     #[cfg(not(feature = "replay-benchmark"))]
     let mode = export_staging::RecoveryMode::Normal;
-    state
+    let snapshot = state
         .library
         .refresh_with_recovery(&state.roots, &state.playback_origin, mode)
-        .await
+        .await?;
+    // Admit basic metadata cheaply; expensive source preparation has its own owner.
+    let cache = state.league_index_cache.clone();
+    let _ = state
+        .library
+        .index_job(
+            Arc::clone(&state.roots),
+            &snapshot.token,
+            None,
+            true,
+            move |root, snapshot, _| {
+                let mut index = league_index::Index::open(&cache, root)?;
+                index.reconcile(&snapshot.games, &snapshot.token)
+            },
+        )
+        .await;
+    Ok(snapshot)
 }
 
 #[tauri::command(async)]
@@ -1256,7 +1275,8 @@ pub fn run() {
                 config: Arc::new(RwLock::new(config)),
                 roots,
                 library: LibraryCoordinator::new(),
-                league_index_cache: app_data.join("league-index"),
+                league_index_cache: config::preparation_data_directory()?.join("league-index"),
+                preparation: Mutex::new(None),
                 playback_origin,
                 playback_metrics,
                 hevc_probe_path,
@@ -1269,6 +1289,9 @@ pub fn run() {
                 #[cfg(feature = "replay-benchmark")]
                 benchmark_requests,
             });
+
+            let preparation=league_preparation::start(app.handle().clone());
+            *app.state::<AppState>().preparation.lock().unwrap_or_else(|p|p.into_inner())=Some(preparation);
 
             #[cfg(feature = "replay-benchmark")]
             {
@@ -1444,8 +1467,17 @@ pub fn run() {
     ]);
 
     builder
-        .run(tauri_context)
-        .expect("error while running League Replay");
+        .build(tauri_context)
+        .expect("error while building League Replay")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<AppState>()
+                    .preparation
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .take();
+            }
+        });
 }
 
 #[cfg(test)]

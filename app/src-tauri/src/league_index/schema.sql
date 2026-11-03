@@ -152,3 +152,6 @@ CREATE TABLE IF NOT EXISTS authored_records(record_id TEXT PRIMARY KEY,kind TEXT
 CREATE TABLE IF NOT EXISTS authored_inputs(record_id TEXT NOT NULL REFERENCES authored_records ON DELETE CASCADE,ordinal INTEGER NOT NULL,media_id TEXT NOT NULL,kind TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(record_id,ordinal));
 CREATE INDEX IF NOT EXISTS authored_input_media ON authored_inputs(media_id,record_id);
 CREATE TABLE IF NOT EXISTS authored_ranges(record_id TEXT NOT NULL REFERENCES authored_records ON DELETE CASCADE,ordinal INTEGER NOT NULL,media_id TEXT NOT NULL,start_frame INTEGER NOT NULL,end_frame_exclusive INTEGER NOT NULL,PRIMARY KEY(record_id,ordinal));
+
+CREATE TABLE IF NOT EXISTS prepared_overlay_sources(media_id TEXT NOT NULL REFERENCES recordings(media_id) ON DELETE CASCADE,run_id TEXT NOT NULL,epoch INTEGER NOT NULL,revision TEXT NOT NULL,complete INTEGER NOT NULL,cursor TEXT,PRIMARY KEY(media_id,run_id,epoch));
+CREATE TABLE IF NOT EXISTS prepared_overlay_samples(media_id TEXT NOT NULL REFERENCES recordings(media_id) ON DELETE CASCADE,run_id TEXT NOT NULL,epoch INTEGER NOT NULL,replay_tick INTEGER NOT NULL,observation_id INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(media_id,run_id,epoch,replay_tick,observation_id));

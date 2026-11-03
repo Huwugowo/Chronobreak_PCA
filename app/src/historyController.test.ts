@@ -54,7 +54,7 @@ it.each(["catalog", "recording"] as const)("retains a terminal %s failure throug
   }
   const controller = new HistoryController(api);
   try {
-    controller.setContext(origin("A", 1), [game]); await vi.advanceTimersByTimeAsync(8);
+    controller.setContext(origin("A", 1), [game]); await vi.advanceTimersByTimeAsync(504);
     expect(controller.value).toMatchObject({ initializing: true, indexing: false,
       indexIssue: { kind: "failed", message: "private operational failure" } });
     finalQuery.resolve(page()); await flush(); await flush();
@@ -83,7 +83,7 @@ it.each([false, true])("keeps one initialization through productive imports and 
   const sessions: boolean[] = [];
   controller.subscribe(state => sessions.push(state.initializing));
   try {
-    controller.setContext(origin("A", 1), [game]); await vi.advanceTimersByTimeAsync(8);
+    controller.setContext(origin("A", 1), [game]); await vi.advanceTimersByTimeAsync(504);
     expect(controller.value).toMatchObject({ initializing: true, loading: false, indexing: true });
     importResult.resolve(ready); await flush(); await flush();
     expect(controller.value).toMatchObject({ initializing: true, indexing: false, loading: true });
@@ -116,7 +116,7 @@ it("lets the newest foreground query satisfy the final initialization barrier", 
     history: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(foreground.promise) };
   const controller = new HistoryController(api);
   try {
-    controller.setContext(origin("A", 1)); await vi.advanceTimersByTimeAsync(4);
+    controller.setContext(origin("A", 1)); await vi.advanceTimersByTimeAsync(500);
     controller.setQuery({ limit: 50, search: "latest" });
     first.resolve(page()); await flush(); await flush();
     expect(controller.value.initializing).toBe(true);
@@ -147,13 +147,13 @@ it.each(["history", "replay"] as const)("waits for the %s writer when navigating
   const old = library.origin()!;
   let replay: Promise<ImportProgress>;
   if (first === "history") {
-    history.setContext(old, [game]); await vi.advanceTimersByTimeAsync(4);
+    history.setContext(old, [game]); await vi.advanceTimersByTimeAsync(500);
     history.setContext(null); library.navigate(false);
     replay = library.readReplay(library.origin()!, game.timestamp, () => library.writeIndex(library.origin()!, "replay", () => write(false)));
   } else {
     replay = library.readReplay(old, game.timestamp, () => library.writeIndex(old, "replay", () => write(true)));
     library.navigate(false); history.setContext(library.origin(), [game]);
-    await vi.advanceTimersByTimeAsync(4);
+    await vi.advanceTimersByTimeAsync(500);
   }
   const replaySettled = replay.catch(error => error);
   try {
@@ -215,7 +215,7 @@ async function overlappingImports() {
   };
   const controller = new HistoryController(api);
   controller.setContext(o, [game]);
-  await vi.advanceTimersByTimeAsync(8);
+  await vi.advanceTimersByTimeAsync(504);
   controller.setQuery({ limit: 50, search: "foreground" }, "foreground");
   return { controller, api, events, pending, imports, queries,
     bounds: () => ({ maximumImports, maximumQueries }),
@@ -235,7 +235,7 @@ it("admits the held foreground query despite repeated imports and coalesces late
   try {
     for (let n = 0; n < 3; n++) {
       imports[n].resolve(pending); await flush();
-      await vi.advanceTimersByTimeAsync(4);
+      await vi.advanceTimersByTimeAsync(500);
     }
     expect(api.history).toHaveBeenCalledTimes(2);
     queries[0].resolve({ ...page(), indexed_recordings: 7 }); await flush();
@@ -284,7 +284,7 @@ it("releases a stale context query into current-context work and discards its di
       fixture.controller.setContext(null);
       fixture.controller.setContext(nextOrigin, [game]);
       fixture.controller.setQuery({ search: "new context", limit: 50 }, "new-context");
-      await vi.advanceTimersByTimeAsync(4);
+      await vi.advanceTimersByTimeAsync(500);
       fixture.queries[0].resolve(page()); await flush();
       expect(fixture.api.history).toHaveBeenLastCalledWith(nextOrigin.token, expect.objectContaining({ search: "new context" }));
       fixture.queries[1].resolve(page()); await flush();
@@ -302,7 +302,7 @@ it("coalesces dirty error recovery once and close prevents any new refresh", asy
     fixture.queries[0].reject(new Error("query failed")); await flush();
     expect(fixture.api.history).toHaveBeenCalledTimes(3);
     expect(fixture.controller.value).toMatchObject({ error: null, loading: true });
-    await vi.advanceTimersByTimeAsync(4);
+    await vi.advanceTimersByTimeAsync(500);
     fixture.imports[1].resolve(fixture.pending); await flush();
     fixture.controller.close();
     fixture.queries[1].resolve(page()); await flush();
@@ -319,7 +319,7 @@ it("distinguishes queued replacements from completed superseded work without can
   const controller = new HistoryController(api);
   controller.setContext(origin("A", 1), [game]);
   controller.setQuery({ limit: 50, search: "first" }, "search-1");
-  await vi.advanceTimersByTimeAsync(4);
+  await vi.advanceTimersByTimeAsync(500);
   controller.setQuery({ limit: 50, search: "replaced" }, "search-2");
   controller.setQuery({ limit: 50, search: "latest" }, "search-3");
   expect(api.history).toHaveBeenCalledTimes(1);
@@ -344,7 +344,7 @@ it("queues the latest input until catalog admission and preserves its action whi
   const controller = new HistoryController(api);
   controller.setContext(o, [game]);
   controller.setQuery({ search: "old", limit: 50 }, "old-input");
-  await vi.advanceTimersByTimeAsync(4);
+  await vi.advanceTimersByTimeAsync(500);
   controller.setQuery({ search: "latest", limit: 50 }, "latest-input");
   expect(api.history).not.toHaveBeenCalled();
   expect(controller.value.error).toBeNull();
@@ -356,7 +356,7 @@ it("queues the latest input until catalog admission and preserves its action whi
     .toEqual(["history_query_scheduled", "history_query_replaced"]);
   expect(events.filter(event => event.actionId === "latest-input").map(event => event.kind))
     .toEqual(["history_query_scheduled", "history_query_dispatched", "history_query_completed", "history_query_admitted"]);
-  await vi.advanceTimersByTimeAsync(4);
+  await vi.advanceTimersByTimeAsync(500);
   expect(api.recording).toHaveBeenCalledTimes(1);
   controller.setQuery({ search: "during import", limit: 50 }, "import-input");
   await flush();
@@ -379,9 +379,9 @@ it("yields between bounded imports while queries run independently and close can
   };
   const controller = new HistoryController(api); controller.setContext(o, [game]);
   await flush(); expect(api.catalog).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(4);
+  await vi.advanceTimersByTimeAsync(500);
   expect(api.catalog).toHaveBeenCalledTimes(1); expect(api.recording).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(4);
+  await vi.advanceTimersByTimeAsync(500);
   expect(api.recording).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(500);
   expect(api.recording).toHaveBeenCalledTimes(1);
@@ -390,7 +390,7 @@ it("yields between bounded imports while queries run independently and close can
   expect(controller.value.loading).toBe(false);
   first.resolve(pending); await flush();
   expect(api.recording).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(4);
+  await vi.advanceTimersByTimeAsync(500);
   expect(api.recording).toHaveBeenCalledTimes(2);
   controller.close(); second.resolve(pending); await flush();
   await vi.advanceTimersByTimeAsync(500);
@@ -474,4 +474,20 @@ it("rejects superseded same-context queries while retaining the previous page", 
   latest.resolve({ ...page(), indexed_recordings: 3 }); await flush();
   expect(controller.value.page?.indexed_recordings).toBe(3);
   controller.close();
+});
+
+it("refreshes the current query when background preparation completes after initialization", async () => {
+  vi.useFakeTimers();
+  const api = { current: () => true, catalog: vi.fn(async (token: string) => catalog(token)), recording: vi.fn(), history: vi.fn(async () => page()) };
+  const controller = new HistoryController(api);
+  try {
+    controller.setContext(origin("A",1),[game]);
+    await vi.advanceTimersByTimeAsync(500);
+    controller.setQuery({ limit:50, search:"Syndra" });await flush();
+    const before=api.history.mock.calls.length;
+    controller.prepared();await flush();
+    expect(api.history).toHaveBeenCalledTimes(before+1);
+    expect(api.history).toHaveBeenLastCalledWith("scan-1",expect.objectContaining({search:"Syndra"}));
+    expect(api.recording).not.toHaveBeenCalled();
+  } finally {controller.close();}
 });

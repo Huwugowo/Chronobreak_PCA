@@ -1,3 +1,4 @@
+import { onPreparedData } from "./preparedData";
 import {
   Match,
   Show,
@@ -393,6 +394,7 @@ function App() {
   createEffect(() => benchmarkApplication()?.update());
 
   onMount(() => {
+    const unsubscribePrepared = onPreparedData(() => history.prepared());
     const unsubscribe = controller.subscribe(setLibraryState);
     setLibraryState(controller.value);
     void ensureHevcCapability()
@@ -417,6 +419,7 @@ function App() {
     }, 700);
 
     onCleanup(() => {
+      unsubscribePrepared();
       unsubscribe();
       controller.dispose();
       window.clearInterval(pollAssets);

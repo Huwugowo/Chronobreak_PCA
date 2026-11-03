@@ -24,7 +24,6 @@ export class ReplayOverlayController {
   private active = false;
   private pending: { scope: SourceScope; generation: number } | null = null;
   private closed = false;
-  private scoreboardOpen = false;
   private scoreboardRequested = false;
   private scoreboardBusy = false;
   private scoreboardResumeAt = 0;
@@ -49,7 +48,7 @@ export class ReplayOverlayController {
       && scope.local_participant === this.state.scope.local_participant)) return;
     const generation = ++this.generation;
     this.cancelScoreboardWork?.(); this.cancelScoreboardWork = null;
-    this.scoreboardRequested = this.scoreboardOpen;
+    this.scoreboardRequested = true;
     this.scoreboardItems.clear();
     this.samples = [];
     this.assets.clear();
@@ -60,8 +59,8 @@ export class ReplayOverlayController {
     this.pump();
   }
   retry() { if (this.state.scope) this.select(this.state.scope, true); }
-  /** First open opts this source into background enrichment, also while closed. */
-  setScoreboardOpen(open: boolean) { this.scoreboardOpen = open; this.scoreboardRequested ||= open; this.pump(); }
+  /** Enrichment starts in idle time before the panel is first opened. */
+  setScoreboardOpen(open: boolean) { this.scoreboardRequested ||= open; this.pump(); }
   setScoreboardBusy(busy: boolean) {
     if (busy === this.scoreboardBusy) return;
     this.scoreboardBusy = busy;

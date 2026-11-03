@@ -27,7 +27,7 @@ pub(super) enum Rejection {
 /// Production and fixtures use the same allowlisted field/status decoder.
 #[derive(Default)]
 pub(super) struct Eog {
-    facts: FinalFacts,
+    pub(super) facts: FinalFacts,
     pub evidence: Option<chronobreak_league_data::ResultEvidence>,
 }
 impl<'de> Deserialize<'de> for Eog {

@@ -1,3 +1,4 @@
+import { onPreparedData } from "../preparedData";
 import {
   For,
   Match,
@@ -196,7 +197,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const unsubscribeOverlay = overlayData.subscribe(setOverlay);
   const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
   const [scoreboardOpen, setScoreboardOpen] = createSignal(false);
-  const [scoreboardMounted, setScoreboardMounted] = createSignal(false);
+  const [scoreboardMounted, setScoreboardMounted] = createSignal(true);
   const toggleScoreboard = () => { setScoreboardMounted(true); setScoreboardOpen(open => !open); };
   createEffect(() => overlayData.setScoreboardOpen(scoreboardOpen()));
   const activeScope = createMemo(() => data().scopes.find(scope => sourceKey(scope.source) === selectedSource())
@@ -226,6 +227,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   let payloadReported = false;
   let detailsFailureReported = false;
   onMount(() => {
+    const unsubscribePrepared = onPreparedData(media => {
+      if (!media.includes(mediaTimeline.mediaId)) return;
+      void replayData.prepared().then(() => {if (!disposed) overlayData.retry();});
+    });
+    onCleanup(unsubscribePrepared);
     detailsPaint = requestAnimationFrame(() => {
       detailsPaint = requestAnimationFrame(() => {
         if (!disposed) { void replayData.initialize(); setDetailsScheduled(false); }

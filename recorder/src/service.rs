@@ -575,6 +575,7 @@ pub async fn run(
     let mut control_telemetry = RecorderControlTelemetry::default();
     let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
+    let _preparation = crate::preparation::Owner(crate::preparation::start(&output_path));
     let post_game = match PostGameCoordinator::start(&output_path) {
         Ok(coordinator) => Some(coordinator),
         Err(code) => {

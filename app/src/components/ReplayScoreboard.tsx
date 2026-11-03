@@ -49,11 +49,9 @@ function CachedIcon(props: { url: string | null; fallback?: string; busy?: boole
 }
 
 export default function ReplayScoreboard(props: Props) {
-  const [activated, setActivated] = createSignal(false);
-  createEffect(() => { if (props.open) setActivated(true); });
   createEffect(() => {
     const base = props.assetBaseUrl;
-    if (!activated() || !base) return;
+    if (!base) return;
     const preloader = new ScoreboardAssetPreloader();
     onCleanup(() => preloader.dispose());
     createEffect(() => preloader.setPaused(props.backgroundBusy ?? false));

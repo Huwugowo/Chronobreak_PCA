@@ -71,7 +71,7 @@ describe("ReplayDataController", () => {
     const { api, controller } = setup({ indexRecording });
     try {
       const initialized = controller.initialize();
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(500);
       await initialized;
       expect(indexRecording).toHaveBeenCalledTimes(2);
       expect(api.sourceScopes).toHaveBeenCalledTimes(1);
@@ -83,6 +83,23 @@ describe("ReplayDataController", () => {
       expect(indexRecording).toHaveBeenCalledTimes(3);
       expect(api.sourceScopes).toHaveBeenCalledTimes(2);
     } finally { controller.dispose(); vi.useRealTimers(); }
+  });
+
+  it("refreshes a result arriving after facts were read during initialization", async () => {
+    let release!: (value: ImportProgress) => void;
+    const pending = new Promise<ImportProgress>(resolve => { release = resolve; });
+    const indexRecording = vi.fn().mockReturnValueOnce(pending).mockResolvedValue({ media_id: media, status: "ready", batches: 0, position: null, tail_bytes: 0 });
+    const { api, controller } = setup({ indexRecording });
+    try {
+      void controller.initialize();
+      await vi.waitFor(() => expect(indexRecording).toHaveBeenCalledOnce());
+      expect(api.loadRecordingFacts).toHaveBeenCalledOnce();
+      const refreshed = controller.prepared();
+      release({ media_id: media, status: "ready", batches: 0, position: null, tail_bytes: 0 });
+      await refreshed;
+      expect(api.loadRecordingFacts).toHaveBeenCalledTimes(2);
+      expect(controller.value.indexing).toBe("ready");
+    } finally { controller.dispose(); }
   });
 
   it("calls browser timers with their global receiver while loading and disposing replay details", async () => {

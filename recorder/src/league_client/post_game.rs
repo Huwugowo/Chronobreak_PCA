@@ -52,6 +52,7 @@ mod tests {
             send,
             stop,
             control_failed: Arc::clone(&control_failed),
+            history: None,
         };
         handle.published(media);
         assert!(control_failed.load(Ordering::Acquire));
@@ -395,6 +396,7 @@ pub(crate) struct Handle {
     send: mpsc::Sender<Command>,
     control_failed: Arc<AtomicBool>,
     stop: watch::Sender<bool>,
+    history: Option<super::history::Handle>,
 }
 impl Handle {
     fn send(&self, command: Command) {
@@ -413,6 +415,11 @@ impl Handle {
         let Ok(closed_ms) = ledger::wall_ms() else {
             return;
         };
+        if let Some(history) = &self.history
+            && let Ok(locator) = directory.locator()
+        {
+            history.submit(candidate.result_binding(), locator);
+        }
         self.send(Command::Submit(
             Box::new(candidate.result_binding()),
             directory,
@@ -432,6 +439,7 @@ pub(crate) struct Coordinator {
     stop: watch::Sender<bool>,
     task: Option<JoinHandle<Totals>>,
     runtime: tokio::runtime::Handle,
+    history: Option<super::history::Coordinator>,
 }
 impl Coordinator {
     pub(crate) fn start(root: &Path) -> Result<Self, &'static str> {
@@ -439,6 +447,7 @@ impl Coordinator {
         if runtime.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
             return Err("result_runtime");
         }
+        let history = super::history::Coordinator::start(root);
         let (send, receive) = mpsc::channel(16);
         let (stop, cancel) = watch::channel(false);
         let control_failed = Arc::new(AtomicBool::new(false));
@@ -487,16 +496,21 @@ impl Coordinator {
                 send,
                 control_failed,
                 stop: stop.clone(),
+                history: Some(history.handle.clone()),
             },
             stop,
             task: Some(task),
             runtime,
+            history: Some(history),
         })
     }
     pub(crate) fn handle(&self) -> Handle {
         self.handle.clone()
     }
     pub(crate) async fn stop(mut self) {
+        if let Some(history) = self.history.take() {
+            history.stop().await;
+        }
         self.stop.send_replace(true);
         if let Some(task) = self.task.as_mut() {
             let _ = task.await;
@@ -507,6 +521,9 @@ impl Coordinator {
 impl Drop for Coordinator {
     fn drop(&mut self) {
         self.stop.send_replace(true);
+        if let Some(history) = self.history.take() {
+            tokio::task::block_in_place(|| self.runtime.block_on(history.stop()));
+        }
         if let Some(task) = self.task.take() {
             tokio::task::block_in_place(|| {
                 let _ = self.runtime.block_on(task);

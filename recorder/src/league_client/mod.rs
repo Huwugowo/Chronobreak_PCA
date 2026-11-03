@@ -2,6 +2,7 @@
 
 mod association;
 pub(crate) mod collector;
+mod history;
 pub(crate) mod post_game;
 mod post_game_ledger;
 pub mod probe;

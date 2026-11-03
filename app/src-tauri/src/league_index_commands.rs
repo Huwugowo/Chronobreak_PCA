@@ -205,12 +205,17 @@ pub(crate) async fn index_league_recording(
             Arc::clone(&state.roots),
             &snapshot_token,
             Some(&game_timestamp),
-            true,
+            rebuild,
             move |root, snapshot, check| {
                 let game = accepted_game(snapshot, &bundle)?;
-                let mut index = Index::open(&cache, root)?;
-                index.reconcile(&snapshot.games, &snapshot.token)?;
-                index.recording(root, game, rebuild, check)
+                if rebuild {
+                    let mut index = Index::open(&cache, root)?;
+                    index.reconcile(&snapshot.games, &snapshot.token)?;
+                    return index.recording(root, game, true, check);
+                }
+                Ok(Index::reader(&cache, root)
+                    .and_then(|index| index.prepared_progress(root, game))
+                    .unwrap_or_else(|_| pending_progress(game)))
             },
         )
         .await
@@ -231,6 +236,7 @@ pub(crate) struct CatalogPage {
     catalog_recordings: usize,
 }
 
+#[cfg(test)]
 fn catalog_page(
     root: &std::path::Path,
     cache: &std::path::Path,
@@ -296,8 +302,51 @@ pub(crate) async fn index_league_catalog(
             Arc::clone(&state.roots),
             &snapshot_token,
             None,
-            true,
-            move |root, snapshot, check| catalog_page(root, &cache, snapshot, after, limit, check),
+            false,
+            move |root, snapshot, check| {
+                ensure!(limit > 0 && limit <= 16, "catalog page limit");
+                let start = match after {
+                    Some(bundle) => {
+                        snapshot
+                            .games
+                            .iter()
+                            .position(|g| g.timestamp == bundle)
+                            .context("catalog cursor")?
+                            + 1
+                    }
+                    None => 0,
+                };
+                let index = Index::reader(&cache, root).ok();
+                let mut items = Vec::new();
+                for game in snapshot.games.iter().skip(start).take(usize::from(limit)) {
+                    check()?;
+                    let result = accepted_game(snapshot, &game.timestamp).map(|game| {
+                        index
+                            .as_ref()
+                            .and_then(|i| i.prepared_progress(root, game).ok())
+                            .unwrap_or_else(|| pending_progress(game))
+                    });
+                    let (progress, error) = match result {
+                        Ok(progress) => (Some(progress), None),
+                        Err(error) => (None, Some(error.to_string())),
+                    };
+                    items.push(CatalogItem {
+                        game_timestamp: game.timestamp.clone(),
+                        media_id: game.media_id.clone(),
+                        progress,
+                        error,
+                    });
+                }
+                let next = (start + items.len() < snapshot.games.len())
+                    .then(|| items.last().map(|i| i.game_timestamp.clone()))
+                    .flatten();
+                Ok(CatalogPage {
+                    snapshot_token: snapshot.token.clone(),
+                    items,
+                    next,
+                    catalog_recordings: snapshot.games.len(),
+                })
+            },
         )
         .await
 }
@@ -336,7 +385,7 @@ pub(crate) async fn query_league_history(
             false,
             move |root, snapshot, _| {
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&snapshot.token)?;
+                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
                 index.history(&query, snapshot.games.len())
             },
         )
@@ -361,7 +410,7 @@ pub(crate) async fn league_source_scopes(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&snapshot.token)?;
+                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.scopes(&descriptor.media_timeline.media_id)
             },
@@ -388,7 +437,7 @@ pub(crate) async fn query_league_events(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&snapshot.token)?;
+                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.events(&query, &descriptor.media_timeline)
             },
@@ -420,7 +469,7 @@ pub(crate) async fn query_league_roster(
                     "roster query media mismatch"
                 );
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&snapshot.token)?;
+                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.roster_at(&scope, tick)
             },
@@ -471,7 +520,7 @@ pub(crate) async fn query_league_overlay_page(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&snapshot.token)?;
+                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.overlay_page(&query, &descriptor.media_timeline)
             },
@@ -498,7 +547,7 @@ pub(crate) async fn query_league_replay_window(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&snapshot.token)?;
+                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.replay_window(&query, &descriptor.media_timeline)
             },
@@ -554,4 +603,14 @@ pub(crate) async fn save_league_authored_record(
             },
         )
         .await
+}
+
+fn pending_progress(game: &GameSummary) -> league_index::ImportProgress {
+    league_index::ImportProgress {
+        media_id: game.media_id.clone().expect("accepted recording identity"),
+        status: "pending".into(),
+        batches: 0,
+        position: None,
+        tail_bytes: 0,
+    }
 }

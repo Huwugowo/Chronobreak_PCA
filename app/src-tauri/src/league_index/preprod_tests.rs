@@ -280,6 +280,7 @@ fn real_preprod_sources_import_query_and_rebuild_without_rewriting_evidence() {
                 limit: 128,
                 include_scoreboard: false,
             };
+            while !index.prepare_overlay(&timeline).unwrap() {}
             let mut samples = Vec::new();
             let mut pages = 0;
             let mut bytes = 0;
