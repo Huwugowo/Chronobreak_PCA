@@ -136,14 +136,6 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         >
           <span aria-hidden="true">−</span>
         </button>
-        <output
-          class={styles.speedValue}
-          aria-label="Selected replay speed"
-          aria-live="polite"
-          title={rateDescription()}
-        >
-          {rate()?.selected ?? 1}x
-        </output>
         <button
           class={styles.speedButton}
           type="button"
@@ -154,6 +146,14 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         >
           <span aria-hidden="true">+</span>
         </button>
+        <output
+          class={styles.speedValue}
+          aria-label="Selected replay speed"
+          aria-live="polite"
+          title={rateDescription()}
+        >
+          {rate()?.selected ?? 1}x
+        </output>
       </div>
 
       <span
