@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS recordings(
   media_id TEXT PRIMARY KEY, bundle TEXT NOT NULL UNIQUE, recorded_at TEXT NOT NULL,
   champion TEXT NOT NULL, mode TEXT NOT NULL, saved INTEGER NOT NULL,
   queue_id INTEGER, map_id INTEGER, outcome TEXT NOT NULL, game_id TEXT,
-  summary_json TEXT NOT NULL, result_json TEXT, source_stamp TEXT,
+  summary_json TEXT NOT NULL, result_json TEXT, source_stamp TEXT, history_stamp TEXT,
   journal_header TEXT, source_identity TEXT, position_json TEXT, checkpoint_json TEXT, timeline_json TEXT,
   telemetry_status TEXT NOT NULL DEFAULT 'pending', tail_bytes INTEGER NOT NULL DEFAULT 0,
   facts_current INTEGER NOT NULL DEFAULT 0 CHECK(facts_current IN (0,1)),

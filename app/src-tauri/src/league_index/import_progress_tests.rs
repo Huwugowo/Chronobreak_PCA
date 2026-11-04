@@ -149,13 +149,17 @@ fn stable_uncommitted_tails_settle_without_retries_and_resume_after_commit() {
 #[test]
 #[ignore = "explicit native import CPU/IO characterization on generated libraries"]
 fn import_retry_measurement() {
-    let fixture = Fixture::new(100);
+    let fixture = Fixture::new(IMPORT_BATCHES * 3);
     let mut index = fixture.index();
-    // An exact four-commit boundary needs one final empty read to establish EOF.
-    let pages = measure(&fixture, &mut index, "productive_100_commits", 26);
-    assert!(pages[..25].iter().all(|p| p.batches == 4));
+    // An exact unit boundary needs one final empty read to establish EOF.
+    let pages = measure(&fixture, &mut index, "productive_commits", 4);
     assert!(
-        pages[..25]
+        pages[..3]
+            .iter()
+            .all(|p| p.batches as usize == IMPORT_BATCHES)
+    );
+    assert!(
+        pages[..3]
             .windows(2)
             .all(|p| p[1].position.as_ref().unwrap().end_offset
                 > p[0].position.as_ref().unwrap().end_offset)

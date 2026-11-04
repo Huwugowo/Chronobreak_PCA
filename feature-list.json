@@ -4821,6 +4821,92 @@
         "2026-10-23: final frontend 349 tests/37 files, TypeScript/build, replay tooling 127 passes/one skip, benchmark and ordinary release builds, phase-reader smoke, canonical validation and whitespace checks pass. Unchanged Rust passes remain valid. GPU remains unavailable. Short immediate post-reopen frame drops (155/710 over six 2s windows) are explicitly disposed to existing QB-REPLAY-009 for focused cause/persistence triage; no before/after regression or universal smooth-playback claim. Characterization complete; no speculative optimization or further campaign."
       ],
       "notes": "2026-10-22 explicit user scope: optimize replay app for its own use; concurrent recording, recorder compatibility, League tests/FPS comparisons and Smite excluded. Replay-only v2 supersedes historical recorder-coupled plan. Bounded moving workflow, cold-index diagnostic and minimal catalog-search fix completed; 2026-10-23 continuation closed missing retained-memory observation with one six-cycle settled-library run. No material memory accumulation observed after first playback. Short startup playback drops have a concrete existing owner QB-REPLAY-009; investigate cause before any optimization. Synthetic moving media cannot establish gameplay decode cost/event-picture alignment; optional GPU evidence unavailable. All accepted/excluded trials and limits are retained in report/checkpoint; no work remains active on this characterization."
+    },
+    {
+      "id": "QB-LIB-027",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Share the approved preparation cache and publish stable match cards promptly",
+      "description": "Use the same approved library cache for preparation and UI reads, and publish validated card facts independently of full replay reconstruction without repeated loading or roster remounts.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-023"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Both preparation launch modes use the captured ApprovedRoot canonical path for cache identity, source reads and writer ownership, matching accepted UI commands across ordinary, forward-slash and extended Windows path forms.",
+        "Logical-path retarget and directory-generation checks remain active; distinct libraries retain independent caches and writer ownership. Existing source recordings and misplaced disposable caches are not rewritten or migrated.",
+        "Focused temporary-library regressions and applicable backend checks pass; a fresh production app demonstrates prepared match-card facts and replay timeline data instead of perpetual loading.",
+        "Initial preparation must not hold match-card facts behind full replay-overlay preparation or repeatedly clear/rebuild displayed cards while progress arrives; validate cold loading separately from eventual data availability."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Exercise preparation through logical path spellings and read through ApprovedRoot; assert prepared overlay availability, shared writer exclusion and distinct-library progress. Verify card facts throughout bounded imports, changed-result invalidation, readiness transitions and retained roster DOM. Run backend/frontend tests, format, Clippy and production desktop build; measure a separate genuinely empty cache."},
+        {"type": "manual", "description": "Open the corrected production app against the retention-disabled preprod library; verify populated match cards, settled loading and replay timeline data."}
+      ],
+      "evidence": [
+        "2026-11-04: preparation uses captured ApprovedRoot.path() for cache/source/writer identity while retaining logical-path approval checks. Cached catalog approval also forces full discovery after library replacement. The Windows path-spelling regression failed before the correction (canonical reader cache missing), then passed with shared writer exclusion and distinct-library isolation; the replacement regression rejects stale catalog carryover.",
+        "Initial identity-only correction restored eventual data, but user reported roughly 30-second-per-card cold loading and 3-second flicker. Isolated cold-cache baseline took 85.82 seconds for all 8 recordings; repeated facts_current changes exposed unavailable card facts during bounded imports. This result reopened the work rather than establishing usable loading.",
+        "Final backend suite: 187 passed, 10 existing opt-in tests ignored (command-20261104-115634.log); all 574 frontend tests passed (command-20261104-115648.log). Strict Clippy, formatting, frontend type check and production desktop build passed. Regressions cover stable final card facts across 13 journal commits, genuine changed-result invalidation, card readiness before overlay completion, no query churn for unchanged pending probes and retained roster DOM identity.",
+        "Cache v7 gives card facts their own freshness stamp and status. Final production build staged at build/release/card-loading-final-20261104 with verified runtime; GUI, recorder and windowless helper all run from it. Exact final-build empty-cache probe published all 8 card fact rows in 0.251 seconds, with no availability regression over 12.099 seconds (build/cache-cold-final-20261104/summary.json). The preceding complete probe retained all 8 card rows throughout 83.449 seconds of full reconstruction and 2472 samples, with zero availability regressions.",
+        "Production UI observation showed 5 available final-result cards populated while telemetry_ready=0 and no overlays were prepared. Later cache inspection found all 8 replay sources complete and 2472 samples. User confirmed the updated cards are quick and stable. Recordings and misplaced old disposable caches were not migrated or rewritten; recorder capture code was unchanged."
+      ],
+      "notes": "2026-11-04 bounded direct correction before the separate 15-second watchdog design. Fixed canonical identity and catalog-generation ownership, then addressed the reported cold-card UX through a cheap whole-catalog facts pass, separate source-stamped history readiness, transition-driven query refresh and equality-preserved roster nodes. Source-derived card facts absent from final results still require valid journal evidence; no default zero stats were promoted into observed facts. Full cold journal/overlay reconstruction remains costly and is recorded separately in QB-LIB-028. User confirmed card behavior after the final production update."
+    },
+    {
+      "id": "QB-LIB-028",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Reduce cold journal and replay reconstruction latency",
+      "description": "Characterize and reduce full cold preparation cost and selected-replay waiting without delaying cards, weakening journal validation or adding unbounded background work.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-027"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "The production headless preparer fully validates/imports and materializes all eight recordings in build/preprod/library within 10 seconds from process launch using an empty disposable cache, including all 2472 overlay samples.",
+        "Preserve committed-prefix checksum, manifest, generation and source validation, resumability, cancellation, bounded writer ownership and correct concurrent cache reset behavior; source bytes remain unchanged.",
+        "Keep the confirmed fast, stable match-card preparation and existing replay/query semantics."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Measure the real production executable against fresh caches and compare complete projection contents with the retained pre-change cache; retain raw timing artifacts and source integrity hashes.", "command": "python tools/preparation_benchmark.py --exe app/src-tauri/target/release/league-replay-app.exe --library build/preprod/library --artifact <new-disposable-artifact-directory> --reference <retained-reference-sqlite>"},
+        {"type": "automated", "description": "Run meaningful regression tests for connection/ownership/reset boundaries and existing import corruption, tail, restart and query fixtures, plus backend formatting, tests and strict Clippy and a production desktop build.", "command": null}
+      ],
+      "evidence": [
+        "2026-11-04 production empty-cache runs completed all eight recordings and 2472 overlay samples in 8.552, 8.847 and 8.619 seconds, including process startup. Third run used the recorder helper's below-normal priority. Artifacts: build/preparation-fast-20261104-{1,2,3}/summary.json and samples.json. This is cold disposable-cache preparation on the current machine, not a physical disk-cache flush claim.",
+        "All 24 projection tables matched the retained 83.449-second reference, including recording/card facts. The newly introduced history_stamp was separately checked against validated source_stamp because the reference predates that column. Journal/JSON source hashes remained unchanged; measured card-readiness regressions were zero.",
+        "Full app backend: 188 passed, 10 explicitly ignored. New regression proves cancellation after SQL projection of a later commit rolls back the entire bounded unit, keeps readers on the previous complete prefix and resumes correctly. Existing checksum/manifest, source-generation, tails, reset/restart and real-journal query/rebuild fixtures passed. Rust formatting, strict all-target Clippy, frontend typecheck/build and production desktop build passed. Independent read-only review found no actionable bounded-import defect. Before commit, a focused UI regression exposed the stale four-batch decoder limit; it now accepts the backend maximum of 32 and rejects 33. The regression failed before correction, then all 42 boundary/history/card tests and frontend type checking passed (command-20261104-170141.log). Exact staged-commit verification, excluding unfinished mutation work, passed 177 backend tests (10 opt-in tests ignored), formatting and strict all-target Clippy. All 575 frontend tests and the production frontend build passed (command-20261104-170343.log); staged roadmap validation passed (110 items / 27 plan-checkpoint pairs)."
+      ],
+      "notes": "2026-11-04 user requested the observed 83-second full preparation become at most 10 seconds. Profiling isolated 1292 units: 32.147 seconds inside units, with the remainder largely deliberate 25ms sleeps; importer SQL accounted for 17.150 seconds. Removed the fixed sleep, reused prepared statements, and grouped at most 32 individually validated journal commits into one atomic SQL publication/checkpoint. Every source commit retains checksum/state validation and before/after cancellation/root checks; final generation, manifest and source-stamp validation remains. Connections and writer ownership still end at every bounded unit, preserving cache reset semantics. No parallel writers, source edits or skipped replay work. Direct lightweight implementation as requested; capture watchdog work is tracked separately in QB-CAP-009."
+    },
+    {
+      "id": "QB-LIB-029",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Display prepared library and replay data within one second",
+      "description": "Measure and remove avoidable waiting when opening an already prepared library or replay, including cached local artwork.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "in-progress",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-028"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "For the current eight-recording preprod library with prepared data and local artwork caches, measure process launch to painted match cards with their cached facts/artwork and achieve less than one second.",
+        "Measure selection to painted cached replay timeline and overlay facts and achieve less than one second on representative recordings; distinguish optional full scoreboard hydration and video decode from cached data display.",
+        "Preserve source, revision and root validation, bounded ownership, stale-response rejection and the accepted cold-preparation behavior. Cached display must not wait on external version checks."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Use a lightweight real production WebView measurement with an already prepared cache; retain timestamps and readiness conditions. Add targeted regressions for the actual waiting mechanism and run applicable component checks.", "command": null}
+      ],
+      "evidence": [
+        "2026-11-04: Data Dragon now publishes its validated local manifest cache before awaiting the online version check. A held-refresh regression proves cached assets stay ready while the check is pending and after it fails. Backend suite: 189 passed, 10 opt-in tests ignored; viewer suite: 50 passed. Strict backend Clippy, Rust formatting, frontend typecheck/build, production desktop build and staged-runtime verification passed.",
+        "Three complete production WebView runs displayed all eight cards and 140 available images in 907.1, 922.5 and 892.9 ms from process launch. Across all 24 recording openings, painted cached timeline/overlay/visible artwork took 209.4-605.2 ms. Every one-second assertion passed. Reports: build/perf/warm-display-after-20261104-{3,4,5}/summary.json; method and complete limits: docs/performance/cached-display-2026-11-04.md.",
+        "The initial new-build launch measured 1271.6 ms for cards/artwork, with observer attachment at 928 ms. Its later navigation failed because of an incorrect harness Back-button selector; the startup result remains retained and valid. Repeated warm operation meets the measured budget, but this initial over-budget result prevents claiming a universal subsecond process-start ceiling. The validated GUI/recorder/helper pair is open from build/release/warm-display-20261104."
+      ],
+      "notes": "2026-11-04 user requests less than one second to display already cached data. Lightweight direct fix and real production rendering checks completed without a formal ExecPlan or historical campaign. Repeated cached display passes; keep in-progress because the initial updated-build launch exceeded the full process-start budget. Next work, if pursuing that strict launch ceiling, must isolate pre-observer native/WebView startup rather than alter replay validation or conceal the initial result. Optional full scoreboard hydration and video decode are outside the cached timeline/overlay measurement. Capture watchdog work is tracked separately in QB-CAP-009."
     }
   ]
 }

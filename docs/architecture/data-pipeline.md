@@ -55,8 +55,28 @@ sibling executable, preparation runs when the app is opened.
 
 An app-owned preparation task also observes the configured library. Both paths
 share a local, disposable SQLite cache and a cross-process writer lock. WAL
-readers remain independent. Each preparation unit imports at most four committed
-journal batches or reconstructs one bounded overlay page, then yields. The
+readers remain independent. Preparation uses the captured `ApprovedRoot` final
+path for cache identity, writer ownership and source reads, matching accepted UI
+commands regardless of the configured Windows path spelling. It separately
+revalidates the logical path against that captured approval before each unit,
+so alias retargeting and directory replacement still invalidate work.
+The cached catalog is bound to its captured approval; a different approval
+requires full discovery even when only an incremental notification arrives.
+Preparation publishes the entire pending catalog's small metadata/final-result
+card facts before importing any full journal. Card freshness has its own source
+stamp and `history_ready` status; it does not imply replay readiness. Journal
+imports retain validated card facts between bounded batches. A real result or
+source change must revalidate those facts rather than preserving old enrichment.
+Each preparation unit streams at most 32 committed journal batches into one
+atomic SQL transaction, or reconstructs one bounded overlay page, then releases
+the writer and connection and yields without a fixed inter-unit delay. Every
+journal commit still passes checksum, sequence, scope and checkpoint-state
+validation, with cancellation/root checks before and after its SQL projection.
+The unit publishes its final checkpoint and committed-prefix rows together;
+interruption rolls back that unit, leaving the previous prefix resumable.
+Prepared SQL statements are reused within the unit. No database connection is
+retained across ownership boundaries, so cache reset cannot leave a worker
+writing an obsolete database. The
 preparer uses native filesystem notifications, coalesced over one second, to
 refresh and prepare only affected published recordings. Idle ticks do not scan
 the library, hash sources, or open SQLite. Unpublished live journal/manifest
@@ -88,6 +108,15 @@ remains a separate write operation. History queries, scopes, event windows and
 overlay pages read local SQLite. The viewer mounts media independently while
 optional details finish. Prepared notifications refresh mounted history and
 matching replay details without remounting the video.
+History status polling refreshes queries when card readiness or full preparation
+changes, not after unchanged pending responses. Background refreshes retain the
+foreground loading state, and equal roster contents retain their mounted nodes.
+Known stale card facts are withheld until their source stamp is validated again.
+
+At desktop startup, Data Dragon publishes the newest complete local manifest
+cache before awaiting its online version check. Cached card and replay artwork
+can therefore render immediately. The background check can refresh the cache;
+failure retains the existing offline-cache/placeholder behavior.
 
 Scoreboard enrichment begins during idle time after the compact replay overlay,
 before the first TAB press. Its panel stays mounted while hidden so its existing

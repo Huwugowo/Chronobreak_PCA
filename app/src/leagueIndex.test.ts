@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeReplayWindow, decodeRecordingFacts } from "./leagueIndex";
+import { decodeImportProgress, decodeReplayWindow, decodeRecordingFacts } from "./leagueIndex";
 import { parseMediaId } from "./replayTime";
 import { replayEvent, replayParticipants, recordedGameClock } from "./replayProjection";
 import { eventInvolvesPlayer } from "./viewerUtils";
@@ -24,6 +24,12 @@ const wire = () => ({ source, local_participant: 1, coverage, next: { replay_tic
     ] } });
 
 describe("bounded League replay boundary", () => {
+  it("accepts a full bounded import step and rejects progress beyond its limit", () => {
+    const progress = { media_id: media, status: "pending", batches: 32,
+      position: null, tail_bytes: 0, history_ready: true };
+    expect(decodeImportProgress(progress).batches).toBe(32);
+    expect(() => decodeImportProgress({ ...progress, batches: 33 })).toThrow();
+  });
   it("rejects malformed death and spell facts at the replay boundary", () => {
     for (const fields of [{is_dead:1},{respawn_timer:-1},{respawn_timer:Infinity},
       {summoner_spells:{one:{id:"4"}}},{summoner_spells:{one:{display_name:7}}},

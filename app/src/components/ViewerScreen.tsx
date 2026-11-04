@@ -847,7 +847,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   });
 
   return (
-    <section class={styles.playbackSurface} data-testid="viewer-surface">
+    <section class={styles.playbackSurface} data-testid="viewer-surface" data-details-status={detailsStatus()}>
       <header class={styles.detailsHeader}>
         <Show when={detailsStatus() !== "ready" && (!detailsLoading() || showDetailsLoading())}>
           <span role="status" data-testid="replay-details-state">

@@ -35,10 +35,12 @@ pub(crate) use query::{
     EventWindow, HistoryPage, HistoryQuery, RosterAt, ScopeQuery, SourceScope, WindowQuery,
 };
 
-const VERSION: i64 = 6;
+const VERSION: i64 = 7;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
-const IMPORT_BATCHES: usize = 4;
+// Journal batches are streamed and checked individually. Group their SQL writes
+// into a bounded prefix rather than reopening/checkpointing every few records.
+const IMPORT_BATCHES: usize = 32;
 
 pub(crate) struct Index {
     db: Connection,
@@ -247,13 +249,43 @@ impl Index {
         rebuild: bool,
         check: &(impl Fn() -> Result<()> + ?Sized),
     ) -> Result<ImportProgress> {
-        check()?;
-        if let Some(media) = &summary.media_id {
-            self.db.execute(
-                "UPDATE recordings SET facts_current=0 WHERE media_id=?1",
-                [media.as_str()],
-            )?;
+        let source = self.history_recording(root, summary, rebuild, check)?;
+        let media = &source.timeline.media_id;
+        let old_stamp: Option<String> = self.db.query_row(
+            "SELECT source_stamp FROM recordings WHERE media_id=?1",
+            [media.as_str()],
+            |r| r.get(0),
+        )?;
+        if !rebuild && old_stamp.as_deref() == Some(&source.stamp) {
+            return self.progress(media, 0);
         }
+        let result = self.import(
+            root,
+            &source.directory,
+            &source.timeline,
+            &source.stamp,
+            check,
+        );
+        if result.is_err() {
+            self.clear_telemetry(media)?;
+            // A superseded job must leave resumable work, not cache an optional
+            // source failure for the next accepted snapshot.
+            check()?;
+            self.db.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1", params![media.as_str(),source.stamp])?;
+        }
+        self.refresh_history_summary(media)?;
+        result
+    }
+
+    /// Publish small, validated card facts independently of journal/overlay work.
+    pub(crate) fn history_recording(
+        &mut self,
+        root: &Path,
+        summary: &GameSummary,
+        rebuild: bool,
+        check: &(impl Fn() -> Result<()> + ?Sized),
+    ) -> Result<RecordingSource> {
+        check()?;
         let descriptor = library::replay_descriptor(root, "", &summary.timestamp, String::new())?;
         let media = descriptor.media_timeline.media_id.clone();
         ensure!(
@@ -303,6 +335,10 @@ impl Index {
             )
             .optional()?
             .flatten();
+        self.db.execute(
+            "UPDATE recordings SET facts_current=0 WHERE media_id=?1 AND (summary_json!=?2 OR result_json IS NOT ?3)",
+            params![media.as_str(), serde_json::to_string(summary)?, result_json],
+        )?;
         self.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json)
             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
             ON CONFLICT(media_id) DO UPDATE SET recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,
@@ -332,35 +368,28 @@ impl Index {
             "UPDATE recordings SET timeline_json=?2 WHERE media_id=?1",
             params![media.as_str(), timeline_json],
         )?;
-        let old_stamp: Option<String> = self.db.query_row(
-            "SELECT source_stamp FROM recordings WHERE media_id=?1",
-            [media.as_str()],
-            |r| r.get(0),
+        check()?;
+        ensure!(
+            source_stamp(&directory)? == stamp,
+            "history source changed during preparation"
+        );
+        self.db.execute(
+            "UPDATE recordings SET history_stamp=?2 WHERE media_id=?1",
+            params![media.as_str(), stamp],
         )?;
-        if !rebuild && old_stamp.as_deref() == Some(&stamp) {
-            self.db.execute(
-                "UPDATE recordings SET facts_current=1 WHERE media_id=?1",
-                [media.as_str()],
-            )?;
-            return self.progress(&media, 0);
-        }
-        let result = self.import(root, &directory, &descriptor.media_timeline, &stamp, check);
-        if result.is_err() {
-            self.clear_telemetry(&media)?;
-            // A superseded job must leave resumable work, not cache an optional
-            // source failure for the next accepted snapshot.
-            check()?;
-            self.db.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1", params![media.as_str(),stamp])?;
-        }
         self.refresh_history_summary(&media)?;
-        result
+        Ok(RecordingSource {
+            directory,
+            timeline: descriptor.media_timeline,
+            stamp,
+        })
     }
 
     pub(crate) fn progress(&self, media: &MediaId, batches: u32) -> Result<ImportProgress> {
-        self.db.query_row("SELECT telemetry_status,position_json,tail_bytes FROM recordings WHERE media_id=?1", [media.as_str()], |r| {
+        self.db.query_row("SELECT telemetry_status,position_json,tail_bytes,facts_current FROM recordings WHERE media_id=?1", [media.as_str()], |r| {
             let position: Option<String> = r.get(1)?;
             Ok(ImportProgress { media_id: media.clone(), status: r.get(0)?, batches,
-                position: position.and_then(|s| serde_json::from_str(&s).ok()), tail_bytes: unsigned(r,2)? })
+                position: position.and_then(|s| serde_json::from_str(&s).ok()), tail_bytes: unsigned(r,2)?, history_ready: r.get(3)? })
         }).map_err(Into::into)
     }
 
@@ -374,6 +403,15 @@ impl Index {
             .as_ref()
             .context("recording media unavailable")?;
         let mut progress = self.progress(media, 0)?;
+        let history_stamp: Option<String> = self.db.query_row(
+            "SELECT history_stamp FROM recordings WHERE media_id=?1",
+            [media.as_str()],
+            |row| row.get(0),
+        )?;
+        progress.history_ready &= history_stamp.is_some_and(|stamp| {
+            source_stamp(&root.join("games").join(&summary.timestamp))
+                .is_ok_and(|current| current == stamp)
+        });
         if self
             .require_source(root, &summary.timestamp, media)
             .is_err()
@@ -450,6 +488,13 @@ pub(crate) struct ImportProgress {
     pub batches: u32,
     pub position: Option<journal::Position>,
     pub tail_bytes: u64,
+    pub history_ready: bool,
+}
+
+pub(crate) struct RecordingSource {
+    directory: PathBuf,
+    timeline: chronobreak_replay_time::MediaTimelineV2,
+    stamp: String,
 }
 fn sql_u64(value: u64) -> Result<i64> {
     value

@@ -197,12 +197,15 @@ fn assert_whole_coverage(index: &Index, scope: &ScopeQuery) {
 
 #[test]
 fn pages_commits_atomically_and_skips_unchanged_sources() {
-    let f = Fixture::new(5);
+    let f = Fixture::new(IMPORT_BATCHES + 1);
     let mut index = f.index();
     let first = index
         .recording(f.root.path(), &f.summary, false, &|| Ok(()))
         .unwrap();
-    assert_eq!((first.status.as_str(), first.batches), ("pending", 4));
+    assert_eq!(
+        (first.status.as_str(), first.batches),
+        ("pending", IMPORT_BATCHES as u32)
+    );
     assert!(
         index
             .events(&f.window(), &f.timeline())
@@ -465,6 +468,94 @@ fn tail_and_corrupt_anchor_stay_optional_to_healthy_media() {
     );
     let descriptor = library::replay_descriptor(f.root.path(), "", "100", String::new()).unwrap();
     assert_eq!(descriptor.media_timeline.media_id, f.source.media_id);
+}
+
+#[test]
+fn card_facts_survive_bounded_imports_before_replay_is_prepared() {
+    let f = Fixture::new(IMPORT_BATCHES * 3 + 1);
+    let result = library::tests::result_fixture(&f.source.media_id);
+    fs::write(
+        f.directory.join("league_match.json"),
+        serde_json::to_vec(&crate::league_match::fixture(&f.source.media_id)).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        f.directory.join(chronobreak_league_data::RESULT_FILE),
+        serde_json::to_vec(&result).unwrap(),
+    )
+    .unwrap();
+    let mut index = f.index();
+    index
+        .history_recording(f.root.path(), &f.summary, false, &|| Ok(()))
+        .unwrap();
+    let query = HistoryQuery {
+        limit: 10,
+        ..Default::default()
+    };
+    let initial = index.history(&query, 1).unwrap();
+    assert!(matches!(
+        initial.rows[0].stats.source,
+        StatsSource::FinalEog
+    ));
+    let expected = serde_json::to_value(&initial.rows[0].stats).unwrap();
+    assert!(index.progress(&f.source.media_id, 0).unwrap().history_ready);
+    assert_eq!(initial.rows[0].index_status, "pending");
+    assert!(index.scopes(&f.source.media_id).is_err());
+    for _ in 0..4 {
+        let check = || {
+            let reader = Index::reader(f.cache.path(), f.root.path())?;
+            let page = reader.history(&query, 1)?;
+            assert_eq!(serde_json::to_value(&page.rows[0].stats).unwrap(), expected);
+            Ok(())
+        };
+        index
+            .recording(f.root.path(), &f.summary, false, &check)
+            .unwrap();
+        assert!(index.progress(&f.source.media_id, 0).unwrap().history_ready);
+    }
+    assert_eq!(
+        index.progress(&f.source.media_id, 0).unwrap().status,
+        "ready"
+    );
+    assert_eq!(
+        index
+            .prepared_progress(f.root.path(), &f.summary)
+            .unwrap()
+            .status,
+        "pending"
+    );
+    assert_eq!(
+        serde_json::to_value(&index.history(&query, 1).unwrap().rows[0].stats).unwrap(),
+        expected
+    );
+    // A real final-result change must replace the displayed facts, rather than
+    // preserving an older enrichment to conceal loading.
+    let mut changed = result;
+    changed.local_player.as_mut().unwrap().stats.kills = Some(42);
+    fs::write(
+        f.directory.join(chronobreak_league_data::RESULT_FILE),
+        serde_json::to_vec(&changed).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !index
+            .prepared_progress(f.root.path(), &f.summary)
+            .unwrap()
+            .history_ready
+    );
+    index
+        .history_recording(f.root.path(), &f.summary, false, &|| Ok(()))
+        .unwrap();
+    assert!(
+        index
+            .prepared_progress(f.root.path(), &f.summary)
+            .unwrap()
+            .history_ready
+    );
+    assert_eq!(
+        index.history(&query, 1).unwrap().rows[0].stats.kills,
+        Some(42)
+    );
 }
 
 #[test]
@@ -899,6 +990,78 @@ fn history_rejects_oversized_rows_before_deserialization() {
     assert!(
         error.to_string().contains("history input capacity"),
         "{error}"
+    );
+}
+
+#[test]
+fn interrupted_unit_keeps_the_previous_published_prefix_and_resumes() {
+    let f = Fixture::new(IMPORT_BATCHES + 3);
+    let mut index = f.index();
+    let first = index
+        .recording(f.root.path(), &f.summary, false, &|| Ok(()))
+        .unwrap();
+    assert_eq!(first.batches as usize, IMPORT_BATCHES);
+    let prefix = index
+        .db
+        .query_row(
+            "SELECT position_json,checkpoint_json FROM recordings WHERE media_id=?1",
+            [f.source.media_id.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .unwrap();
+    let checks = std::cell::Cell::new(0);
+    let check = || {
+        checks.set(checks.get() + 1);
+        // Readers see the previous complete unit, including while a later
+        // source commit has already been applied inside the write transaction.
+        let reader = Index::reader(f.cache.path(), f.root.path())?;
+        let count: i64 = reader
+            .db
+            .query_row("SELECT count(*) FROM commits", [], |row| row.get(0))?;
+        assert_eq!(count, IMPORT_BATCHES as i64);
+        ensure!(
+            checks.get() < 4,
+            "interrupt second commit before publication"
+        );
+        Ok(())
+    };
+    assert!(
+        index
+            .import(
+                f.root.path(),
+                &f.directory,
+                &f.timeline(),
+                &source_stamp(&f.directory).unwrap(),
+                &check
+            )
+            .is_err()
+    );
+    assert_eq!(checks.get(), 4);
+    let after = index
+        .db
+        .query_row(
+            "SELECT position_json,checkpoint_json FROM recordings WHERE media_id=?1",
+            [f.source.media_id.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .unwrap();
+    assert_eq!(prefix, after);
+    assert_eq!(
+        index
+            .db
+            .query_row("SELECT count(*) FROM commits", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        IMPORT_BATCHES as i64
+    );
+    f.ready(&mut index);
+    assert_eq!(
+        index
+            .db
+            .query_row("SELECT count(*) FROM commits", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        (IMPORT_BATCHES + 3) as i64
     );
 }
 

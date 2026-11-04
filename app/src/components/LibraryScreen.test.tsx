@@ -146,6 +146,15 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,creep_score:0},index_status:"ready"}]}});
   expect(roster.textContent).toContain("Indexed ally");
   expect(roster.textContent).toContain("Indexed enemy");
+  const rosterNodes = [...roster.querySelectorAll("[class*=rosterPlayer]")];
+  setHistory(JSON.parse(JSON.stringify(history())));
+  expect([...roster.querySelectorAll("[class*=rosterPlayer]")]).toEqual(rosterNodes);
+  expect(roster.querySelector("[class*=rosterPlayer]")).toBe(rosterNodes[0]);
+  setHistory({ ...history(), historyReady: { [game.media_id!]: false } });
+  expect(roster.textContent).not.toContain("Indexed ally");
+  expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).not.toContain("136");
+  setHistory({ ...history(), historyReady: { [game.media_id!]: true } });
+  expect(roster.textContent).toContain("Indexed ally");
   expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS 00.0 / min");
   for (const missing of [{creep_score:null}, {duration_seconds:null}, {duration_seconds:0}]) {
     setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,...missing},index_status:"ready"}]}});

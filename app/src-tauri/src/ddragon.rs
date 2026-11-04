@@ -55,10 +55,24 @@ impl DdragonStatus {
 }
 
 pub async fn initialize(cache_directory: PathBuf, status: Arc<RwLock<DdragonStatus>>) {
-    let result = refresh(&cache_directory).await;
+    initialize_with_refresh(&cache_directory, &status, refresh(&cache_directory)).await;
+}
+
+async fn initialize_with_refresh(
+    cache_directory: &Path,
+    status: &RwLock<DdragonStatus>,
+    refresh: impl std::future::Future<Output = Result<DdragonStatus>>,
+) {
+    // Local assets are usable before the optional online patch check completes.
+    if let Ok(Some(cached)) = newest_cached_status(cache_directory) {
+        *status
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = cached;
+    }
+    let result = refresh.await;
     let next = match result {
         Ok(status) => status,
-        Err(error) => match newest_cached_status(&cache_directory) {
+        Err(error) => match newest_cached_status(cache_directory) {
             Ok(Some(mut cached)) => {
                 cached.error = Some(format!("using cached assets: {error}"));
                 cached
@@ -533,6 +547,52 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({ "data": data })).unwrap(),
         )
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cached_assets_are_ready_while_the_online_check_is_pending_and_after_it_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("15.10.1");
+        fs::create_dir(&directory).unwrap();
+        write_manifest(&directory.join("item.json"), &["Boots"]);
+        write_manifest(&directory.join("champion.json"), &["Syndra"]);
+        fs::write(
+            directory.join("runesReforged.json"),
+            br#"[{"id":8200,"icon":"perk-images/Styles/Sorcery/Sorcery.png","slots":[]}]"#,
+        )
+        .unwrap();
+        let status = Arc::new(RwLock::new(DdragonStatus::loading(root.path())));
+        let (checking, online_check_started) = tokio::sync::oneshot::channel();
+        let (fail_check, failure) = tokio::sync::oneshot::channel();
+        let task_status = status.clone();
+        let task = tokio::spawn(async move {
+            initialize_with_refresh(root.path(), &task_status, async {
+                checking.send(()).unwrap();
+                failure.await.unwrap();
+                bail!("online check unavailable")
+            })
+            .await;
+        });
+
+        online_check_started.await.unwrap();
+        let cached = status.read().unwrap().clone();
+        assert_eq!(cached.state, "ready");
+        assert_eq!(cached.version.as_deref(), Some("15.10.1"));
+        assert_eq!(cached.item_count, 1);
+        assert_eq!(cached.champion_count, 1);
+        assert!(cached.error.is_none());
+        fail_check.send(()).unwrap();
+        task.await.unwrap();
+        let fallback = status.read().unwrap();
+        assert_eq!(fallback.state, "ready");
+        assert_eq!(fallback.version, cached.version);
+        assert!(
+            fallback
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("online check unavailable")
+        );
     }
 
     #[test]

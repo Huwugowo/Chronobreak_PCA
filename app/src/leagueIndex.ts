@@ -30,7 +30,7 @@ export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavai
   evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
 export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string };
 export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
-export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number };
+export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number; history_ready?: boolean };
 type Position = { end_offset: number; last_sequence: number; checksum: number[] };
 export type CatalogPage = { snapshot_token: string; items: Array<{ game_timestamp: string; media_id: MediaId | null; progress: ImportProgress | null; error: string | null }>;
   next: string | null; catalog_recordings: number };
@@ -91,8 +91,9 @@ function coverage(value: unknown): QueryCoverage {
     observed_from: r.observed_from === null ? null : gameTick(r.observed_from), observed_through: r.observed_through === null ? null : gameTick(r.observed_through) };
 }
 export function decodeImportProgress(value: unknown): ImportProgress {
-  const r = exact(value, ["media_id", "status", "batches", "position", "tail_bytes"]);
-  return { media_id: parseMediaId(r.media_id), status: status(r.status), batches: integer(r.batches, 0, 4), position: position(r.position), tail_bytes: integer(r.tail_bytes) };
+  const r = exact(value, ["media_id", "status", "batches", "position", "tail_bytes", "history_ready"]);
+  if (typeof r.history_ready !== "boolean") throw new Error("history readiness");
+  return { media_id: parseMediaId(r.media_id), status: status(r.status), batches: integer(r.batches, 0, 32), position: position(r.position), tail_bytes: integer(r.tail_bytes), history_ready: r.history_ready };
 }
 export function decodeCatalogPage(value: unknown, token: string): CatalogPage {
   const r = exact(value, ["snapshot_token", "items", "next", "catalog_recordings"]); if (r.snapshot_token !== token) throw new Error("stale index catalog");
@@ -188,7 +189,7 @@ export function decodeRosterAt(value: unknown, requested: SourceEpoch): RosterAt
 }
 
 export async function indexRecording(token: string, game: string, rebuild = false): Promise<ImportProgress> {
-  if (useMockApi()) { const recording = (await loadGames()).find(g => g.timestamp === game); if (!recording?.media_id) throw new Error("Recording not found"); return { media_id: recording.media_id, status: "ready", batches: 0, position: null, tail_bytes: 0 }; }
+  if (useMockApi()) { const recording = (await loadGames()).find(g => g.timestamp === game); if (!recording?.media_id) throw new Error("Recording not found"); return { media_id: recording.media_id, status: "ready", batches: 0, position: null, tail_bytes: 0, history_ready: true }; }
   return decodeImportProgress(await invoke("index_league_recording", { snapshotToken: token, gameTimestamp: game, rebuild }));
 }
 export async function indexCatalog(token: string, after: string | null): Promise<CatalogPage> {

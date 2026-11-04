@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
 import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHistoryPreview";
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
@@ -232,7 +232,8 @@ function GamesLibrary(props: Props) {
       return matchesSearch && matchesChampion && matchesMode && matchesSaved;
     }
   };
-  const rowFor = (game: GameSummary) => props.history?.page?.rows.find(row => row.media_id === game.media_id && row.game.timestamp === game.timestamp);
+  const rowFor = (game: GameSummary) => game.media_id && props.history?.historyReady?.[game.media_id] === false
+    ? undefined : props.history?.page?.rows.find(row => row.media_id === game.media_id && row.game.timestamp === game.timestamp);
   const statsFor = (game: GameSummary) => rowFor(game)?.stats ?? unavailableStats;
 
   return (
@@ -323,7 +324,12 @@ function GamesLibrary(props: Props) {
                 const outcome = displayedOutcome(game);
                 const health = replayHealth(game);
                 const stats = () => statsFor(game);
-                const participants = () => rowFor(game)?.game.participants ?? game.participants;
+                const participants = createMemo(() => rowFor(game)?.game.participants ?? game.participants, undefined, {
+                  equals: (before, after) => before.length === after.length && before.every((player, index) => {
+                    const next = after[index];
+                    return player.summoner_name === next.summoner_name && player.champion === next.champion && player.relation === next.relation;
+                  }),
+                });
                 const finalCs = () => stats().source === "final_eog" ? stats().creep_score : null;
                 const csPerMinute = () => {
                   const cs = finalCs(), duration = stats().duration_seconds;

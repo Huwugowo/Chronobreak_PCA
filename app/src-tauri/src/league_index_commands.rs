@@ -612,5 +612,6 @@ fn pending_progress(game: &GameSummary) -> league_index::ImportProgress {
         batches: 0,
         position: None,
         tail_bytes: 0,
+        history_ready: false,
     }
 }

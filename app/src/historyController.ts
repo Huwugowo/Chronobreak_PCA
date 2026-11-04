@@ -6,7 +6,7 @@ import type { GameSummary } from "./types";
 // Per-recording limitations permit continued imports; a failed operation ends
 // initialization until a fresh accepted context. Keep its diagnostic private.
 export type HistoryIndexIssue = { kind: "limited" } | { kind: "failed"; message: string };
-export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; initializing: boolean; error: string | null; indexIssue: HistoryIndexIssue | null; laterPage: boolean };
+export type HistoryState = { page: HistoryPage | null; loading: boolean; indexing: boolean; initializing: boolean; error: string | null; indexIssue: HistoryIndexIssue | null; laterPage: boolean; historyReady?: Readonly<Record<string, boolean>> };
 export type HistoryQueryObservation = {
   kind: "history_query_scheduled" | "history_query_replaced" | "history_query_dispatched" |
     "history_query_completed" | "history_query_superseded" | "history_query_admitted" | "history_query_error";
@@ -38,7 +38,7 @@ export class HistoryController {
   private importActive = false;
   private catalogPending = false;
   private catalogAfter: string | null = null;
-  private pending = new Map<string, string>();
+  private pending = new Map<string, { mediaId: string; historyReady: boolean }>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   constructor(private readonly api: Dependencies) {}
@@ -65,7 +65,7 @@ export class HistoryController {
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
     this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
-    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexIssue: null, laterPage: false });
+    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexIssue: null, laterPage: false, historyReady: {} });
     this.schedule();
   }
   prepared() {
@@ -86,12 +86,12 @@ export class HistoryController {
     if (this.state.loading || this.state.error) return;
     this.query = { ...this.query, after: null }; this.requestQuery();
   }
-  private requestQuery(actionId?: string) {
+  private requestQuery(actionId?: string, background = false) {
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
     this.queryActionId = actionId;
     this.queryGeneration++; this.queryPending = true;
     this.observeQuery("history_query_scheduled", this.queryGeneration, this.queryActionId);
-    this.publish({ loading: true, error: null }); this.pumpQuery();
+    this.publish({ loading: background ? this.state.loading : true, error: null }); this.pumpQuery();
   }
   private refreshQuery() {
     if (!this.context || !this.current(this.context)) return;
@@ -99,7 +99,7 @@ export class HistoryController {
     // coalesced refresh follows settlement; pending user input takes priority.
     if (this.queryActive) { this.queryDirty = true; return; }
     if (this.queryPending) this.pumpQuery();
-    else this.requestQuery();
+    else this.requestQuery(undefined, true);
   }
   private pumpQuery() {
     const context = this.context;
@@ -132,7 +132,8 @@ export class HistoryController {
     });
   }
   private finishInitialization(context: Context) {
-    if (this.current(context) && this.state.initializing && !this.importActive && !this.catalogPending && !this.pending.size
+    if (this.current(context) && this.state.initializing && !this.importActive && !this.catalogPending
+      && ![...this.pending.values()].some(progress => !progress.historyReady)
       && !this.queryActive && !this.queryPending && context.queriedRevision === context.revision)
       this.publish({ initializing: false });
   }
@@ -148,32 +149,39 @@ export class HistoryController {
     if (!context || !this.current(context) || this.importActive) return;
     this.importActive = true;
     const catalog = this.catalogPending;
-    const next = this.pending.entries().next().value as [string, string] | undefined;
+    const next = this.pending.entries().next().value;
     if (!catalog && !next) { this.importActive = false; return; }
     // Include synchronous adapter failure in the same settlement path.
     void (async (): Promise<CatalogPage | ImportProgress> => catalog ? this.api.catalog(context.origin.token, this.catalogAfter, context.origin)
       : this.api.recording(context.origin.token, next![0], context.origin))().then(result => {
       if (!this.current(context)) return;
-      context.revision++;
+      let changed = catalog;
+      const historyReadyByMedia = { ...this.state.historyReady };
       if (catalog) {
         const page = result as CatalogPage;
         if (page.snapshot_token !== context.origin.token) throw new Error("Stale index page");
         this.catalogAfter = page.next; this.catalogPending = page.next !== null;
         for (const item of page.items) {
+          if (item.media_id && item.progress?.history_ready !== undefined)
+            historyReadyByMedia[item.media_id] = item.progress.history_ready;
           if (item.error || item.progress?.status === "unavailable") this.publish({ indexIssue: { kind: "limited" } });
-          if (item.progress?.status === "pending" && item.media_id) this.pending.set(item.game_timestamp, item.media_id);
+          if (item.progress?.status === "pending" && item.media_id) this.pending.set(item.game_timestamp,
+            { mediaId: item.media_id, historyReady: item.progress.history_ready === true });
         }
       } else if (next) {
         this.pending.delete(next[0]);
         const progress = result as ImportProgress;
-        if (progress.media_id !== next[1]) throw new Error("Index recording identity changed");
-        if (progress.status === "pending") this.pending.set(next[0], next[1]);
+        if (progress.media_id !== next[1].mediaId) throw new Error("Index recording identity changed");
+        const historyReady = progress.history_ready ?? progress.status !== "pending";
+        historyReadyByMedia[progress.media_id] = historyReady;
+        changed = progress.status !== "pending" || historyReady !== next[1].historyReady;
+        if (progress.status === "pending") this.pending.set(next[0], { ...next[1], historyReady });
         if (progress.status === "unavailable") this.publish({ indexIssue: { kind: "limited" } });
       }
-      this.publish({ indexing: this.catalogPending || this.pending.size > 0 });
+      this.publish({ indexing: this.catalogPending || this.pending.size > 0, historyReady: historyReadyByMedia });
       // Preserve input queued before the catalog token existed. Recording
       // imports can continue independently once catalog admission completes.
-      this.refreshQuery();
+      if (changed) { context.revision++; this.refreshQuery(); }
     }).catch(error => {
       if (this.current(context)) {
         // Retry requires a new accepted refresh, avoiding an idle failure loop.
