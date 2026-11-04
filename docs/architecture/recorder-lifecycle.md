@@ -65,16 +65,29 @@ termination and valid media do not prove complete gameplay coverage or a semanti
 
 Normal stop ends native capture, drains bounded GPU/encoder/mux work, flushes the muxer, and reaps every owned task/thread/child under finite deadlines. A clean result requires an intentional stop boundary, terminal WGC/encode/mux evidence, consistent frame accounting, successful mux exit, and nonempty output. The common finalizer validates the private candidate before renaming it to canonical `video.mp4`; unsuccessful fragments are preserved and never overwrite it. Completed MP4 fragments are flushed during capture so forced-encoder fixtures remain recoverable.
 
-The existing service watchdog requires copied source-QPC, completed encode and mux-byte
-advancement within 15 seconds under regular observation. Hidden/minimized windows
-and detached sources pause only the source deadline; CFR encoding and muxing must
-continue. Restore or a new attached-source generation rearms source freshness
-without extending encode/mux deadlines. A service observation
-gap longer than 15 seconds rearms one confirmation window, with aggregate diagnostics.
-Fresh required progress after the gap must be observed before clean stop is allowed;
-an unresolved confirmation preserves partial output. Explicit protocol errors still
-fail immediately. This is bounded watchdog state,
-not a new lifecycle or library authority.
+The service watchdog requires completed encode and mux-byte advancement within
+15 seconds under regular observation. Source-QPC silence, hidden/minimized windows
+and detached sources are recoverable: CFR encoding and muxing continue using the
+last snapshot without an elapsed source-loss cutoff. One watchdog availability
+state drives waiting/resumed events. Visibility or a new leaf generation cannot
+report resumption; a fresh source QPC must advance.
+
+An attached source silent for 15 seconds requests a leaf rebuild through the
+existing latest-value worker control, deduplicated by source generation and QPC.
+The GPU worker rejects stale requests if its source has advanced or been replaced.
+Background silence does not churn capture: rebuilding an attached silent source
+waits for that HWND to be foreground. Focus only gates this repair and never owns
+recording lifetime. The existing two-second attachment cadence, original-process
+handle/identity checks, same-device adapter restriction and strict callback cleanup
+also apply to silent-leaf recovery. Encoder, mux, snapshot and CFR epoch survive.
+New attachment rearms only source recovery; downstream deadlines do not extend.
+
+A service observation gap longer than 15 seconds rearms one confirmation window,
+with aggregate diagnostics. Fresh encode and mux progress after the gap must be
+observed before clean stop is allowed; source silence cannot veto publication.
+An unresolved downstream confirmation preserves partial output. Explicit protocol
+errors still fail immediately. This bounded watchdog state adds no lifecycle or
+library authority.
 
 All ordinary stop paths check the latest evidence against that watchdog before
 draining the worker, so final flush cannot erase an already-confirmed stall. The

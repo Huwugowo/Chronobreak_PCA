@@ -406,17 +406,23 @@ impl NativeRecorderSession {
             self.pending_resize = None;
             tracing::info!("capture window closed; retaining recording timeline");
         }
-        if source.is_attached() || Instant::now() < *next_attach {
-            return Ok(());
-        }
-        *next_attach = Instant::now() + Duration::from_secs(2);
         let Some(control) = control else {
             return Ok(());
         };
+        let recovery = control.target.borrow().recovery.filter(|request| {
+            request.matches(
+                self.source_generation,
+                self.clock.telemetry().latest_source_qpc_100ns,
+            )
+        });
+        if (source.is_attached() && recovery.is_none()) || Instant::now() < *next_attach {
+            return Ok(());
+        }
+        *next_attach = Instant::now() + Duration::from_secs(2);
         if stop.load(Ordering::Acquire) || control.original.has_ended()? {
             return Ok(());
         }
-        let target = control.target.borrow().clone();
+        let target = control.target.borrow().target.clone();
         ensure!(
             matches!(target.source, crate::platform::CaptureSource::WindowsGraphicsCapture { pid, .. } if pid == control.original.identity().pid),
             "replacement belongs to a different process"
@@ -428,6 +434,21 @@ impl NativeRecorderSession {
         }
         if stop.load(Ordering::Acquire) || control.original.has_ended()? {
             return Ok(());
+        }
+        if source.is_attached() {
+            // Background WGC silence is normal. Wait for the user to return
+            // before rebuilding a stuck leaf. Fresh worker QPC or a replaced
+            // generation invalidates an outstanding service request above.
+            if !crate::platform::capture_target_is_foreground(&target) {
+                return Ok(());
+            }
+            tracing::info!(
+                generation = self.source_generation,
+                latest_qpc = self.clock.telemetry().latest_source_qpc_100ns,
+                "rebuilding silent capture source; retaining encoder, mux and timeline"
+            );
+            source.detach()?;
+            self.pending_resize = None;
         }
         // Preparation errors are terminal, except the typed pre-callback target-gone race.
         match source.attach(&target, || {

@@ -78,7 +78,6 @@ struct ActiveRecording {
     diagnostics: watch::Receiver<RecordingEvidence>,
     progress_watchdog: CaptureProgressWatchdog,
     progress_report_due: Instant,
-    source_unavailable: bool,
     poller: Option<PollerSession>,
     match_context: Option<ContextSession>,
     match_directory: Option<DirectoryGuard>,
@@ -269,6 +268,16 @@ enum VideoRecordingSession {
 }
 
 impl VideoRecordingSession {
+    fn request_source_recovery(&self, evidence: &RecordingEvidence) {
+        #[cfg(windows)]
+        {
+            let Self::Native(session) = self;
+            session.request_source_recovery(evidence);
+        }
+        #[cfg(not(windows))]
+        let _ = evidence;
+    }
+
     #[cfg(windows)]
     fn update_target(&self, target: CaptureTarget) {
         let Self::Native(session) = self;
@@ -382,15 +391,16 @@ struct CaptureProgressWatchdog {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CaptureProgressState {
     Monitoring,
-    PausedByWindowVisibility,
+    WaitingForSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CaptureProgressObservation {
     Healthy,
     ObserverGap,
-    PausedByWindowVisibility,
-    ResumedAfterWindowVisibility,
+    WaitingForSource,
+    SourceResumed,
+    SourceRecoveryRequired,
     Stalled(String),
 }
 
@@ -437,36 +447,23 @@ impl CaptureProgressWatchdog {
             self.source_generation = evidence.source_generation;
             self.source_advanced_at = now;
         }
-        let visibility = if evidence.source_detached {
-            CaptureTargetVisibility::PausedByWindowVisibility
-        } else {
-            visibility
-        };
+        let fresh_source = evidence.latest_qpc.unwrap_or_default() > self.source_qpc;
         self.observe_progress(evidence, now);
-        let observation = match (self.state, visibility) {
-            (_, CaptureTargetVisibility::PausedByWindowVisibility) => {
-                // WGC may pause while hidden, but the native CFR encoder and
-                // muxer must keep advancing using the last captured image.
-                self.source_advanced_at = now;
-                if self.state == CaptureProgressState::Monitoring {
-                    self.state = CaptureProgressState::PausedByWindowVisibility;
-                    CaptureProgressObservation::PausedByWindowVisibility
-                } else {
-                    CaptureProgressObservation::Healthy
-                }
-            }
-            (CaptureProgressState::PausedByWindowVisibility, CaptureTargetVisibility::Visible) => {
-                self.state = CaptureProgressState::Monitoring;
-                self.source_advanced_at = now;
-                CaptureProgressObservation::ResumedAfterWindowVisibility
-            }
-            (CaptureProgressState::Monitoring, CaptureTargetVisibility::Visible) => {
-                CaptureProgressObservation::Healthy
-            }
-        };
+        let source_silent = now.saturating_duration_since(self.source_advanced_at)
+            >= CAPTURE_PROGRESS_STALL_TIMEOUT;
+        let unavailable = evidence.source_detached
+            || visibility == CaptureTargetVisibility::PausedByWindowVisibility;
+        let previous_state = self.state;
+        if unavailable || source_silent {
+            self.state = CaptureProgressState::WaitingForSource;
+        } else if fresh_source {
+            // Visibility and a new leaf generation alone do not prove recovery.
+            self.state = CaptureProgressState::Monitoring;
+        }
 
+        // Source silence is recoverable. The healthy CFR graph keeps using its
+        // last snapshot; actual encoding and file-writing stalls remain fatal.
         for (label, last_advanced) in [
-            ("WGC source timestamp", self.source_advanced_at),
             ("encoded frame count", self.encoded_advanced_at),
             ("muxed byte count", self.muxed_advanced_at),
         ] {
@@ -478,17 +475,23 @@ impl CaptureProgressWatchdog {
             }
         }
         if self.confirmation_started_at.is_some_and(|started| {
-            (self.state == CaptureProgressState::PausedByWindowVisibility
-                || self.source_advanced_at > started)
-                && self.encoded_advanced_at > started
-                && self.muxed_advanced_at > started
+            self.encoded_advanced_at > started && self.muxed_advanced_at > started
         }) {
             self.confirmation_started_at = None;
         }
         if observer_gap {
             CaptureProgressObservation::ObserverGap
+        } else if source_silent && !unavailable {
+            CaptureProgressObservation::SourceRecoveryRequired
+        } else if self.state != previous_state {
+            match self.state {
+                CaptureProgressState::WaitingForSource => {
+                    CaptureProgressObservation::WaitingForSource
+                }
+                CaptureProgressState::Monitoring => CaptureProgressObservation::SourceResumed,
+            }
         } else {
-            observation
+            CaptureProgressObservation::Healthy
         }
     }
 
@@ -518,7 +521,7 @@ impl CaptureProgressWatchdog {
         // Retain the last observed visibility when the HWND no longer exists.
         let visibility = match self.state {
             CaptureProgressState::Monitoring => CaptureTargetVisibility::Visible,
-            CaptureProgressState::PausedByWindowVisibility => {
+            CaptureProgressState::WaitingForSource => {
                 CaptureTargetVisibility::PausedByWindowVisibility
             }
         };
@@ -840,16 +843,18 @@ pub async fn run(
                             }
                         }
                     }
-                    if evidence.source_detached && !recording.source_unavailable {
-                        recording.source_unavailable = true;
-                        events(ServiceEvent::SourceUnavailable { directory: recording.session.directory().to_path_buf() });
-                    } else if recording.source_unavailable && !evidence.source_detached
-                        && evidence.latest_qpc.unwrap_or_default() > recording.progress_watchdog.source_qpc {
-                        recording.source_unavailable = false;
-                        events(ServiceEvent::Recording { directory: recording.session.directory().to_path_buf() });
-                    }
                     let now = Instant::now();
-                    match recording.progress_watchdog.observe(&evidence, now, visibility) {
+                    let previous_state = recording.progress_watchdog.state;
+                    let observation = recording.progress_watchdog.observe(&evidence, now, visibility);
+                    if recording.progress_watchdog.state != previous_state
+                        && !matches!(observation, CaptureProgressObservation::Stalled(_)) {
+                        let directory = recording.session.directory().to_path_buf();
+                        events(match recording.progress_watchdog.state {
+                            CaptureProgressState::WaitingForSource => ServiceEvent::SourceUnavailable { directory },
+                            CaptureProgressState::Monitoring => ServiceEvent::Recording { directory },
+                        });
+                    }
+                    match observation {
                         CaptureProgressObservation::ObserverGap => {
                             control_telemetry.watchdog_observer_gaps =
                                 control_telemetry.watchdog_observer_gaps.saturating_add(1);
@@ -864,12 +869,15 @@ pub async fn run(
                             stop_recording_with_failure(recording, &events, stall_reason).await;
                             startup_retry.block_active_process(current_process);
                         }
-                        CaptureProgressObservation::PausedByWindowVisibility => {
-                            info!("capture source watchdog paused while the League window is hidden or minimized; encode and mux monitoring remain active");
+                        CaptureProgressObservation::WaitingForSource => {
+                            info!("waiting for fresh capture frames; encode and mux monitoring remain active");
                         }
-                        CaptureProgressObservation::ResumedAfterWindowVisibility => {
-                            info!("capture progress watchdog resumed after the League window became visible");
+                        CaptureProgressObservation::SourceResumed => {
+                            info!("capture source resumed with a fresh frame");
                             recording.progress_report_due = now + Duration::from_secs(10);
+                        }
+                        CaptureProgressObservation::SourceRecoveryRequired => {
+                            recording.session.request_source_recovery(&evidence);
                         }
                         CaptureProgressObservation::Healthy if now >= recording.progress_report_due => {
                             log_capture_progress(
@@ -1506,7 +1514,6 @@ async fn start_recording(
         identity_admission.send_replace(false);
     }
     Ok(ActiveRecording {
-        source_unavailable: false,
         #[cfg(target_os = "windows")]
         original_process,
         media_id,
@@ -1628,7 +1635,6 @@ async fn stop_recording_inner(
         diagnostics,
         mut progress_watchdog,
         progress_report_due: _,
-        source_unavailable: _,
         poller,
         match_context,
         match_directory,
@@ -2116,83 +2122,84 @@ mod tests {
     }
 
     #[test]
-    fn detached_source_pauses_only_source_watchdog_and_reattach_rearms_once() {
-        let now = Instant::now();
-        let mut evidence = RecordingEvidence {
-            latest_qpc: Some(1),
-            source_detached: true,
-            ..Default::default()
-        };
-        let mut watchdog = CaptureProgressWatchdog::new(&evidence, now);
-        for seconds in 1..=20 {
-            evidence.encoded_frames += 60;
-            evidence.muxed_bytes += 1000;
-            assert!(!matches!(
-                watchdog.observe(
-                    &evidence,
-                    now + Duration::from_secs(seconds),
-                    CaptureTargetVisibility::Visible
-                ),
-                CaptureProgressObservation::Stalled(_)
-            ));
-        }
-        evidence.source_detached = false;
-        evidence.source_generation = 1;
-        for seconds in 21..=35 {
-            evidence.encoded_frames += 60;
-            evidence.muxed_bytes += 1000;
-            assert!(!matches!(
-                watchdog.observe(
-                    &evidence,
-                    now + Duration::from_secs(seconds),
-                    CaptureTargetVisibility::Visible
-                ),
-                CaptureProgressObservation::Stalled(_)
-            ));
-        }
-        evidence.encoded_frames += 60;
-        evidence.muxed_bytes += 1000;
-        assert!(matches!(
-            watchdog.observe(
-                &evidence,
-                now + Duration::from_secs(36),
-                CaptureTargetVisibility::Visible
-            ),
-            CaptureProgressObservation::Stalled(_)
-        ));
-    }
-
-    #[test]
-    fn capture_progress_watchdog_requires_source_encode_and_mux_progress() {
+    fn visible_silent_source_survives_without_cutoff_and_can_stop_cleanly() {
         let start = Instant::now();
         let mut evidence = RecordingEvidence {
             latest_qpc: Some(100),
-            encoded_frames: 10,
-            muxed_bytes: 1_000,
-            ..RecordingEvidence::default()
+            ..Default::default()
         };
         let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
-
+        for second in 1..=120 {
+            evidence.encoded_frames += 60;
+            evidence.muxed_bytes += 1000;
+            let observation = watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(second),
+                CaptureTargetVisibility::Visible,
+            );
+            assert_eq!(
+                observation,
+                if second < 15 {
+                    CaptureProgressObservation::Healthy
+                } else {
+                    CaptureProgressObservation::SourceRecoveryRequired
+                }
+            );
+            assert_eq!(
+                watchdog.failure_before_stop(&evidence, start + Duration::from_secs(second)),
+                None
+            );
+        }
+        assert_eq!(watchdog.state, CaptureProgressState::WaitingForSource);
         evidence.latest_qpc = Some(200);
-        evidence.encoded_frames = 20;
-        evidence.muxed_bytes = 2_000;
         assert_eq!(
             watchdog.observe(
                 &evidence,
-                start + Duration::from_secs(14),
+                start + Duration::from_secs(121),
                 CaptureTargetVisibility::Visible
             ),
-            CaptureProgressObservation::Healthy
+            CaptureProgressObservation::SourceResumed
         );
+        assert_eq!(watchdog.state, CaptureProgressState::Monitoring);
+    }
+
+    #[test]
+    fn reattached_generation_does_not_resume_until_a_fresh_source_frame() {
+        let start = Instant::now();
+        let mut evidence = RecordingEvidence {
+            latest_qpc: Some(100),
+            source_detached: true,
+            ..Default::default()
+        };
+        let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
+        for second in 1..=40 {
+            evidence.encoded_frames += 60;
+            evidence.muxed_bytes += 1000;
+            if second == 21 {
+                evidence.source_detached = false;
+                evidence.source_generation = 1;
+            }
+            let observation = watchdog.observe(
+                &evidence,
+                start + Duration::from_secs(second),
+                CaptureTargetVisibility::Visible,
+            );
+            let expected = match second {
+                1 => CaptureProgressObservation::WaitingForSource,
+                36.. => CaptureProgressObservation::SourceRecoveryRequired,
+                _ => CaptureProgressObservation::Healthy,
+            };
+            assert_eq!(observation, expected);
+            assert_eq!(watchdog.state, CaptureProgressState::WaitingForSource);
+        }
+        evidence.latest_qpc = Some(101);
         assert_eq!(
             watchdog.observe(
                 &evidence,
-                start + Duration::from_secs(29),
+                start + Duration::from_secs(41),
                 CaptureTargetVisibility::Visible
             ),
-            CaptureProgressObservation::Stalled(
-                "WGC source timestamp did not advance for 15 seconds".to_owned()
-            )
+            CaptureProgressObservation::SourceResumed
         );
     }
 
@@ -2211,69 +2218,42 @@ mod tests {
     }
 
     #[test]
-    fn capture_progress_watchdog_pauses_and_resets_for_window_visibility() {
+    fn restoring_visibility_without_a_fresh_frame_stays_waiting() {
         let start = Instant::now();
         let mut evidence = RecordingEvidence {
             latest_qpc: Some(100),
-            encoded_frames: 10,
-            muxed_bytes: 1_000,
-            ..RecordingEvidence::default()
+            ..Default::default()
         };
         let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
-
-        evidence.encoded_frames += 1;
-        evidence.muxed_bytes += 1;
-        assert_eq!(
-            watchdog.observe(
+        for second in 1..=80 {
+            evidence.encoded_frames += 60;
+            evidence.muxed_bytes += 1000;
+            let observation = watchdog.observe(
                 &evidence,
-                start + Duration::from_secs(10),
-                CaptureTargetVisibility::PausedByWindowVisibility
-            ),
-            CaptureProgressObservation::PausedByWindowVisibility
-        );
-        for second in (20..=80).step_by(10) {
-            evidence.encoded_frames += 1;
-            evidence.muxed_bytes += 1;
-            assert_eq!(
-                watchdog.observe(
-                    &evidence,
-                    start + Duration::from_secs(second),
+                start + Duration::from_secs(second),
+                if second < 80 {
                     CaptureTargetVisibility::PausedByWindowVisibility
-                ),
-                CaptureProgressObservation::Healthy
+                } else {
+                    CaptureTargetVisibility::Visible
+                },
+            );
+            assert_eq!(
+                observation,
+                match second {
+                    1 => CaptureProgressObservation::WaitingForSource,
+                    80 => CaptureProgressObservation::SourceRecoveryRequired,
+                    _ => CaptureProgressObservation::Healthy,
+                }
             );
         }
-        evidence.encoded_frames += 1;
-        evidence.muxed_bytes += 1;
+        evidence.latest_qpc = Some(101);
         assert_eq!(
             watchdog.observe(
                 &evidence,
                 start + Duration::from_secs(81),
                 CaptureTargetVisibility::Visible
             ),
-            CaptureProgressObservation::ResumedAfterWindowVisibility
-        );
-        evidence.encoded_frames += 1;
-        evidence.muxed_bytes += 1;
-        assert_eq!(
-            watchdog.observe(
-                &evidence,
-                start + Duration::from_secs(95),
-                CaptureTargetVisibility::Visible
-            ),
-            CaptureProgressObservation::Healthy
-        );
-        evidence.encoded_frames += 1;
-        evidence.muxed_bytes += 1;
-        assert_eq!(
-            watchdog.observe(
-                &evidence,
-                start + Duration::from_secs(96),
-                CaptureTargetVisibility::Visible
-            ),
-            CaptureProgressObservation::Stalled(
-                "WGC source timestamp did not advance for 15 seconds".to_owned()
-            )
+            CaptureProgressObservation::SourceResumed
         );
     }
 
@@ -2298,7 +2278,7 @@ mod tests {
                         start,
                         CaptureTargetVisibility::PausedByWindowVisibility
                     ),
-                    CaptureProgressObservation::PausedByWindowVisibility
+                    CaptureProgressObservation::WaitingForSource
                 );
                 for second in 1..=15 {
                     if stalled_signal != "encoded frame count" {
@@ -2334,11 +2314,7 @@ mod tests {
 
     #[test]
     fn stop_checks_each_stalled_signal_before_flush_can_refresh_progress() {
-        for stalled_signal in [
-            "WGC source timestamp",
-            "encoded frame count",
-            "muxed byte count",
-        ] {
+        for stalled_signal in ["encoded frame count", "muxed byte count"] {
             let start = Instant::now();
             let mut evidence = RecordingEvidence {
                 latest_qpc: Some(100),
@@ -2348,9 +2324,7 @@ mod tests {
             };
             let mut watchdog = CaptureProgressWatchdog::new(&evidence, start);
             for second in 1_u32..=14 {
-                if stalled_signal != "WGC source timestamp" {
-                    evidence.latest_qpc = Some(100 + i64::from(second));
-                }
+                evidence.latest_qpc = Some(100 + i64::from(second));
                 if stalled_signal != "encoded frame count" {
                     evidence.encoded_frames += 1;
                 }
@@ -2434,7 +2408,7 @@ mod tests {
                 CaptureTargetVisibility::Visible
             ),
             CaptureProgressObservation::Stalled(
-                "WGC source timestamp did not advance for 15 seconds".to_owned()
+                "encoded frame count did not advance for 15 seconds".to_owned()
             )
         );
     }
@@ -2464,12 +2438,9 @@ mod tests {
                     )
                 );
                 // A regular observation without new progress must not clear
-                // the pending confirmation. Hidden source progress is waived.
+                // the pending confirmation. Source progress is always recoverable.
                 watchdog.observe(&evidence, gap + Duration::from_secs(1), visibility);
                 if fresh_progress {
-                    if visibility == CaptureTargetVisibility::Visible {
-                        evidence.latest_qpc = Some(200);
-                    }
                     evidence.encoded_frames += 1;
                     evidence.muxed_bytes += 1;
                 }

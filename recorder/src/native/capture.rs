@@ -27,6 +27,24 @@ use super::{NATIVE_WGC_FRAME_POOL_CAPACITY, NATIVE_WGC_HANDOFF_CAPACITY};
 
 const CALLBACK_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
+#[cfg(feature = "native-failure-injection")]
+static NEXT_SOURCE_SILENCE_AFTER_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Fault fixture: only the next leaf stops delivering frames after this delay.
+/// Replacing that leaf restores normal callbacks. Absent from production builds.
+#[cfg(feature = "native-failure-injection")]
+pub fn silence_next_wgc_source_after(after: Duration) -> Result<()> {
+    let millis = u64::try_from(after.as_millis())?;
+    anyhow::ensure!(
+        (1..=600_000).contains(&millis),
+        "invalid fixture silence delay"
+    );
+    NEXT_SOURCE_SILENCE_AFTER_MS
+        .compare_exchange(0, millis, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| anyhow::anyhow!("a WGC silence fixture is already armed"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StartupFailurePoint {
@@ -946,11 +964,20 @@ fn frame_arrived_handler(
 ) -> TypedEventHandler<Direct3D11CaptureFramePool, IInspectable> {
     let owner = FrameCallbackOwner::new(state);
     let telemetry = Arc::clone(telemetry);
+    #[cfg(feature = "native-failure-injection")]
+    let silence_after = match NEXT_SOURCE_SILENCE_AFTER_MS.swap(0, Ordering::AcqRel) {
+        0 => None,
+        millis => Some(Instant::now() + Duration::from_millis(millis)),
+    };
     TypedEventHandler::new(
         move |pool: windows::core::Ref<Direct3D11CaptureFramePool>, _| {
             let Some(_activity) = owner.state.enter() else {
                 return Ok(());
             };
+            #[cfg(feature = "native-failure-injection")]
+            if silence_after.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Ok(());
+            }
             let Some(pool) = pool.as_ref() else {
                 telemetry.record_callback_error(
                     NativeWgcCallbackErrorCategory::MissingEventSource,

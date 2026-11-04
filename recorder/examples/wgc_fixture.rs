@@ -62,6 +62,7 @@ mod windows_fixture {
         Resize,
         TinyResize,
         MinimizeRestore,
+        SilentRestore,
         Occlusion,
         CloseWindow,
         Recreate,
@@ -171,6 +172,7 @@ mod windows_fixture {
                         "resize" => Scenario::Resize,
                         "tiny_resize" => Scenario::TinyResize,
                         "minimize_restore" => Scenario::MinimizeRestore,
+                        "silent_restore" => Scenario::SilentRestore,
                         "occlusion" => Scenario::Occlusion,
                         "close_window" => Scenario::CloseWindow,
                         "recreate" => Scenario::Recreate,
@@ -663,6 +665,10 @@ mod windows_fixture {
                     window.set_minimized(true);
                     println!("QUEUEBACK_WGC_ACTION minimized");
                 }
+                Scenario::SilentRestore => {
+                    window.focus_window();
+                    println!("QUEUEBACK_WGC_ACTION rendering_paused_same_visible_hwnd");
+                }
                 Scenario::Occlusion => {
                     let base = window
                         .outer_position()
@@ -710,6 +716,10 @@ mod windows_fixture {
                     window.focus_window();
                     println!("QUEUEBACK_WGC_ACTION restored_and_focused");
                 }
+                Scenario::SilentRestore => {
+                    window.focus_window();
+                    println!("QUEUEBACK_WGC_ACTION rendering_resumed_same_hwnd");
+                }
                 Scenario::Occlusion => {
                     if let Some(occluder) = self.occluder.take() {
                         occluder.set_visible(false);
@@ -755,6 +765,12 @@ mod windows_fixture {
         }
 
         fn draw_next_frame(&mut self) {
+            if self.scenario == Scenario::SilentRestore
+                && self.first_action_done
+                && !self.second_action_done
+            {
+                return;
+            }
             if let Some(window) = &self.window {
                 draw_frame(
                     window,
@@ -762,7 +778,7 @@ mod windows_fixture {
                     self.marker.as_mut(),
                     matches!(
                         self.scenario,
-                        Scenario::Recreate | Scenario::MinimizeRestore
+                        Scenario::Recreate | Scenario::MinimizeRestore | Scenario::SilentRestore
                     ) && self.second_action_done,
                 );
                 self.frame = self.frame.saturating_add(1);

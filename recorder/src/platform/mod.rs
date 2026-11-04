@@ -196,6 +196,9 @@ impl CaptureTarget {
 mod windows;
 
 #[cfg(target_os = "windows")]
+pub(crate) use windows::capture_target_is_foreground;
+
+#[cfg(target_os = "windows")]
 pub(crate) use windows::{
     WindowUnavailable, capture_target_for_window, capture_window_for_process,
 };

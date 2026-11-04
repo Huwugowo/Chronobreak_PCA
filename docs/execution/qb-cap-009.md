@@ -2,13 +2,13 @@
 
 Feature: `QB-CAP-009`
 ExecPlan: `docs/exec-plans/qb-cap-009-process-owned-recording.md`
-Updated: 2026-11-01
+Updated: 2026-11-04
 
 ## Current milestone
-Review of `833c1dc` complete. No actionable production-lifetime regression found; three fixture defects corrected and focused checks passed.
+Attached-source silence recovery implemented and validated with real WGC/NVENC capture, full decode and canonical publication. The corrected portable recorder is running with the previously validated fast app/helper build.
 
 ## Active unit
-None. Production implementation and fixture review fixes are complete; actual NVENC recreation/minimize capture remains unverified.
+None. Lightweight implementation and focused validation complete; real League alt-tab confirmation remains an acceptance observation.
 
 ## Completed
 - Retained limited-rights Windows `OwnedHandle` shared through `Arc<OriginalProcess>` from readiness through capture/stop. A different watcher selection cannot replace the still-live original owner. No new unsafe Send/Sync implementation.
@@ -25,9 +25,16 @@ None. Production implementation and fixture review fixes are complete; actual NV
 None. Unrelated app/audio/probe changes and the separate library proposal remain untouched.
 
 ## Remaining
-Decoded continuity for recreation/minimize and actual League behavior remain unverified on compatible hardware. No long soak or performance campaign is required for committing the implementation.
+Actual League alt-tab behavior remains unverified. Generated-window silent-source rebuild, same-process recreation and minimize/restore now pass on the current hardware. No long soak or performance campaign is required for this implementation.
 
 ## Verification
+- 2026-11-04 source-silence fix: all-target/all-feature recorder tests passed (271 library tests, 12 ignored; 7 integration tests; 3 lifecycle-fixture and 3 WGC-fixture example tests). Log: `.codex/logs/command-20261104-150900.log`. Coverage includes 120 seconds of visible source silence with healthy encode/mux progress, clean stop during silence, generation/visibility changes without false resumption, fresh-QPC resumption, observer-gap confirmation without source progress, and preserved encoder/mux/protocol failure precedence. The final obsolete test-only source branch was removed and its stop-time failure test rerun successfully (`.codex/logs/command-20261104-151213.log`).
+- Current all-target/all-feature check, format check and strict Clippy passed: `.codex/logs/command-20261104-151007.log`. Production release build passed without `native-failure-injection`: `.codex/logs/command-20261104-150506.log`.
+- Real generated-window `33 silent_restore` passed: `build/qb-data-003/capture-fixtures/a504eb17-abdc-47d6-8e83-24cda06ec6c0/result.json`. A feature-gated fault silences only the first leaf's callbacks after six seconds; replacement clears it. Logs prove an actual same-device leaf rebuild, fresh-QPC resumption, continued encoder/mux progress and no watchdog failure. Service events retain the same recording directory; full H.264 decode proves the restored green epoch and four moving samples, followed by canonical publication after original-process exit.
+- Real generated-window `30 minimize_restore` passed: `build/qb-data-003/capture-fixtures/fc5719df-ef9b-4785-b18b-d1cf23f61138/result.json`; `16 recreate` passed: `build/qb-data-003/capture-fixtures/3761f8e4-e341-455f-b050-d85ca8cf9a90/result.json`. Both include waiting/fresh-resume events, same recording identity, full decode, moving restored footage and canonical publication. Only dedicated generated fixture libraries were used.
+- Fixture corrections discovered by actual runs: static GDI content still generates WGC timestamps here, so pausing rendering alone did not exercise source silence (failed root `160711b7-d883-4c0f-9fec-5dae731be991`). A deterministic test-only callback fault now proves the actual recovery path. A subsequent real run rebuilt/resumed/published but the decoder rejected its expected process-exit duplicate tail (`90d53800-28e8-4de2-a699-e24a92cc1b25`). The validator now permits at most a short terminal tail while requiring four moving green samples immediately before it; negative frozen-restoration checks remain enforced. No production validation was weakened.
+- Packaged fixed recorder with unchanged validated app SHA-256 `11121EE15DB959B3C76D3A5193EE659D172380775BBCDE0AE01548DE6D3C8F0E` under `build/release/watchdog-recovery-20261104`; runtime verification passed. Production recorder SHA-256 `14E3BA90CA3F6827C694BE7668995645DE51A64223376B421F8934898A7A87A5`. Confirmed the old recorder idle and no League process before replacement; running recorder PID 31968 and its preparation helper both resolve to this portable pair. Persistent preprod library/cache and unrelated edits were preserved.
+- Final status endpoint confirmed PID 31968 `available`/`idle` with no capture problem or service failure. Canonical roadmap validator passed (114 items / 30 plan-checkpoint pairs), final diff whitespace check passed, and changed Rust-file format checks passed.
 - `cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features`: passed, 266 library + 7 integration + 3 fixture tests; 12 ignored. Includes window-first finalization, explicit-stop versus unexpected worker exit, failure precedence, detached-source watchdog/rearm, cumulative leaf accounting, existing callback-quiescence and exact-process-handle tests. Log: `.codex/logs/command-20261101-023649.log`.
 - `cargo clippy --manifest-path recorder/Cargo.toml --all-targets --all-features -- -D warnings`: passed. Log: `.codex/logs/command-20261101-023813.log`.
 - `cargo check --manifest-path recorder/Cargo.toml --all-targets --all-features`: passed.
@@ -45,10 +52,10 @@ Decoded continuity for recreation/minimize and actual League behavior remain unv
 User explicitly replaced the five-minute cutoff and oversized mandatory verification with proportionate checks, and authorized direct implementation/commit without another planning approval. Initial restricted test runs could not pin ancestor publication directories or write command logs; the permitted local test run passed. Lint findings were corrected. No validation or safety invariant was weakened.
 
 ## Decisions
-Window interruption is recoverable and does not invalidate healthy footage. Continuous encoding can consume disk until the process exits/user stops; existing write errors are terminal and preserve partials. No additional worker, persisted health authority, automatic device rebuild or arbitrary timeout. Keep feature in progress solely because decoded hardware continuity is unverified. Production implementation was committed in `833c1dc`; the review fixes preserve that design.
+Window interruption and attached-source silence are recoverable and do not invalidate healthy footage. The existing latest-value worker control carries deduplicated generation/QPC rebuild requests; live worker evidence invalidates stale requests. Rebuild only the leaf, at the existing two-second cadence, after that HWND returns to foreground. Focus gates repair only. One watchdog availability state owns waiting/resumed status, and only actual fresh QPC proves resumption. Encoder/mux deadlines, protocol errors, same-process/same-adapter identity, strict callback cleanup and publication validation remain enforced. Continuous encoding can consume disk until process exit/user stop; existing write errors remain terminal and preserve partials. No additional worker, persisted health authority, automatic device rebuild or elapsed source-loss cutoff. Keep feature in progress pending real League acceptance. Original process-owned implementation was committed in `833c1dc`; this extension follows the user-approved lightweight implementation and focused validation.
 
 ## Blockers
-Runtime continuity check: this environment's NVENC session returned `NO_ENCODE_DEVICE`. Startup readiness, audio and library UX remain separate work.
+None for this implementation. The previous NVENC `NO_ENCODE_DEVICE` restriction did not recur in the current interactive session. Real League acceptance remains an observation, not an automated fixture claim. Startup readiness, audio and library UX remain separate work.
 
 ## Next action
-When a compatible NVENC interactive session is available, run the existing service fixture with `16 recreate` and `30 minimize_restore` (and a short `close_window` run); record actual capture/decode results without expanding validation scope.
+Confirm a real League alt-tab longer than 15 seconds returns to fresh footage in the same recording with the running fixed build. No further review or optimization campaign is required.

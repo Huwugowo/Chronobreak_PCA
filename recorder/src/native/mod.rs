@@ -16,6 +16,9 @@ mod session;
 mod source;
 mod winrt;
 
+#[cfg(feature = "native-failure-injection")]
+pub use capture::silence_next_wgc_source_after;
+
 pub use capture::{
     CapturedWgcFrame, NativeWgcCallbackError, NativeWgcCallbackErrorCategory,
     NativeWgcTelemetrySnapshot,

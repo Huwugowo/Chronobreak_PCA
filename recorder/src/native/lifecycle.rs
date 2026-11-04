@@ -64,7 +64,7 @@ impl StartupDeadline {
 
 struct NativeWorker {
     stop: Arc<AtomicBool>,
-    target: Option<watch::Sender<CaptureTarget>>,
+    target: Option<watch::Sender<NativeSourceUpdate>>,
     thread: Option<JoinHandle<Result<NativeSessionTelemetrySnapshot>>>,
     #[cfg(test)]
     cleanup_observer: Option<Arc<NativeWorkerCleanupObserver>>,
@@ -224,7 +224,10 @@ impl NativeRecordingSession {
         })?;
         let output = directory.join(VIDEO_PARTIAL_MP4);
         let worker_output = output.clone();
-        let (target_sender, target_receiver) = watch::channel(target.clone());
+        let (target_sender, target_receiver) = watch::channel(NativeSourceUpdate {
+            target: target.clone(),
+            recovery: None,
+        });
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let (evidence_sender, evidence) = watch::channel(RecordingEvidence::default());
@@ -379,7 +382,34 @@ impl NativeRecordingSession {
 
     pub(crate) fn update_target(&self, target: CaptureTarget) {
         if let Some(sender) = &self.worker.target {
-            sender.send_replace(target);
+            sender.send_modify(|update| update.target = target);
+        }
+    }
+
+    pub(crate) fn request_source_recovery(&self, evidence: &RecordingEvidence) {
+        if let Some(sender) = &self.worker.target {
+            let request = SourceRecoveryRequest {
+                generation: evidence.source_generation,
+                latest_qpc: evidence.latest_qpc.unwrap_or_default(),
+            };
+            // A single latest-value control slot bounds and deduplicates
+            // repeated service observations; it cannot accumulate rebuilds.
+            let requested = sender.send_if_modified(|update| {
+                if update.recovery == Some(request) {
+                    return false;
+                }
+                update.recovery = Some(request);
+                true
+            });
+            if requested {
+                tracing::info!(
+                    generation = request.generation,
+                    latest_qpc = request.latest_qpc,
+                    encoded_frames = evidence.encoded_frames,
+                    muxed_bytes = evidence.muxed_bytes,
+                    "capture source is silent; queued recoverable leaf rebuild"
+                );
+            }
         }
     }
 
@@ -470,9 +500,27 @@ impl NativeRecordingSession {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SourceRecoveryRequest {
+    pub generation: u64,
+    pub latest_qpc: i64,
+}
+
+impl SourceRecoveryRequest {
+    pub fn matches(self, generation: u64, latest_qpc: i64) -> bool {
+        self.generation == generation && self.latest_qpc == latest_qpc
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct NativeSourceUpdate {
+    pub target: CaptureTarget,
+    pub recovery: Option<SourceRecoveryRequest>,
+}
+
 pub(super) struct NativeSourceControl {
     pub original: Arc<crate::watcher::OriginalProcess>,
-    pub target: watch::Receiver<CaptureTarget>,
+    pub target: watch::Receiver<NativeSourceUpdate>,
 }
 
 struct NativeWorkerOptions {
@@ -569,6 +617,19 @@ mod tests {
         NativeCfrTelemetrySnapshot, NativeMuxTelemetrySnapshot, NativeNv12TelemetrySnapshot,
         NativeNvencTelemetrySnapshot, NativeWgcTelemetrySnapshot,
     };
+
+    #[test]
+    fn pending_recovery_cannot_rebuild_a_resumed_or_replaced_source() {
+        let request = SourceRecoveryRequest {
+            generation: 3,
+            latest_qpc: 100,
+        };
+        assert!(request.matches(3, 100));
+        // A queued service observation must lose to live GPU-worker evidence.
+        assert!(!request.matches(3, 101));
+        assert!(!request.matches(4, 100));
+        assert!(!request.matches(4, 101));
+    }
 
     #[test]
     fn initial_frame_wait_extends_only_for_new_source_progress() {

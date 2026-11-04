@@ -11,8 +11,9 @@ use windows::Win32::UI::HiDpi::{
     SetThreadDpiAwarenessContext,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClientRect, GetSystemMetrics, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SM_CXSCREEN, SM_CYSCREEN,
+    EnumWindows, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SM_CXSCREEN,
+    SM_CYSCREEN,
 };
 use windows::core::BOOL;
 
@@ -168,6 +169,15 @@ pub fn validate_capture_target(target: &CaptureTarget) -> Result<()> {
         anyhow::bail!("the selected League HWND is hidden or minimized");
     }
     Ok(())
+}
+
+/// Only gates a silent-source rebuild. Focus never owns recording lifetime.
+pub(crate) fn capture_target_is_foreground(target: &CaptureTarget) -> bool {
+    let CaptureSource::WindowsGraphicsCapture { hwnd, .. } = target.source else {
+        return false;
+    };
+    // SAFETY: compares opaque HWND values; no ownership or memory access.
+    unsafe { GetForegroundWindow().0 as usize as u64 == hwnd }
 }
 
 pub fn capture_target_visibility(target: &CaptureTarget) -> Result<CaptureTargetVisibility> {

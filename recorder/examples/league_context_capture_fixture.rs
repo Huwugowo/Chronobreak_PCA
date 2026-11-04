@@ -7,6 +7,7 @@ fn scenario_restore_time(scenario: &str, seconds: u64) -> anyhow::Result<u64> {
         "steady" | "close_window" => (7, 10),
         "recreate" => (7, 13),
         "minimize_restore" => (21, 27),
+        "silent_restore" => (25, 31),
         _ => anyhow::bail!("unsupported lifecycle scenario"),
     };
     anyhow::ensure!(
@@ -40,18 +41,24 @@ fn validate_decoded_frames(scenario: &str, seconds: u64, decoded: &[u8]) -> anyh
         frames.len() >= seconds.saturating_sub(2).max(4) as usize,
         "recording timeline stopped before process exit"
     );
-    if matches!(scenario, "recreate" | "minimize_restore") {
+    if matches!(scenario, "recreate" | "minimize_restore" | "silent_restore") {
         let red = |frame: &&[u8]| frame[0] > 180 && frame[1] < 70;
         let green = |frame: &&[u8]| frame[1] > 180 && frame[0] < 70;
         anyhow::ensure!(
             frames.iter().take(5).any(red) && frames.iter().rev().take(4).all(green),
             "decoded recording did not resume the restored window's fresh green epoch"
         );
+        // Process-owned capture intentionally repeats the final image until
+        // the next two-second process observation requests stop. Permit that
+        // terminal tail, but require four moving green samples just before it.
         anyhow::ensure!(
-            frames[frames.len() - 4..].windows(2).all(|pair| pair[0]
-                .iter()
-                .zip(pair[1])
-                .any(|(a, b)| a.abs_diff(*b) > 32)),
+            frames[frames.len().saturating_sub(7)..]
+                .windows(4)
+                .any(|window| window.iter().all(green)
+                    && window.windows(2).all(|pair| pair[0]
+                        .iter()
+                        .zip(pair[1])
+                        .any(|(a, b)| a.abs_diff(*b) > 32))),
             "decoded frames did not keep advancing after restore"
         );
     }
@@ -84,6 +91,11 @@ async fn main() -> anyhow::Result<()> {
         .context("duration seconds required")?
         .parse()?;
     let restore_at = scenario_restore_time(&scenario, seconds)?;
+    if scenario == "silent_restore" {
+        // Static GDI content can still produce WGC timestamps. Silence the
+        // first leaf deterministically; only real replacement clears the fault.
+        league_replay_recorder::native::silence_next_wgc_source_after(Duration::from_secs(6))?;
+    }
     if std::env::var("LEAGUE_REPLAY_PROCESS_NAME").as_deref() != Ok("wgc_fixture.exe")
         || std::env::var("LEAGUE_REPLAY_AUDIO_DEVICE").as_deref() != Ok("silent")
     {
@@ -232,9 +244,15 @@ async fn main() -> anyhow::Result<()> {
                 _ = tokio::signal::ctrl_c() => bail!("fixture interrupted"),
                 event = events.recv() => {
                     match event {
-                        Some(ServiceEvent::SourceUnavailable { .. }) => saw_unavailable = true,
-                        Some(ServiceEvent::Recording { .. }) if saw_unavailable => saw_resumed = true,
-                        Some(ServiceEvent::Idle | ServiceEvent::Recording { .. } | ServiceEvent::Availability(_)) => {},
+                        Some(ServiceEvent::SourceUnavailable { directory: reported }) => {
+                            anyhow::ensure!(reported == directory, "waiting changed the recording directory");
+                            saw_unavailable = true;
+                        },
+                        Some(ServiceEvent::Recording { directory: reported }) => {
+                            anyhow::ensure!(reported == directory, "recovery created a different recording");
+                            saw_resumed |= saw_unavailable;
+                        },
+                        Some(ServiceEvent::Idle | ServiceEvent::Availability(_)) => {},
                         _ => bail!("fixture recording ended early"),
                     }
                 }
@@ -242,10 +260,10 @@ async fn main() -> anyhow::Result<()> {
         }
         let reopened = query(&namespace, &std::env::current_exe()?).await?;
         if reopened.capture_activity != CaptureActivity::Recording { bail!("capture did not survive observer close/reopen"); }
-        if matches!(scenario.as_str(), "close_window" | "recreate") && !saw_unavailable {
+        if matches!(scenario.as_str(), "close_window" | "recreate" | "minimize_restore" | "silent_restore") && !saw_unavailable {
             bail!("window loss never reported waiting for the source");
         }
-        if scenario == "recreate" && !saw_resumed {
+        if matches!(scenario.as_str(), "recreate" | "minimize_restore" | "silent_restore") && !saw_resumed {
             bail!("fresh source never reported resumed recording after waiting");
         }
         if scenario != "steady" {
@@ -288,6 +306,14 @@ async fn main() -> anyhow::Result<()> {
     }
     if failed.load(Ordering::SeqCst) {
         bail!("fixture service failed during finalization");
+    }
+    if scenario == "silent_restore" {
+        let log = std::fs::read_to_string(root.join("service.log"))?;
+        anyhow::ensure!(
+            log.contains("rebuilding silent capture source; retaining encoder, mux and timeline")
+                && log.contains("replacement capture source attached on original device"),
+            "silent-source fixture did not exercise an actual leaf rebuild"
+        );
     }
     for file in ["video.mp4", "metadata.json", "game_log.json"] {
         if !directory.join(file).is_file() {
@@ -357,12 +383,17 @@ mod tests {
         assert!(scenario_restore_time("recreate", 10).is_err());
         assert_eq!(scenario_restore_time("recreate", 13).unwrap(), 7);
         assert!(scenario_restore_time("close_window", 10).is_ok());
+        assert!(scenario_restore_time("silent_restore", 30).is_err());
+        assert_eq!(scenario_restore_time("silent_restore", 31).unwrap(), 25);
     }
 
     #[test]
     fn decoded_check_rejects_motion_before_restore_and_frozen_restored_images() {
-        for (scenario, seconds, restored_at) in [("recreate", 13, 7), ("minimize_restore", 27, 21)]
-        {
+        for (scenario, seconds, restored_at) in [
+            ("recreate", 13, 7),
+            ("minimize_restore", 27, 21),
+            ("silent_restore", 31, 25),
+        ] {
             let frames = |restored_at, moving| {
                 (0..seconds)
                     .flat_map(|index| {
@@ -381,6 +412,17 @@ mod tests {
             };
             let valid = frames(restored_at, true);
             assert!(validate_decoded_frames(scenario, seconds, &valid).is_ok());
+            let mut terminal_tail = valid.clone();
+            for index in seconds - 2..seconds {
+                terminal_tail[index as usize * 768 + 3] =
+                    terminal_tail[(seconds as usize - 3) * 768 + 3];
+            }
+            assert!(validate_decoded_frames(scenario, seconds, &terminal_tail).is_ok());
+            let mut frozen_early = valid.clone();
+            for index in seconds - 8..seconds {
+                frozen_early[index as usize * 768 + 3] = 0;
+            }
+            assert!(validate_decoded_frames(scenario, seconds, &frozen_early).is_err());
             assert!(validate_decoded_frames(scenario, seconds, &frames(seconds, true)).is_err());
             assert!(
                 validate_decoded_frames(scenario, seconds, &frames(restored_at, false)).is_err()
