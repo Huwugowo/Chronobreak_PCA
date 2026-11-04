@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { Show } from "solid-js";
 import { PLAYBACK_RATES, type PlaybackRate, type PlaybackSnapshot } from "../playbackController";
 import { VolumeMuteIcon, VolumeUpIcon } from "../ui/icons";
 import styles from "./PlaybackControls.module.css";
@@ -15,6 +15,12 @@ export type PlaybackControlsProps = {
 
 export default function PlaybackControls(props: PlaybackControlsProps) {
   const rate = () => props.state?.rate;
+  const rateIndex = () => PLAYBACK_RATES.indexOf(rate()?.selected ?? 1);
+  const adjacentRate = (direction: -1 | 1) => PLAYBACK_RATES[rateIndex() + direction];
+  const stepRate = (direction: -1 | 1) => {
+    const next = adjacentRate(direction);
+    if (!unavailable() && next !== undefined) props.onRate(next);
+  };
   const muted = () => props.state?.media.muted ?? false;
   const volumePercent = () => Math.round((props.state?.media.volume ?? 1) * 100);
   const displayedVolumePercent = () => muted() ? 0 : volumePercent();
@@ -119,22 +125,36 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         </label>
       </div>
 
-      <label class={styles.speed}>
-        <span class={styles.srOnly}>Speed</span>
-        <select
-          aria-label="Replay speed"
-          title={rateDescription()}
-          value={rate()?.selected ?? 1}
-          disabled={unavailable()}
-          onChange={(event) =>
-            props.onRate(Number(event.currentTarget.value) as PlaybackRate)
-          }
+      <div class={styles.speed} role="group" aria-label="Replay speed">
+        <button
+          class={styles.speedButton}
+          type="button"
+          aria-label="Decrease replay speed"
+          title={adjacentRate(-1) === undefined ? "Minimum speed" : `Decrease speed to ${adjacentRate(-1)}x`}
+          disabled={unavailable() || adjacentRate(-1) === undefined}
+          onClick={() => stepRate(-1)}
         >
-          <For each={PLAYBACK_RATES}>
-            {(value) => <option value={value}>{value}x</option>}
-          </For>
-        </select>
-      </label>
+          <span aria-hidden="true">−</span>
+        </button>
+        <output
+          class={styles.speedValue}
+          aria-label="Selected replay speed"
+          aria-live="polite"
+          title={rateDescription()}
+        >
+          {rate()?.selected ?? 1}x
+        </output>
+        <button
+          class={styles.speedButton}
+          type="button"
+          aria-label="Increase replay speed"
+          title={adjacentRate(1) === undefined ? "Maximum speed" : `Increase speed to ${adjacentRate(1)}x`}
+          disabled={unavailable() || adjacentRate(1) === undefined}
+          onClick={() => stepRate(1)}
+        >
+          <span aria-hidden="true">+</span>
+        </button>
+      </div>
 
       <span
         classList={{

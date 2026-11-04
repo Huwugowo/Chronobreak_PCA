@@ -4907,6 +4907,35 @@
         "The initial new-build launch measured 1271.6 ms for cards/artwork, with observer attachment at 928 ms. Its later navigation failed because of an incorrect harness Back-button selector; the startup result remains retained and valid. Repeated warm operation meets the measured budget, but this initial over-budget result prevents claiming a universal subsecond process-start ceiling. The validated GUI/recorder/helper pair is open from build/release/warm-display-20261104."
       ],
       "notes": "2026-11-04 user requests less than one second to display already cached data. Lightweight direct fix and real production rendering checks completed without a formal ExecPlan or historical campaign. Repeated cached display passes; keep in-progress because the initial updated-build launch exceeded the full process-start budget. Next work, if pursuing that strict launch ceiling, must isolate pre-observer native/WebView startup rather than alter replay validation or conceal the initial result. Optional full scoreboard hydration and video decode are outside the cached timeline/overlay measurement. Capture watchdog work is tracked separately in QB-CAP-009."
+    },
+    {
+      "id": "QB-REPLAY-027",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "One-click replay speed steps",
+      "description": "Replace the replay speed menu with visible minus and plus buttons that step through the existing native speed ladder in one click, following League replay navigation.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "in-progress",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-006"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Visible minus and plus buttons immediately select the adjacent speed in 0.25x, 0.5x, 1x, 2x, 4x, 8x; the current selected speed is always readable without opening a menu.",
+        "Each click moves one rung without wrapping; disable minus at 0.25x, plus at 8x and both when playback controls are unavailable. Repeated clicks use the latest selected intent.",
+        "Use the shared control in windowed and fullscreen layouts, with accessible button names, native keyboard activation and preserved replay-shortcut isolation, audio controls and truthful rate limitation/fallback status.",
+        "Preserve the existing playback controller, persistent media element, rate ladder and recovery semantics; focused UI/controller checks, frontend checks and production build pass."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Exercise adjacent steps, rapid repeated clicks, ladder endpoints, unavailable controls, keyboard isolation and selected-versus-fallback display with the rendered shared controls; retain controller/viewer/fullscreen regressions.", "command": "npm run test --prefix app"},
+        {"type": "automated", "description": "Run frontend type checking, production frontend and desktop builds, canonical validation and scoped whitespace checks.", "command": "npm run check --prefix app; npm run build --prefix app; npm run desktop:build --prefix app"}
+      ],
+      "evidence": [
+        "2026-11-04: shared PlaybackControls replaces the speed menu with labelled minus/plus buttons and a live selected-speed readout. Each click steps the existing 0.25/0.5/1/2/4/8 ladder from the latest selected intent; endpoints and unavailable states disable the corresponding buttons. Existing limitation/fallback feedback and controller ownership are preserved.",
+        "130 focused control/controller/viewer/fullscreen tests passed (command-20261104-223326.log), including rapid real-controller rate changes, both ladder directions, endpoint/unavailable behavior, keyboard propagation, selected-versus-fallback display and retained controls/media across fullscreen/recovery. Full frontend suite: 579 passed / 43 files (command-20261104-223358.log). Typecheck and production frontend build passed (command-20261104-223415.log). Fresh production desktop build passed in 4m04s, with only the existing linker-output warning.",
+        "Scoped whitespace checks passed. Initial canonical validation passed for 115 items / 30 plan-checkpoint pairs; final validation failed on an unrelated concurrent QB-AUDIO-003 checkpoint edit: docs/execution/qb-audio-003.md is not UTF-8 (byte 0x96 at position 194). That file is preserved; feature remains non-done only for the final canonical gate. Durable control behavior is documented in docs/architecture/desktop-replay.md. Interactive WebView/audio observations were not rerun for this presentation-only change; no new decoder, audible-output or performance claim is made."
+      ],
+      "notes": "2026-11-04 explicit user request based on League's minus/plus replay control. Bounded direct presentation change to the existing QB-REPLAY-009 speed ladder; its deferred human audio/A/V gate and completed controller evidence remain unchanged. No keyboard speed shortcuts, new rates or decoder changes. Implementation and product verification are complete. Next action: after the separate QB-AUDIO-003 editing session restores its checkpoint to UTF-8, rerun final canonical validation and set this feature done; do not repeat unchanged product checks."
     }
   ]
 }

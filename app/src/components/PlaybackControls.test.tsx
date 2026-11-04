@@ -85,7 +85,7 @@ it.each(["ignored", "rejected", "transformed"] as const)("renders the applied vo
   } finally { cleanup(); }
 });
 
-it("exposes six native speed choices and independent keyboard-accessible audio controls", () => {
+it("steps through six speeds in one click and preserves accessible audio and fallback feedback", () => {
   const [state, setState] = createSignal<NonNullable<PlaybackControlsProps["state"]>>({
     rate: { selected: 1, effective: 1, applied: 1, observed: null, outcome: "suspended", limitation: null },
     media: { muted: false, volume: 0.75 }, audio: "available-but-unverified", desiredPlaying: false, readiness: "ready",
@@ -98,10 +98,23 @@ it("exposes six native speed choices and independent keyboard-accessible audio c
     onVolume={(volume) => setState((old) => ({ ...old, media: { ...old.media, volume } }))} />, host);
   const globalKey = vi.fn(); window.addEventListener("keydown", globalKey);
   try {
-    const speed = host.querySelector("select")!;
-    expect([...speed.options].map((option) => option.textContent)).toEqual(["0.25x", "0.5x", "1x", "2x", "4x", "8x"]);
-    speed.value = "4"; speed.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(changed).toHaveBeenCalledWith(4); expect(speed.value).toBe("4");
+    const speed = host.querySelector("output")!;
+    const decrease = host.querySelector<HTMLButtonElement>('[aria-label="Decrease replay speed"]')!;
+    const increase = host.querySelector<HTMLButtonElement>('[aria-label="Increase replay speed"]')!;
+    expect(host.querySelector("select")).toBeNull();
+    expect(speed.textContent).toBe("1x");
+    decrease.click(); expect(speed.textContent).toBe("0.5x");
+    decrease.click(); expect(speed.textContent).toBe("0.25x");
+    expect(decrease.disabled).toBe(true);
+    decrease.click(); expect(changed).toHaveBeenCalledTimes(2);
+    for (const expected of ["0.5x", "1x", "2x", "4x", "8x"]) {
+      increase.click(); expect(speed.textContent).toBe(expected);
+    }
+    expect(increase.disabled).toBe(true);
+    increase.click(); expect(changed).toHaveBeenCalledTimes(7);
+    for (const expected of ["4x", "2x", "1x", "0.5x", "0.25x"]) {
+      decrease.click(); expect(speed.textContent).toBe(expected);
+    }
     const volume = host.querySelector("input")!;
     expect(volume.getAttribute("aria-label")).toBe("Replay volume");
     expect([volume.min, volume.max]).toEqual(["0", "100"]);
@@ -113,13 +126,61 @@ it("exposes six native speed choices and independent keyboard-accessible audio c
     const key = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
     volume.dispatchEvent(key);
     expect(key.defaultPrevented).toBe(false); expect(globalKey).not.toHaveBeenCalled();
+    increase.focus();
+    for (const key of ["Enter", " ", "ArrowUp", "ArrowDown"]) {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      increase.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(globalKey).not.toHaveBeenCalled();
     setState((old) => ({ ...old, desiredPlaying: true, rate: { selected: 8, applied: 1, effective: 1,
       observed: 1, outcome: "limited", limitation: "Presented video stopped advancing" } }));
-    expect(speed.value).toBe("8");
+    expect(speed.textContent).toBe("8x");
     expect(host.querySelector('[role="status"]')!.textContent).toBe("8x unavailable; playing at 1x");
     setState((old) => ({ ...old, readiness: "recovering" }));
     expect(host.querySelector('[role="status"]')!.textContent).toBe("8x unavailable; fallback 1x");
+    decrease.click();
+    expect(changed).toHaveBeenLastCalledWith(4);
+    expect(speed.textContent).toBe("4x");
   } finally { window.removeEventListener("keydown", globalKey); dispose(); }
+});
+
+it("applies rapid adjacent steps through the real controller and disables unavailable controls", () => {
+  const { video, controller, host, cleanup } = renderControllerControls();
+  try {
+    const decrease = host.querySelector<HTMLButtonElement>('[aria-label="Decrease replay speed"]')!;
+    const increase = host.querySelector<HTMLButtonElement>('[aria-label="Increase replay speed"]')!;
+    for (const expected of [2, 4, 8]) {
+      increase.click();
+      expect(controller.snapshot().rate.selected).toBe(expected);
+      expect(video.playbackRate).toBe(expected);
+    }
+    for (const expected of [4, 2, 1, 0.5, 0.25]) {
+      decrease.click();
+      expect(controller.snapshot().rate.selected).toBe(expected);
+      expect(video.playbackRate).toBe(expected);
+    }
+    controller.dispose();
+    expect(decrease.disabled).toBe(true);
+    expect(increase.disabled).toBe(true);
+  } finally { cleanup(); }
+});
+
+it.each([undefined, "closed", "disposed"] as const)("disables speed steps when controls are %s", (readiness) => {
+  const changed = vi.fn();
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PlaybackControls state={readiness === undefined ? undefined : {
+    rate: { selected: 1, effective: 1, applied: 1, observed: null, outcome: "suspended", limitation: null },
+    media: { muted: false, volume: 1 }, audio: "available-but-unverified", desiredPlaying: false, readiness,
+  }} onRate={changed} onMuted={vi.fn()} onVolume={vi.fn()} />, host);
+  try {
+    for (const label of ["Decrease replay speed", "Increase replay speed"]) {
+      const button = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+      expect(button.disabled).toBe(true);
+      button.click();
+    }
+    expect(changed).not.toHaveBeenCalled();
+  } finally { dispose(); }
 });
 it("moving volume while muted restores audible playback", () => {
   const [state, setState] = createSignal<NonNullable<PlaybackControlsProps["state"]>>({

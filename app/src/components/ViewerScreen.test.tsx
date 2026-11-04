@@ -357,18 +357,20 @@ it("marks only the persistent primary video across layout and recovery, then rel
       error: { get: () => ({ code: 3, message: "fixture decode error" }) } });
     primary.dispatchEvent(new Event("loadstart"));
     primary.dispatchEvent(new Event("loadedmetadata"));
-    const selectSpeed = (value: string) => {
-      const select = host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!;
-      expect([...select.options].map((option) => option.value)).toEqual(["0.25", "0.5", "1", "2", "4", "8"]);
-      select.value = value; select.dispatchEvent(new Event("change", { bubbles: true }));
-    };
-    selectSpeed("4");
+    const increase = host.querySelector<HTMLButtonElement>('[aria-label="Increase replay speed"]')!;
+    increase.click(); increase.click();
+    expect(primary.playbackRate).toBe(4);
     host.querySelector<HTMLButtonElement>('[aria-label="Mute replay"]')!.click();
     const volume = host.querySelector<HTMLInputElement>('[aria-label="Replay volume"]')!;
     volume.value = "37"; volume.dispatchEvent(new Event("input", { bubbles: true }));
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "f" }));
     expect(host.querySelector('[data-testid="video-frame"]')?.getAttribute("data-fullscreen")).toBe("true");
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!.value).toBe("4");
+    expect(host.querySelector("output")!.textContent).toBe("4x");
+    expect(host.querySelector('[aria-label="Increase replay speed"]')).toBe(increase);
+    host.querySelector<HTMLButtonElement>('[aria-label="Decrease replay speed"]')!.click();
+    expect(primary.playbackRate).toBe(2);
+    increase.click();
+    expect(primary.playbackRate).toBe(4);
     expect(host.querySelector<HTMLInputElement>('[aria-label="Replay volume"]')!.value).toBe("37");
     expect(host.querySelector('[aria-label="Mute replay"]')).not.toBeNull();
     primary.dispatchEvent(new Event("error"));
@@ -377,7 +379,7 @@ it("marks only the persistent primary video across layout and recovery, then rel
     expect(primary.playbackRate).toBe(4); expect(primary.muted).toBe(false); expect(primary.volume).toBe(0.37);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(host.querySelector("video")).toBe(primary);
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!.value).toBe("4");
+    expect(host.querySelector("output")!.textContent).toBe("4x");
     expect([...document.querySelectorAll('[data-qb-primary-playback="true"]')]).toEqual([primary]);
   } finally { dispose(); }
   expect(host.querySelector("video")).toBeNull();
@@ -494,8 +496,8 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
     primary.dispatchEvent(new Event("loadedmetadata"));
     primary.dispatchEvent(new Event("canplay"));
     primary.dispatchEvent(new Event("seeked"));
-    const speed = host.querySelector<HTMLSelectElement>('[aria-label="Replay speed"]')!;
-    speed.value = "4"; speed.dispatchEvent(new Event("change", { bubbles: true }));
+    const increase = host.querySelector<HTMLButtonElement>('[aria-label="Increase replay speed"]')!;
+    increase.click(); increase.click();
     const preview = host.querySelector<HTMLButtonElement>('[aria-label="Preview selected clip"]')!;
     expect(preview.disabled).toBe(false);
     preview.click();

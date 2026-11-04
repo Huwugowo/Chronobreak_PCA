@@ -244,7 +244,10 @@ Continuous decoder identification is not required where trustworthy provenance i
 absent. No additional normal runtime observer is introduced for acceptance proof.
 
 Shared windowed/fullscreen controls expose 0.25x, 0.5x, 1x, 2x, 4x and 8x,
-plus independent mute and volume intent. The controller keeps selected rate,
+with visible minus/plus buttons selecting the adjacent rung in one click and a
+selected-speed readout. The buttons stop at the ladder endpoints; stepping uses
+the latest selected intent even when the runtime has applied a fallback rate.
+Mute and volume intent remain independent. The controller keeps selected rate,
 accepted native property and observed presentation advancement separate. Rate
 verification uses settled RVFC windows; intentional seeks, loops, pauses and
 hidden documents suspend measurement. Repeated buffering cannot renew an
