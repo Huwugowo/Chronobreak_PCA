@@ -45,8 +45,8 @@ fn seed_measurement_projection(fixture: &Fixture, index: &mut Index) {
     let tx = index.db.transaction().unwrap();
     {
         let mut recording = tx.prepare_cached(
-            "INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,telemetry_status)
-             VALUES (?1,?2,?3,?4,?5,0,'unknown',?6,'ready')",
+            "INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,telemetry_status,match_group)
+             VALUES (?1,?2,?3,?4,?5,0,'unknown',?6,'ready',?7)",
         ).unwrap();
         let mut scope = tx
             .prepare_cached(
@@ -62,6 +62,7 @@ fn seed_measurement_projection(fixture: &Fixture, index: &mut Index) {
             summary.media_id = Some(MediaId::parse(&media).unwrap());
             summary.timestamp = format!("m{row:05}");
             summary.recorded_at = format!("2026-08-{:02}T{:02}:00:00Z", row % 28 + 1, row % 24);
+            summary.match_group = Some(format!("{row:064x}"));
             recording
                 .execute(params![
                     media,
@@ -69,7 +70,8 @@ fn seed_measurement_projection(fixture: &Fixture, index: &mut Index) {
                     summary.recorded_at,
                     summary.champion,
                     summary.game_mode,
-                    serde_json::to_string(&summary).unwrap()
+                    serde_json::to_string(&summary).unwrap(),
+                    summary.match_group,
                 ])
                 .unwrap();
             scope
@@ -205,7 +207,8 @@ fn measurement_fixture_keeps_history_keyset_and_exact_actor_identity() {
     semantic.media_id = Some(MediaId::parse(media).unwrap());
     semantic.timestamp = "measurement-keyset".into();
     semantic.recorded_at = "2026-08-28T10:00:00Z".into();
-    index.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,telemetry_status,facts_current,history_flags) VALUES (?1,'measurement-keyset',?2,?3,?4,0,'unknown',?5,'ready',1,0)", params![media,semantic.recorded_at,semantic.champion,semantic.game_mode,serde_json::to_string(&semantic).unwrap()]).unwrap();
+    semantic.match_group = Some("0".repeat(64));
+    index.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,telemetry_status,facts_current,history_flags,match_group) VALUES (?1,'measurement-keyset',?2,?3,?4,0,'unknown',?5,'ready',1,0,?6)", params![media,semantic.recorded_at,semantic.champion,semantic.game_mode,serde_json::to_string(&semantic).unwrap(),semantic.match_group]).unwrap();
     index
         .db
         .execute(

@@ -625,6 +625,20 @@ class ReplayCorpusTests(unittest.TestCase):
             )
             self.assertEqual(evidence["producer_backend"], "replay-corpus-copy")
 
+    def test_generated_match_context_binds_each_fixture_to_its_own_match(self) -> None:
+        metadata = {
+            "media_id": MEDIA_ID,
+            "game_mode": "PRACTICETOOL",
+            "local_player_summoner_name": "QB-Blue-1#TEST",
+        }
+        first = corpus._build_match_context(metadata, "corpus-1", 1)
+        second = corpus._build_match_context(metadata, "corpus-1", 2)
+        self.assertEqual(first["media_id"], metadata["media_id"])
+        self.assertEqual(first["local_puuid"], second["local_puuid"])
+        self.assertEqual((first["game_id"], second["game_id"]), ("1", "2"))
+        self.assertEqual(first["lcu_queue_mode"], first["live_mode"])
+        self.assertEqual(first, corpus._build_match_context(metadata, "corpus-1", 1))
+
     def test_failed_build_preserves_hidden_partial_without_publishing_bundle(self) -> None:
         with tempfile.TemporaryDirectory(prefix="queueback-corpus-publication-") as temporary:
             base = Path(temporary)

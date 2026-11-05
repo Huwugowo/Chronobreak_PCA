@@ -28,7 +28,7 @@ impl Fixture {
         let root = tempdir().unwrap();
         let cache = tempdir().unwrap();
         let directory =
-            library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+            library::tests::write_matched_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
         let summary = library::list_games(root.path()).unwrap().remove(0);
         let mut records = Vec::new();
         let recovered = journal::recover(
@@ -558,6 +558,207 @@ fn card_facts_survive_bounded_imports_before_replay_is_prepared() {
     );
 }
 
+#[tokio::test]
+async fn history_groups_recording_parts_before_filters_counts_and_pagination() {
+    let f = Fixture::new(1);
+    let root = f.root.path();
+    let write_part = |bundle: &str, date: &str, local_account: Option<&str>, saved: bool| {
+        let path = library::tests::write_game(root, bundle, date, saved);
+        let media = MediaId::new_v4();
+        let metadata = path.join("metadata.json");
+        let json = fs::read_to_string(&metadata).unwrap();
+        fs::write(
+            &metadata,
+            json.replace(f.source.media_id.as_str(), media.as_str()),
+        )
+        .unwrap();
+        if let Some(account) = local_account {
+            let mut candidate = crate::league_match::fixture(&media);
+            candidate["local_puuid"] = serde_json::json!(account);
+            fs::write(
+                path.join("league_match.json"),
+                serde_json::to_vec(&candidate).unwrap(),
+            )
+            .unwrap();
+        }
+        media
+    };
+    let middle = write_part(
+        "101",
+        "2026-08-06T10:00:00Z",
+        Some("synthetic-local-puuid"),
+        true,
+    );
+    let latest = write_part(
+        "102",
+        "2026-08-07T10:00:00Z",
+        Some("synthetic-local-puuid"),
+        false,
+    );
+    // Share a timestamp across groups to exercise the second keyset column.
+    let other = write_part(
+        "103",
+        "2026-08-07T10:00:00Z",
+        Some("different-puuid"),
+        false,
+    );
+    let newest_metadata = root.join("games/102/metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&newest_metadata).unwrap()).unwrap();
+    metadata["local_player_champion"] = serde_json::json!("Ahri");
+    fs::write(newest_metadata, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    write_part("104", "2026-08-08T10:00:00Z", None, false);
+    fs::write(root.join("games/104/league_match.json"), b"invalid").unwrap();
+
+    let mut index = f.index();
+    let catalog = library::list_games(root).unwrap();
+    index.reconcile(&catalog, "grouped").unwrap();
+    assert_eq!(
+        catalog
+            .iter()
+            .filter(|part| part.match_group.is_none())
+            .count(),
+        1
+    );
+    assert_eq!(
+        catalog
+            .iter()
+            .filter(|part| part.match_group == f.summary.match_group)
+            .count(),
+        3
+    );
+
+    let query = HistoryQuery {
+        limit: 1,
+        ..Default::default()
+    };
+    let first = index.history(&query, 2).unwrap();
+    assert_eq!((first.catalog_recordings, first.indexed_recordings), (2, 2));
+    let next = first.next.unwrap();
+    let second = index
+        .history(
+            &HistoryQuery {
+                after: Some(next.clone()),
+                ..query.clone()
+            },
+            2,
+        )
+        .unwrap();
+    let representatives = [&first.rows[0].media_id, &second.rows[0].media_id];
+    assert!(representatives.contains(&&latest) && representatives.contains(&&other));
+    assert!(second.next.is_none());
+    let saved_ahri = HistoryQuery {
+        limit: 10,
+        champion: Some("Ahri".into()),
+        saved_only: Some(true),
+        ..Default::default()
+    };
+    let saved_before_results = index.history(&saved_ahri, 2).unwrap();
+    assert_eq!(saved_before_results.rows.len(), 1);
+    assert_eq!(saved_before_results.rows[0].media_id, latest);
+
+    for (bundle, media, kills) in [("100", &f.source.media_id, 7), ("101", &middle, 19)] {
+        let mut result = library::tests::result_fixture(media);
+        result.local_player.as_mut().unwrap().stats.kills = Some(kills);
+        fs::write(
+            root.join("games")
+                .join(bundle)
+                .join(chronobreak_league_data::RESULT_FILE),
+            serde_json::to_vec(&result).unwrap(),
+        )
+        .unwrap();
+        let part = catalog
+            .iter()
+            .find(|part| part.media_id.as_ref() == Some(media))
+            .unwrap();
+        index
+            .history_recording(root, part, false, &|| Ok(()))
+            .unwrap();
+    }
+    f.ready(&mut index);
+    let first_after_result = index.history(&query, 2).unwrap();
+    assert_eq!(
+        serde_json::to_value(first_after_result.next).unwrap(),
+        serde_json::to_value(Some(next)).unwrap()
+    );
+    assert!(index.history(&saved_ahri, 2).unwrap().rows.is_empty());
+
+    for query in [
+        HistoryQuery {
+            limit: 10,
+            saved_only: Some(true),
+            ..Default::default()
+        },
+        HistoryQuery {
+            limit: 10,
+            event_kind: Some("ChampionKill".into()),
+            ..Default::default()
+        },
+    ] {
+        let matches = index.history(&query, 2).unwrap();
+        assert_eq!(matches.rows.len(), 1);
+        assert_eq!(matches.rows[0].media_id, middle);
+        assert_eq!(matches.rows[0].stats.kills, Some(19));
+        assert!(matches!(
+            matches.rows[0].stats.source,
+            StatsSource::FinalEog
+        ));
+    }
+    let video = include_bytes!("../../testdata/recording.mp4");
+    fs::create_dir(root.join("clips")).unwrap();
+    fs::write(root.join("clips/104_1.mp4"), video).unwrap();
+    let roots =
+        std::sync::Arc::new(crate::playback_server::MediaRoots::new(root.to_owned()).unwrap());
+    let (logical, approved) = roots.output_pair();
+    let snapshot =
+        library::refresh_library_snapshot(&logical, &approved, "", "grouped".into(), || Ok(()))
+            .unwrap();
+    assert!(snapshot.archive_error.is_none());
+    assert!(!root.join("games/104").exists());
+    let origin = crate::playback_server::start(
+        crate::playback_policy::BoundServer::bind().unwrap(),
+        roots,
+        Default::default(),
+        root.join("ddragon"),
+        #[cfg(feature = "replay-benchmark")]
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .unwrap();
+    let mut urls = vec![format!("{origin}/clips/104_1.mp4")];
+    for (bundle, media) in [
+        ("100", &f.source.media_id),
+        ("101", &middle),
+        ("102", &latest),
+    ] {
+        let descriptor =
+            library::replay_descriptor(root, &origin, bundle, "grouped".into()).unwrap();
+        assert_eq!(&descriptor.media_timeline.media_id, media);
+        assert!(
+            descriptor
+                .video_url
+                .ends_with(&format!("/games/{bundle}/video.mp4"))
+        );
+        urls.push(descriptor.video_url);
+    }
+    for url in urls {
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert_eq!(response.bytes().await.unwrap().as_ref(), video);
+    }
+}
+
 #[test]
 fn final_nullable_facts_replace_recorded_projection_independently() {
     let f = Fixture::new(1);
@@ -957,13 +1158,8 @@ fn ui_refresh_keeps_unchanged_prepared_history_current() {
     );
     assert_eq!(index.history(&query, 1).unwrap().rows.len(), 1);
     index.reconcile(&[], "empty").unwrap();
-    let counts: u64 = index
-        .db
-        .query_row("SELECT SUM(count) FROM history_counts", [], |r| {
-            unsigned(r, 0)
-        })
-        .unwrap();
-    assert_eq!(counts, 0);
+    let empty = index.history(&query, 0).unwrap();
+    assert_eq!((empty.indexed_recordings, empty.unknown_recordings), (0, 0));
 }
 
 #[test]

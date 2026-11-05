@@ -5,6 +5,7 @@ mod clip_duration;
 mod clip_export;
 mod config;
 mod ddragon;
+mod directory_guard;
 mod export_process;
 mod export_staging;
 mod league_authored;
@@ -16,6 +17,7 @@ mod league_match;
 mod league_result;
 mod library;
 mod library_coordinator;
+mod library_mutation;
 mod music;
 mod playback_diagnostics;
 mod playback_file;
@@ -646,6 +648,16 @@ fn open_clips_folder(state: State<'_, AppState>) -> Result<(), String> {
     open_folder(&state.roots.output_directory().join("clips")).map_err(error_string)
 }
 
+#[tauri::command(async)]
+fn open_unmatched_recordings_folder(state: State<'_, AppState>) -> Result<(), String> {
+    ensure_user_mutation_allowed(&state)?;
+    let (logical, approved) = state.roots.output_pair();
+    let owner =
+        library_mutation::LibraryMutation::acquire(&logical, &approved).map_err(error_string)?;
+    let folder = owner.unmatched().map_err(error_string)?;
+    open_folder(&folder.path).map_err(error_string)
+}
+
 #[tauri::command]
 fn get_hevc_probe_status(state: State<'_, AppState>) -> HevcProbeStatus {
     let marker = read_hevc_marker(&state.hevc_probe_path);
@@ -1173,10 +1185,13 @@ pub fn run() {
             reconcile_hevc_capability(&config_path, &hevc_probe_path, &mut config)?;
 
             ensure_output_directories(&output_directory)?;
-            if let Err(error) =
-                library::run_auto_delete(&output_directory, config.storage.auto_delete_days)
-            {
-                eprintln!("League Replay auto-delete skipped: {error}");
+            if config.storage.auto_delete_days > 0 {
+                let retention = playback_file::ApprovedRoot::new(&output_directory)
+                    .and_then(|root| library_mutation::LibraryMutation::acquire(&output_directory, &root))
+                    .and_then(|owner| library::run_auto_delete(&owner, config.storage.auto_delete_days));
+                if let Err(error) = retention {
+                    eprintln!("League Replay auto-delete skipped: {error}");
+                }
             }
 
             let resource_directory = app
@@ -1401,6 +1416,7 @@ pub fn run() {
         get_settings,
         save_settings,
         open_output_folder,
+        open_unmatched_recordings_folder,
         open_clips_folder,
         get_hevc_probe_status,
         record_hevc_probe_result,
@@ -1454,6 +1470,7 @@ pub fn run() {
         get_settings,
         save_settings,
         open_output_folder,
+        open_unmatched_recordings_folder,
         open_clips_folder,
         get_hevc_probe_status,
         record_hevc_probe_result,

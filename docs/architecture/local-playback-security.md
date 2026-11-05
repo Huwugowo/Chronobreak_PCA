@@ -87,10 +87,13 @@ never reopened after validation. Open/validation failures deny delivery; a faile
 blocking task returns an empty server error without exposing paths or capabilities.
 
 `MediaRoots` keeps the configured/logical output directory separately for library,
-export and folder-opening operations. Only HTTP delivery uses its `ApprovedRoot`
-final-path snapshot. Settings prepares both as one validated value, persists the
-configuration, then publishes the pair under one write lock. Validation or save
-failure leaves the active pair unchanged.
+export and folder-opening operations. HTTP delivery uses its `ApprovedRoot`
+final-path snapshot. Native library mutations also verify that root's live
+generation and logical alias, then retain canonical directory handles through
+effects; their destructive ownership contract is described in `media-library.md`.
+Settings prepares both as one validated value, persists the configuration, then
+publishes the pair under one write lock. Validation or save failure leaves the
+active pair unchanged.
 
 Library and Data Dragon root path snapshots are made at explicit startup/selection.
 Each request uses one immutable snapshot. A library settings change affects later

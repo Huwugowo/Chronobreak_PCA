@@ -1,7 +1,7 @@
 //! Disposable export staging. Final clips and recordings are never cleanup targets.
 
 use std::collections::{BinaryHeap, HashSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+use crate::directory_guard::{DirectoryGuard, guard_root, open_regular, reject_reparse};
 use crate::playback_file::ApprovedRoot;
 
 const STAGING: &str = ".chronobreak-export";
@@ -57,120 +58,11 @@ impl RecoveryReport {
     }
 }
 
-/// Keeping each directory open without delete sharing freezes this path chain.
-pub(crate) struct DirectoryGuard {
-    _file: File,
-    path: PathBuf,
-}
-
-impl DirectoryGuard {
-    #[cfg(windows)]
-    fn open(path: &Path) -> Result<Self> {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
-            FILE_SHARE_WRITE,
-        };
-        let file = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
-            .open(path)
-            .with_context(|| format!("cannot guard export directory {}", path.display()))?;
-        ensure!(
-            file.metadata()?.is_dir(),
-            "export directory is not a directory"
-        );
-        reject_reparse(&file.metadata()?)?;
-        ensure!(
-            crate::playback_file::final_path(&file)? == path,
-            "export directory identity changed"
-        );
-        Ok(Self {
-            _file: file,
-            path: path.to_owned(),
-        })
-    }
-
-    #[cfg(not(windows))]
-    fn open(_path: &Path) -> Result<Self> {
-        anyhow::bail!("guarded export staging requires Windows")
-    }
-
-    fn child(&self, name: &str, create: bool) -> Result<Self> {
-        let path = self.path.join(name);
-        if create {
-            match fs::create_dir(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error).context("cannot create export directory"),
-            }
-        }
-        Self::open(&path)
-    }
-}
-
-fn reject_reparse(metadata: &fs::Metadata) -> Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-        ensure!(
-            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 == 0,
-            "export staging contains a reparse point"
-        );
-    }
-    #[cfg(not(windows))]
-    ensure!(
-        !metadata.file_type().is_symlink(),
-        "export staging contains a symlink"
-    );
-    Ok(())
-}
-
-fn open_regular(path: &Path, writable: bool, create: bool) -> Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(writable).create(create);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows::Win32::Storage::FileSystem::{
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        };
-        options
-            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0);
-    }
-    let file = options
-        .open(path)
-        .context("cannot open export ownership file")?;
-    ensure!(
-        file.metadata()?.is_file(),
-        "export ownership target is not a file"
-    );
-    reject_reparse(&file.metadata()?)?;
-    #[cfg(windows)]
-    ensure!(
-        crate::playback_file::final_path(&file)? == path,
-        "export file identity changed"
-    );
-    Ok(file)
-}
-
 pub(crate) struct Lease {
     _root: DirectoryGuard,
     clips: DirectoryGuard,
     staging: DirectoryGuard,
     _lock: File,
-}
-
-pub(crate) fn guard_root(root: &ApprovedRoot) -> Result<DirectoryGuard> {
-    let directory = DirectoryGuard::open(root.path())?;
-    ensure!(
-        root.matches_directory(&directory._file)?,
-        "approved export root was replaced"
-    );
-    Ok(directory)
 }
 
 impl Lease {

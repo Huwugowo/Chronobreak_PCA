@@ -176,7 +176,7 @@ impl LibraryCoordinator {
         roots: &MediaRoots,
         origin: &str,
     ) -> Result<LibrarySnapshot, LibraryRefreshError> {
-        self.refresh_with_recovery(roots, origin, crate::export_staging::RecoveryMode::Normal)
+        self.refresh_with_recovery(roots, origin, crate::export_staging::RecoveryMode::ReadOnly)
             .await
     }
 
@@ -189,7 +189,7 @@ impl LibraryCoordinator {
         self.refresh_with(roots, origin, move |capture| {
             // Keep the captured directory generation stable through recovery and
             // the complete scan, including when its logical alias is retargeted.
-            let _root_guard = crate::export_staging::guard_root(&capture.root)?;
+            let _root_guard = crate::directory_guard::guard_root(&capture.root)?;
             // Recovery errors retain staging, never hide healthy media. The
             // captured approved root, not a later settings value, owns this work.
             match crate::export_staging::recover(&capture.root, recovery_mode, || {
@@ -202,8 +202,17 @@ impl LibraryCoordinator {
                 ),
             }
             capture.check_current()?;
-            library::build_library_snapshot(
-                capture.root.path(),
+            if recovery_mode == crate::export_staging::RecoveryMode::ReadOnly {
+                return library::build_library_snapshot(
+                    capture.root.path(),
+                    &capture.origin,
+                    capture.token.clone(),
+                    || capture.check_current(),
+                );
+            }
+            library::refresh_library_snapshot(
+                &capture.path,
+                &capture.root,
                 &capture.origin,
                 capture.token.clone(),
                 || capture.check_current(),
@@ -663,7 +672,9 @@ impl LibraryCoordinator {
         roots: &Arc<MediaRoots>,
         token: &str,
         selection: Selection<'_>,
-        work: impl FnOnce(&std::path::Path) -> anyhow::Result<T> + Send + 'static,
+        work: impl FnOnce(&crate::library_mutation::LibraryMutation) -> anyhow::Result<T>
+        + Send
+        + 'static,
     ) -> Result<T, String> {
         // Check identity before contending for the single mutation owner so a
         // stale token remains a superseded request rather than being reported
@@ -684,7 +695,12 @@ impl LibraryCoordinator {
         tokio::task::spawn_blocking(move || {
             let completion = completion;
             // Conservatively invalidate every admitted attempt, including partial errors.
-            let result = work(&completion.capture.path).map_err(crate::error_string);
+            let result = crate::library_mutation::LibraryMutation::acquire(
+                &completion.capture.path,
+                &completion.capture.root,
+            )
+            .and_then(|owner| work(&owner))
+            .map_err(crate::error_string);
             drop(completion);
             result
         })
@@ -1094,6 +1110,12 @@ mod tests {
     async fn read_only_refresh_does_not_create_recovery_artifacts() {
         let directory = tempdir().unwrap();
         fs::write(directory.path().join("sentinel"), b"read-only fixture").unwrap();
+        let unmatched = crate::library::tests::write_game(
+            directory.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
         let roots = MediaRoots::new(directory.path().into()).unwrap();
         LibraryCoordinator::new()
             .refresh_with_recovery(
@@ -1104,6 +1126,13 @@ mod tests {
             .await
             .unwrap();
         assert!(!directory.path().join("clips").exists());
+        assert!(
+            !directory
+                .path()
+                .join(crate::library::UNMATCHED_RECORDINGS)
+                .exists()
+        );
+        assert!(unmatched.join("video.mp4").is_file());
         assert_eq!(
             fs::read(directory.path().join("sentinel")).unwrap(),
             b"read-only fixture"
@@ -1192,6 +1221,7 @@ mod tests {
         assert!(current(&coordinator).is_none());
     }
     include!("library_coordinator_m2_tests.rs");
+    include!("library_mutation_tests.rs");
     include!("library_coordinator_replay_tests.rs");
     include!("league_index_lifecycle_tests.rs");
 }

@@ -23,6 +23,7 @@ import {
   loadSettings,
   openClipsFolder,
   openOutputFolder,
+  openUnmatchedRecordingsFolder,
   persistSettings,
   removeClip,
   removeGame,
@@ -562,6 +563,8 @@ function App() {
               onBack={closeSettings}
               onChooseFolder={() => void chooseFolder()}
               onOpenFolder={() => void openOutputFolder().catch(showError)}
+              onOpenUnmatchedFolder={() => void openUnmatchedRecordingsFolder().catch(showError)}
+              archiveError={libraryState().snapshot?.archive_error}
               onRetention={(days) => void saveSettings(settings()!.output_path, days)}
               onCleanUp={() => void cleanStorage()}
               onRebuildLeagueData={() => void rebuildLeagueData()}

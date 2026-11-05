@@ -82,9 +82,9 @@ fn exact_media_and_export_coordinates_ignore_optional_source_files() {
     assert!(read_metadata(&game.join(METADATA_JSON)).unwrap().saved);
     let summary = read_game_summary(&game, "1786000000".into());
     assert!(summary.saved && !summary.incomplete && summary.video_available);
-    assert!(delete_game(root.path(), "1786000000").is_err());
+    assert!(delete_game(&mutation(root.path()), "1786000000").is_err());
     let result = run_auto_delete_at(
-        root.path(),
+        &mutation(root.path()),
         1,
         OffsetDateTime::parse("2026-10-15T00:00:00Z", &Rfc3339).unwrap(),
     )

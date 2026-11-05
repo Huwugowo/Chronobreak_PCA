@@ -150,6 +150,7 @@ function GamesLibrary(props: Props) {
   const [outcomeFilter, setOutcomeFilter] = createSignal("");
   const [stolenOnly, setStolenOnly] = createSignal(false);
   const [textPending, setTextPending] = createSignal(false);
+  const [expandedMatch, setExpandedMatch] = createSignal<string | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchActionId: string | undefined;
   let scheduledSearchActionId: string | undefined;
@@ -199,14 +200,36 @@ function GamesLibrary(props: Props) {
   };
   const paginationDisabled = () => updating() || !!props.history?.error;
 
-  const savedCount = () => props.games.filter((game) => game.saved).length;
+  const groups = createMemo(() => {
+    const byMatch = new Map<string, GameSummary[]>();
+    for (const game of props.games) {
+      if (!game.match_group || !game.video_available || game.incomplete) continue;
+      const parts = byMatch.get(game.match_group);
+      if (parts) parts.push(game);
+      else byMatch.set(game.match_group, [game]);
+    }
+    for (const parts of byMatch.values()) {
+      parts.sort((a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at) || a.timestamp.localeCompare(b.timestamp, undefined, { numeric: true }));
+    }
+    return byMatch;
+  });
+  const partsFor = (game: GameSummary) => game.match_group ? groups().get(game.match_group) ?? [] : [];
+  const savedCount = () => [...groups().values()].filter(parts => parts.some(game => game.saved)).length;
+  const fallbackCards = createMemo(() => [...groups().values()]
+    .sort((a, b) => b[b.length - 1].recorded_at.localeCompare(a[a.length - 1].recorded_at))
+    .map(parts => parts.reduce((best, part) => part.league_result || !best.league_result ? part : best)));
+  const representativeByGroup = createMemo(() => {
+    const cards = new Map(fallbackCards().map(game => [game.match_group, game]));
+    for (const row of props.history?.page?.rows ?? []) cards.set(row.game.match_group, row.game);
+    return [...cards.values()];
+  });
 
   const champions = () =>
-    [...new Set(props.games.map((game) => game.champion).filter((champion) => champion !== "Unknown"))]
+    [...new Set(representativeByGroup().map((game) => game.champion).filter((champion) => champion !== "Unknown"))]
       .sort((a, b) => a.localeCompare(b));
 
   const modes = () =>
-    [...new Set(props.games.map((game) => game.game_mode).filter((mode) => mode !== "Unknown"))]
+    [...new Set(representativeByGroup().map((game) => game.game_mode).filter((mode) => mode !== "Unknown"))]
       .sort((a, b) => a.localeCompare(b));
 
   const filteredGames = () => {
@@ -214,11 +237,11 @@ function GamesLibrary(props: Props) {
     const semantic = semanticQuery();
     const rows = props.history?.page?.rows;
     if (rows) {
-      const matches = rows.map(row => props.games.find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
+      const matches = rows.map(row => partsFor(row.game).find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
       return matches;
     }
     if (semantic) return [];
-    return props.games.filter(basicMatch);
+    return fallbackCards().filter(basicMatch).slice(0, 50);
     function basicMatch(game: GameSummary) {
       const matchesSearch =
         !query
@@ -227,7 +250,7 @@ function GamesLibrary(props: Props) {
 
       const matchesChampion = !championFilter() || game.champion === championFilter();
       const matchesMode = !modeFilter() || game.game_mode === modeFilter();
-      const matchesSaved = !savedOnly() || game.saved;
+      const matchesSaved = !savedOnly() || partsFor(game).some(part => part.saved);
 
       return matchesSearch && matchesChampion && matchesMode && matchesSaved;
     }
@@ -286,7 +309,7 @@ function GamesLibrary(props: Props) {
           Favorites
         </button>
         <div class={matchStyles.summaryBar} aria-label="Match History summary">
-          <span><strong>{props.games.length}</strong> recordings</span>
+          <span><strong>{groups().size}</strong> {groups().size === 1 ? "match" : "matches"}</span>
           <i aria-hidden="true" />
           <span><strong>{savedCount()}</strong> saved</span>
         </div>
@@ -314,14 +337,17 @@ function GamesLibrary(props: Props) {
       </p>
 
       <Show
-        when={props.games.length > 0}
+        when={groups().size > 0}
         fallback={<MatchHistoryEmptyState />}
       >
         <div class={matchStyles.matchScroller}>
           <section class={matchStyles.matchList} aria-label="Recorded matches" aria-busy={updating()}>
             <For each={filteredGames()}>
               {(game: GameSummary) => {
-                const outcome = displayedOutcome(game);
+                const parts = () => partsFor(game);
+                const multipart = () => parts().length > 1;
+                const expanded = () => multipart() && expandedMatch() === game.match_group;
+                const outcome = () => displayedOutcome(rowFor(game)?.game ?? game);
                 const health = replayHealth(game);
                 const stats = () => statsFor(game);
                 const participants = createMemo(() => rowFor(game)?.game.participants ?? game.participants, undefined, {
@@ -340,19 +366,30 @@ function GamesLibrary(props: Props) {
                   "champion",
                   game.champion === "Unknown" ? null : game.champion,
                 );
-                const date = game.recorded_at ? formatDate(game.recorded_at, true) : "—";
-                const time = game.recorded_at ? formattedTime(game.recorded_at) : "—";
+                const recordedAt = () => parts()[parts().length - 1]?.recorded_at ?? game.recorded_at;
+                const date = () => recordedAt() ? formatDate(recordedAt(), true) : "—";
+                const time = () => recordedAt() ? formattedTime(recordedAt()) : "—";
+                const duration = () => {
+                  const seconds = stats().duration_seconds;
+                  return seconds === null ? game.duration_ms : seconds * 1_000;
+                };
 
                 return (
-                  <article class={matchStyles.matchItem} data-outcome={outcome ?? undefined}>
+                  <><article class={matchStyles.matchItem} data-outcome={outcome() ?? undefined}>
                     <button
                       class={matchStyles.matchOpen}
                       type="button"
-                      onClick={() => props.onOpenGame(game.timestamp, props.snapshotOrigin)}
+                      onClick={() => multipart()
+                        ? setExpandedMatch(expanded() ? null : game.match_group)
+                        : props.onOpenGame(game.timestamp, props.snapshotOrigin)}
                       disabled={!game.video_available || !props.actionable}
+                      aria-expanded={multipart() ? expanded() : undefined}
+                      aria-controls={multipart() ? `recording-parts-${game.match_group}` : undefined}
                       aria-label={
                         game.video_available
-                          ? `Open ${game.champion} recording from ${formatDate(game.recorded_at)}`
+                          ? multipart()
+                            ? `Choose a recording for ${game.champion} match from ${formatDate(recordedAt())} (${parts().length} recordings)`
+                            : `Open ${game.champion} recording from ${formatDate(recordedAt())}`
                           : `${game.champion} recording unavailable`
                       }
                     >
@@ -363,31 +400,31 @@ function GamesLibrary(props: Props) {
 
                         <span
                           class={matchStyles.relativeAge}
-                          title={game.recorded_at ? `${date} · ${time}` : undefined}
+                          title={recordedAt() ? `${date()} · ${time()}` : undefined}
                         >
-                          {formatRelativeAge(game.recorded_at)}
+                          {formatRelativeAge(recordedAt())}
                         </span>
 
                         <span class={matchStyles.contextDivider} aria-hidden="true" />
 
                         <Show
-                          when={outcome}
+                          when={outcome()}
                           fallback={
                             <Show when={health}>
                               <strong class={matchStyles.health}>{health}</strong>
                             </Show>
                           }
                         >
-                          <strong class={matchStyles.outcome} data-outcome={outcome!}>
-                            {outcomeLabel(outcome!)}
+                          <strong class={matchStyles.outcome} data-outcome={outcome()!}>
+                            {outcomeLabel(outcome()!)}
                           </strong>
                         </Show>
 
                         <span class={matchStyles.contextDuration}>
-                          {game.duration_ms ? formatMatchDuration(game.duration_ms) : "—"}
+                          {duration() ? formatMatchDuration(duration()) : "—"}
                         </span>
 
-                        <Show when={outcome && health}>
+                        <Show when={outcome() && health}>
                           <em class={matchStyles.health}>{health}</em>
                         </Show>
                       </span>
@@ -547,12 +584,14 @@ function GamesLibrary(props: Props) {
                         </span>
                       </span>
                       <span class={matchStyles.recordingMeta}>
-                        <strong>{formatBytes(game.video_size_bytes)}</strong>
-                        <small>Recording</small>
+                        <strong>{formatBytes(parts().reduce((sum, part) => sum + part.video_size_bytes, 0))}</strong>
+                        <Show when={multipart()} fallback={<small>Recording</small>}>
+                          <small class={matchStyles.partsBadge}>{parts().length} recordings</small>
+                        </Show>
                       </span>
                     </button>
 
-                    <div class={matchStyles.matchActions}>
+                    <Show when={!multipart()}><div class={matchStyles.matchActions}>
                       <button
                         class={matchStyles.starButton}
                         type="button"
@@ -585,8 +624,29 @@ function GamesLibrary(props: Props) {
                           </div>
                         </details>
                       </Show>
-                    </div>
+                    </div></Show>
                   </article>
+                  <Show when={expanded()}>
+                    <section id={`recording-parts-${game.match_group}`} class={matchStyles.recordingParts} aria-label="Match recordings">
+                      <h3>Match recordings</h3>
+                      <ol>
+                        <For each={parts()}>{(part, index) => (
+                          <li>
+                            <strong>Part {index() + 1}</strong>
+                            <time dateTime={part.recorded_at}>{formatDate(part.recorded_at, true)} · {formattedTime(part.recorded_at)}</time>
+                            <span>{formatMatchDuration(part.duration_ms)}</span>
+                            <div>
+                              <button class={controlStyles.control} type="button" disabled={!props.actionable} onClick={() => props.onOpenGame(part.timestamp, props.snapshotOrigin)}>Play</button>
+                              <button class={controlStyles.control} type="button" disabled={props.busyId !== null || !props.actionable} onClick={() => props.onToggleSaved(part, props.snapshotOrigin)}>{part.saved ? "Unsave" : "Save"}</button>
+                              <Show when={!part.saved}>
+                                <button class={controlStyles.control} type="button" disabled={props.busyId !== null || !props.actionable} onClick={() => props.onDeleteGame(part, props.snapshotOrigin)}>Delete</button>
+                              </Show>
+                            </div>
+                          </li>
+                        )}</For>
+                      </ol>
+                    </section>
+                  </Show></>
                 );
               }}
             </For>
@@ -595,8 +655,8 @@ function GamesLibrary(props: Props) {
       </Show>
       <div class={matchStyles.toolbar}>
         <Show when={props.history?.laterPage}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryFirst} disabled={paginationDisabled()}>First page</button></Show>
-        <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={paginationDisabled()}>Next 50 recordings</button></Show>
-        <Show when={props.games.length > 0 && filteredGames().length === 0 && !updating()}><span>No observed matches. Coverage may be incomplete.</span></Show>
+        <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={paginationDisabled()}>Next 50 matches</button></Show>
+        <Show when={groups().size > 0 && filteredGames().length === 0 && !updating()}><span>No observed matches. Coverage may be incomplete.</span></Show>
       </div>
     </section>
   );
@@ -605,8 +665,8 @@ function GamesLibrary(props: Props) {
 function MatchHistoryEmptyState() {
   return (
     <section class={matchStyles.emptyState}>
-      <h2>No recordings yet</h2>
-      <p>Your next automatically recorded League game will appear here.</p>
+      <h2>No matches yet</h2>
+      <p>Recordings appear here when Chronobreak can identify the match.</p>
     </section>
   );
 }

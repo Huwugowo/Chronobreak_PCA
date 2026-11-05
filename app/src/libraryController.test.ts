@@ -15,7 +15,7 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
   games: [{ media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), timestamp: game, champion: "Ahri", game_mode: "CLASSIC", duration_ms: 1,
     recorded_at: "2026-01-01T00:00:00Z", kills: 0, deaths: 0, assists: 0,
     summoner_spells: [], keystone_id: null, items: [], participants: [], saved: false, incomplete: false,
-    video_size_bytes: 1, video_available: true, league_result: null }],
+    video_size_bytes: 1, video_available: true, league_result: null, match_group: "a".repeat(64) }],
   clips: [{ filename: `${game}_clip`, game_timestamp: game, clip_timestamp: "1", duration_ms: null,
     file_size_bytes: 1, thumbnail_path: null, thumbnail_url: null, video_url: "",
     source_champion: "Ahri", source_date: null }],

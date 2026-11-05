@@ -6,6 +6,7 @@ use std::path::Path;
 
 use chronobreak_replay_time::MediaId;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 const MAX_BYTES: u64 = 64 * 1024;
 const MAX_STRING: usize = 256;
@@ -19,6 +20,8 @@ pub(crate) enum MatchStatus {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct LeagueMatch {
+    #[serde(skip)]
+    pub(crate) group_key: String,
     pub media_id: MediaId,
     pub status: MatchStatus,
     pub game_id: String,
@@ -135,7 +138,14 @@ impl Candidate {
         {
             return None;
         }
+        // Control characters are forbidden in the validated account and ID.
+        let mut group_key = Sha256::new();
+        group_key.update(b"chronobreak/league-match/v1\0");
+        group_key.update(self.local_puuid.as_bytes());
+        group_key.update(b"\0");
+        group_key.update(self.game_id.as_bytes());
         Some(LeagueMatch {
+            group_key: format!("{:x}", group_key.finalize()),
             media_id: self.media_id,
             status: self.status,
             game_id: self.game_id,
@@ -148,23 +158,34 @@ impl Candidate {
 }
 
 pub(crate) fn read(directory: &Path, media_id: &MediaId) -> Option<LeagueMatch> {
+    inspect(directory, media_id).ok().flatten()
+}
+
+/// Distinguish unavailable I/O from an absent or invalid identity when archiving.
+pub(crate) fn inspect(
+    directory: &Path,
+    media_id: &MediaId,
+) -> std::io::Result<Option<LeagueMatch>> {
     let path = directory.join("league_match.json");
-    if !fs::symlink_metadata(&path).ok()?.is_file() {
-        return None;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if !metadata.is_file() => return Ok(None),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
     }
-    let file = File::open(path).ok()?;
-    let metadata = file.metadata().ok()?;
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > MAX_BYTES {
-        return None;
+        return Ok(None);
     }
     let mut bytes = Vec::new();
-    file.take(MAX_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_BYTES {
-        return None;
+        return Ok(None);
     }
-    serde_json::from_slice::<Candidate>(&bytes)
-        .ok()?
-        .project(media_id)
+    Ok(serde_json::from_slice::<Candidate>(&bytes)
+        .ok()
+        .and_then(|candidate| candidate.project(media_id)))
 }
 
 #[cfg(test)]

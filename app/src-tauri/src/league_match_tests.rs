@@ -21,10 +21,10 @@ fn optional_match_context_is_scoped_to_the_selected_media() {
         replay_descriptor(root.path(), "origin", "1786000000", "token".to_owned()).unwrap(),
         descriptor
     );
-    save_game(root.path(), "1786000000", true).unwrap();
+    save_game(&mutation(root.path()), "1786000000", true).unwrap();
     assert_eq!(fs::read(&path).unwrap(), bytes);
     assert!(list_games(root.path()).unwrap()[0].saved);
-    assert!(delete_game(root.path(), "1786000000").is_err());
+    assert!(delete_game(&mutation(root.path()), "1786000000").is_err());
 }
 
 pub(crate) fn result_fixture(media: &MediaId) -> chronobreak_league_data::ResultFile {

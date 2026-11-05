@@ -50,7 +50,8 @@ impl Source for Responses {
 async fn simulated_live_responses_reach_durable_sql_and_application_queries() {
     let root = tempdir().unwrap();
     let cache = tempdir().unwrap();
-    let directory = library::tests::write_game(root.path(), "100", "2026-10-19T10:00:00Z", false);
+    let directory =
+        library::tests::write_matched_game(root.path(), "100", "2026-10-19T10:00:00Z", false);
     let timeline = library::replay_descriptor(root.path(), "", "100", String::new())
         .unwrap()
         .media_timeline;

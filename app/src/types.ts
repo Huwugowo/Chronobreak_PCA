@@ -1,5 +1,6 @@
 export type GameSummary = {
   media_id: import("./replayTime").MediaId | null;
+  match_group: string | null;
   timestamp: string;
   champion: string;
   game_mode: string;
@@ -42,6 +43,7 @@ export type LibrarySnapshot = {
   games: GameSummary[];
   clips: ClipSummary[];
   usage: StorageUsage;
+  archive_error?: string | null;
 };
 
 export type ClipDuration =

@@ -409,8 +409,18 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let approved = ApprovedRoot::new(library.path()).unwrap();
         let other_approved = ApprovedRoot::new(other.path()).unwrap();
-        crate::library::tests::write_game(library.path(), "100", "2026-08-05T10:00:00Z", false);
-        crate::library::tests::write_game(other.path(), "200", "2026-08-05T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            library.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
+        crate::library::tests::write_matched_game(
+            other.path(),
+            "200",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
         let stop = Arc::new(AtomicBool::new(false));
         let spellings = [
             library.path().to_owned(),
@@ -521,7 +531,12 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let mut state = Preparation::default();
-        crate::library::tests::write_game(&logical_root, "100", "2026-08-05T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            &logical_root,
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
         prepare(
             &logical_root,
             cache.path(),
@@ -534,7 +549,12 @@ mod tests {
         let previous = state.approved.clone().unwrap();
         std::fs::rename(&logical_root, directory.path().join("previous")).unwrap();
         std::fs::create_dir(&logical_root).unwrap();
-        crate::library::tests::write_game(&logical_root, "200", "2026-08-06T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            &logical_root,
+            "200",
+            "2026-08-06T10:00:00Z",
+            false,
+        );
         let approved = ApprovedRoot::new(&logical_root).unwrap();
         assert_ne!(approved, previous);
         // A replacement between the background observer and preparation must
@@ -564,7 +584,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let root = ApprovedRoot::new(directory.path()).unwrap();
         let cache = tempfile::tempdir().unwrap();
-        crate::library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            root.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
         let stop = Arc::new(AtomicBool::new(false));
         let mut completed = Preparation::default();
         assert_eq!(
@@ -694,9 +719,18 @@ mod tests {
         let root = ApprovedRoot::new(directory.path()).unwrap();
         let cache = tempfile::tempdir().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
-        crate::library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
-        let other =
-            crate::library::tests::write_game(root.path(), "101", "2026-08-06T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            root.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
+        let other = crate::library::tests::write_matched_game(
+            root.path(),
+            "101",
+            "2026-08-06T10:00:00Z",
+            false,
+        );
         let mut state = Preparation::default();
         prepare(
             root.path(),
@@ -736,7 +770,12 @@ mod tests {
         assert_eq!(state.completed[&other], original);
         assert_eq!(state.games.as_ref().unwrap().len(), 2);
         // A new publication must not invalidate unchanged recordings' search readiness.
-        crate::library::tests::write_game(root.path(), "102", "2026-08-07T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            root.path(),
+            "102",
+            "2026-08-07T10:00:00Z",
+            false,
+        );
         changes.bundles.clear();
         changes.bundles.insert("102".into(), true);
         prepare(root.path(), cache.path(), &stop, &mut state, &changes)
@@ -765,7 +804,12 @@ mod tests {
         let root = ApprovedRoot::new(directory.path()).unwrap();
         let cache = tempfile::tempdir().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
-        crate::library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            root.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
         let writer = Index::open(cache.path(), root.path()).unwrap();
         let mut background = Background::new(root.path().into(), cache.path().into());
         assert!(background.tick(&stop).await.is_err());
@@ -782,8 +826,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let root = ApprovedRoot::new(directory.path()).unwrap();
         let cache = tempfile::tempdir().unwrap();
-        let bad =
-            crate::library::tests::write_game(root.path(), "101", "2026-08-06T10:00:00Z", false);
+        let bad = crate::library::tests::write_matched_game(
+            root.path(),
+            "101",
+            "2026-08-06T10:00:00Z",
+            false,
+        );
         let metadata = bad.join("metadata.json");
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
@@ -796,7 +844,12 @@ mod tests {
         )
         .unwrap();
         std::fs::write(bad.join("league_observations.jsonl"), b"broken").unwrap();
-        crate::library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        crate::library::tests::write_matched_game(
+            root.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
         let stop = Arc::new(AtomicBool::new(false));
         let mut completed = Preparation::default();
         prepare(

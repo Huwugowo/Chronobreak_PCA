@@ -3,28 +3,15 @@ CREATE TABLE IF NOT EXISTS cache_identity(root TEXT PRIMARY KEY, version INTEGER
 CREATE TABLE IF NOT EXISTS recordings(
   media_id TEXT PRIMARY KEY, bundle TEXT NOT NULL UNIQUE, recorded_at TEXT NOT NULL,
   champion TEXT NOT NULL, mode TEXT NOT NULL, saved INTEGER NOT NULL,
-  queue_id INTEGER, map_id INTEGER, outcome TEXT NOT NULL, game_id TEXT,
+  queue_id INTEGER, map_id INTEGER, outcome TEXT NOT NULL, game_id TEXT, match_group TEXT,
   summary_json TEXT NOT NULL, result_json TEXT, source_stamp TEXT, history_stamp TEXT,
   journal_header TEXT, source_identity TEXT, position_json TEXT, checkpoint_json TEXT, timeline_json TEXT,
   telemetry_status TEXT NOT NULL DEFAULT 'pending', tail_bytes INTEGER NOT NULL DEFAULT 0,
   facts_current INTEGER NOT NULL DEFAULT 0 CHECK(facts_current IN (0,1)),
   history_flags INTEGER NOT NULL DEFAULT 31 CHECK(history_flags BETWEEN 0 AND 31)
 );
--- At most 64 rows; page reads never aggregate historical observations.
-CREATE TABLE IF NOT EXISTS history_counts(mask INTEGER PRIMARY KEY CHECK(mask BETWEEN 0 AND 63), count INTEGER NOT NULL CHECK(count>=0));
-CREATE TRIGGER IF NOT EXISTS history_count_insert AFTER INSERT ON recordings BEGIN
-  INSERT INTO history_counts VALUES (NEW.history_flags | CASE WHEN NEW.facts_current=0 THEN 32 ELSE 0 END,1)
-    ON CONFLICT(mask) DO UPDATE SET count=count+1;
-END;
-CREATE TRIGGER IF NOT EXISTS history_count_delete AFTER DELETE ON recordings BEGIN
-  UPDATE history_counts SET count=count-1 WHERE mask=(OLD.history_flags | CASE WHEN OLD.facts_current=0 THEN 32 ELSE 0 END);
-END;
-CREATE TRIGGER IF NOT EXISTS history_count_update AFTER UPDATE OF history_flags,facts_current ON recordings BEGIN
-  UPDATE history_counts SET count=count-1 WHERE mask=(OLD.history_flags | CASE WHEN OLD.facts_current=0 THEN 32 ELSE 0 END);
-  INSERT INTO history_counts VALUES (NEW.history_flags | CASE WHEN NEW.facts_current=0 THEN 32 ELSE 0 END,1)
-    ON CONFLICT(mask) DO UPDATE SET count=count+1;
-END;
-CREATE INDEX IF NOT EXISTS recordings_date ON recordings(recorded_at DESC, media_id);
+CREATE INDEX IF NOT EXISTS recordings_date ON recordings(recorded_at DESC,media_id,match_group) WHERE match_group IS NOT NULL;
+CREATE INDEX IF NOT EXISTS recordings_match ON recordings(match_group,recorded_at DESC,media_id,saved,facts_current,history_flags) WHERE match_group IS NOT NULL;
 CREATE INDEX IF NOT EXISTS recordings_queue_outcome_date ON recordings(queue_id, outcome, recorded_at DESC, media_id);
 CREATE TABLE IF NOT EXISTS commits(
   media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,

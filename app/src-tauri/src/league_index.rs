@@ -35,7 +35,7 @@ pub(crate) use query::{
     EventWindow, HistoryPage, HistoryQuery, RosterAt, ScopeQuery, SourceScope, WindowQuery,
 };
 
-const VERSION: i64 = 7;
+const VERSION: i64 = 8;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 // Journal batches are streamed and checked individually. Group their SQL writes
@@ -209,9 +209,9 @@ impl Index {
         }
         tx.execute("DELETE FROM recordings WHERE NOT EXISTS(SELECT 1 FROM present p WHERE p.bundle=recordings.bundle AND p.media_id=recordings.media_id)", [])?;
         {
-            let mut update = tx.prepare_cached("INSERT INTO recordings(bundle,media_id,recorded_at,champion,mode,saved,summary_json,outcome)
-            VALUES (?1,?2,?3,?4,?5,?6,?7,'unknown') ON CONFLICT(media_id) DO UPDATE SET
-            recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,summary_json=excluded.summary_json,
+            let mut update = tx.prepare_cached("INSERT INTO recordings(bundle,media_id,recorded_at,champion,mode,saved,summary_json,outcome,match_group)
+            VALUES (?1,?2,?3,?4,?5,?6,?7,'unknown',?8) ON CONFLICT(media_id) DO UPDATE SET
+            recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,summary_json=excluded.summary_json,match_group=excluded.match_group,
             facts_current=CASE WHEN recordings.summary_json=excluded.summary_json THEN recordings.facts_current ELSE 0 END")?;
             for game in games {
                 if let Some(media) = &game.media_id
@@ -224,7 +224,8 @@ impl Index {
                         game.champion,
                         game.game_mode,
                         game.saved,
-                        serde_json::to_string(game)?
+                        serde_json::to_string(game)?,
+                        game.match_group,
                     ])?;
                 }
             }
@@ -297,6 +298,11 @@ impl Index {
         // must invalidate this version, rather than bless older decoded facts.
         let stamp = source_stamp(&directory)?;
         let candidate = crate::league_match::read(&directory, &media);
+        ensure!(
+            candidate.as_ref().map(|candidate| &candidate.group_key)
+                == summary.match_group.as_ref(),
+            "recording match identity changed since scan"
+        );
         let result = crate::league_result::read(&directory, &media, candidate.as_ref());
         // Same media ID in two bundles is ambiguous and must never silently move.
         let previous: Option<String> = self
@@ -339,15 +345,15 @@ impl Index {
             "UPDATE recordings SET facts_current=0 WHERE media_id=?1 AND (summary_json!=?2 OR result_json IS NOT ?3)",
             params![media.as_str(), serde_json::to_string(summary)?, result_json],
         )?;
-        self.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json)
-            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+        self.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json,match_group)
+            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
             ON CONFLICT(media_id) DO UPDATE SET recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,
               queue_id=excluded.queue_id,map_id=excluded.map_id,outcome=excluded.outcome,game_id=excluded.game_id,summary_json=excluded.summary_json,result_json=excluded.result_json",
             params![media.as_str(),summary.timestamp,summary.recorded_at,summary.champion,summary.game_mode,summary.saved,
                 result.as_ref().and_then(|r| r.queue_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.queue_id))).map(sql_u64).transpose()?,
                 result.as_ref().and_then(|r| r.map_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.map_id))).map(sql_u64).transpose()?,
                 result.as_ref().map(|r| name(&r.outcome)).transpose()?.unwrap_or_else(|| "unknown".into()),
-                candidate.as_ref().map(|c| c.game_id.as_str()),serde_json::to_string(summary)?,previous_result])?;
+                candidate.as_ref().map(|c| c.game_id.as_str()),serde_json::to_string(summary)?,previous_result,summary.match_group])?;
         if previous_result != result_json {
             self.final_facts(&media, result.as_ref())?;
             self.db.execute(
@@ -594,7 +600,13 @@ pub(crate) fn catalog_key(games: &[GameSummary]) -> Result<String> {
             (
                 g.timestamp.as_str(),
                 g.media_id.as_ref().map(MediaId::as_str),
-                serde_json::to_string(&(&g.recorded_at, &g.champion, &g.game_mode, g.saved)),
+                serde_json::to_string(&(
+                    &g.recorded_at,
+                    &g.champion,
+                    &g.game_mode,
+                    g.saved,
+                    &g.match_group,
+                )),
             )
         })
         .collect::<Vec<_>>();

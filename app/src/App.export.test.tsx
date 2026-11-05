@@ -48,7 +48,7 @@ afterEach(() => {
 
 const mount = async () => {
   harness.probe = { snapshot_token: "A-1", game_timestamp: "1",
-    game: { media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), league_result:null, timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-27T00:00:00Z",
+    game: { media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), league_result:null, match_group: null, timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-27T00:00:00Z",
       kills: 1, deaths: 2, assists: 3, duration_ms: 240_000, summoner_spells: [], keystone_id: null,
       items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true },
     video_url: "http://127.0.0.1:123/games/1/video.mp4",

@@ -114,7 +114,15 @@ export class HistoryController {
         return;
       }
       // SQL results cannot admit new media or overwrite the accepted scan.
-      for (const row of page.rows) if (!context.games.some(game => game.timestamp === row.game.timestamp && game.media_id === row.media_id)) throw new Error("History recording changed since the scan");
+      const accepted = new Map(context.games.map(game => [game.timestamp, game]));
+      const seen = new Set<string>();
+      for (const row of page.rows) {
+        const game = accepted.get(row.game.timestamp);
+        const group = row.game.match_group;
+        if (!group || seen.has(group) || game?.match_group !== group || game.media_id !== row.media_id)
+          throw new Error("History recording changed since the scan");
+        seen.add(group);
+      }
       context.queriedRevision = revision;
       this.publish({ page, laterPage: !!query.after, loading: false, error: null });
       this.observeQuery("history_query_admitted", generation, actionId, page.rows.length);

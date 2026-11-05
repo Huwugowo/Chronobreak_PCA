@@ -14,13 +14,18 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::config;
+use crate::directory_guard::{DirectoryGuard, is_missing, open_regular, reject_reparse};
+use crate::library_mutation::LibraryMutation;
 
 const METADATA_JSON: &str = "metadata.json";
 const VIDEO_MP4: &str = "video.mp4";
+pub(crate) const UNMATCHED_RECORDINGS: &str = "unmatched-recordings";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameSummary {
     pub media_id: Option<MediaId>,
+    #[serde(default)]
+    pub match_group: Option<String>,
     pub timestamp: String,
     pub champion: String,
     pub game_mode: String,
@@ -82,6 +87,7 @@ pub(crate) struct LibrarySnapshot {
     pub games: Vec<GameSummary>,
     pub clips: Vec<LibraryClip>,
     pub usage: StorageUsage,
+    pub archive_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -346,12 +352,69 @@ fn build_library_snapshot_with(
     read_summary: impl FnMut(&Path, String) -> GameSummary,
 ) -> Result<LibrarySnapshot> {
     let inventory = scan_games(output_directory, &check_current, read_summary)?;
+    finish_library_snapshot(
+        output_directory,
+        origin,
+        token,
+        check_current,
+        inventory,
+        None,
+    )
+}
+
+pub(crate) fn refresh_library_snapshot(
+    logical: &Path,
+    root: &crate::playback_file::ApprovedRoot,
+    origin: &str,
+    token: String,
+    check_current: impl Fn() -> Result<()>,
+) -> Result<LibrarySnapshot> {
+    let mut inventory = scan_games(root.path(), &check_current, read_game_summary)?;
+    let mut archive_error = None;
+    if inventory.iter().any(unmatched_recording) {
+        let result = LibraryMutation::acquire(logical, root)
+            .and_then(|owner| archive_unmatched(&owner, &mut inventory, &check_current));
+        if let Err(error) = result {
+            archive_error = Some(format!(
+                "Some unmatched recordings remain in the recording folder. {error:#}"
+            ));
+        }
+    }
+    finish_library_snapshot(
+        root.path(),
+        origin,
+        token,
+        check_current,
+        inventory,
+        archive_error,
+    )
+}
+
+fn finish_library_snapshot(
+    output_directory: &Path,
+    origin: &str,
+    token: String,
+    check_current: impl Fn() -> Result<()>,
+    inventory: Vec<GameSummary>,
+    mut archive_error: Option<String>,
+) -> Result<LibrarySnapshot> {
     let mut usage = StorageUsage {
         games_bytes: inventory.iter().map(|game| game.video_size_bytes).sum(),
         game_count: inventory.len() as u64,
         clips_bytes: 0,
         clip_count: 0,
     };
+    match archive_usage(output_directory, &check_current) {
+        Ok((count, bytes)) => {
+            usage.game_count += count;
+            usage.games_bytes += bytes;
+        }
+        Err(error) => {
+            archive_error.get_or_insert_with(|| {
+                format!("Could not read the unmatched recordings folder. {error:#}")
+            });
+        }
+    }
     let games: Vec<_> = inventory.into_iter().filter(usable_recording).collect();
     let sources = games
         .iter()
@@ -402,6 +465,7 @@ fn build_library_snapshot_with(
         games,
         clips,
         usage,
+        archive_error,
     })
 }
 
@@ -443,6 +507,85 @@ pub(crate) fn published_game(root: &Path, timestamp: &str) -> Option<GameSummary
 
 fn usable_recording(game: &GameSummary) -> bool {
     !game.incomplete && game.video_available && game.media_id.is_some()
+}
+
+fn unmatched_recording(game: &GameSummary) -> bool {
+    usable_recording(game) && game.match_group.is_none()
+}
+
+fn archive_unmatched(
+    owner: &LibraryMutation,
+    inventory: &mut Vec<GameSummary>,
+    check_current: &impl Fn() -> Result<()>,
+) -> Result<()> {
+    let games = owner.games()?;
+    let destination = owner.unmatched()?;
+    let mut error = None;
+    inventory.retain(|game| {
+        if !unmatched_recording(game) {
+            return true;
+        }
+        let result = (|| -> Result<bool> {
+            check_current()?;
+            let source = games.removal_target(std::ffi::OsStr::new(&game.timestamp))?;
+            let metadata = read_metadata_file(open_regular(
+                &source.path().join(METADATA_JSON),
+                false,
+                false,
+            )?)?;
+            anyhow::ensure!(
+                Some(&metadata.media_id) == game.media_id.as_ref(),
+                "recording changed since discovery"
+            );
+            recording_video_size(source.path())?;
+            if crate::league_match::inspect(source.path(), &metadata.media_id)?.is_some() {
+                return Ok(false);
+            }
+            check_current()?;
+            source.move_directory_into(&destination)?;
+            Ok(true)
+        })();
+        match result {
+            Ok(moved) => !moved,
+            Err(cause) => {
+                error.get_or_insert_with(|| cause.context(format!("Recording {}", game.timestamp)));
+                true
+            }
+        }
+    });
+    error.map_or(Ok(()), Err)
+}
+
+fn archive_usage(root: &Path, check_current: &impl Fn() -> Result<()>) -> Result<(u64, u64)> {
+    let archive = root.join(UNMATCHED_RECORDINGS);
+    let metadata = match fs::symlink_metadata(&archive) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) => return Err(error.into()),
+    };
+    reject_reparse(&metadata)?;
+    let archive = DirectoryGuard::open(&archive)?;
+    let mut count = 0;
+    let mut bytes = 0;
+    for entry in fs::read_dir(&archive.path)? {
+        check_current()?;
+        let entry = entry?;
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if !entry.file_name().to_str().is_some_and(valid_game_id)
+            || !metadata.is_dir()
+            || reject_reparse(&metadata).is_err()
+        {
+            continue;
+        }
+        count += 1;
+        if let Ok(video) = fs::symlink_metadata(entry.path().join(VIDEO_MP4))
+            && video.is_file()
+            && reject_reparse(&video).is_ok()
+        {
+            bytes += video.len();
+        }
+    }
+    Ok((count, bytes))
 }
 
 fn scan_games(
@@ -618,7 +761,8 @@ pub fn list_clips(
 pub fn storage_usage(output_directory: &Path) -> Result<StorageUsage> {
     // Storage inventory includes retained attempts, independently of history.
     let games = scan_games(output_directory, || Ok(()), read_game_summary)?;
-    let games_bytes = games.iter().map(|game| game.video_size_bytes).sum();
+    let (archived, archived_bytes) = archive_usage(output_directory, &|| Ok(()))?;
+    let games_bytes = archived_bytes + games.iter().map(|game| game.video_size_bytes).sum::<u64>();
     let clips_directory = output_directory.join("clips");
     let mut clips_bytes = 0;
     let mut clip_count = 0;
@@ -640,75 +784,79 @@ pub fn storage_usage(output_directory: &Path) -> Result<StorageUsage> {
     Ok(StorageUsage {
         games_bytes,
         clips_bytes,
-        game_count: games.len() as u64,
+        game_count: games.len() as u64 + archived,
         clip_count,
     })
 }
 
-pub fn save_game(output_directory: &Path, timestamp: &str, saved: bool) -> Result<()> {
+pub(crate) fn save_game(owner: &LibraryMutation, timestamp: &str, saved: bool) -> Result<()> {
     if !valid_game_id(timestamp) {
         bail!("invalid game identifier");
     }
-    let metadata_path = output_directory
-        .join("games")
-        .join(timestamp)
-        .join(METADATA_JSON);
-    if !metadata_path.exists() {
-        bail!("incomplete recordings cannot be saved");
-    }
-    let mut metadata = read_metadata(&metadata_path)?;
+    let games = owner.games()?;
+    let game = games.child(timestamp, false)?;
+    let metadata_path = game.path.join(METADATA_JSON);
+    let mut metadata = read_metadata_file(
+        open_regular(&metadata_path, false, false)
+            .context("incomplete recordings cannot be saved")?,
+    )?;
     metadata.saved = saved;
     let mut bytes = serde_json::to_vec_pretty(&metadata).context("failed to serialize metadata")?;
     bytes.push(b'\n');
     config::write_atomic(&metadata_path, &bytes)
 }
 
-pub fn delete_game(output_directory: &Path, timestamp: &str) -> Result<()> {
+pub(crate) fn delete_game(owner: &LibraryMutation, timestamp: &str) -> Result<()> {
     if !valid_game_id(timestamp) {
         bail!("invalid game identifier");
     }
-    let game_directory = output_directory.join("games").join(timestamp);
-    if !game_directory.is_dir() {
+    let games = owner.games()?;
+    let game = games.removal_target(std::ffi::OsStr::new(timestamp))?;
+    if !game.is_directory()? {
         bail!("recording does not exist");
     }
     // Saved intent is media metadata, independent of optional telemetry. An
     // unreadable metadata file cannot safely authorize destructive deletion.
-    if read_metadata(&game_directory.join(METADATA_JSON))?.saved {
+    if read_metadata_file(open_regular(
+        &game.path().join(METADATA_JSON),
+        false,
+        false,
+    )?)?
+    .saved
+    {
         bail!("saved recordings must be unsaved before deletion");
     }
-    fs::remove_dir_all(&game_directory)
-        .with_context(|| format!("failed to delete recording {}", game_directory.display()))
+    game.remove_tree().context("failed to delete recording")
 }
 
-pub fn delete_clip(output_directory: &Path, filename: &str) -> Result<()> {
+pub(crate) fn delete_clip(owner: &LibraryMutation, filename: &str) -> Result<()> {
     if parse_clip_filename(filename).is_none() {
         bail!("invalid clip filename");
     }
-    let clips_directory = output_directory.join("clips");
-    let video = clips_directory.join(format!("{filename}.mp4"));
-    if !video.is_file() {
-        bail!("clip does not exist");
-    }
-    fs::remove_file(&video)
-        .with_context(|| format!("failed to delete clip {}", video.display()))?;
-    let thumbnail = clips_directory.join(format!("{filename}.jpg"));
-    if thumbnail.exists() {
-        fs::remove_file(&thumbnail)
-            .with_context(|| format!("failed to delete thumbnail {}", thumbnail.display()))?;
+    let clips = owner.clips()?;
+    clips
+        .removal_target(std::ffi::OsStr::new(&format!("{filename}.mp4")))?
+        .remove_file()
+        .context("failed to delete clip")?;
+    match clips.removal_target(std::ffi::OsStr::new(&format!("{filename}.jpg"))) {
+        Ok(thumbnail) => thumbnail
+            .remove_file()
+            .context("failed to delete thumbnail")?,
+        Err(error) if is_missing(&error) => {}
+        Err(error) => return Err(error).context("failed to delete thumbnail"),
     }
     Ok(())
 }
 
-pub fn run_auto_delete(output_directory: &Path, auto_delete_days: u32) -> Result<AutoDeleteResult> {
-    run_auto_delete_at(
-        output_directory,
-        auto_delete_days,
-        OffsetDateTime::now_utc(),
-    )
+pub(crate) fn run_auto_delete(
+    owner: &LibraryMutation,
+    auto_delete_days: u32,
+) -> Result<AutoDeleteResult> {
+    run_auto_delete_at(owner, auto_delete_days, OffsetDateTime::now_utc())
 }
 
 fn run_auto_delete_at(
-    output_directory: &Path,
+    owner: &LibraryMutation,
     auto_delete_days: u32,
     now: OffsetDateTime,
 ) -> Result<AutoDeleteResult> {
@@ -717,22 +865,59 @@ fn run_auto_delete_at(
     }
     let threshold = time::Duration::days(i64::from(auto_delete_days));
     let mut deleted_count = 0;
-    for game in list_games(output_directory)? {
-        if game.saved || game.incomplete || game.recorded_at.is_empty() {
+    for collection in [owner.optional_games()?, owner.optional_unmatched()?]
+        .into_iter()
+        .flatten()
+    {
+        deleted_count += delete_old_recordings(&collection, now, threshold)?;
+    }
+    Ok(AutoDeleteResult { deleted_count })
+}
+
+fn delete_old_recordings(
+    games: &DirectoryGuard,
+    now: OffsetDateTime,
+    threshold: time::Duration,
+) -> Result<u64> {
+    let mut deleted_count = 0;
+    // Neither a published snapshot nor an earlier scan authorizes removal. The
+    // library lease and exact recording handle span fresh eligibility and effects.
+    for entry in fs::read_dir(&games.path)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(timestamp) = name.to_str().filter(|name| valid_game_id(name)) else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() {
             continue;
         }
-        let Ok(recorded_at) = OffsetDateTime::parse(&game.recorded_at, &Rfc3339) else {
+        let game = match games.removal_target(std::ffi::OsStr::new(timestamp)) {
+            Ok(game) => game,
+            Err(error) if is_missing(&error) => continue,
+            Err(error) => return Err(error),
+        };
+        if !game.is_directory()? {
+            continue;
+        }
+        let Ok(metadata) = open_regular(&game.path().join(METADATA_JSON), false, false)
+            .and_then(read_metadata_file)
+        else {
+            continue;
+        };
+        if metadata.saved || recording_video_size(game.path()).is_err() {
+            continue;
+        }
+        let Ok(recorded_at) = OffsetDateTime::parse(&metadata.recorded_at, &Rfc3339) else {
             continue;
         };
         if now - recorded_at <= threshold {
             continue;
         }
-        let directory = output_directory.join("games").join(&game.timestamp);
-        fs::remove_dir_all(&directory)
-            .with_context(|| format!("failed to auto-delete {}", directory.display()))?;
+        game.remove_tree()
+            .context("failed to auto-delete recording")?;
         deleted_count += 1;
     }
-    Ok(AutoDeleteResult { deleted_count })
+    Ok(deleted_count)
 }
 
 fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
@@ -755,6 +940,9 @@ fn read_game_summary(directory: &Path, timestamp: String) -> GameSummary {
     game.incomplete = !game.video_available;
     if game.video_available {
         let candidate = crate::league_match::read(directory, &metadata.media_id);
+        game.match_group = candidate
+            .as_ref()
+            .map(|candidate| candidate.group_key.clone());
         if let Some(result) =
             crate::league_result::read(directory, &metadata.media_id, candidate.as_ref())
         {
@@ -778,6 +966,7 @@ fn game_summary_from_bundle(
 ) -> GameSummary {
     GameSummary {
         media_id: Some(metadata.media_id.clone()),
+        match_group: None,
         timestamp,
         champion: metadata
             .local_player_champion
@@ -809,6 +998,7 @@ fn game_summary_from_bundle(
 fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
     GameSummary {
         media_id: None,
+        match_group: None,
         recorded_at: String::new(),
         timestamp,
         champion: "Unknown".to_owned(),
@@ -838,9 +1028,12 @@ pub(crate) fn recording_export_authority(directory: &Path) -> Result<ExportRecor
 }
 
 fn read_metadata(path: &Path) -> Result<MetadataDocument> {
+    read_metadata_file(fs::File::open(path).context("recording metadata is unavailable")?)
+}
+
+fn read_metadata_file(file: fs::File) -> Result<MetadataDocument> {
     use std::io::Read;
     const MAX_METADATA_BYTES: u64 = 64 * 1024;
-    let file = fs::File::open(path).context("recording metadata is unavailable")?;
     let info = file
         .metadata()
         .context("could not inspect recording metadata")?;
@@ -1282,6 +1475,29 @@ pub(crate) mod tests {
         game
     }
 
+    pub(crate) fn write_matched_game(
+        root: &Path,
+        timestamp: &str,
+        recorded_at: &str,
+        saved: bool,
+    ) -> PathBuf {
+        let game = write_game(root, timestamp, recorded_at, saved);
+        fs::write(
+            game.join("league_match.json"),
+            serde_json::to_vec(&crate::league_match::fixture(
+                &MediaId::parse(MEDIA_ID).unwrap(),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        game
+    }
+
+    fn mutation(root: &Path) -> LibraryMutation {
+        let approved = crate::playback_file::ApprovedRoot::new(root).unwrap();
+        LibraryMutation::acquire(root, &approved).unwrap()
+    }
+
     include!("replay_descriptor_tests.rs");
     include!("league_match_tests.rs");
 
@@ -1292,6 +1508,100 @@ pub(crate) mod tests {
             "test-scan".into(),
             || Ok(()),
         )
+    }
+
+    #[test]
+    fn refresh_archives_complete_unmatched_bundles_and_retains_saved_or_incomplete() {
+        let root = tempdir().unwrap();
+        let root = root.path();
+        let date = "2026-08-05T10:00:00Z";
+        let missing = write_game(root, "100", date, false);
+        let invalid = write_game(root, "101", date, true);
+        fs::write(invalid.join("league_match.json"), b"invalid match context").unwrap();
+        let matched = write_matched_game(root, "102", "2026-08-14T10:00:00Z", false);
+        let partial = write_game(root, "103", date, false);
+        fs::write(partial.join(VIDEO_MP4), b"partial").unwrap();
+        let clip = root.join("clips/100_1.mp4");
+        fs::create_dir(clip.parent().unwrap()).unwrap();
+        fs::write(&clip, RECORDING_VIDEO).unwrap();
+        let original: Vec<_> = fs::read_dir(&missing)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect();
+        let before = core_snapshot(root).unwrap();
+        let approved = crate::playback_file::ApprovedRoot::new(root).unwrap();
+        let refresh = || {
+            refresh_library_snapshot(root, &approved, "", "archive-test".into(), || Ok(())).unwrap()
+        };
+        let after = refresh();
+        assert_eq!(after.archive_error, None);
+        assert_eq!(after.usage.game_count, before.usage.game_count);
+        assert_eq!(after.usage.games_bytes, before.usage.games_bytes);
+        assert_eq!(after.games.len(), 1);
+        assert_eq!(after.games[0].timestamp, "102");
+        assert!(after.games[0].match_group.is_some());
+        let archive = root.join(UNMATCHED_RECORDINGS);
+        assert!(!missing.exists() && !invalid.exists() && matched.exists() && partial.exists());
+        for (name, bytes) in original {
+            assert_eq!(fs::read(archive.join("100").join(name)).unwrap(), bytes);
+        }
+        assert_eq!(after.clips[0].filename, "100_1");
+        assert_eq!(fs::read(&clip).unwrap(), RECORDING_VIDEO);
+        assert_eq!(refresh().archive_error, None);
+
+        let partial_archive = archive.join("104");
+        fs::create_dir(&partial_archive).unwrap();
+        fs::copy(
+            partial.join(METADATA_JSON),
+            partial_archive.join(METADATA_JSON),
+        )
+        .unwrap();
+        fs::copy(partial.join(VIDEO_MP4), partial_archive.join(VIDEO_MP4)).unwrap();
+        let owner = mutation(root);
+        let now = OffsetDateTime::parse("2026-08-15T10:00:00Z", &Rfc3339).unwrap();
+        assert_eq!(run_auto_delete_at(&owner, 3, now).unwrap().deleted_count, 1);
+        assert!(!archive.join("100").exists());
+        assert!(archive.join("101").is_dir() && partial_archive.is_dir() && partial.is_dir());
+        assert!(matched.is_dir() && clip.is_file());
+    }
+
+    #[test]
+    fn refresh_reports_unmatched_archive_collision_and_preserves_source() {
+        let root = tempdir().unwrap();
+        let root = root.path();
+        let source = write_game(root, "100", "2026-08-05T10:00:00Z", false);
+        let destination = root.join(UNMATCHED_RECORDINGS).join("100");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join(VIDEO_MP4), b"existing").unwrap();
+        let approved = crate::playback_file::ApprovedRoot::new(root).unwrap();
+        let snapshot =
+            refresh_library_snapshot(root, &approved, "", "collision-test".into(), || Ok(()))
+                .unwrap();
+        assert!(
+            snapshot
+                .archive_error
+                .as_deref()
+                .is_some_and(|error| error.contains("Recording 100"))
+        );
+        assert_eq!(snapshot.games[0].match_group, None);
+        assert_eq!(fs::read(source.join(VIDEO_MP4)).unwrap(), RECORDING_VIDEO);
+        assert_eq!(fs::read(destination.join(VIDEO_MP4)).unwrap(), b"existing");
+    }
+
+    #[test]
+    fn refresh_preserves_source_when_archive_collection_is_invalid() {
+        let root = tempdir().unwrap();
+        let root = root.path();
+        let source = write_game(root, "100", "2026-08-05T10:00:00Z", false);
+        fs::write(root.join(UNMATCHED_RECORDINGS), b"not a directory").unwrap();
+        let approved = crate::playback_file::ApprovedRoot::new(root).unwrap();
+        let snapshot =
+            refresh_library_snapshot(root, &approved, "", "guard-test".into(), || Ok(())).unwrap();
+        assert!(snapshot.archive_error.is_some());
+        assert_eq!(fs::read(source.join(VIDEO_MP4)).unwrap(), RECORDING_VIDEO);
     }
 
     #[test]
@@ -1529,7 +1839,7 @@ pub(crate) mod tests {
     fn save_requires_and_preserves_strict_schema_v2_metadata() {
         let root = tempdir().unwrap();
         let game = write_game(root.path(), "1786000000", "2026-08-05T10:00:00Z", false);
-        save_game(root.path(), "1786000000", true).unwrap();
+        save_game(&mutation(root.path()), "1786000000", true).unwrap();
         let metadata: MetadataDocument = read_metadata(&game.join(METADATA_JSON)).unwrap();
         assert!(metadata.saved);
         assert_eq!(metadata.media_id.as_str(), MEDIA_ID);
@@ -1565,7 +1875,7 @@ pub(crate) mod tests {
             value["capture"] = capture.clone();
             fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
             read_metadata(&path).unwrap();
-            save_game(root.path(), "42", true).unwrap();
+            save_game(&mutation(root.path()), "42", true).unwrap();
             let saved: serde_json::Value =
                 serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
             assert_eq!(saved["capture"], capture);
@@ -1600,7 +1910,7 @@ pub(crate) mod tests {
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(!list_games(root.path()).unwrap()[0].incomplete);
         replay_descriptor(root.path(), "http://localhost", "42", "fixture".into()).unwrap();
-        save_game(root.path(), "42", true).unwrap();
+        save_game(&mutation(root.path()), "42", true).unwrap();
         let mut saved: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["publication"], receipt);
@@ -1632,7 +1942,7 @@ pub(crate) mod tests {
             assert!(!games[0].incomplete);
             replay_descriptor(root.path(), "http://localhost", "42", "fixture".into()).unwrap();
         }
-        save_game(root.path(), "42", true).unwrap();
+        save_game(&mutation(root.path()), "42", true).unwrap();
         let metadata = read_metadata(&game.join(METADATA_JSON)).unwrap();
         assert!(metadata.saved);
         assert!(metadata._publication.is_some());

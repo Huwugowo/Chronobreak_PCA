@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import type { AppSettings, DdragonStatus, StorageUsage } from "../types";
 import BackButton from "../ui/BackButton";
 import { ExternalLinkIcon } from "../ui/icons";
@@ -14,6 +14,8 @@ type Props = {
   onBack: () => void;
   onChooseFolder: () => void;
   onOpenFolder: () => void;
+  onOpenUnmatchedFolder: () => void;
+  archiveError?: string | null;
   onRetention: (days: number) => void;
   onCleanUp: () => void;
   onRebuildLeagueData?: () => void;
@@ -66,6 +68,20 @@ function SettingsScreen(props: Props) {
               onClick={props.onOpenFolder}
             >
               <span>Open current folder</span>
+              <ExternalLinkIcon size={14} />
+            </button>
+          </div>
+        </section>
+
+        <section class={styles.settingsPanel}>
+          <header><div><p>RECORDINGS</p><h2>Unmatched recordings</h2></div></header>
+          <p class={styles.settingDetail}>
+            Videos without a League match ID are kept here and follow your automatic cleanup settings.
+          </p>
+          <Show when={props.archiveError}><p class={styles.settingDetail} role="status">{props.archiveError}</p></Show>
+          <div class={styles.settingActions}>
+            <button class={`${controlStyles.control} ${controlStyles.iconLabel}`} type="button" onClick={props.onOpenUnmatchedFolder}>
+              <span>Open unmatched recordings folder</span>
               <ExternalLinkIcon size={14} />
             </button>
           </div>

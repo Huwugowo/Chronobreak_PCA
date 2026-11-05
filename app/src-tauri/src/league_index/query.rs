@@ -4,22 +4,43 @@ use obs::events::{ActorRole, EventRevision};
 
 pub(super) const MAX_WINDOW_ROWS: usize = 512;
 pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-pub(super) const HISTORY_SQL: &str = "SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.recorded_at,r.facts_current FROM recordings r
-    WHERE (?1 IS NULL OR r.recorded_at<?1 OR (r.recorded_at=?1 AND r.media_id>?2))
-    AND ((?3 IS NULL AND ?4 IS NULL AND ?6 IS NULL AND ?7=0) OR r.facts_current=1)
+// The newest member stands for its match in the date index. Card facts can
+// come from another member without changing the cursor or page membership.
+pub(super) const HISTORY_SQL: &str = "
+    SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id
+    FROM recordings g INDEXED BY recordings_date CROSS JOIN recordings r ON r.media_id=(
+        SELECT part.media_id FROM recordings part WHERE part.match_group=g.match_group
+        ORDER BY CASE
+            WHEN part.facts_current=0 THEN 0
+            WHEN part.result_json IS NOT NULL THEN 3
+            WHEN part.telemetry_status='ready' AND EXISTS(
+                SELECT 1 FROM scopes s JOIN roster_members m ON m.media_id=s.media_id
+                    AND m.run_id=s.run_id AND m.epoch=s.epoch AND m.participant_id=s.local_participant
+                WHERE s.media_id=part.media_id
+            ) THEN 2
+            ELSE 1 END DESC, part.recorded_at DESC,part.media_id
+        LIMIT 1
+    )
+    WHERE g.match_group IS NOT NULL
+    AND (?1 IS NULL OR g.recorded_at<?1 OR (g.recorded_at=?1 AND g.media_id>?2))
+    AND g.media_id=(SELECT head.media_id FROM recordings head WHERE head.match_group=g.match_group
+        ORDER BY head.recorded_at DESC,head.media_id LIMIT 1)
+    AND ((?3 IS NULL AND ?4 IS NULL AND (?6 IS NULL OR ?7!=0)) OR r.facts_current=1)
     AND (?3 IS NULL OR r.queue_id=?3) AND (?4 IS NULL OR r.outcome=?4) AND (?5 IS NULL OR r.champion=?5)
-    AND (?6 IS NULL OR EXISTS(SELECT 1 FROM final_players f WHERE f.media_id=r.media_id AND f.riot_id=?6)
+    AND (?6 IS NULL OR ?7!=0 OR EXISTS(SELECT 1 FROM final_players f WHERE f.media_id=r.media_id AND f.riot_id=?6)
         OR (r.telemetry_status='ready' AND EXISTS(SELECT 1 FROM participants p WHERE p.media_id=r.media_id AND p.riot_id=?6)))
-    AND (?7=0 OR (r.telemetry_status='ready' AND EXISTS(SELECT 1 FROM events e
-        WHERE e.media_id=r.media_id AND e.ingestion NOT IN ('invalid','conflict')
+    AND (?7=0 OR EXISTS(SELECT 1 FROM recordings part JOIN events e ON e.media_id=part.media_id
+        WHERE part.match_group=g.match_group AND part.facts_current=1 AND part.telemetry_status='ready'
+        AND e.ingestion NOT IN ('invalid','conflict')
         AND (?8 IS NULL OR e.kind=?8) AND (?9 IS NULL OR e.stolen=?9) AND (?10 IS NULL OR e.kill_streak>=?10)
         AND ((?11 IS NULL AND ?6 IS NULL) OR EXISTS(SELECT 1 FROM effective_event_actors a
             JOIN participants p ON p.media_id=a.media_id AND p.run_id=a.run_id AND p.epoch=a.epoch AND p.participant_id=a.participant_id
             WHERE a.media_id=e.media_id AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal AND a.status='resolved'
-            AND (?11 IS NULL OR a.role=?11) AND (?6 IS NULL OR p.riot_id=?6))))))
-    AND (?13 IS NULL OR r.mode=?13) AND (COALESCE(?14,0)=0 OR r.saved=1)
+            AND (?11 IS NULL OR a.role=?11) AND (?6 IS NULL OR p.riot_id=?6)))))
+    AND (?13 IS NULL OR r.mode=?13)
+    AND (COALESCE(?14,0)=0 OR EXISTS(SELECT 1 FROM recordings part WHERE part.match_group=g.match_group AND part.saved=1))
     AND (?15 IS NULL OR instr(lower(r.champion),lower(?15))>0 OR instr(lower(r.mode),lower(?15))>0)
-    ORDER BY r.recorded_at DESC,r.media_id LIMIT ?12";
+    ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12";
 pub(super) const GAME_TICK_ROSTER_LOOKUP_SQL: &str = "SELECT r.observation_id,r.game_tick,e.data FROM rosters r JOIN evidence e
     ON e.media_id=r.media_id AND e.run_id=r.run_id AND e.epoch=r.epoch AND e.observation_id=r.observation_id
     WHERE r.media_id=?1 AND r.run_id=?2 AND r.epoch=?3 AND r.game_tick<=?4 ORDER BY r.game_tick DESC,r.observation_id DESC LIMIT 1";
@@ -515,21 +536,16 @@ impl Index {
             u32::from(query.limit) + 1,
             query.mode,
             query.saved_only,
-            query.search
+            query.search,
         ])?;
         let mut output = Vec::new();
         let mut next = None;
+        let mut last_cursor = None;
         let mut input_bytes = 0;
         let mut output_bytes = 0;
         while let Some(row) = rows.next()? {
             if output.len() == usize::from(query.limit) {
-                if let Some(last) = output.last() {
-                    let last: &HistoryRow = last;
-                    next = Some(HistoryCursor {
-                        recorded_at: last.game.recorded_at.clone(),
-                        media_id: last.media_id.clone(),
-                    });
-                }
+                next = last_cursor;
                 break;
             }
             let media = MediaId::parse(&row.get::<_, String>(0)?)?;
@@ -539,7 +555,7 @@ impl Index {
                 input_bytes += bytes.len();
             }
             ensure!(input_bytes <= MAX_RESPONSE_BYTES, "history input capacity");
-            let current: bool = row.get(5)?;
+            let current: bool = row.get(4)?;
             let result: Option<String> = if current { row.get(2)? } else { None };
             let result: Option<ResultFile> =
                 result.map(|r| serde_json::from_str(&r)).transpose()?;
@@ -549,6 +565,9 @@ impl Index {
                 HistoryStats::unavailable()
             };
             let mut game: GameSummary = serde_json::from_str(&row.get::<_, String>(1)?)?;
+            if current {
+                game.league_result = result.as_ref().map(ResultFile::summary);
+            }
             game.participants = if current {
                 self.history_participants(&media, result.as_ref())?
             } else {
@@ -569,6 +588,10 @@ impl Index {
                 output_bytes <= MAX_RESPONSE_BYTES,
                 "history response capacity"
             );
+            last_cursor = Some(HistoryCursor {
+                recorded_at: row.get(5)?,
+                media_id: MediaId::parse(&row.get::<_, String>(6)?)?,
+            });
             output.push(item);
         }
         use super::history_summary::*;
@@ -586,8 +609,12 @@ impl Index {
             mask |= EVENTS_UNKNOWN;
         }
         let (indexed, uncertain): (u64, u64) = self.db.query_row(
-            "SELECT COALESCE(SUM(count),0),COALESCE(SUM(CASE WHEN (mask & ?1)!=0 THEN count ELSE 0 END),0) FROM history_counts",
-            [mask], |r| Ok((unsigned(r,0)?,unsigned(r,1)?)),
+            "SELECT COUNT(*),COALESCE(SUM(unknown),0) FROM (
+                SELECT MAX(facts_current=0 OR (history_flags & ?1)!=0) AS unknown
+                FROM recordings WHERE match_group IS NOT NULL GROUP BY match_group
+            )",
+            [mask],
+            |r| Ok((unsigned(r, 0)?, unsigned(r, 1)?)),
         )?;
         Ok(HistoryPage {
             rows: output,

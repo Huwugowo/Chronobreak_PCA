@@ -13,7 +13,7 @@ const deferred = <T,>() => {
 const snapshot = (token: string, saved = false): LibrarySnapshot => ({ token,
   games: [{ media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", duration_ms: 10_000,
     recorded_at: "", kills: 0, deaths: 0, assists: 0, summoner_spells: [], keystone_id: null,
-    items: [], participants: [], saved, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null }],
+    items: [], participants: [], saved, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null, match_group: "a".repeat(64) }],
   clips: [], usage: { games_bytes: 1, clips_bytes: 0, game_count: 1, clip_count: 0 },
 });
 const setup = async () => {

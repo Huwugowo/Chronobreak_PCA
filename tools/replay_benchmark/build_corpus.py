@@ -1687,6 +1687,44 @@ def _build_metadata(
     }
 
 
+def _build_match_context(
+    metadata: Mapping[str, Any], corpus_id: str, game_number: int
+) -> dict[str, Any]:
+    def observation(sequence: int, start_us: int) -> dict[str, int]:
+        return {
+            "live_sequence": sequence,
+            "live_started_us": start_us,
+            "live_finished_us": start_us + 50,
+            "lcu_started_us": start_us + 50,
+            "lcu_finished_us": start_us + 100,
+        }
+
+    mode = metadata["game_mode"]
+    return {
+        "schema_version": 1,
+        "status": "provisional",
+        "media_id": metadata["media_id"],
+        "game_id": str(game_number),
+        "queue_id": 0,
+        "local_puuid": f"queueback-generated-{corpus_id}",
+        "local_riot_id": metadata["local_player_summoner_name"],
+        "lcu_map_id": 11,
+        "lcu_queue_map_id": 11,
+        "lcu_map_mode": mode,
+        "lcu_queue_mode": mode,
+        "live_map_id": 11,
+        "live_mode": mode,
+        "evidence": {
+            "lcu_session_source": "/lol-gameflow/v1/session",
+            "local_identity_source": "/lol-summoner/v1/current-summoner",
+            "live_source": "existing_activeplayer_gamestats_round",
+            "credential_epoch_marker": metadata["media_id"],
+            "first": observation(1, 0),
+            "second": observation(2, 10_000_000),
+        },
+    }
+
+
 def _assert_bundle_contract(
     metadata: Mapping[str, Any], game_log: Mapping[str, Any]
 ) -> None:
@@ -1797,7 +1835,9 @@ def build_corpus(
     staging_root.mkdir()
     _assert_reparse_free_existing(staging_root, "staging_root")
     built: list[dict[str, Any]] = []
-    for fixture, source_evidence in zip(validated["fixtures"], sources):
+    for game_number, (fixture, source_evidence) in enumerate(
+        zip(validated["fixtures"], sources), start=1
+    ):
         bundle = staging_root / fixture["id"]
         bundle.mkdir()
         _assert_reparse_free_existing(bundle, f"fixture {fixture['id']} staging root")
@@ -1838,8 +1878,13 @@ def build_corpus(
         _assert_bundle_contract(metadata, game_log)
         metadata_partial = bundle / "metadata.partial.json"
         game_log_partial = bundle / "game_log.partial.json"
+        match_context = bundle / "league_match.json"
         _write_json_new(metadata_partial, metadata)
         _write_json_new(game_log_partial, game_log)
+        _write_json_new(
+            match_context,
+            _build_match_context(metadata, validated["corpus_id"], game_number),
+        )
         media_hash = _sha256(media_partial)
         metadata_hash = _sha256(metadata_partial)
         game_log_hash = _sha256(game_log_partial)
@@ -1859,6 +1904,7 @@ def build_corpus(
                 "output_media_sha256": media_hash,
                 "metadata_sha256": metadata_hash,
                 "game_log_sha256": game_log_hash,
+                "league_match_sha256": _sha256(match_context),
                 "snapshot_count": len(game_log["snapshots"]),
                 "event_count": len(game_log["events"]),
                 "personal_data": False,

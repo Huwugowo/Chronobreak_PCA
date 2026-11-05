@@ -8,13 +8,60 @@ import type { HistoryState } from "../historyController";
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
+it("opens one chooser for all parts of a match in start order", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const origin = { root: "A", rootEpoch: 1, request: 1, token: "scan", navigation: 1 };
+  const group = "a".repeat(64);
+  const part = (timestamp: string, minute: string, match_group: string | null, champion: string, saved = false): GameSummary => ({
+    timestamp, match_group, champion, saved,
+    media_id: `9c82b929-7c85-4c27-a6d0-${timestamp.padStart(12, "0")}` as GameSummary["media_id"],
+    game_mode: "CLASSIC", recorded_at: `2026-01-01T10:${minute}:00Z`, duration_ms: 15_000,
+    kills: 0, deaths: 0, assists: 0, summoner_spells: [], keystone_id: null, items: [], participants: [],
+    incomplete: false, video_size_bytes: 1, video_available: true, league_result: null,
+  });
+  const earliest = part("100", "01", group, "Ahri", true);
+  const middle = part("101", "02", group, "Ahri");
+  const newest = part("102", "03", group, "Ahri");
+  const single = part("103", "04", "b".repeat(64), "Lux");
+  const unmatched = part("104", "05", null, "Syndra");
+  const open = vi.fn(), toggle = vi.fn(), remove = vi.fn();
+  const dispose = render(() => <LibraryScreen tab="games" games={[middle, single, newest, unmatched, earliest]} clips={[]}
+    ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
+    actionable snapshotOrigin={origin} busyId={null} onOpenGame={open} onToggleSaved={toggle} onDeleteGame={remove}
+    onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  try {
+    expect(host.querySelectorAll("article")).toHaveLength(2);
+    expect(host.textContent).toContain("2 matches");
+    expect(host.textContent).toContain("3 recordings");
+    expect(host.textContent).not.toContain("Syndra");
+    host.querySelector<HTMLButtonElement>('[aria-label^="Open Lux"]')!.click();
+    expect(open).toHaveBeenCalledExactlyOnceWith(single.timestamp, origin);
+
+    const chooser = host.querySelector<HTMLButtonElement>('[aria-label^="Choose a recording for Ahri"]')!;
+    chooser.click();
+    expect(chooser.getAttribute("aria-expanded")).toBe("true");
+    expect(open).toHaveBeenCalledTimes(1);
+    const parts = [...host.querySelectorAll<HTMLLIElement>('[aria-label="Match recordings"] li')];
+    expect(parts.map(row => row.querySelector("time")!.dateTime)).toEqual([earliest.recorded_at, middle.recorded_at, newest.recorded_at]);
+    const action = (index: number, label: string) => [...parts[index].querySelectorAll("button")].find(button => button.textContent === label);
+    parts.forEach((_, index) => action(index, "Play")!.click());
+    expect(open.mock.calls.slice(1)).toEqual([earliest, middle, newest].map(game => [game.timestamp, origin]));
+    expect(action(0, "Delete")).toBeUndefined();
+    action(0, "Unsave")!.click();
+    action(1, "Save")!.click();
+    action(2, "Delete")!.click();
+    expect(toggle.mock.calls).toEqual([[earliest, origin], [middle, origin]]);
+    expect(remove).toHaveBeenCalledExactlyOnceWith(newest, origin);
+  } finally { dispose(); }
+});
+
 it("shows a safe operational warning without semantic filters and clears it after refresh", () => {
   const host = document.createElement("div"); document.body.append(host);
   const origin = { root: "A", rootEpoch: 1, request: 1, token: "scan", navigation: 1 };
   const game: GameSummary = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
     champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
     kills: 2, deaths: 1, assists: 3, summoner_spells: [], keystone_id: null, items: [], participants: [],
-    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
+    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null, match_group: "a".repeat(64) };
   const opened = vi.fn();
   const [history, setHistory] = createSignal<HistoryState>({ page: null, loading: false, indexing: false,
     initializing: false, error: null, indexIssue: { kind: "failed", message: "private database path" }, laterPage: false });
@@ -62,7 +109,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
     incomplete: false,
     video_size_bytes: 1,
     video_available: true,
-    league_result: { outcome: "unknown", ended_early: true, partial: true },
+    league_result: { outcome: "unknown", ended_early: true, partial: true }, match_group: "a".repeat(64),
   };
   const ddragon: DdragonStatus = {
     state: "offline",
@@ -175,7 +222,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(saved).toHaveBeenCalledTimes(1);
   expect(deleted).toHaveBeenCalledTimes(1);
   // History must not add recording attempts outside the eligible SQL page.
-  const complete = Array.from({length:50}, (_,i)=>({...game,timestamp:String(1000+i),media_id:`9c82b929-7c85-4c27-a6d0-${String(i).padStart(12,"0")}` as GameSummary["media_id"]}));
+  const complete = Array.from({length:50}, (_,i)=>({...game,match_group:i.toString(16).padStart(64,"0"),timestamp:String(1000+i),media_id:`9c82b929-7c85-4c27-a6d0-${String(i).padStart(12,"0")}` as GameSummary["media_id"]}));
   setGames([...complete,{...game,timestamp:"incomplete",incomplete:true}]);
   setHistory({...history(),laterPage:false,page:{...history().page!,rows:complete.map(game=>({game,media_id:game.media_id!,stats,index_status:"ready"})),next:{recorded_at:game.recorded_at,media_id:complete[49].media_id!}}});
   expect(host.querySelectorAll("article")).toHaveLength(50);
@@ -227,7 +274,7 @@ it("identifies retained cards during debounce, loading and failure, then clears 
   const game: GameSummary = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
     champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
     kills: 2, deaths: 1, assists: 3, summoner_spells: [], keystone_id: null, items: [], participants: [],
-    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null };
+    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null, match_group: "a".repeat(64) };
   const [history, setHistory] = createSignal<HistoryState>({ loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false,
     page: { rows: [{ media_id: game.media_id!, game, index_status: "ready", stats: { source: "final_eog", kills: 9, deaths: 1, assists: 2,
       items: null, summoner_spells: null, keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null,
@@ -253,12 +300,12 @@ it("identifies retained cards during debounce, loading and failure, then clears 
   expect(card?.textContent).toContain("11.00:1 KDA");
   expect(host.textContent).toContain("Showing previous results.");
   expect(host.querySelector('[aria-label="Recorded matches"]')?.getAttribute("aria-busy")).toBe("true");
-  expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 recordings")?.disabled).toBe(true);
+  expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 matches")?.disabled).toBe(true);
   setHistory(state => ({ ...state, loading: false, error: "Search failed" }));
   expect(host.textContent).toContain("Could not update matches.");
   expect(host.textContent).toContain("Showing previous results.");
   expect(host.querySelector("article")).toBe(card);
-  expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 recordings")?.disabled).toBe(true);
+  expect([...host.querySelectorAll("button")].find(button => button.textContent === "Next 50 matches")?.disabled).toBe(true);
   setHistory(state => ({ ...state, loading: false, error: null, page: { ...state.page!, rows: [], next: null } }));
   expect(host.querySelector("article")).toBeNull();
   expect(host.textContent).not.toContain("Updating matches.");

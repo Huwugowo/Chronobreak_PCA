@@ -55,7 +55,8 @@ mod catalog_tests {
     fn history_catalog_search_and_counts_exclude_recording_attempts() {
         let root = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
-        let invalid = library::tests::write_game(root.path(), "102", "2026-08-05T10:00:00Z", false);
+        let invalid =
+            library::tests::write_matched_game(root.path(), "102", "2026-08-05T10:00:00Z", false);
         let previous =
             library::build_library_snapshot(root.path(), "", "previous".into(), || Ok(())).unwrap();
         let old_page =
@@ -65,7 +66,7 @@ mod catalog_tests {
         // A refresh must also evict a previously indexed recording that is no
         // longer usable, rather than only exclude new recording attempts.
         fs::write(invalid.join("metadata.json"), b"{").unwrap();
-        library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        library::tests::write_matched_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
         let partial = root.path().join("games/101");
         fs::create_dir_all(&partial).unwrap();
         fs::write(partial.join("video.partial.mp4"), b"partial").unwrap();
@@ -118,8 +119,12 @@ mod catalog_tests {
         ] {
             let root = tempfile::tempdir().unwrap();
             let cache = tempfile::tempdir().unwrap();
-            let game =
-                library::tests::write_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+            let game = library::tests::write_matched_game(
+                root.path(),
+                "100",
+                "2026-08-05T10:00:00Z",
+                false,
+            );
             let metadata_path = game.join("metadata.json");
             let mut metadata: serde_json::Value =
                 serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
@@ -144,7 +149,12 @@ mod catalog_tests {
                     fs::create_dir(game.join("video.mp4")).unwrap();
                 }
                 "duplicate" => {
-                    library::tests::write_game(root.path(), "101", "2026-08-05T10:00:00Z", false);
+                    library::tests::write_matched_game(
+                        root.path(),
+                        "101",
+                        "2026-08-05T10:00:00Z",
+                        false,
+                    );
                 }
                 "corrupt_source" => {
                     fs::write(game.join("league_observations.jsonl"), b"{broken\n").unwrap()
@@ -386,7 +396,13 @@ pub(crate) async fn query_league_history(
             move |root, snapshot, _| {
                 let index = Index::reader(&cache, root)?;
                 index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
-                index.history(&query, snapshot.games.len())
+                let matches = snapshot
+                    .games
+                    .iter()
+                    .filter_map(|game| game.match_group.as_deref())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                index.history(&query, matches)
             },
         )
         .await
@@ -594,9 +610,13 @@ pub(crate) async fn save_league_authored_record(
             &state.roots,
             &snapshot_token,
             crate::library_coordinator::Selection::Library,
-            move |root| {
-                let store =
-                    crate::league_authored::put(root, expected_revision, record, &|| Ok(()))?;
+            move |owner| {
+                let store = crate::league_authored::put(
+                    owner.root_path(),
+                    expected_revision,
+                    record,
+                    &|| Ok(()),
+                )?;
                 Ok(AuthoredRevision {
                     revision: store.revision,
                 })

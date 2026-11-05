@@ -231,10 +231,10 @@ async fn mutation_cancellation_retains_slot_and_invalidates_after_partial_failur
         let roots = Arc::clone(&roots);
         tokio::spawn(async move {
             coordinator
-                .mutate(&roots, &token, Selection::Clip("100_200"), move |path| {
+                .mutate(&roots, &token, Selection::Clip("100_200"), move |owner| {
                     started.send(std::thread::current().id()).unwrap();
                     blocked.recv_timeout(Duration::from_secs(5))?;
-                    fs::remove_file(path.join("clips/100_200.mp4"))?;
+                    library::delete_clip(owner, "100_200")?;
                     anyhow::bail!("injected partial failure")
                 })
                 .await as Result<(), String>
@@ -243,6 +243,10 @@ async fn mutation_cancellation_retains_slot_and_invalidates_after_partial_failur
     assert_ne!(signalled(ready).await, runtime_thread);
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
+    let approved = ApprovedRoot::new(directory.path()).unwrap();
+    assert!(crate::library_mutation::LibraryMutation::acquire(directory.path(), &approved)
+        .err().unwrap().to_string().contains("busy"));
+    assert!(fs::rename(directory.path(), directory.path().with_extension("replaced")).is_err());
     assert!(matches!(
         coordinator.mutation_permit(),
         Err(LibraryRefreshError::Busy)
@@ -274,6 +278,7 @@ async fn mutation_cancellation_retains_slot_and_invalidates_after_partial_failur
             .is_none()
     );
     assert!(!directory.path().join("clips/100_200.mp4").exists());
+    crate::library_mutation::LibraryMutation::acquire(directory.path(), &approved).unwrap();
 }
 
 #[tokio::test]

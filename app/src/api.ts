@@ -90,6 +90,7 @@ let mockGames: GameSummary[] = [
   {
     timestamp: "1786005616",
     media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001786005616"),
+    match_group: "1".repeat(64),
     champion: "Syndra",
     game_mode: "CLASSIC",
     duration_ms: 1_788_316,
@@ -118,6 +119,7 @@ let mockGames: GameSummary[] = [
   {
     timestamp: "1786004189",
     media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001786004189"),
+    match_group: "2".repeat(64),
     champion: "Viktor",
     game_mode: "CLASSIC",
     duration_ms: 2_142_000,
@@ -146,6 +148,7 @@ let mockGames: GameSummary[] = [
   {
     timestamp: "1785999000",
     media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001785999000"),
+    match_group: "3".repeat(64),
     champion: "Jinx",
     game_mode: "ARAM",
     duration_ms: 1_327_000,
@@ -174,6 +177,7 @@ let mockGames: GameSummary[] = [
   {
     timestamp: "1785900000",
     media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001785900000"),
+    match_group: "4".repeat(64),
     champion: "Orianna",
     game_mode: "CLASSIC",
     duration_ms: 1_954_000,
@@ -202,6 +206,7 @@ let mockGames: GameSummary[] = [
   {
     timestamp: "1785800000",
     media_id: parseMediaId("9c82b929-7c85-4c27-a6d0-001785800000"),
+    match_group: "5".repeat(64),
     champion: "Ahri",
     game_mode: "CLASSIC",
     duration_ms: 2_342_000,
@@ -278,7 +283,7 @@ export const loadClips = async (): Promise<ClipSummary[]> => {
 let mockSnapshotSequence = 0;
 
 export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
-  const wire = exactRecord(value, ["token", "games", "clips", "usage"], "library_snapshot");
+  const wire = exactRecord(value, ["token", "games", "clips", "usage", "archive_error"], "library_snapshot");
   if (typeof wire.token !== "string" || wire.token.length === 0) throw new Error("library_snapshot.token is invalid");
   if (!Array.isArray(wire.games) || !Array.isArray(wire.clips)) throw new Error("library_snapshot arrays are invalid");
   const clipKeys = ["filename", "game_timestamp", "clip_timestamp", "duration_ms", "file_size_bytes", "thumbnail_path", "thumbnail_url", "video_url", "source_champion", "source_date"];
@@ -295,7 +300,8 @@ export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
   for (const key of ["games_bytes", "clips_bytes", "game_count", "clip_count"]) {
     if (typeof usage[key] !== "number" || !Number.isSafeInteger(usage[key])) throw new Error(`library_snapshot.usage.${key} is invalid`);
   }
-  return { token: wire.token, games, clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage };
+  if (wire.archive_error !== null && typeof wire.archive_error !== "string") throw new Error("library_snapshot.archive_error is invalid");
+  return { token: wire.token, games, clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage, archive_error: wire.archive_error };
 };
 
 export const refreshLibrary = async (): Promise<LibrarySnapshot> => {
@@ -387,7 +393,7 @@ export const decodeMappedReplayTick = (value: unknown, label: string): ReplayTic
   }
 };
 
-const gameKeys = ["media_id", "timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available", "league_result"];
+const gameKeys = ["media_id", "match_group", "timestamp", "champion", "game_mode", "duration_ms", "recorded_at", "kills", "deaths", "assists", "summoner_spells", "keystone_id", "items", "participants", "saved", "incomplete", "video_size_bytes", "video_available", "league_result"];
 
 const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] => {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
@@ -403,6 +409,9 @@ const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] 
 export const decodeGameSummary = (value: unknown, label: string): GameSummary => {
   const game = exactRecord(value, gameKeys, label);
   const mediaId = game.media_id === null && game.incomplete === true ? null : parseMediaId(game.media_id);
+  if (game.match_group !== null && (!mediaId || typeof game.match_group !== "string" || !/^[0-9a-f]{64}$/.test(game.match_group))) {
+    throw new Error(label + ".match_group is invalid");
+  }
   const items = recordArray(game.items, label + ".items");
   for (const [index, item] of items.entries()) exactRecord(item, ["item_id", "slot"], label + ".items[" + index + "]");
   return { ...game, media_id: mediaId, league_result: decodeLeagueResultSummary(game.league_result), participants: decodeParticipants(game.participants, label + ".participants") } as GameSummary;
@@ -695,6 +704,11 @@ export const openOutputFolder = async (): Promise<void> => {
 export const openClipsFolder = async (): Promise<void> => {
   if (useMockApi()) return;
   await invoke("open_clips_folder");
+};
+
+export const openUnmatchedRecordingsFolder = async (): Promise<void> => {
+  if (useMockApi()) return;
+  await invoke("open_unmatched_recordings_folder");
 };
 
 export const loadDdragonStatus = async (): Promise<DdragonStatus> => {

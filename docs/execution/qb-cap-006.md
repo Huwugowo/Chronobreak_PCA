@@ -2,7 +2,7 @@
 
 Feature: `QB-CAP-006`
 ExecPlan: `docs/exec-plans/qb-cap-006-window-admission-v4.md`
-Updated: 2026-11-01
+Updated: 2026-11-05
 
 ## Current milestone
 
@@ -37,7 +37,7 @@ None.
 
 ## Remaining
 
-Observe one ordinary League loading/alt-tab/exit/relaunch sequence on supported hardware. This is unverified behavior, not a long campaign or a prerequisite to committing the focused implementation. The black-screen cause remains unattributed.
+Compare switching away during the League loading screen with the recorder stopped. The user reports that switching away during active gameplay succeeds with their rebuilt recorder and app, while switching away during the loading screen still leaves the game black. The recorder-off comparison is pending and the cause remains unattributed.
 
 ## Verification
 

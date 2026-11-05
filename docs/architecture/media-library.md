@@ -15,6 +15,8 @@ The configured output directory is the library root:
       metadata.json
       league_match.json  # optional provisional context
       league_result.json # optional confirmed EOG facts
+  unmatched-recordings/
+    <unix-timestamp>[-<collision-suffix>]/ # complete archived bundle
   clips/
     <source-timestamp>_<clip-timestamp>.mp4
     <source-timestamp>_<clip-timestamp>.jpg
@@ -46,8 +48,12 @@ projection rather than the core snapshot's empty compatibility participant list.
 Exact recorded names are preserved; missing team knowledge stays neutral. No
 journal scan or additional file read occurs on a history page. Missing or invalid
 telemetry keeps healthy video and saved intent available.
-History pages, search, filter choices and match counts share the eligible games
-snapshot. Recording attempts are never added back as incomplete cards. Summoner
+History pages, search, filter choices and counts use playable recordings with
+validated League match identity. The app derives an opaque group key from the
+exact decimal game ID and local account PUUID. Every recording keeps its own
+media ID, timeline, telemetry and clip references. A single-part card opens the
+replay directly. Multipart cards expose chronological Play, Save and Delete
+controls for each part. Summoner
 spells come from checked final facts or the selected recorded snapshot, preserving
 missing slots. The versioned Data Dragon summoner manifest resolves numeric IDs,
 internal keys and recorded display names to validated image filenames. An older
@@ -116,6 +122,39 @@ mutation attempt invalidates through a completion guard, including partial error
 and unwinding; errors remain visible. Failed settings persistence retains the
 published pair and revision. Refresh-invalidated retained views are display-only
 until a successful refresh supplies an admissible token.
+
+The admitted worker constructs `LibraryMutation`, verifying the live approved root
+generation and logical alias before acquiring a nonblocking OS lock on the checked
+root-relative `.chronobreak-mutation.lease` file. The lock file remains present;
+its retained handle owns the lock, with no timestamp/PID takeover. Distinct owners
+and aliases of one canonical library contend; other libraries remain independent.
+Contention is an explicit busy error. Startup retention acquires the same capability
+and skips on failure. Save/delete/retention function signatures require it; the
+authored-record command also receives its guarded canonical root while retaining
+the authored store's own atomic/revision protocol. The worker retains this lease
+after caller cancellation. It does not acquire the export staging lease or hold
+shared library exclusion through export encoding.
+
+`directory_guard.rs` shares staging's Windows identity/reparse checks. Mutation
+effects use the guarded canonical path, retaining root/collection/recording handles
+without delete sharing. Save keeps that chain through strict metadata reading and
+atomic replacement. Retention derives saved, timestamp and canonical-video
+completeness under the lease and exact recording handle; cached scan flags cannot
+authorize removal. Snapshots identify item names in an approved root generation,
+not immutable per-item contents.
+
+Deletion targets additionally have DELETE access and are removed through those
+same checked handles with `FileDispositionInfo`, including the final recording
+directory. A parent guard alone does not freeze child names. Recursive removal
+preflights and retains the complete tree in postorder before its first deletion;
+reparses, inaccessible members, more than 4,096 entries including the recording
+root, or directory depth beyond 64 reject without deleting content. Targets remain
+held through effects; children close before parents are marked for removal. New
+external entries after preflight are not traversed and can make final removal fail.
+Effect-phase I/O errors remain visible partial errors, not an atomic recursive
+delete or rollback guarantee. Clip MP4/JPEG deletion retains its existing optional
+sidecar partial-error behavior. Arbitrary external content writers and recorder
+optional-sidecar publication do not participate in the app mutation lease.
 
 The Star uses a separate optimistic display overlay keyed to the originating root,
 root epoch, request, token, navigation and canonical snapshot. A successful save
@@ -212,8 +251,12 @@ Event revisions retain evidence and exact `(media_id, run_id, epoch)` scope; act
 joins require stored participant references. Replay ticks are calculated from each
 observation's own calibration. A timing change invalidates the projection.
 
-Catalog membership, counts and cursors derive exclusively from the eligible
-filesystem snapshot; unfinished or invalid core bundles are absent. Duplicate
+Catalog membership derives from the eligible filesystem snapshot. History groups
+that catalog before filtering, counting or paging. Match facts come from the
+newest checked final result when available, then the newest checked recorded
+facts. Events can match any ready part and Saved includes groups with any saved
+part. Keyset cursors use the newest part's time and media ID, so
+enriching the card does not move it across pages. Duplicate
 media identity and corrupt/unsupported optional telemetry still fail strict
 semantic import. Optional telemetry failures leave usable recordings available
 for playback and basic history/search with unavailable semantic facts.
@@ -239,8 +282,8 @@ keyset pagination and semantic filters. A new accepted snapshot marks cached sou
 facts unchecked until each bounded catalog import verifies that recording's small
 source stamp; unchanged sources do not require another journal read. Semantic
 matches and statistics remain pending for unchecked sources. Coverage classes are
-materialized during import, with catalog totals maintained in at most 64 buckets;
-page reads never aggregate all historical observations. History describes the last
+materialized during import. Count queries roll up those per-recording flags by
+match without reading historical observations. History describes the last
 checked projection in its accepted snapshot; selected replay reads also recheck
 the current source stamp before returning data.
 KDA and inventory use nullable final EOG facts or an explicitly labelled recorded
@@ -349,7 +392,20 @@ duration; output frame and audio-alignment validation remain mandatory.
 
 ## Retention and deletion safety
 
-The app reports recording-inventory video and clip-MP4 bytes/counts and supports explicit game/clip deletion. Storage inventory includes retained attempt directories independently of eligible Match History counts; its existing video-byte metric is unchanged. Age-based `run_auto_delete` skips games whose metadata marks them saved. Settings changes update the app's media root; recorder use of the shared setting takes effect when its configuration is next loaded.
+Normal library refresh uses the library mutation lease to revalidate complete
+recordings without match identity and rename their whole bundles into
+`unmatched-recordings`. The guarded Windows move uses the pinned source and
+destination handles and refuses replacement. Failed moves leave their sources
+available on disk and surface in Settings, where the archive also opens in
+Explorer. Read-only refreshes leave the filesystem untouched. Partial and failed
+captures stay with recorder recovery. Exported clip files remain independently
+playable if their source is archived.
+
+Storage inventory includes active recordings, retained attempts and archived
+recordings, along with clip MP4s. Age-based `run_auto_delete` applies the same
+published-video, age and saved checks to active and archived recordings.
+Settings changes update the app's media root. The recorder reads the shared
+setting when it next loads its configuration.
 
 Destructive tests must use `tempfile` or a purpose-created test library. Real user recordings must never be used for retention, corruption, recovery, relocation, or deletion tests.
 

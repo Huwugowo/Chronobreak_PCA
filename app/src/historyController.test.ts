@@ -5,7 +5,7 @@ import type { LibrarySnapshot } from "./types";
 import type { CatalogPage, HistoryPage, ImportProgress } from "./leagueIndex";
 import type { GameSummary } from "./types";
 const origin = (root: string, rootEpoch: number): LibraryOrigin => ({ root, rootEpoch, request: rootEpoch, token: `scan-${rootEpoch}`, navigation: rootEpoch });
-const game = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" } as GameSummary;
+const game = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311", match_group: "a".repeat(64) } as GameSummary;
 const page = (): HistoryPage => ({ rows: [], next: null, indexed_recordings: 0, catalog_recordings: 1, unknown_recordings: 1 });
 const catalog = (token: string): CatalogPage => ({ snapshot_token: token, items: [], next: null, catalog_recordings: 1 });
 const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (error: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; };

@@ -70,7 +70,7 @@
       },
       "acceptance_criteria": [
         "Library snapshots and game listings admit only strict valid core metadata plus usable regular nonempty canonical video through the shared replay-opening boundary; incomplete, missing and corrupted mandatory recording data cannot create match entries.",
-        "Missing or invalid optional League metadata, telemetry and EOG results do not hide an otherwise usable published replay or fabricate match facts.",
+        "Usable recordings require validated League match identity to appear in Match History under QB-LIB-030. Optional telemetry and EOG results do not hide matched recordings or fabricate match facts.",
         "History/search catalog membership, pagination, filters and match counts derive from the same eligible snapshot; the UI does not reintroduce incomplete attempt cards.",
         "Existing storage/maintenance inventory, retention safeguards and recovery remain independent of history eligibility. Eligibility checks are read-only and never delete or rewrite partial recordings, metadata or diagnostic evidence.",
         "Recording failures continue through the existing recorder error/status mechanism. No new notification subsystem or independent recording-health authority is introduced.",
@@ -4888,6 +4888,58 @@
       "notes": "2026-10-22 explicit user scope: optimize replay app for its own use; concurrent recording, recorder compatibility, League tests/FPS comparisons and Smite excluded. Replay-only v2 supersedes historical recorder-coupled plan. Bounded moving workflow, cold-index diagnostic and minimal catalog-search fix completed; 2026-10-23 continuation closed missing retained-memory observation with one six-cycle settled-library run. No material memory accumulation observed after first playback. Short startup playback drops have a concrete existing owner QB-REPLAY-009; investigate cause before any optimization. Synthetic moving media cannot establish gameplay decode cost/event-picture alignment; optional GPU evidence unavailable. All accepted/excluded trials and limits are retained in report/checkpoint; no work remains active on this characterization."
     },
     {
+      "id": "QB-LIB-025",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Retain live directory authority through library mutations",
+      "description": "Reject stale save/delete/retention authority when the captured library directory is replaced or its logical alias is retargeted, and retain the correct directory ownership through every filesystem effect.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-008", "QB-LIB-009"],
+      "execution": {"workflow": "planned", "plan": "docs/exec-plans/qb-lib-025-guarded-library-mutations-v2.md", "progress": "docs/execution/qb-lib-025.md"},
+      "acceptance_criteria": [
+        "An accepted snapshot cannot authorize save, game deletion, clip deletion or retention against a different live directory generation at the same logical path.",
+        "Captured mutation ownership remains valid through the filesystem effects, including the relevant directory chain below the root. Intended deletion still succeeds; an identity precheck or dropping a target guard before unguarded path resolution cannot leave the replacement race open.",
+        "Preserve current snapshot admission, owned worker cancellation, error invalidation, saved-recording protection and unrelated root behavior. Replacement and original content remain untouched when authority is rejected."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Temporary-library regressions replace the selected root before admission and between admission/effect, exercise logical-alias retargeting and games/clips/recording-directory replacement during work across all mutation routes, and assert source/replacement preservation on rejection. Verify intended save/deletion/retention succeeds with ownership retained, including final directory removal. Run applicable backend checks and existing root/export regressions.", "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"}
+      ],
+      "evidence": [
+        "2026-11-03: worker-owned approved root/alias and directory chain, exact-handle removal and bounded retained-tree preflight now guard save, game/clip delete and retention. Tests reject replacement before/after admission on all four routes; aliases/descendant replacement cannot redirect effects, preflight rejection preserves content, and intended final removal succeeds.",
+        "Final backend 184 passed / 10 existing opt-in ignored; format and strict Clippy passed. Frontend check/build and 54 focused tests passed. Details: docs/execution/qb-lib-025.md."
+      ],
+      "notes": "F1 reproduced deletion in a replacement library under an old snapshot token; historical audit: docs/reviews/implicit-state-machines-2026-11-03.md. Implemented jointly with QB-LIB-026. V2 plan preserves the original and preflights a bounded retained tree before recursive effects, so unsupported or inaccessible members do not cause predictable partial deletion. Effect-phase I/O errors remain explicit; no recursive rollback or hardware claim."
+    },
+    {
+      "id": "QB-LIB-026",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Serialize save protection and deletion across app owners",
+      "description": "Make save, manual deletion and retention mutually consistent when independent app processes use the same recording library.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-009"],
+      "execution": {"workflow": "planned", "plan": "docs/exec-plans/qb-lib-025-guarded-library-mutations-v2.md", "progress": "docs/execution/qb-lib-026.md"},
+      "acceptance_criteria": [
+        "Independent app owners cannot both successfully save a recording and delete it using an earlier unsaved observation; save/delete results correspond to a valid serialized outcome.",
+        "Save, manual deletion and retention share ownership across app processes using the same canonical library, including logical aliases. Retention derives or revalidates saved/incomplete/age eligibility under that ownership, retained through removal; ownership failure is explicit and cannot authorize deletion.",
+        "Preserve incomplete/saved recording protection, bounded cancellation and worker cleanup, unrelated libraries and source data. A last-moment recheck alone does not replace shared arbitration."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Use temporary libraries and deterministic contention tests for save versus manual and retention deletion, including actual separate processes and logical aliases of the same library. Force stale pre-lock retention observations and assert eligibility is checked under ownership. Verify saved-content preservation, truthful serialized results, bounded busy handling, independent-library progress, lock retention after caller cancellation, release after worker completion/process death, and existing mutation regressions.", "command": "cargo test --manifest-path app/src-tauri/Cargo.toml library_mutation -- --nocapture"}
+      ],
+      "evidence": [
+        "2026-11-03: nonblocking OS lease per guarded canonical library covers save, manual deletion and both retention callers from live eligibility through effects. Real process tests verify both serial orderings, alias contention, stale scan rejection, independent libraries and kill release; caller cancellation retains worker ownership.",
+        "Final focused mutation suite 10 passed; full backend 184 passed / 10 existing opt-in ignored; format and strict Clippy passed. Frontend check/build and 54 focused tests passed. Details: docs/execution/qb-lib-026.md."
+      ],
+      "notes": "F2 historical two-coordinator reproduction: docs/reviews/implicit-state-machines-2026-11-03.md. Implemented jointly with QB-LIB-025 using the existing worker-owned permit plus a distinct root-relative OS lease; export staging and recorder ownership remain separate. Verification used actual independent processes and temporary libraries, with no whole-app performance or hardware claim."
+    },
+    {
       "id": "QB-LIB-027",
       "kind": "feature",
       "stage": "ready",
@@ -5002,6 +5054,37 @@
         "Scoped whitespace checks passed. Initial canonical validation passed for 115 items / 30 plan-checkpoint pairs; final validation failed on an unrelated concurrent QB-AUDIO-003 checkpoint edit: docs/execution/qb-audio-003.md is not UTF-8 (byte 0x96 at position 194). That file is preserved; feature remains non-done only for the final canonical gate. Durable control behavior is documented in docs/architecture/desktop-replay.md. Interactive WebView/audio observations were not rerun for this presentation-only change; no new decoder, audible-output or performance claim is made."
       ],
       "notes": "2026-11-04 explicit user request based on League's minus/plus replay control. Bounded direct presentation change to the existing QB-REPLAY-009 speed ladder; its deferred human audio/A/V gate and completed controller evidence remain unchanged. No keyboard speed shortcuts, new rates or decoder changes. Implementation and product verification are complete. Next action: after the separate QB-AUDIO-003 editing session restores its checkpoint to UTF-8, rerun final canonical validation and set this feature done; do not repeat unchanged product checks."
+    },
+    {
+      "id": "QB-LIB-030",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Group recordings by League match and archive unmatched footage",
+      "description": "Show one Match History card per validated League match with individually playable recordings. Preserve unmatched published bundles in a dedicated user-accessible folder.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-024", "QB-LIB-025", "QB-LIB-026", "QB-LIB-027", "QB-DATA-003"],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-lib-030-grouped-match-history.md",
+        "progress": "docs/execution/qb-lib-030.md"
+      },
+      "acceptance_criteria": [
+        "Validated account and exact League game ID group playable recordings before History pagination and counting. Use the newest checked final facts, falling back to available recorded facts. Match filters describe the card, event filters find any part, and any saved part makes the match saved.",
+        "Single-part cards open directly. Multipart cards show a count and offer all parts oldest first with individual playback, save and delete. Existing replay and clip media identities and clocks remain intact.",
+        "Published unmatched recordings stay out of History and are archived as whole bundles during app maintenance. Settings opens the dedicated folder and reports failed moves. Atomic no-replace moves preserve sources on failure. Existing storage and guarded retention cover both collections with saved and incomplete protection.",
+        "Dedicated grouped History, playback, archive and retention fixtures and applicable app checks pass."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Verify grouped filtering, counts, stable paging, chooser, playback, clip access, guarded moves and retention using temporary libraries, then run applicable app and canonical checks.", "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"}
+      ],
+      "evidence": [
+        "2026-11-05 Windows app suite passed 194 tests. A three-part generated match verified cross-part event hits, saved and card filters, separate accounts, stable paging, and independent replay and clip delivery. Temporary archives verified byte preservation, safe failure and retention.",
+        "Frontend type check, 580 tests and production build passed. Windows app formatting and strict Clippy, 16 generated corpus tests, and canonical validation passed. A 10,000-recording debug fixture measured 18.9 ms default and 20.7 ms event-filtered History p95."
+      ],
+      "notes": "2026-11-05 user-approved History requirement supersedes the earlier identity-optional display policy. Loading-screen black screen remains tracked separately in QB-CAP-006."
     }
   ]
 }
