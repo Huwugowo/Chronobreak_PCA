@@ -29,7 +29,8 @@ cargo run -- --diagnose
 ```
 
 This validates configuration and packaged-runtime identity, reports the fixed native
-H.264 High recording plan and runtime ID, and discovers Windows loopback audio. The
+H.264 High recording plan and runtime ID, and reports the requested audio mode. Actual
+WASAPI activation and sound are measured during capture, not inferred by diagnostics. The
 production graph is created only after League exposes its exact HWND and DXGI adapter.
 Windows has one recorder backend: in-process WGC/D3D11/NVENC video with FFmpeg used
 only for AAC audio and fragmented-MP4 muxing. There is no backend selector or
@@ -50,15 +51,26 @@ On Windows, `auto` resolves to the fixed H.264 High 1920x1080 60-FPS native plan
 HEVC and other profile values are rejected during recorder initialization; they are
 not silently mapped to H.264 High and no external compatibility backend is retained.
 
-If neither `Stereo Mix` nor a DirectShow WASAPI loopback device is available, the
-recorder keeps the video recording alive with a silent stereo track. To select a
-specific DirectShow device during development:
+Windows captures the default playback endpoint through native WASAPI loopback,
+converted to 48-kHz stereo PCM and encoded as one AAC track. It requires neither
+Stereo Mix nor a DirectShow device. The endpoint is resolved for each recording;
+headphone/device changes reopen audio without restarting video or changing its epoch.
+Audio unavailability or bad timestamps produce counted fill on the existing PCM
+transport. Failed initial transport setup selects video-only before video begins.
+Shared FFmpeg, pipe or storage corruption can still invalidate a recording; media
+validation remains strict.
+
+The development override accepts `system` or `default` (also the unset default):
 
 ```powershell
-$env:LEAGUE_REPLAY_AUDIO_DEVICE = "Your loopback device"
+$env:LEAGUE_REPLAY_AUDIO_DEVICE = "system"
 ```
 
-Set the value to `silent` to force the silent-track fallback.
+Use `silent` or `none` for intentional silence. Obsolete named-device values warn
+and select video-only. Saved `capture.audio` diagnostics distinguish observed sound,
+uncertain idle, degradation and unavailable capture; an AAC track alone is not proof
+of captured playback. End-to-end hardware validation status is recorded in
+`docs/execution/qb-audio-003.md`.
 
 ## Provisional League context
 

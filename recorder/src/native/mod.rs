@@ -4,6 +4,7 @@
 //! ownership remain inside one exact-HWND, same-adapter boundary. FFmpeg is
 //! used only for synchronized audio encoding and fragmented-MP4 muxing.
 
+mod audio;
 mod capture;
 mod clock;
 mod convert;

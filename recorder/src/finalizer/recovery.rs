@@ -198,7 +198,9 @@ async fn reconcile_when_idle(
     let expectations = FinalizationExpectationsV2 {
         media_id: metadata.media_id.clone(),
         expected_video_codec: expected.video.codec.clone(),
-        expected_audio_codec: expected.audio.codec.clone(),
+        expected_audio: chronobreak_replay_time::AudioExpectation::exact(
+            expected.audio.codec.clone(),
+        ),
         producer: expected.producer.clone(),
         capture: expected.capture.clone(),
         require_zero_video_start: true,

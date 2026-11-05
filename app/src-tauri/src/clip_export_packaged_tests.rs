@@ -79,7 +79,9 @@ async fn write_source(root: &Path, tools: &MediaTools, audio: bool) -> (PathBuf,
         FinalizationExpectationsV2 {
             media_id: MediaId::parse("123e4567-e89b-42d3-a456-426614174000").unwrap(),
             expected_video_codec: "h264".to_owned(),
-            expected_audio_codec: audio.then(|| "aac".to_owned()),
+            expected_audio: chronobreak_replay_time::AudioExpectation::exact(
+                audio.then(|| "aac".to_owned()),
+            ),
             producer: ProducerEvidenceV2 {
                 backend: "generated-export-fixture".to_owned(),
                 expected_frame_rate: Rational::positive(30, 1, "fixture rate").unwrap(),

@@ -270,6 +270,9 @@ impl RecordingPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioSource {
+    SystemLoopback,
+    NativePcm(String),
+    Unavailable(String),
     DirectShow(String),
     AvFoundationCombined,
     Silent,
@@ -280,9 +283,12 @@ pub enum AudioSource {
 impl AudioSource {
     pub fn description(&self) -> String {
         match self {
+            Self::SystemLoopback => "Windows system playback (WASAPI loopback)".to_owned(),
+            Self::NativePcm(_) => "native timestamped system PCM".to_owned(),
+            Self::Unavailable(reason) => format!("video only: {reason}"),
             Self::DirectShow(device) => format!("DirectShow device {device:?}"),
             Self::AvFoundationCombined => "AVFoundation default audio".to_owned(),
-            Self::Silent => "silent stereo fallback".to_owned(),
+            Self::Silent => "intentional silent stereo".to_owned(),
             #[cfg(feature = "replay-time-fixture")]
             Self::ReplayTimeFixturePcm(_) => "synchronized replay-time fixture PCM".to_owned(),
         }
@@ -453,42 +459,17 @@ impl Ffmpeg {
                 {
                     return AudioSource::Silent;
                 }
-                return AudioSource::DirectShow(explicit);
-            }
-
-            let mut command = ffmpeg_command(&self.path);
-            command.args([
-                "-hide_banner",
-                "-list_devices",
-                "true",
-                "-f",
-                "dshow",
-                "-i",
-                "dummy",
-            ]);
-            let output = run_bounded_probe(
-                command,
-                ENCODER_PROBE_TIMEOUT,
-                "Windows audio-device discovery",
-            )
-            .await;
-
-            match output {
-                Ok(output) => {
-                    let listing = format!(
-                        "{}\n{}",
-                        String::from_utf8_lossy(&output.stdout),
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                    if let Some(device) = choose_audio_device(&listing) {
-                        return AudioSource::DirectShow(device);
-                    }
+                if explicit.eq_ignore_ascii_case("system")
+                    || explicit.eq_ignore_ascii_case("default")
+                    || explicit.trim().is_empty()
+                {
+                    return AudioSource::SystemLoopback;
                 }
-                Err(error) => warn!(%error, "Windows audio-device discovery failed"),
+                let reason = "obsolete LEAGUE_REPLAY_AUDIO_DEVICE override; remove it or use system, none or silent";
+                warn!(value=%explicit, "{reason}; recording video only");
+                return AudioSource::Unavailable(reason.into());
             }
-
-            warn!("no Windows loopback audio device found; recording a silent audio track");
-            AudioSource::Silent
+            AudioSource::SystemLoopback
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -1112,38 +1093,6 @@ fn codec_candidates(preference: CodecPreference, hevc_playback_supported: bool) 
     }
 }
 
-#[cfg(any(target_os = "windows", test))]
-fn choose_audio_device(listing: &str) -> Option<String> {
-    let names = quoted_device_names(listing);
-    names
-        .iter()
-        .find(|name| name.to_ascii_lowercase().contains("stereo mix"))
-        .cloned()
-        .or_else(|| {
-            names
-                .iter()
-                .find(|name| {
-                    let lower = name.to_ascii_lowercase();
-                    lower.contains("wasapi") && lower.contains("loopback")
-                })
-                .cloned()
-        })
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn quoted_device_names(listing: &str) -> Vec<String> {
-    listing
-        .lines()
-        .filter_map(|line| {
-            let start = line.find('"')?;
-            let remainder = &line[start + 1..];
-            let end = remainder.find('"')?;
-            let name = &remainder[..end];
-            (!name.starts_with('@')).then(|| name.to_owned())
-        })
-        .collect()
-}
-
 fn build_recording_arguments(
     target: &CaptureTarget,
     plan: RecordingPlan,
@@ -1265,6 +1214,24 @@ fn build_recording_arguments(
 
 pub(crate) fn append_windows_audio_arguments(arguments: &mut Vec<OsString>, audio: &AudioSource) {
     match audio {
+        AudioSource::NativePcm(endpoint) => {
+            push_args(
+                arguments,
+                &[
+                    "-thread_queue_size",
+                    "32",
+                    "-f",
+                    "f32le",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-i",
+                ],
+            );
+            arguments.push(endpoint.into());
+        }
+        AudioSource::SystemLoopback | AudioSource::Unavailable(_) => {}
         AudioSource::DirectShow(device) => {
             push_args(
                 arguments,
@@ -1391,27 +1358,6 @@ mod tests {
         assert_eq!(selected.codec(), VideoCodec::H264);
         assert_eq!(selected.profile(), RecordingProfile::High);
         assert_eq!(selected.fps(), 60);
-    }
-
-    #[test]
-    fn prefers_stereo_mix_over_wasapi() {
-        let listing = r#"
-            [dshow] "WASAPI loopback"
-            [dshow] "Stereo Mix (Realtek)"
-        "#;
-        assert_eq!(
-            choose_audio_device(listing).as_deref(),
-            Some("Stereo Mix (Realtek)")
-        );
-    }
-
-    #[test]
-    fn ignores_alternative_device_ids() {
-        let listing = r#"
-            [dshow] "Stereo Mix"
-            [dshow] "@device_cm_{something}"
-        "#;
-        assert_eq!(quoted_device_names(listing), vec!["Stereo Mix"]);
     }
 
     #[cfg(feature = "replay-time-fixture")]

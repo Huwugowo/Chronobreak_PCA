@@ -8,6 +8,7 @@ use tokio::sync::watch;
 use crate::encoder::{AudioSource, RecordingEvidence};
 use crate::platform::{CaptureTarget, instant_from_qpc_100ns};
 
+use super::audio::NativeAudio;
 use super::lifecycle::{NATIVE_STARTUP_TIMEOUT, StartupDeadline};
 use super::{
     NATIVE_ENCODER_SLOT_COUNT, NATIVE_WGC_FRAME_POOL_CAPACITY, NativeCfrClock,
@@ -15,6 +16,7 @@ use super::{
     NativeNv12Converter, NativeNv12TelemetrySnapshot, NativeNvencEncoder,
     NativeNvencTelemetrySnapshot, NativeWgcSource, NativeWgcTelemetrySnapshot,
 };
+use crate::poller::AudioCaptureSummaryV1;
 
 const NATIVE_FPS: u32 = 60;
 const NATIVE_WIDTH: u32 = 1920;
@@ -27,8 +29,9 @@ const MAX_CATCH_UP_SUBMISSIONS_PER_PASS: u64 = 2;
 const NO_SLOT_RETRY_WAIT: Duration = Duration::from_millis(1);
 const FINAL_CATCH_UP_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeSessionTelemetrySnapshot {
+    pub audio: Option<AudioCaptureSummaryV1>,
     pub capture: NativeWgcTelemetrySnapshot,
     pub cfr: NativeCfrTelemetrySnapshot,
     pub conversion: NativeNv12TelemetrySnapshot,
@@ -72,6 +75,8 @@ enum TickAdmission {
 pub struct NativeRecorderSession {
     encoder: Option<NativeNvencEncoder>,
     mux: Option<NativeMuxProcess>,
+    audio: Option<NativeAudio>,
+    audio_summary: Option<AudioCaptureSummaryV1>,
     converter: NativeNv12Converter,
     source: Option<NativeWgcSource>,
     clock: NativeCfrClock,
@@ -89,6 +94,8 @@ pub struct NativeRecorderSession {
     source_generation: u64,
     #[cfg(feature = "native-failure-injection")]
     injected_nvenc_failure_after_ticks: Option<u64>,
+    #[cfg(feature = "native-failure-injection")]
+    injected_audio_failure_after_ticks: Option<u64>,
     #[cfg(feature = "native-failure-injection")]
     injected_mux_failure: Option<InjectedMuxFailure>,
     #[cfg(feature = "native-failure-injection")]
@@ -122,6 +129,34 @@ impl NativeRecorderSession {
         evidence: Option<&watch::Sender<RecordingEvidence>>,
         startup_deadline: Instant,
     ) -> Result<Self> {
+        // Start thread-affine acquisition independently before WGC; endpoint
+        // readiness never gates source/device initialization.
+        let mut audio_summary = match audio {
+            AudioSource::SystemLoopback => Some(AudioCaptureSummaryV1::default()),
+            AudioSource::Unavailable(reason) => Some(AudioCaptureSummaryV1 {
+                last_error: Some(reason.clone()),
+                ..Default::default()
+            }),
+            AudioSource::Silent => Some(AudioCaptureSummaryV1 {
+                requested_source: "silent".into(),
+                outcome: "intentional_silence".into(),
+                output: "intentional_silence_aac".into(),
+                ..Default::default()
+            }),
+            _ => None,
+        };
+        let mut native_audio = if matches!(audio, AudioSource::SystemLoopback) {
+            match NativeAudio::start() {
+                Ok(owner) => Some(owner),
+                Err(error) => {
+                    tracing::warn!(%error, "system audio unavailable; starting video only");
+                    audio_summary.as_mut().unwrap().last_error = Some(error.to_string());
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut source = startup_stage(
             stop,
             startup_deadline,
@@ -143,24 +178,99 @@ impl NativeRecorderSession {
                         startup_deadline,
                     )
                 })?;
-            let mut mux =
-                startup_stage(stop, startup_deadline, "native mux initialization", || {
-                    let plan = NativeMuxPlan::h264(NATIVE_FPS, audio, output)?;
-                    NativeMuxProcess::start(ffmpeg, &plan)
-                })?;
+            let handshake_deadline = startup_deadline.min(Instant::now() + Duration::from_secs(1));
+            let resolved_audio = if let Some(owner) = native_audio.as_mut() {
+                match owner.begin_transport(
+                    clock.telemetry().first_source_qpc_100ns,
+                    clock.next_deadline()?,
+                    handshake_deadline,
+                ) {
+                    Ok(pipe) => AudioSource::NativePcm(pipe),
+                    Err(error) => {
+                        tracing::warn!(%error, "system PCM setup failed; starting video only");
+                        audio_summary.as_mut().unwrap().last_error = Some(error.to_string());
+                        native_audio.take();
+                        AudioSource::Unavailable(error.to_string())
+                    }
+                }
+            } else if matches!(audio, AudioSource::SystemLoopback) {
+                AudioSource::Unavailable("native capture unavailable".into())
+            } else {
+                audio.clone()
+            };
+            let mut mux = Some(startup_stage(
+                stop,
+                startup_deadline,
+                "native mux initialization",
+                || {
+                    let plan = NativeMuxPlan::h264(NATIVE_FPS, &resolved_audio, output)?;
+                    match native_audio.as_ref() {
+                        Some(owner) => {
+                            NativeMuxProcess::start_with_audio_flow(ffmpeg, &plan, owner.flow())
+                        }
+                        None => NativeMuxProcess::start(ffmpeg, &plan),
+                    }
+                },
+            )?);
             let encoder = startup_stage(
                 stop,
                 startup_deadline,
                 "native NVENC initialization",
                 || {
-                    let writer = mux.take_video_writer()?;
-                    NativeNvencEncoder::new(&source, &converter, writer)
+                    NativeNvencEncoder::new_with_writer(&source, &converter, || {
+                        // Hardware registration overlaps D + 4096/48000. Only
+                        // residual prefix time is waited here, with no epoch rebase.
+                        let wait_started = Instant::now();
+                        if native_audio
+                            .as_ref()
+                            .is_some_and(|owner| !owner.await_handshake(handshake_deadline, stop))
+                        {
+                            if let Some(owner) = native_audio.take() {
+                                owner.stop(0);
+                                audio_summary = Some(owner.summary());
+                            }
+                            // No video writer has escaped. Reap the A/V child
+                            // before the single video-only retry, same epoch/budget.
+                            drop(mux.take());
+                            mux = Some(startup_stage(
+                                stop,
+                                startup_deadline,
+                                "video-only mux retry",
+                                || {
+                                    NativeMuxProcess::start(
+                                        ffmpeg,
+                                        &NativeMuxPlan::h264(
+                                            NATIVE_FPS,
+                                            &AudioSource::Unavailable(
+                                                "PCM bootstrap failed".into(),
+                                            ),
+                                            output,
+                                        )?,
+                                    )
+                                },
+                            )?);
+                        }
+                        tracing::info!(
+                            residual_audio_wait_ms = wait_started.elapsed().as_millis(),
+                            startup_age_ms = clock.next_deadline()?.elapsed().as_millis(),
+                            "native hardware/audio initialization complete on original epoch"
+                        );
+                        startup_stage(stop, startup_deadline, "native writer readiness", || {
+                            mux.as_mut().context("mux missing")?.take_video_writer()
+                        })
+                    })
                 },
             )?;
             startup_stage(stop, startup_deadline, "native startup completion", || {
                 Ok(())
             })?;
-            Ok((converter, clock, mux, encoder, diagnostics))
+            Ok((
+                converter,
+                clock,
+                mux.context("mux missing")?,
+                encoder,
+                diagnostics,
+            ))
         })();
         let (converter, clock, mux, encoder, diagnostics) = match initialized {
             Ok(initialized) => initialized,
@@ -173,6 +283,8 @@ impl NativeRecorderSession {
         Ok(Self {
             encoder: Some(encoder),
             mux: Some(mux),
+            audio: native_audio,
+            audio_summary,
             converter,
             source: Some(source),
             clock,
@@ -191,6 +303,8 @@ impl NativeRecorderSession {
             #[cfg(feature = "native-failure-injection")]
             injected_nvenc_failure_after_ticks: None,
             #[cfg(feature = "native-failure-injection")]
+            injected_audio_failure_after_ticks: None,
+            #[cfg(feature = "native-failure-injection")]
             injected_mux_failure: None,
             #[cfg(feature = "native-failure-injection")]
             injected_worker_stall: None,
@@ -199,6 +313,23 @@ impl NativeRecorderSession {
 
     pub fn output(&self) -> &Path {
         &self.output
+    }
+
+    #[cfg(feature = "native-failure-injection")]
+    pub fn inject_audio_timestamp_failure_after_ticks(
+        &mut self,
+        scheduled_ticks: u64,
+    ) -> Result<()> {
+        ensure!(
+            scheduled_ticks > 0,
+            "injected audio failure tick must be positive"
+        );
+        ensure!(
+            self.audio.is_some(),
+            "audio fault fixture requires active system audio"
+        );
+        self.injected_audio_failure_after_ticks = Some(scheduled_ticks);
+        Ok(())
     }
 
     #[cfg(feature = "native-failure-injection")]
@@ -473,6 +604,10 @@ impl NativeRecorderSession {
     }
 
     pub fn finish(mut self) -> Result<NativeSessionTelemetrySnapshot> {
+        // Freeze the video-authoritative tail before encoder/mux draining.
+        if let Some(audio) = &self.audio {
+            audio.stop(self.clock.telemetry().scheduled_ticks);
+        }
         let encode = self
             .encoder
             .take()
@@ -558,6 +693,11 @@ impl NativeRecorderSession {
                     capture.pending_frame_replacements
                 );
                 Ok(NativeSessionTelemetrySnapshot {
+                    audio: self
+                        .audio
+                        .as_mut()
+                        .map(NativeAudio::finish_summary)
+                        .or_else(|| self.audio_summary.take()),
                     capture,
                     cfr,
                     conversion,
@@ -795,6 +935,16 @@ impl NativeRecorderSession {
     }
 
     fn submit_tick(&mut self, qpc_100ns: i64) -> Result<TickAdmission> {
+        #[cfg(feature = "native-failure-injection")]
+        if self
+            .injected_audio_failure_after_ticks
+            .is_some_and(|threshold| self.clock.telemetry().scheduled_ticks >= threshold)
+        {
+            self.injected_audio_failure_after_ticks = None;
+            if let Some(audio) = self.audio.as_ref() {
+                audio.inject_timestamp_failure();
+            }
+        }
         #[cfg(feature = "native-failure-injection")]
         if self
             .injected_nvenc_failure_after_ticks
@@ -1148,7 +1298,7 @@ fn duration_100ns(duration: Duration) -> u64 {
 }
 
 impl NativeSessionTelemetrySnapshot {
-    pub(crate) fn recording_evidence(self) -> RecordingEvidence {
+    pub(crate) fn recording_evidence(&self) -> RecordingEvidence {
         RecordingEvidence {
             capture_ready: true,
             source_detached: false,

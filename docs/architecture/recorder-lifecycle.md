@@ -7,7 +7,7 @@ Process ownership, availability and login registration are described in
 
 `recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production tray mode runs the UI event loop while the recording service runs on Tokio.
 
-The service resolves the immutable packaged media runtime and detects audio once, then checks League process presence every two seconds. Historical recovery does no work during startup or the watcher loop. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
+The service resolves the immutable packaged media runtime and audio request mode once, then checks League process presence every two seconds. WASAPI resolves the current default playback endpoint independently for each recording. Historical recovery does no work during startup or the watcher loop. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
 
 League process presence remains the automatic lifecycle authority:
 
@@ -37,6 +37,25 @@ changing the configured folder, restart the recorder to retry the same game.
 On Windows, the sole production video path is in-process exact-HWND Windows Graphics Capture on an explicit D3D11 adapter, D3D11 resize/BGRA-to-NV12 conversion, and direct NVENC H.264 submission. There is no external capture-backend selector and no automatic GDI, primary-display, software, cross-adapter, codec, or vendor fallback. See [windows-capture.md](windows-capture.md) for the complete supported surface and frame/resource contract.
 
 The service owns one native implementation: a supervised GPU worker, bounded completion thread, four NVENC slots, diagnostics receiver, and one FFmpeg child restricted to audio encoding and fragmented-MP4 muxing. Startup is announced only after a real first WGC frame and advancing encode/mux evidence. Cooperative cleanup performs the blocking worker join off the async executor; child pipes are continuously drained and reaped under finite deadlines.
+
+Optional system audio adds an independent WASAPI owner and PCM writer. Capture begins
+asynchronously before WGC, with bounded pre-roll; the complete PCM bootstrap overlaps
+NVENC initialization on the original WGC epoch. Before any video writer escapes,
+failed audio setup reaps the first mux child before one video-only retry. Endpoint
+invalidation, timestamp failure and audio cleanup degrade audio without becoming
+fatal video evidence. A healthy PCM writer supplies accountable fill during recovery.
+Actual video, shared transport/mux and container failures retain their existing fatal
+handling. Stop signals the final video count and 500-ms audio budget before encoder
+drain; audio capture cleanup never gates that drain. Unproven audio cleanup retains
+only independent audio state and disables subsequent audio, not video. The shared
+FFmpeg boundary and cooperative OS cancellation remain explicit limits.
+
+System capture uses optional AAC during strict finalization. Any present stream must
+be valid and contain samples; an empty AAC header cannot pass as video-only success.
+Recovery instead reconstructs required/absent audio from its staged validated terminal
+timeline and requires exact equality. The optional nested versioned `capture.audio`
+summary records capture provenance and reconciled output; it is preserved by app saves
+and never becomes another media authority.
 
 The original process owns the session, independently of its replaceable WGC window.
 The service retains a query/synchronize `OwnedHandle` matching the original PID and

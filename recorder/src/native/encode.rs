@@ -1012,6 +1012,20 @@ impl NativeNvencEncoder {
     where
         W: Write + Send + 'static,
     {
+        Self::new_with_writer(source, converter, || Ok(writer))
+    }
+
+    /// Initialize hardware concurrently with independent audio bootstrap. Obtain
+    /// the final sink only after registration, before any submission can occur.
+    pub(crate) fn new_with_writer<W, F>(
+        source: &NativeWgcSource,
+        converter: &NativeNv12Converter,
+        make_writer: F,
+    ) -> Result<Self>
+    where
+        W: Write + Send + 'static,
+        F: FnOnce() -> Result<W>,
+    {
         ensure!(
             converter.dimensions() == (ENCODE_WIDTH, ENCODE_HEIGHT),
             "native NVENC requires a 1920x1080 M3 converter"
@@ -1079,6 +1093,19 @@ impl NativeNvencEncoder {
             }
         };
 
+        let writer = match make_writer() {
+            Ok(writer) => writer,
+            Err(error) => {
+                let mut slots = slots;
+                let cleanup_error = cleanup_slot_resources(api, encoder, &mut slots);
+                let session_error = session.close().err();
+                return Err(combine_initialization_errors(
+                    error,
+                    cleanup_error,
+                    session_error,
+                ));
+            }
+        };
         let completion_telemetry = Arc::new(CompletionTelemetry::default());
         let (completion_sender, completion_receiver) =
             sync_channel::<CompletionCommand>(NATIVE_ENCODER_SLOT_COUNT + 2);

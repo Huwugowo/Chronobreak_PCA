@@ -431,7 +431,9 @@ mod benchmark {
             let expectations = FinalizationExpectationsV2 {
                 media_id: media_id.clone(),
                 expected_video_codec: fixture.expected_video_codec.clone(),
-                expected_audio_codec: fixture.expected_audio_codec.clone(),
+                expected_audio: chronobreak_replay_time::AudioExpectation::exact(
+                    fixture.expected_audio_codec.clone(),
+                ),
                 producer: ProducerEvidenceV2 {
                     backend: "finalizer-benchmark-generated".to_owned(),
                     expected_frame_rate: fixture.expected_frame_rate,

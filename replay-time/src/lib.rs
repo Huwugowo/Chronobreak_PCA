@@ -970,13 +970,31 @@ pub const FFPROBE_SUMMARY_SHOW_ENTRIES: &str = concat!(
 
 /// Recorder-owned expectations supplied to bounded finalized-media validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioExpectation {
+    /// Exactly one matching audio stream is required.
+    RequiredCodec(String),
+    /// No audio or exactly one matching audio stream is accepted.
+    OptionalCodec(String),
+    /// Audio streams must be absent.
+    Absent,
+}
+
+impl AudioExpectation {
+    /// Preserve deliberate legacy expectations, including `None` = no audio.
+    pub fn exact(codec: Option<String>) -> Self {
+        codec.map_or(Self::Absent, Self::RequiredCodec)
+    }
+}
+
+/// Recorder-owned expectations supplied to bounded finalized-media validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinalizationExpectationsV2 {
     /// Opaque identity allocated before capture begins.
     pub media_id: MediaId,
     /// Required finalized video codec.
     pub expected_video_codec: String,
-    /// Required finalized audio codec, or `None` when the recording must have no audio.
-    pub expected_audio_codec: Option<String>,
+    /// Explicit audio presence and codec policy; present malformed audio always fails.
+    pub expected_audio: AudioExpectation,
     /// Producer cadence and runtime evidence.
     pub producer: ProducerEvidenceV2,
     /// Optional capture-clock provenance.
@@ -1196,9 +1214,8 @@ pub fn parse_ffprobe_media_timeline(
         RoundingMode::Exact,
     )?;
 
-    let expected_audio_codec = expectations.expected_audio_codec.as_deref();
-    let audio_timeline = match (audio, expected_audio_codec) {
-        (None, None) => AudioTimelineV2 {
+    let audio_timeline = match (audio, &expectations.expected_audio) {
+        (None, AudioExpectation::Absent | AudioExpectation::OptionalCodec(_)) => AudioTimelineV2 {
             present: false,
             codec: None,
             sample_rate: None,
@@ -1207,18 +1224,24 @@ pub fn parse_ffprobe_media_timeline(
             replay_start: None,
             replay_end: None,
         },
-        (None, Some(_)) => {
+        (None, AudioExpectation::RequiredCodec(_)) => {
             return Err(ReplayTimeError::InvalidMediaProbe {
                 reason: "required audio stream is missing",
             });
         }
-        (Some(_), None) => {
+        (Some(_), AudioExpectation::Absent) => {
             return Err(ReplayTimeError::InvalidMediaProbe {
                 reason: "unexpected audio stream is present",
             });
         }
-        (Some(audio), Some(expected_codec)) => {
-            if audio.index > 255 || audio.index == video.index || audio.codec_name != expected_codec
+        (
+            Some(audio),
+            AudioExpectation::RequiredCodec(expected_codec)
+            | AudioExpectation::OptionalCodec(expected_codec),
+        ) => {
+            if audio.index > 255
+                || audio.index == video.index
+                || audio.codec_name != *expected_codec
             {
                 return Err(ReplayTimeError::InvalidMediaProbe {
                     reason: "audio stream identity or codec is invalid",
@@ -2047,7 +2070,7 @@ mod tests {
         FinalizationExpectationsV2 {
             media_id: media_id(),
             expected_video_codec: "h264".to_owned(),
-            expected_audio_codec: Some("aac".to_owned()),
+            expected_audio: AudioExpectation::RequiredCodec("aac".to_owned()),
             producer: ProducerEvidenceV2 {
                 backend: "native-wgc-d3d11-nvenc".to_owned(),
                 expected_frame_rate: rational(60, 1),
@@ -2089,6 +2112,39 @@ mod tests {
             ],
             "format": { "start_time": "0.100000", "duration": "5.000000" }
         })
+    }
+
+    #[test]
+    fn explicit_audio_presence_never_accepts_malformed_present_audio() {
+        for present in [false, true] {
+            let mut probe = ffprobe_summary();
+            if !present {
+                probe["streams"].as_array_mut().unwrap().pop();
+            }
+            for (policy, accepts) in [
+                (AudioExpectation::Absent, !present),
+                (AudioExpectation::RequiredCodec("aac".into()), present),
+                (AudioExpectation::OptionalCodec("aac".into()), true),
+            ] {
+                let mut expected = finalization_expectations();
+                expected.expected_audio = policy;
+                assert_eq!(
+                    parse_ffprobe_media_timeline(&serde_json::to_string(&probe).unwrap(), expected)
+                        .is_ok(),
+                    accepts
+                );
+            }
+        }
+        for field in ["codec_name", "sample_rate", "duration_ts", "time_base"] {
+            let mut probe = ffprobe_summary();
+            probe["streams"][1][field] = "invalid".into();
+            let mut expected = finalization_expectations();
+            expected.expected_audio = AudioExpectation::OptionalCodec("aac".into());
+            assert!(
+                parse_ffprobe_media_timeline(&serde_json::to_string(&probe).unwrap(), expected)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

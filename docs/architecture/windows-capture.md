@@ -26,7 +26,7 @@ League HWND
   -> D3D11 video-processor resize and BGRA-to-NV12 conversion
   -> four owned NV12/NVENC slots
   -> direct NVENC H.264 submission and bounded completion thread
-  -> FFmpeg video-bitstream pipe + DirectShow/silent AAC audio
+  -> FFmpeg video-bitstream pipe + native WASAPI PCM / intentional-silence AAC
   -> fragmented MP4
 ```
 
@@ -38,11 +38,46 @@ Full video frames remain GPU-resident through acquisition, resize/color conversi
 
 The native recorder starts one supervised FFmpeg child, but FFmpeg performs no video
 capture, filtering, scaling, or encoding. It receives the already encoded native
-Annex-B H.264 packet sequence, captures the selected DirectShow loopback or silent
-audio source, encodes AAC, and muxes fragmented MP4. Packaged ffprobe performs the
+Annex-B H.264 packet sequence and native WASAPI f32le 48-kHz stereo PCM (or explicit
+intentional silence), encodes AAC, and muxes fragmented MP4. Packaged ffprobe performs the
 bounded common finalization probe. FFmpeg remains the correct implementation for
 muxing, probing, export/transcoding, and fixture tooling; those uses are not recorder
 backends.
+
+System audio has two independent owners: an MTA WASAPI capture thread, started
+before WGC without waiting for endpoint activation, and an event-driven PCM writer.
+Packet storage is pooled (2 MiB plus one 32-KiB coalescing buffer); pre-epoch queued
+coverage is bounded to one second and available pool capacity, and post-epoch PCM
+to 500 ms. Overwrite and missing startup coverage are reported. QPC timestamps map
+to signed 48-kHz sample slots against the original first-WGC QPC/Instant anchor;
+contiguous device positions preserve a run. The fixed delivery allowance is 250 ms.
+Silence inferred after that allowance, confirmed silent packets, discarded/late
+valid frames and timing residuals are distinct counters; late sound is degraded
+coverage, never a promise that waiting guarantees packet availability.
+
+The writer opens a private 32-KiB named pipe and supplies one complete 4,096-frame
+prefix before video production. Its minimum post-epoch readiness is about 335 ms;
+NVENC initialization overlaps that preparation and only residual time is awaited.
+The existing CFR epoch/catch-up behavior is retained. Failed bootstrap reaps the
+A/V child before one video-only retry within the original startup deadline.
+Audio reserved/emitted lead is bounded to 24,000 frames plus `800*M`, where M is
+FFmpeg's existing video progress. A cap-stall EOF escape requires the same actual
+video pipe write pending, unchanged M and an active cap for one second. User-space
+buffering, slow initialization and ordinary pauses cannot arm it.
+
+Endpoint failure/retry remains upstream of a healthy PCM pump, which writes counted
+fill. Default endpoint/state/format notifications are coalesced on the audio owner;
+retries run at most once per second for five seconds, then every 30 seconds or on
+notification. Stop freezes the video boundary before encoder drain and gives audio
+500 ms including pending I/O. Cancellation retains live buffers until OS completion;
+an outstanding owner retains no GPU/video resources and disables further audio until
+relaunch. Cooperative Windows cancellation is not a hard kernel-call guarantee.
+Raw PCM overhang is bounded to 500 ms, with up to two AAC frames of codec padding;
+replay/export duration stays video-authoritative. Managed complete-prefix EOF has
+scoped shipped-runtime evidence; arbitrary pipe/FFmpeg/storage corruption remains
+a shared-mux failure. Audio absence is permitted for system capture, but present
+audio still needs valid facts and nonzero MP4 sample runs. See the feature checkpoint
+for hardware validation results and remaining limitations.
 
 ## Runtime contract
 

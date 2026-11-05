@@ -204,6 +204,54 @@ pub(crate) struct ExportRecordingAuthority {
     pub encoder_used: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct AudioCaptureSummaryDocument {
+    #[serde(deserialize_with = "audio_schema_version")]
+    schema_version: u32,
+    requested_source: String,
+    outcome: String,
+    output: String,
+    observed_frames: u64,
+    confirmed_silent_frames: u64,
+    written_frames: u64,
+    valid_written_frames: u64,
+    non_silent_written_frames: u64,
+    inferred_idle_frames: u64,
+    unavailable_fill_frames: u64,
+    startup_missing_frames: u64,
+    late_valid_frames: u64,
+    late_non_silent_frames: u64,
+    late_packets: u64,
+    maximum_lateness_frames: u64,
+    discarded_frames: u64,
+    pre_epoch_trimmed_frames: u64,
+    pre_roll_overwritten_frames: u64,
+    discontinuities: u64,
+    reopen_count: u64,
+    first_valid_qpc_100ns: Option<u64>,
+    last_valid_qpc_100ns: Option<u64>,
+    delivery_allowance_ms: u32,
+    maximum_delivery_delay_100ns: u64,
+    maximum_lead_frames: u64,
+    tail_overhang_frames: u64,
+    last_residual_frames: i64,
+    maximum_residual_frames: u64,
+    last_error: Option<String>,
+}
+
+fn audio_schema_version<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u32, D::Error> {
+    let version = u32::deserialize(deserializer)?;
+    if version != 1 {
+        return Err(serde::de::Error::custom(
+            "unsupported audio summary version",
+        ));
+    }
+    Ok(version)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CaptureMetadataDocument {
@@ -269,6 +317,8 @@ struct CaptureMetadataDocument {
     _latest_qpc_100ns: i64,
     #[serde(rename = "terminal_progress")]
     _terminal_progress: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    audio: Option<AudioCaptureSummaryDocument>,
 }
 
 /// The caller owns blocking admission and supplies a cheap cancellation check.
@@ -1483,6 +1533,58 @@ pub(crate) mod tests {
         let metadata: MetadataDocument = read_metadata(&game.join(METADATA_JSON)).unwrap();
         assert!(metadata.saved);
         assert_eq!(metadata.media_id.as_str(), MEDIA_ID);
+    }
+
+    #[test]
+    fn audio_summary_is_optional_strict_and_preserved_by_save() {
+        let root = tempdir().unwrap();
+        let game = write_game(root.path(), "42", "2026-10-30T00:00:00Z", false);
+        let path = game.join(METADATA_JSON);
+        let original: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let summary =
+            serde_json::to_value(league_replay_recorder::poller::AudioCaptureSummaryV1::default())
+                .unwrap();
+        let mut capture = json!({
+            "schema_version":1,"backend":original["capture_backend"],"diagnostics_abi":1,
+            "support_label":"fixture","capture_adapter_luid":"1","encoder_adapter_luid":"1",
+            "capture_adapter_name":"fixture","capture_output":"fixture","encoder_backend":"nvenc",
+            "encoder_interop":"fixture","media_runtime_id":original["media_runtime_id"],
+            "source_format":"BGRA","converted_format":"NV12","host_readback":false,"gpu_stages":[],
+            "frame_pool_capacity":2,"capture_output_pool_capacity":1,"filter_buffered_frame_limit":0,
+            "encoder_depth":4,"progress_stall_timeout_seconds":15,"maximum_texture_bytes":0,
+            "source_frames_surfaced":0,"source_frames_superseded":0,"encoded_frames":0,"muxed_bytes":0,
+            "cfr_duplicates":0,"cfr_discards":0,"pool_recreations":0,"first_qpc_100ns":1,
+            "latest_qpc_100ns":1,"terminal_progress":true
+        });
+        for with_audio in [false, true] {
+            if with_audio {
+                capture["audio"] = summary.clone();
+            }
+            let mut value = original.clone();
+            value["capture"] = capture.clone();
+            fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            read_metadata(&path).unwrap();
+            save_game(root.path(), "42", true).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved["capture"], capture);
+        }
+        for bad in [json!({"foreign":1}), json!({"schema_version":2})] {
+            let mut changed = summary.clone();
+            for (key, value) in bad.as_object().unwrap() {
+                changed[key] = value.clone();
+            }
+            assert!(
+                serde_json::from_value::<AudioCaptureSummaryDocument>(changed.clone()).is_err()
+            );
+            assert!(
+                serde_json::from_value::<league_replay_recorder::poller::AudioCaptureSummaryV1>(
+                    changed
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

@@ -439,7 +439,11 @@ async fn publication_child() {
     let expectations = FinalizationExpectationsV2 {
         media_id: timeline.media_id,
         expected_video_codec: "h264".into(),
-        expected_audio_codec: Some("aac".into()),
+        expected_audio: if std::env::var_os("QUEUEBACK_RECOVERY_CHILD_OPTIONAL_AUDIO").is_some() {
+            chronobreak_replay_time::AudioExpectation::OptionalCodec("aac".into())
+        } else {
+            chronobreak_replay_time::AudioExpectation::RequiredCodec("aac".into())
+        },
         producer: chronobreak_replay_time::ProducerEvidenceV2 {
             expected_frame_count: FrameBoundary::new(120).unwrap(),
             ..timeline.producer
@@ -472,6 +476,144 @@ fn wait_marker(child: &mut std::process::Child, marker: &Path) {
     }
     child.kill().unwrap();
     child.wait().unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires QUEUEBACK_TEST_MEDIA_RUNTIME; generated temporary media only"]
+async fn packaged_optional_audio_recovery_preserves_exact_staged_presence() {
+    let runtime = PathBuf::from(std::env::var_os("QUEUEBACK_TEST_MEDIA_RUNTIME").unwrap());
+    let tools = queueback_media_runtime::resolve_root(&runtime)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let mut staged = Vec::new();
+    for (index, finite_audio) in [false, true].into_iter().enumerate() {
+        let game = root.path().join("games").join((42 + index).to_string());
+        std::fs::create_dir_all(&game).unwrap();
+        let source = game.join(VIDEO_PARTIAL_MP4);
+        let mut encode = Command::new(tools.ffmpeg());
+        encode.args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1920x1080:rate=60:duration=2",
+        ]);
+        if finite_audio {
+            encode.args([
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:sample_rate=48000:duration=0.4",
+            ]);
+        }
+        let output = encode
+            .args([
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-threads",
+                "1",
+                "-profile:v",
+                "high",
+                "-bf",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "30",
+                "-c:a",
+                "aac",
+                "-movflags",
+                crate::encoder::FRAGMENTED_MP4_FLAGS,
+                "-avoid_negative_ts",
+                "disabled",
+            ])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let marker = root.path().join(format!("{index}.ready"));
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "finalizer::recovery::tests::publication_child",
+                "--nocapture",
+            ])
+            .env("QUEUEBACK_RECOVERY_CHILD_DIRECTORY", &game)
+            .env("QUEUEBACK_RECOVERY_CHILD_PROBE", tools.ffprobe())
+            .env("QUEUEBACK_RECOVERY_CHILD_STAGE", "pending")
+            .env("QUEUEBACK_RECOVERY_CHILD_MARKER", &marker)
+            .env("QUEUEBACK_RECOVERY_CHILD_OPTIONAL_AUDIO", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        wait_marker(&mut child, &marker);
+        let pending = std::fs::read(game.join(METADATA_PENDING_JSON)).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&pending).unwrap();
+        assert_eq!(value["media_timeline"]["audio"]["present"], finite_audio);
+        staged.push((game, pending, value));
+    }
+    for index in 0..staged.len() {
+        let (game, pending, value) = &staged[index];
+        let mut changed = value.clone();
+        changed["media_timeline"]["audio"] = staged[1 - index].2["media_timeline"]["audio"].clone();
+        std::fs::write(
+            game.join(METADATA_PENDING_JSON),
+            serde_json::to_vec(&changed).unwrap(),
+        )
+        .unwrap();
+        let original = tree(game);
+        let mut probes = 0;
+        assert_eq!(
+            reconcile(
+                game,
+                tools.ffprobe(),
+                &mut probes,
+                Instant::now() + ADMISSION_BUDGET
+            )
+            .await
+            .unwrap()
+            .0,
+            Disposition::InvalidMedia
+        );
+        assert_eq!(tree(game), original);
+        std::fs::write(game.join(METADATA_PENDING_JSON), pending).unwrap();
+        let mut probes = 0;
+        assert_eq!(
+            reconcile(
+                game,
+                tools.ffprobe(),
+                &mut probes,
+                Instant::now() + ADMISSION_BUDGET
+            )
+            .await
+            .unwrap()
+            .0,
+            Disposition::Recovered
+        );
+        let recovered: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(game.join(METADATA_JSON)).unwrap()).unwrap();
+        assert_eq!(recovered["media_timeline"], value["media_timeline"]);
+        let decode = Command::new(tools.ffmpeg())
+            .args(["-v", "error", "-xerror", "-threads", "1", "-i"])
+            .arg(game.join(VIDEO_MP4))
+            .args(["-f", "null", "NUL"])
+            .output()
+            .unwrap();
+        assert!(
+            decode.status.success(),
+            "{}",
+            String::from_utf8_lossy(&decode.stderr)
+        );
+    }
 }
 
 #[tokio::test]

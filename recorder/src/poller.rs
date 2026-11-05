@@ -59,6 +59,134 @@ pub struct RecordingMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioCaptureSummaryV1 {
+    #[serde(deserialize_with = "audio_schema_version")]
+    pub schema_version: u32,
+    pub requested_source: String,
+    pub outcome: String,
+    pub output: String,
+    pub observed_frames: u64,
+    pub confirmed_silent_frames: u64,
+    pub written_frames: u64,
+    pub valid_written_frames: u64,
+    pub non_silent_written_frames: u64,
+    pub inferred_idle_frames: u64,
+    pub unavailable_fill_frames: u64,
+    pub startup_missing_frames: u64,
+    pub late_valid_frames: u64,
+    pub late_non_silent_frames: u64,
+    pub late_packets: u64,
+    pub maximum_lateness_frames: u64,
+    pub discarded_frames: u64,
+    pub pre_epoch_trimmed_frames: u64,
+    pub pre_roll_overwritten_frames: u64,
+    pub discontinuities: u64,
+    pub reopen_count: u64,
+    pub first_valid_qpc_100ns: Option<u64>,
+    pub last_valid_qpc_100ns: Option<u64>,
+    pub delivery_allowance_ms: u32,
+    pub maximum_delivery_delay_100ns: u64,
+    pub maximum_lead_frames: u64,
+    pub tail_overhang_frames: u64,
+    pub last_residual_frames: i64,
+    pub maximum_residual_frames: u64,
+    pub last_error: Option<String>,
+}
+
+fn audio_schema_version<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u32, D::Error> {
+    let version = u32::deserialize(deserializer)?;
+    if version != 1 {
+        return Err(serde::de::Error::custom(
+            "unsupported audio summary version",
+        ));
+    }
+    Ok(version)
+}
+
+impl AudioCaptureSummaryV1 {
+    pub(crate) fn reconcile(
+        &mut self,
+        audio: &chronobreak_replay_time::AudioTimelineV2,
+        video_end: u64,
+    ) {
+        if !audio.present {
+            self.output = "video_only".into();
+            self.outcome = "unavailable".into();
+            return;
+        }
+        if self.requested_source == "silent" {
+            return;
+        }
+        let finite = audio
+            .replay_end
+            .is_some_and(|end| i128::from(end.get()) < i128::from(video_end));
+        self.output = if self.valid_written_frames == 0 {
+            "fallback_only_aac"
+        } else if finite {
+            "finite_captured_aac"
+        } else {
+            "captured_aac"
+        }
+        .into();
+        self.outcome = if self.outcome == "degraded"
+            || finite
+            || self.late_valid_frames > 0
+            || self.discarded_frames > 0
+            || self.last_error.is_some()
+        {
+            "degraded"
+        } else if self.non_silent_written_frames > 0 {
+            "captured"
+        } else if self.observed_frames > 0 || self.inferred_idle_frames > 0 {
+            "idle_uncertain"
+        } else {
+            "unavailable"
+        }
+        .into();
+    }
+}
+
+impl Default for AudioCaptureSummaryV1 {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            requested_source: "system".into(),
+            outcome: "unavailable".into(),
+            output: "video_only".into(),
+            observed_frames: 0,
+            confirmed_silent_frames: 0,
+            written_frames: 0,
+            valid_written_frames: 0,
+            non_silent_written_frames: 0,
+            inferred_idle_frames: 0,
+            unavailable_fill_frames: 0,
+            startup_missing_frames: 0,
+            late_valid_frames: 0,
+            late_non_silent_frames: 0,
+            late_packets: 0,
+            maximum_lateness_frames: 0,
+            discarded_frames: 0,
+            pre_epoch_trimmed_frames: 0,
+            pre_roll_overwritten_frames: 0,
+            discontinuities: 0,
+            reopen_count: 0,
+            first_valid_qpc_100ns: None,
+            last_valid_qpc_100ns: None,
+            delivery_allowance_ms: 250,
+            maximum_delivery_delay_100ns: 0,
+            maximum_lead_frames: 0,
+            tail_overhang_frames: 0,
+            last_residual_frames: 0,
+            maximum_residual_frames: 0,
+            last_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CaptureMetadata {
     pub schema_version: u32,
     pub backend: String,
@@ -91,6 +219,8 @@ pub struct CaptureMetadata {
     pub first_qpc_100ns: i64,
     pub latest_qpc_100ns: i64,
     pub terminal_progress: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioCaptureSummaryV1>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

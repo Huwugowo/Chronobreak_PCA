@@ -17,6 +17,8 @@ use anyhow::{Context, Result, bail, ensure};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use super::audio::flow::AudioFlow;
+
 use crate::encoder::{
     AudioSource, FRAGMENTED_MP4_FLAGS, append_windows_audio_arguments, push_args,
 };
@@ -42,12 +44,15 @@ impl NativeMuxPlan {
         }
 
         let mut arguments = Vec::new();
-        // Open live audio before probing the video pipe: audio that occurs
-        // during H.264 probing cannot be recovered by a later timestamp shift.
-        // This preserves DShow sample timestamps; it does not establish a
-        // DShow-clock/WGC-QPC mapping or assert that their first samples coincide.
+        ensure!(
+            !matches!(audio, AudioSource::SystemLoopback),
+            "native audio must be resolved to PCM before mux startup"
+        );
+        let has_audio = !matches!(audio, AudioSource::Unavailable(_));
+        // PCM zero is already mapped to the WGC epoch by the independent pump.
+        // Supply its complete bootstrap prefix before video production begins.
         let audio_first = match audio {
-            AudioSource::DirectShow(_) => true,
+            AudioSource::DirectShow(_) | AudioSource::NativePcm(_) => true,
             #[cfg(feature = "replay-time-fixture")]
             AudioSource::ReplayTimeFixturePcm(_) => true,
             _ => false,
@@ -72,6 +77,8 @@ impl NativeMuxPlan {
                 // live demux path moving, while -r supplies the input time base
                 // and the output bitstream filter below transfers packet
                 // ordinal into the exact CFR presentation grid.
+                "-thread_queue_size",
+                "32",
                 "-use_wallclock_as_timestamps",
                 "1",
                 "-r",
@@ -79,7 +86,7 @@ impl NativeMuxPlan {
         );
         arguments.push(frames_per_second.to_string().into());
         push_args(&mut arguments, &["-f", "h264", "-i", "pipe:0"]);
-        if !audio_first {
+        if !audio_first && has_audio {
             append_windows_audio_arguments(&mut arguments, audio);
         }
         let (video_map, audio_map) = if audio_first {
@@ -87,12 +94,14 @@ impl NativeMuxPlan {
         } else {
             ("0:v:0", "1:a:0")
         };
-        push_args(
-            &mut arguments,
-            &[
-                "-map", video_map, "-map", audio_map, "-c:v", "copy", "-bsf:v",
-            ],
-        );
+        push_args(&mut arguments, &["-map", video_map]);
+        if has_audio {
+            push_args(
+                &mut arguments,
+                &["-map", audio_map, "-c:a", "aac", "-b:a", "192k"],
+            );
+        }
+        push_args(&mut arguments, &["-c:v", "copy", "-bsf:v"]);
         arguments.push(
             format!("setts=pts=N:dts=N:duration=1:time_base=1/{frames_per_second}:prescale=1")
                 .into(),
@@ -100,11 +109,8 @@ impl NativeMuxPlan {
         push_args(
             &mut arguments,
             &[
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-shortest",
+                "-max_interleave_delta",
+                "250000",
                 // AAC encoder priming starts at a negative DTS. Allowing the
                 // muxer to normalize it would shift the already-normalized
                 // video grid; the MP4 stream facts retain replay zero.
@@ -265,6 +271,7 @@ pub(crate) struct NativeMuxFragmentScan {
 
 struct NativeMuxTelemetry {
     frames_per_second: u32,
+    flow: Arc<AudioFlow>,
     encoded_frames: AtomicU64,
     muxed_bytes: AtomicU64,
     output_time_us: AtomicI64,
@@ -293,9 +300,10 @@ struct NativeMuxTelemetry {
 }
 
 impl NativeMuxTelemetry {
-    fn new(frames_per_second: u32) -> Self {
+    fn new(frames_per_second: u32) -> Result<Self> {
         debug_assert!(frames_per_second > 0);
-        Self {
+        Ok(Self {
+            flow: Arc::new(AudioFlow::new()?),
             frames_per_second,
             encoded_frames: AtomicU64::new(0),
             muxed_bytes: AtomicU64::new(0),
@@ -322,7 +330,7 @@ impl NativeMuxTelemetry {
             #[cfg(feature = "native-failure-injection")]
             writer_calls_for_injection: AtomicU64::new(0),
             stderr_tail: Mutex::new(VecDeque::with_capacity(MAX_STDERR_TAIL_LINES)),
-        }
+        })
     }
 
     fn snapshot(&self) -> NativeMuxTelemetrySnapshot {
@@ -551,11 +559,29 @@ impl NativeMuxWriterTiming {
 /// Buffered Annex-B writer that keeps the large syscall-saving buffer while
 /// observing FFmpeg process loss on every NVENC output frame.
 pub struct NativeMuxVideoWriter {
-    writer: BufWriter<ChildStdin>,
+    writer: BufWriter<ObservedVideoPipe>,
     telemetry: Arc<NativeMuxTelemetry>,
     timing: NativeMuxWriterTiming,
     unflushed_bytes: usize,
     last_flush: Instant,
+}
+
+/// Observe actual pipe syscalls, including writes caused by BufWriter flushes.
+/// Merely accepting bytes into its user-space buffer never arms audio EOF.
+struct ObservedVideoPipe {
+    stdin: ChildStdin,
+    flow: Arc<AudioFlow>,
+}
+
+impl Write for ObservedVideoPipe {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let _pending = (!buffer.is_empty()).then(|| self.flow.begin());
+        self.stdin.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.flush()
+    }
 }
 
 impl Write for NativeMuxVideoWriter {
@@ -630,7 +656,18 @@ pub struct NativeMuxProcess {
 
 impl NativeMuxProcess {
     pub fn start(ffmpeg: &Path, plan: &NativeMuxPlan) -> Result<Self> {
+        Self::start_with_audio_flow(ffmpeg, plan, Arc::new(AudioFlow::new()?))
+    }
+
+    pub(crate) fn start_with_audio_flow(
+        ffmpeg: &Path,
+        plan: &NativeMuxPlan,
+        flow: Arc<AudioFlow>,
+    ) -> Result<Self> {
         ensure!(!ffmpeg.as_os_str().is_empty(), "FFmpeg path is empty");
+        let mut telemetry = NativeMuxTelemetry::new(plan.frames_per_second())?;
+        telemetry.flow = flow;
+        let telemetry = Arc::new(telemetry);
         let mut command = Command::new(ffmpeg);
         command
             .args(plan.arguments())
@@ -650,7 +687,6 @@ impl NativeMuxProcess {
             terminate_child(&mut child);
             bail!("mux-only FFmpeg diagnostics pipe was not created");
         };
-        let telemetry = Arc::new(NativeMuxTelemetry::new(plan.frames_per_second()));
         let progress_telemetry = Arc::clone(&telemetry);
         let progress_thread = match thread::Builder::new()
             .name("queueback-native-mux-progress".to_owned())
@@ -707,7 +743,13 @@ impl NativeMuxProcess {
             .context("mux-only FFmpeg video pipe was not created")?;
         self.writer_taken = true;
         Ok(NativeMuxVideoWriter {
-            writer: BufWriter::with_capacity(NATIVE_PIPE_BUFFER_BYTES, stdin),
+            writer: BufWriter::with_capacity(
+                NATIVE_PIPE_BUFFER_BYTES,
+                ObservedVideoPipe {
+                    stdin,
+                    flow: Arc::clone(&self.telemetry.flow),
+                },
+            ),
             telemetry: Arc::clone(&self.telemetry),
             timing: NativeMuxWriterTiming::default(),
             unflushed_bytes: 0,
@@ -1014,7 +1056,12 @@ fn ingest_progress_line(line: &str, telemetry: &NativeMuxTelemetry) {
         return;
     };
     match key {
-        "frame" => ingest_monotonic_u64(value, &telemetry.encoded_frames, telemetry),
+        "frame" => {
+            ingest_monotonic_u64(value, &telemetry.encoded_frames, telemetry);
+            telemetry
+                .flow
+                .progress(telemetry.encoded_frames.load(Ordering::Relaxed));
+        }
         "total_size" => ingest_monotonic_u64(value, &telemetry.muxed_bytes, telemetry),
         "out_time_us" if value != "N/A" => match value.parse::<i64>() {
             Ok(parsed) => {
@@ -1078,6 +1125,142 @@ mod tests {
             .collect()
     }
 
+    /// Child deliberately withholds stdin reads until the parent releases a real
+    /// Windows event. The writer under test blocks inside OS pipe I/O.
+    #[test]
+    #[ignore = "subprocess helper for real blocked video pipe test"]
+    fn blocked_video_pipe_child() {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            INFINITE, OpenEventW, SYNCHRONIZATION_SYNCHRONIZE, WaitForSingleObject,
+        };
+        use windows::core::PCWSTR;
+        let name = std::env::var("CHRONOBREAK_AUDIO_TEST_GATE").expect("parent gate");
+        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: test-only named event retained by the parent until child exit.
+        unsafe {
+            let gate = OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr()))
+                .expect("open gate");
+            WaitForSingleObject(gate, INFINITE);
+            CloseHandle(gate).expect("close gate");
+        }
+        std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink()).expect("drain real pipe");
+    }
+
+    #[test]
+    fn audio_escape_requires_genuinely_blocked_video_pipe_io() {
+        use super::super::audio::flow::LeadEscape;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Threading::{CreateEventW, SetEvent};
+        use windows::core::PCWSTR;
+        let name = format!(
+            "Local\\Chronobreak.Audio.Test.{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: test owns exactly one event handle; child only opens its own handle.
+        let gate = unsafe {
+            OwnedHandle::from_raw_handle(
+                CreateEventW(None, true, false, PCWSTR(wide.as_ptr()))
+                    .expect("gate")
+                    .0,
+            )
+        };
+        let mut child = Command::new(std::env::current_exe().expect("test exe"))
+            .args([
+                "--exact",
+                "native::mux::tests::blocked_video_pipe_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("CHRONOBREAK_AUDIO_TEST_GATE", name)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("reader child");
+        let stdin = child.stdin.take().expect("stdin");
+        let telemetry = Arc::new(NativeMuxTelemetry::new(60).expect("telemetry"));
+        let flow = Arc::clone(&telemetry.flow);
+        let mut writer = NativeMuxVideoWriter {
+            writer: BufWriter::with_capacity(
+                NATIVE_PIPE_BUFFER_BYTES,
+                ObservedVideoPipe {
+                    stdin,
+                    flow: Arc::clone(&flow),
+                },
+            ),
+            telemetry,
+            timing: NativeMuxWriterTiming::default(),
+            unflushed_bytes: 0,
+            last_flush: Instant::now(),
+        };
+        let mut escape = LeadEscape::default();
+        // Initialization and paused production never fabricate a pending write.
+        assert!(
+            escape
+                .deadline(true, flow.snapshot(), Instant::now())
+                .is_none()
+        );
+        let (pcm_name, pcm_pump, cancel_pcm) =
+            super::super::audio::pump_without_endpoint(Arc::clone(&flow));
+        let (eof_sender, eof_receiver) = std::sync::mpsc::channel();
+        let pcm_reader = thread::spawn(move || {
+            let mut reader = std::fs::File::open(pcm_name).expect("open real PCM pipe");
+            let bytes = std::io::copy(&mut reader, &mut std::io::sink())
+                .expect("read PCM through actual EOF");
+            let _ = eof_sender.send(());
+            bytes
+        });
+        let generation = flow.snapshot().generation;
+        writer.write_all(&[0x55; 4]).expect("buffered write");
+        let only_buffered = flow.snapshot().generation == generation;
+        // Wait beyond the escape interval while the real video pipe has not
+        // received a syscall. Initialization/ordinary pauses must keep PCM open.
+        let stayed_open = eof_receiver
+            .recv_timeout(Duration::from_millis(1400))
+            .is_err();
+        let output =
+            thread::spawn(move || writer.write_all(&vec![0x55; 4 * NATIVE_PIPE_BUFFER_BYTES]));
+        let escaped = eof_receiver.recv_timeout(Duration::from_secs(5)).is_ok();
+        let observed_pending = flow.snapshot().pending_since.is_some();
+        if !escaped {
+            cancel_pcm();
+        }
+        // Release actual stdin backpressure before assertions, then join/reap.
+        // SAFETY: parent retains the gate until its child has exited.
+        unsafe {
+            SetEvent(HANDLE(gate.as_raw_handle())).expect("release reader");
+        }
+        let write = output.join().expect("writer thread");
+        let status = child.wait().expect("reap child");
+        assert!(status.success(), "reader child failed");
+        write.expect("write released by reader");
+        let summary = pcm_pump.join().expect("PCM owner").expect("managed EOF");
+        let bytes = pcm_reader.join().expect("PCM reader");
+        assert!(
+            only_buffered && stayed_open,
+            "buffering or paused production must not arm EOF"
+        );
+        assert!(
+            observed_pending && escaped,
+            "real pending I/O must produce PCM EOF"
+        );
+        assert_eq!(bytes, 24000 * 8);
+        assert_eq!(summary.last_error.as_deref(), Some("audio_lead_stall_eof"));
+        assert!(flow.snapshot().pending_since.is_none());
+        assert!(
+            escape
+                .deadline(true, flow.snapshot(), Instant::now())
+                .is_none()
+        );
+    }
+
     #[test]
     fn h264_mux_plan_declares_cfr_streamcopy_and_fragmented_mp4() {
         let plan = NativeMuxPlan::h264(60, &AudioSource::Silent, Path::new("native.mp4"))
@@ -1130,7 +1313,7 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["-movflags", FRAGMENTED_MP4_FLAGS])
         );
-        assert!(arguments.iter().any(|argument| argument == "-shortest"));
+        assert!(!arguments.iter().any(|argument| argument == "-shortest"));
         assert_eq!(arguments.last().map(String::as_str), Some("native.mp4"));
         assert_eq!(plan.output(), Path::new("native.mp4"));
     }
@@ -1228,7 +1411,7 @@ mod tests {
 
     #[test]
     fn writer_timing_is_local_until_exact_terminal_publication() {
-        let telemetry = NativeMuxTelemetry::new(60);
+        let telemetry = NativeMuxTelemetry::new(60).expect("mux telemetry");
         let mut timing = NativeMuxWriterTiming::default();
         timing.record_write(Duration::from_micros(10), 60);
         timing.record_write(Duration::from_millis(20), 60);
@@ -1348,7 +1531,7 @@ mod tests {
     #[cfg(feature = "native-failure-injection")]
     #[test]
     fn writer_stall_configuration_is_bounded_and_fires_once() {
-        let telemetry = NativeMuxTelemetry::new(60);
+        let telemetry = NativeMuxTelemetry::new(60).expect("mux telemetry");
         assert!(
             telemetry
                 .configure_writer_stall(0, Duration::from_millis(1))
@@ -1386,7 +1569,7 @@ mod tests {
 
     #[test]
     fn native_progress_evidence_is_monotonic_and_terminal() {
-        let telemetry = NativeMuxTelemetry::new(60);
+        let telemetry = NativeMuxTelemetry::new(60).expect("mux telemetry");
         for line in [
             "frame=1",
             "total_size=4096",
@@ -1426,7 +1609,7 @@ mod tests {
 
     #[test]
     fn cfr_mux_time_tracks_ffmpeg_frames_when_reported_time_stalls() {
-        let telemetry = NativeMuxTelemetry::new(60);
+        let telemetry = NativeMuxTelemetry::new(60).expect("mux telemetry");
         for line in [
             "frame=14477",
             "total_size=2556429",
@@ -1445,7 +1628,7 @@ mod tests {
 
     #[test]
     fn video_sink_reports_early_mux_exit_without_waiting_for_buffer_flush() {
-        let telemetry = NativeMuxTelemetry::new(60);
+        let telemetry = NativeMuxTelemetry::new(60).expect("mux telemetry");
         telemetry
             .progress_pipe_closed
             .store(true, Ordering::Release);

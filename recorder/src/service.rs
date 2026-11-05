@@ -1353,6 +1353,7 @@ async fn start_recording(
             encoder_interop.clone(),
         ];
         let capture = CaptureMetadata {
+            audio: None,
             schema_version: 1,
             backend: "native_windows_graphics_capture_d3d11".to_owned(),
             diagnostics_abi: CAPTURE_DIAGNOSTIC_ABI,
@@ -1736,6 +1737,7 @@ async fn stop_recording_inner(
     match video_result {
         Ok(candidate) => {
             let published = async {
+                let native_audio = candidate.audio_summary().cloned();
                 let recorded_at_label = OffsetDateTime::from(recorded_at)
                     .format(&Rfc3339)
                     .context("failed to format recording start time")?;
@@ -1745,7 +1747,9 @@ async fn stop_recording_inner(
                 let expectations = FinalizationExpectationsV2 {
                     media_id: media_id.clone(),
                     expected_video_codec: details.codec.clone(),
-                    expected_audio_codec: Some("aac".to_owned()),
+                    expected_audio: if native_audio.as_ref().is_some_and(|audio| audio.requested_source == "system") {
+                        chronobreak_replay_time::AudioExpectation::OptionalCodec("aac".into())
+                    } else { chronobreak_replay_time::AudioExpectation::RequiredCodec("aac".into()) },
                     producer: ProducerEvidenceV2 {
                         backend: details.capture_backend.clone(),
                         expected_frame_rate: candidate.expected_frame_rate(),
@@ -1759,6 +1763,11 @@ async fn stop_recording_inner(
                     require_zero_video_start: true,
                 };
                 let validated = validate_candidate(&ffprobe_path, candidate, expectations).await?;
+                if let (Some(capture), Some(mut audio)) = (details.capture.as_mut(), native_audio) {
+                    audio.reconcile(&validated.timeline().audio, validated.timeline().video.replay_end.get());
+                    info!(outcome=%audio.outcome, output=%audio.output, observed_frames=audio.observed_frames, valid_written_frames=audio.valid_written_frames, inferred_frames=audio.inferred_idle_frames + audio.unavailable_fill_frames + audio.startup_missing_frames, late_valid_frames=audio.late_valid_frames, "system audio final outcome");
+                    capture.audio = Some(audio);
+                }
                 if let (Some(directory), Some(Ok(context))) = (match_directory, context_result)
                     && let Some(candidate) = context.candidate
                 {

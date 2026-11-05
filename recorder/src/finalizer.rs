@@ -36,6 +36,7 @@ pub struct CompletedVideoCandidate {
     partial_path: PathBuf,
     expected_frame_rate: Rational,
     expected_frame_count: FrameBoundary,
+    audio: Option<crate::poller::AudioCaptureSummaryV1>,
 }
 
 impl CompletedVideoCandidate {
@@ -66,11 +67,24 @@ impl CompletedVideoCandidate {
             partial_path,
             expected_frame_rate,
             expected_frame_count,
+            audio: None,
         })
     }
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    pub(crate) fn with_audio_summary(
+        mut self,
+        audio: Option<crate::poller::AudioCaptureSummaryV1>,
+    ) -> Self {
+        self.audio = audio;
+        self
+    }
+
+    pub(crate) fn audio_summary(&self) -> Option<&crate::poller::AudioCaptureSummaryV1> {
+        self.audio.as_ref()
     }
 
     pub fn partial_path(&self) -> &Path {
@@ -193,6 +207,7 @@ async fn complete_fragmented_media_facts(
     let streams = summary["streams"]
         .as_array_mut()
         .context("ffprobe streams missing")?;
+    let has_audio = streams.iter().any(|stream| stream["codec_type"] == "audio");
     let mut videos = streams
         .iter_mut()
         .filter(|stream| stream["codec_type"] == "video");
@@ -224,6 +239,10 @@ async fn complete_fragmented_media_facts(
         tokio::task::spawn_blocking(move || fragments::video_sample_timing(&path, deadline, rate))
             .await
             .context("fragment scan worker failed")??;
+    ensure!(
+        !has_audio || timing.audio_samples > 0,
+        "present MP4 audio track has no complete samples"
+    );
     if video["nb_frames"].is_null() {
         video["nb_frames"] = timing.samples.to_string().into();
     } else {
@@ -597,7 +616,9 @@ mod tests {
         let expectations = FinalizationExpectationsV2 {
             media_id: media_id(),
             expected_video_codec: "h264".to_owned(),
-            expected_audio_codec: Some("aac".to_owned()),
+            expected_audio: chronobreak_replay_time::AudioExpectation::RequiredCodec(
+                "aac".to_owned(),
+            ),
             producer: timeline().producer,
             capture: None,
             require_zero_video_start: true,
@@ -680,7 +701,9 @@ mod tests {
         let expectations = FinalizationExpectationsV2 {
             media_id: media_id(),
             expected_video_codec: "h264".to_owned(),
-            expected_audio_codec: Some("aac".to_owned()),
+            expected_audio: chronobreak_replay_time::AudioExpectation::RequiredCodec(
+                "aac".to_owned(),
+            ),
             producer: ProducerEvidenceV2 {
                 expected_frame_count: FrameBoundary::new(frames).unwrap(),
                 ..timeline().producer
@@ -802,7 +825,9 @@ mod tests {
             let expectations = FinalizationExpectationsV2 {
                 media_id: media_id(),
                 expected_video_codec: "h264".into(),
-                expected_audio_codec: Some("aac".into()),
+                expected_audio: chronobreak_replay_time::AudioExpectation::RequiredCodec(
+                    "aac".into(),
+                ),
                 producer: ProducerEvidenceV2 {
                     expected_frame_count: FrameBoundary::new(30).unwrap(),
                     ..timeline().producer

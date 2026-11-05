@@ -3638,6 +3638,70 @@
       "stage": "draft"
     },
     {
+      "id": "QB-AUDIO-003",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Restore system audio with native WASAPI loopback",
+      "description": "Capture one Windows default-playback-endpoint system-audio track with native WASAPI, synchronized to the existing WGC epoch and encoded by the existing FFmpeg mux child; independently failing audio degrades explicitly while healthy gameplay video remains publishable.",
+      "priority": "P1",
+      "area": "audio",
+      "status": "in-progress",
+      "parent_id": "EPIC-AUDIO",
+      "dependencies": [
+        "QB-CAP-001",
+        "QB-REPLAY-012"
+      ],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-audio-003-wasapi-system-loopback-v4.md",
+        "progress": "docs/execution/qb-audio-003.md"
+      },
+      "acceptance_criteria": [
+        "Ordinary shared-mode playback on the current default eRender/eConsole endpoint produces one audible 48-kHz stereo AAC track in the existing WGC/D3D11/NVENC H.264 MP4 path, without Stereo Mix, DirectShow name matching, additional concurrent media children, a video-backend change or process separation.",
+        "Start WASAPI asynchronously before WGC initialization without awaiting endpoint readiness; retain at most one second of timestamped pre-roll and trim it against the shared first-WGC QPC/Instant anchor. Use checked sample arithmetic and contiguous-run accounting for gaps/overlap/discontinuities. Inferred fill is distinct from confirmed SILENT packets; late valid and potentially audible coverage loss is counted and makes audio degraded. Use a conservative fixed 250-ms delivery allowance checked by the short real-device observation, with scalar late-valid/non-SILENT-late counts and no fill interval ledger or arrival guarantee. Early/late A/V markers remain within 20 ms mapping error and 10 ms change; the short marker check does not certify long-duration drift and no custom drift controller is introduced.",
+        "Endpoint absence, audio-service restart, device changes, bad timestamps, capture queue loss and capture-owner failure/cleanup cannot invalidate independently healthy video. Keep them upstream of a healthy PCM pump with counted fill and bounded recovery. Demonstrated managed complete-prefix EOF may retain finite audio; arbitrary broken/torn pipe I/O or FFmpeg audio-encoder failures are shared-mux risks, not universally isolated. Actual child/storage/video/container failures remain terminal; do not hide malformed audio under optional capture.",
+        "Limit reserved/emitted PCM to max(24000, 800*M + 24000) samples at 48 kHz/60 FPS, where M is existing FFmpeg progress frame. Bootstrap is independent of video; the initial 4096-frame prefix is one complete 32-KiB write. Managed EOF requires a capped pump, the same video sink write/flush pending for a full second and no M advancement. No-bitstream initialization, ordinary production pauses and delayed progress alone keep audio open; use a live operation generation, not frame credit. Stop grants at most 500 ms including pending writes, trims unsent samples to final video count and accounts for at most 500 ms irreversible PCM overhang plus bounded codec tail (at most 542.7 ms total positive overhang); the existing early-stop artifact must retain video-authoritative replay/export endpoints and not propagate the source tail into an exported clip. One pre-video setup-failure retry selects video-only within the existing startup deadline. Remove -shortest; preserve video/CFR/media checks, reject present AAC with no sample runs, and retain exact staged-media recovery expectations.",
+        "Audio uses at most two additional threads, at most 8 MiB combined application-owned audio storage, one-second pre-epoch ring and at most 500 ms queued PCM after epoch handoff. Use event-driven/coalesced waits, one necessary WASAPI-to-owned-buffer copy, reusable silence/scratch, no unconditional polling and no audio waits/work on video callbacks or the GPU worker. Bound and observe pipe/FFmpeg queues separately. Capture-owner cleanup cannot hold video finalization hostage; retain narrowly necessary COM/callback/I/O state safely under a finite ownership bound.",
+        "Resolve system audio per recording session, keep silent/none intentional, reject obsolete/invalid audio-source requests with an actionable warning and video-only recording, never fatal startup or process suppression, and distinguish observed packets, idle/uncertain coverage, intentional silence and unavailable capture in diagnostics. Keep outer capture schema version 1; a nested version-1 optional typed capture.audio provenance/outcome summary records counts/fill/discontinuity/recovery and survives strict app read/save; older recordings without it stay readable/unknown. Keep MediaTimelineV2 and replay/export controls unchanged. Reconcile requested source with actual validated output: video-only, fallback-only AAC, finite captured AAC and captured AAC; retain delivery/late-loss and lead/tail summaries.",
+        "Focused actual-tone/channel/quiet-to-sound, short WGC/NVENC early/late A/V, clean lifecycle plus published-video-after-audio-fault, available real default-device switch and short matched resource observations support completion. Targeted tests, applicable integration/handoff checks and relevant release builds pass. Observe CPU/memory/thread cost and investigate clear regressions without an arbitrary new CPU percentage gate; record unavailable hardware truthfully. No new long soak or full League benchmark is required."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Targeted pre-roll/QPC/continuity/inferred-fill/scalar late-loss, lead reservation/qualified-EOF eligibility and generation reset (slow no-bitstream startup, no-pending-write pause, pending backpressure), stop deadline, bounded capture recovery and nonfatal outcomes; required/optional/absent audio including empty AAC sample rejection and staged recovery equality; metadata read/save. Run applicable checks/builds at integration/handoff, not each milestone.",
+          "command": null
+        },
+        {
+          "type": "automated",
+          "description": "Planning transport evidence is retained in docs/performance/results/qb-audio-003-transport.json. Integrate only focused regressions for single-write prefix, pre-video failed connect/write then one reaped video-only retry, managed EOF, pending-write-qualified progress lead stall and finite stop tail with the reused replay/export tail check through the production writer. Retain adverse empty/torn-PCM results; use the existing exact-CFR analyzer/negative control without assuming universal pipe-failure isolation.",
+          "command": "python tools/replay_time/run_native_mux_av.py --runtime-root build/media-runtime/windows-x86_64 --pairs 1"
+        },
+        {
+          "type": "manual",
+          "description": "Generated endpoint tones verify actual sound, stereo channels and quiet-to-sound. One short real WGC/NVENC early/late flash/tone recording verifies short-run QPC-to-media alignment, without a long-duration drift claim; an audio-local fault case must publish complete continuing video with degraded audio evidence. Exercise one real default-device switch when available; supplement unavailable/service faults with focused deterministic cases. Use sentinel-owned fixtures, never user media.",
+          "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "One short matched intentional-silence versus WASAPI generated recording pair with identical video/tone playback; retain recorder+mux CPU/private-memory and audio queue/thread/handle observations. Enforce finite bounds, investigate clear regression and make no League FPS or negligible-impact claim.",
+          "command": null
+        },
+        {
+          "type": "inspection",
+          "description": "At handoff/completion, run the full canonical validator in docs/development/VERIFICATION.md, verify exact linked plan/checkpoint association and focused whitespace/diff checks. Preserve the superseded immutable plan and unrelated working-tree bytes; durable documentation must describe actual obtained behavior.",
+          "command": null
+        }
+      ],
+      "evidence": [
+        "2026-11-02 planning only: current Windows service selects audio once through DirectShow capture-device listing and falls back to anullsrc; this does not implement WASAPI endpoint loopback. Repository exploration and Microsoft API research inform the linked one-track design. No native-audio implementation, hardware A/V result or performance pass is claimed.",
+        "2026-11-02 planning revision: the user's engineering review explicitly changes the reliability requirement to preserve independently healthy gameplay video when audio fails. The v2 design supersedes terminal-audio failure, exact video-credit/idle-clock proof and custom drift correction with nonfatal audio outcomes, an early transport proof and focused validation. Implementation and hardware/performance verification have not begun.",
+        "2026-11-02 final planning experiment: verified shipped r6; actual Windows named-pipe complete-prefix/probing/normal-AAC EOF and 500-ms progress cap preserved 360 exact-CFR generated video frames with successful decode. Zero PCM left empty AAC; a four-byte initial prefix exited 69 and truncated video. Split startup writes stalled the handshake; one 32-KiB prefix succeeded. Pre-video connect-failure fallback reaped then produced full video-only output in one retry. Evidence and limitations are retained in docs/performance/results/qb-audio-003-transport.json; no WASAPI/WGC/NVENC implementation or negligible-overhead proof is claimed.",
+        "2026-11-04 review retained before implementation: v4 qualifies the one-second audio EOF escape with a continuously pending video sink operation, preventing no-bitstream initialization/ordinary pauses from closing healthy audio. It fixes D at a conservative 250 ms, replaces the fill interval ledger with scalar late-loss counters, makes the 542.7-ms tail/replay-export check and nonfatal obsolete configuration explicit, and limits short A/V claims. Current writer/startup code supports the correction; no new media/hardware experiment or product implementation was performed.",
+        "2026-11-04 implementation: native WASAPI capture, bounded PCM transport/lead/stop, NVENC-overlapped prefix, video-only bootstrap fallback and strict optional AAC/metadata/recovery are integrated. Actual blocked ChildStdin I/O plus real PCM EOF and a no-I/O pause regression passed; replay-time 15 tests, app backend 190 tests, focused generated video-only/finite-AAC recovery, Clippy and frontend/desktop builds passed. Required native A/V/tail/audio-fault/resource acceptance remains environment-blocked by fixture NVENC NO_ENCODE_DEVICE; controlled quiet/stereo evidence remains incomplete. See execution checkpoint for exact results; feature remains in-progress."
+      ],
+      "notes": "V4 implementation approved and integrated; preserve immutable v1-v4 and transport evidence. Actual pending-I/O generation qualifies EOF; the original WGC epoch/CFR remains authoritative and NVENC overlaps the ~335-ms PCM bootstrap. Endpoint errors are upstream of a healthy PCM pump; arbitrary shared transport corruption remains a mux risk. Required real hardware acceptance is incomplete, so do not mark done. QB-AUDIO-001 remains separate. Exact results and next action live in the execution checkpoint."
+    },
+    {
       "id": "QB-AUDIO-001",
       "kind": "feature",
       "name": "Separate Audio Tracks",

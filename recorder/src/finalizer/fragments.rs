@@ -81,6 +81,7 @@ impl<R: Read + Seek> Reader<R> {
     fn video_track(&mut self, moov: BoxHeader, rate: Rational) -> Result<VideoTiming> {
         let mut offset = moov.payload;
         let mut video_id = None;
+        let mut audio_id = None;
         while offset < moov.end {
             let trak = self.header(offset, moov.end)?;
             offset = trak.end;
@@ -90,6 +91,17 @@ impl<R: Read + Seek> Reader<R> {
             let mdia = self.child(trak, *b"mdia")?;
             let hdlr = self.child(mdia, *b"hdlr")?;
             if self.bytes::<4>(hdlr.payload + 8, hdlr.end)? != *b"vide" {
+                if self.bytes::<4>(hdlr.payload + 8, hdlr.end)? == *b"soun" {
+                    ensure!(audio_id.is_none(), "multiple MP4 audio tracks");
+                    let tkhd = self.child(trak, *b"tkhd")?;
+                    let version = self.bytes::<4>(tkhd.payload, tkhd.end)?[0];
+                    ensure!(version <= 1, "unsupported MP4 audio track header");
+                    let id = u32::from_be_bytes(
+                        self.bytes(tkhd.payload + if version == 1 { 20 } else { 12 }, tkhd.end)?,
+                    );
+                    ensure!(id > 0, "invalid MP4 audio track ID");
+                    audio_id = Some(id);
+                }
                 continue;
             }
             ensure!(video_id.is_none(), "multiple MP4 video tracks");
@@ -179,9 +191,13 @@ impl<R: Read + Seek> Reader<R> {
                 step,
                 samples: 0,
                 end_pts: 0,
+                audio_id: None,
+                audio_samples: 0,
             });
         }
-        video_id.context("MP4 video track missing")
+        let mut video = video_id.context("MP4 video track missing")?;
+        video.audio_id = audio_id;
+        Ok(video)
     }
 
     fn defaults(&mut self, moov: BoxHeader, id: u32) -> Result<(u32, u32)> {
@@ -442,6 +458,27 @@ impl<R: Read + Seek> Reader<R> {
                         let traf = self.header(position, atom.end)?;
                         position = traf.end;
                         if traf.kind == *b"traf" {
+                            if let Some(audio_id) = timing.audio_id {
+                                let tfhd = self.child(traf, *b"tfhd")?;
+                                if u32::from_be_bytes(self.bytes(tfhd.payload + 4, tfhd.end)?)
+                                    == audio_id
+                                {
+                                    let mut run_position = traf.payload;
+                                    while run_position < traf.end {
+                                        let run = self.header(run_position, traf.end)?;
+                                        run_position = run.end;
+                                        if run.kind == *b"trun" {
+                                            let count = u32::from_be_bytes(
+                                                self.bytes(run.payload + 4, run.end)?,
+                                            );
+                                            timing.audio_samples = timing
+                                                .audio_samples
+                                                .checked_add(u64::from(count))
+                                                .context("MP4 audio sample count overflow")?;
+                                        }
+                                    }
+                                }
+                            }
                             self.track_fragment(
                                 traf,
                                 atom,
@@ -468,6 +505,8 @@ pub(super) struct VideoTiming {
     step: u64,
     pub samples: u64,
     pub end_pts: u64,
+    audio_id: Option<u32>,
+    pub audio_samples: u64,
 }
 
 pub(super) fn video_sample_timing(
@@ -583,6 +622,28 @@ mod tests {
         }
         .inspect(length, Rational::new(60, 1).unwrap())
         .map(|timing| timing.samples)
+    }
+
+    #[test]
+    fn distinguishes_empty_audio_headers_from_actual_audio_sample_runs() {
+        let with_audio = movie(&[track(7, b"vide", 0), track(2, b"soun", 0)].concat());
+        for samples in [0, 1] {
+            let bytes = [
+                with_audio.clone(),
+                fragment(atom(b"moof", &[traf(2, samples), traf(7, 60)].concat()), 0),
+            ]
+            .concat();
+            let length = bytes.len() as u64;
+            let timing = Reader {
+                input: Cursor::new(bytes),
+                deadline: Instant::now() + Duration::from_secs(2),
+                boxes: 0,
+            }
+            .inspect(length, Rational::new(60, 1).unwrap())
+            .unwrap();
+            assert_eq!(timing.samples, 60);
+            assert_eq!(timing.audio_samples, u64::from(samples));
+        }
     }
 
     #[test]

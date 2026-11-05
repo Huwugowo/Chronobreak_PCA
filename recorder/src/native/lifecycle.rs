@@ -454,7 +454,7 @@ impl NativeRecordingSession {
                 output.display()
             );
         }
-        worker_result?;
+        let terminal = worker_result?;
         // Window loss is handled inside the worker. Only an explicit stop may
         // end a healthy recording; automatic stop also confirms its process below.
         if exited_before_stop {
@@ -496,7 +496,13 @@ impl NativeRecordingSession {
             Rational::positive(60, 1, "native recording frame rate").map_err(anyhow::Error::new)?;
         let expected_frame_count =
             FrameBoundary::new(final_evidence.encoded_frames).map_err(anyhow::Error::new)?;
-        CompletedVideoCandidate::new(directory, output, expected_frame_rate, expected_frame_count)
+        Ok(CompletedVideoCandidate::new(
+            directory,
+            output,
+            expected_frame_rate,
+            expected_frame_count,
+        )?
+        .with_audio_summary(terminal.audio))
     }
 }
 
@@ -672,6 +678,7 @@ mod tests {
 
     fn telemetry() -> NativeSessionTelemetrySnapshot {
         NativeSessionTelemetrySnapshot {
+            audio: None,
             capture: NativeWgcTelemetrySnapshot {
                 arrivals: 120,
                 admitted: 120,
@@ -770,11 +777,12 @@ mod tests {
     ) -> NativeRecordingSession {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let terminal_snapshot = snapshot.clone();
         let thread = thread::spawn(move || {
             while !worker_stop.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(1));
             }
-            Ok(snapshot)
+            Ok(terminal_snapshot)
         });
         fake_session_with_worker(directory, snapshot, NativeWorker::new(stop, thread))
     }
@@ -887,7 +895,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut snapshot = telemetry();
         snapshot.target_closed = true;
-        let session = fake_session(directory.path(), snapshot);
+        let session = fake_session(directory.path(), snapshot.clone());
 
         let candidate = session.stop(true, || true).await.unwrap();
         assert_eq!(candidate.expected_frame_count().get(), 120);
@@ -900,12 +908,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut snapshot = telemetry();
         snapshot.target_closed = true;
-        let candidate = fake_session(directory.path(), snapshot)
+        let candidate = fake_session(directory.path(), snapshot.clone())
             .stop(false, || false)
             .await
             .unwrap();
         assert_eq!(candidate.expected_frame_count().get(), 120);
-        let error = exited_session(directory.path(), snapshot, Ok(snapshot))
+        let error = exited_session(directory.path(), snapshot.clone(), Ok(snapshot))
             .await
             .stop(true, || true)
             .await
@@ -972,12 +980,13 @@ mod tests {
             let worker_stop = Arc::clone(&stop);
             let process_ended = Arc::new(AtomicBool::new(false));
             let worker_process_ended = Arc::clone(&process_ended);
+            let terminal_snapshot = snapshot.clone();
             let thread = thread::spawn(move || {
                 while !worker_stop.load(Ordering::Acquire) {
                     thread::sleep(Duration::from_millis(1));
                 }
                 worker_process_ended.store(true, Ordering::Release);
-                Ok(snapshot)
+                Ok(terminal_snapshot)
             });
             let observer = Arc::new(NativeWorkerCleanupObserver::default());
             let worker = NativeWorker::with_cleanup_observer(stop, thread, Arc::clone(&observer));
@@ -1001,7 +1010,7 @@ mod tests {
     async fn exited_worker_without_target_close_rejects_even_complete_evidence() {
         let directory = tempfile::tempdir().unwrap();
         let snapshot = telemetry();
-        let session = exited_session(directory.path(), snapshot, Ok(snapshot)).await;
+        let session = exited_session(directory.path(), snapshot.clone(), Ok(snapshot)).await;
 
         let error = session.stop(false, || true).await.unwrap_err();
         assert!(error.to_string().contains("without a stop request"));
@@ -1015,7 +1024,7 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let mut snapshot = telemetry();
             snapshot.target_closed = true;
-            let mut session = fake_session(directory.path(), snapshot);
+            let mut session = fake_session(directory.path(), snapshot.clone());
             let mut evidence = snapshot.recording_evidence();
             match failure {
                 "protocol" => evidence.protocol_error = Some("fixture protocol failure".to_owned()),

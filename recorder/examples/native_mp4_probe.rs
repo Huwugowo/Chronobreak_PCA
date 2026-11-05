@@ -17,6 +17,7 @@ mod windows_probe {
         let mut output = None;
         let mut duration_seconds = 10_u64;
         let mut fail_nvenc_after_ticks = None;
+        let mut fail_audio_after_ticks = None;
         let mut stall_worker_after_ticks = None;
         let mut stall_worker_ms = None;
         let mut stall_mux_after_writes = None;
@@ -24,10 +25,20 @@ mod windows_probe {
         let mut fail_mux_after_writes = None;
         let mut fail_mux_after_fragment_after_writes = None;
         let mut fixture_pcm = None;
+        let mut system_audio = false;
         let mut fixture_start_signal = None;
         let mut max_no_slot_admission_failures = 0_u64;
         while let Some(argument) = args.next() {
             match argument.as_str() {
+                "--system-audio" => system_audio = true,
+                "--fail-audio-after-ticks" => {
+                    fail_audio_after_ticks = Some(
+                        args.next()
+                            .context("--fail-audio-after-ticks requires a value")?
+                            .parse::<u64>()
+                            .context("--fail-audio-after-ticks must be an integer")?,
+                    );
+                }
                 "--pid" => {
                     pid = Some(
                         args.next()
@@ -142,14 +153,22 @@ mod windows_probe {
         let audio = fixture_pcm
             .as_ref()
             .map(|endpoint| AudioSource::ReplayTimeFixturePcm(endpoint.clone()))
-            .unwrap_or(AudioSource::Silent);
+            .unwrap_or(if system_audio {
+                AudioSource::SystemLoopback
+            } else {
+                AudioSource::Silent
+            });
         #[cfg(not(feature = "replay-time-fixture"))]
         let audio = {
             ensure!(
                 fixture_pcm.is_none() && fixture_start_signal.is_none(),
                 "fixture PCM and start signaling require the replay-time-fixture Cargo feature"
             );
-            AudioSource::Silent
+            if system_audio {
+                AudioSource::SystemLoopback
+            } else {
+                AudioSource::Silent
+            }
         };
         #[cfg(feature = "replay-time-fixture")]
         if let Some(signal) = fixture_start_signal.as_ref() {
@@ -170,6 +189,11 @@ mod windows_probe {
                 .context("could not publish native fixture start readiness")?;
         }
         let mut session = NativeRecorderSession::start(&target, &ffmpeg, &audio, &output)?;
+        #[cfg(feature = "native-failure-injection")]
+        if let Some(ticks) = fail_audio_after_ticks {
+            session.inject_audio_timestamp_failure_after_ticks(ticks)?;
+            println!("CHRONOBREAK_NATIVE_FAILURE_INJECTION audio_timestamp_after_ticks={ticks}");
+        }
         #[cfg(feature = "replay-time-fixture")]
         if let Some(signal) = fixture_start_signal.as_ref() {
             publish_fixture_start_signal(signal)?;
@@ -234,6 +258,10 @@ mod windows_probe {
         #[cfg(not(feature = "native-failure-injection"))]
         {
             ensure!(
+                fail_audio_after_ticks.is_none(),
+                "--fail-audio-after-ticks requires the native-failure-injection Cargo feature"
+            );
+            ensure!(
                 fail_nvenc_after_ticks.is_none(),
                 "--fail-nvenc-after-ticks requires the native-failure-injection Cargo feature"
             );
@@ -264,6 +292,9 @@ mod windows_probe {
             });
         }
         let telemetry = session.finish()?;
+        if let Some(audio) = &telemetry.audio {
+            println!("CHRONOBREAK_NATIVE_AUDIO {}", serde_json::to_string(audio)?);
+        }
         let expected_ticks = duration_seconds
             .checked_mul(60)
             .context("expected CFR tick count overflowed")?;

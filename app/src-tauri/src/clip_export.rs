@@ -997,7 +997,7 @@ async fn validate_exported_media(
     let expectations = FinalizationExpectationsV2 {
         media_id: request.media_id.clone(),
         expected_video_codec: "h264".to_owned(),
-        expected_audio_codec: Some("aac".to_owned()),
+        expected_audio: chronobreak_replay_time::AudioExpectation::RequiredCodec("aac".to_owned()),
         producer: ProducerEvidenceV2 {
             backend: "clip-export-full-reencode".to_owned(),
             expected_frame_rate: profile.output_frame_rate,

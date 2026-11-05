@@ -8,6 +8,9 @@ param(
     [int]$DurationSeconds = 10,
     [switch]$CollectResources,
     [switch]$ReplayTimeMarkers,
+    [switch]$SystemAudio,
+    [ValidateRange(0, 432000)]
+    [int]$AudioFaultAfterTicks = 0,
     [switch]$KeepTargetVisible,
     [ValidateRange(1, 60)]
     [int]$ResourceSampleSeconds = 5,
@@ -20,6 +23,10 @@ Set-StrictMode -Version Latest
 
 if ($ReplayTimeMarkers -and ($Scenario -ne "steady" -or $Interruption -ne "none")) {
     throw "Replay-time markers require the steady scenario without an interruption."
+}
+if ($SystemAudio -and $ReplayTimeMarkers) { throw "System audio and injected fixture PCM are separate fixture inputs." }
+if ($AudioFaultAfterTicks -gt 0 -and (-not $SystemAudio -or $AudioFaultAfterTicks -ge $DurationSeconds * 60)) {
+    throw "The audio fault requires system capture and a tick before the normal stop boundary."
 }
 if ($ReplayTimeMarkers -and ($DurationSeconds -lt 6 -or $DurationSeconds -gt 120)) {
     throw "Replay-time marker verification requires a duration from 6 through 120 seconds."
@@ -314,6 +321,8 @@ public static class QueueBackNativeFixtureExecutionState {
         "--output", $video,
         "--duration-seconds", $DurationSeconds
     )
+    if ($SystemAudio) { $captureArguments += "--system-audio" }
+    if ($AudioFaultAfterTicks -gt 0) { $captureArguments += @("--fail-audio-after-ticks", [string]$AudioFaultAfterTicks) }
     if ($ReplayTimeMarkers) {
         if (-not $markerEndpoint -or $null -eq $markerGeneration) {
             throw "The native fixture did not publish its marker endpoint and generation."

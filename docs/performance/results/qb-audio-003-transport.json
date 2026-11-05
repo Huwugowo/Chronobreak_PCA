@@ -1,0 +1,1905 @@
+{
+  "schema_version": 1,
+  "feature": "QB-AUDIO-003",
+  "date": "2026-11-02",
+  "purpose": "One focused planning transport experiment, not product implementation or WASAPI/NVENC verification",
+  "runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+  "runtime_verification": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/media_runtime/verify.ps1 -RuntimeRoot build/media-runtime/windows-x86_64 (passed)",
+  "driver": "build/perf/qb-audio-003-transport/experiment.py",
+  "driver_sha256": "2737336ffb3bcfe7e26c1be0e3e295f26f6edd5b45452d3798ccd6399f59ffb6",
+  "source": "Generated 256x192, 360-frame, 60-fps H.264 with no B frames; silent f32le 48k stereo; no user media",
+  "limitations": [
+    "No WASAPI activation, WGC/NVENC run, production finalizer invocation, CPU or memory-budget proof.",
+    "First batch first_audio_mux_packet detector matched demuxer accidentally: those rows prove prefix closure during input processing, not closure after AAC output.",
+    "The 170642 detector correction failed to match the runtime log format; these two retained trials ran to full EOF, not the named early closure.",
+    "The 170830 batch used the correct aost#/muxer <- signature and proves closure after actual AAC output.",
+    "No claim about arbitrary OS write failures or shared-process isolation.",
+    "The 171507 pre-video handshake trial split the 4096-frame prefix across smaller writes; it timed out with zero video, preserving the failed attempt. The 171603 trial sent a single 32768-byte prefix and completed the handshake before video with all 360 frames.",
+    "The fallback row injects no audio connection after spawn, reaps that child with zero video bytes, and sends all generated video to one video-only replacement; production connect/partial-write cancellation and strict finalizer remain integration checks."
+  ],
+  "runs": [
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-165738",
+      "results": [
+        {
+          "name": "zero_pcm",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 0,
+          "events": [
+            [
+              0.0268,
+              "pipe_connected"
+            ],
+            [
+              0.0271,
+              "audio_handle_closed"
+            ],
+            [
+              5.9859,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 0,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-e8336ecf34f9484496ba00f9804a971d",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\zero_pcm\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.994,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 288000,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 0,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "one_frame",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 8,
+          "events": [
+            [
+              0.0271,
+              "pipe_connected"
+            ],
+            [
+              0.0272,
+              "audio_handle_closed"
+            ],
+            [
+              0.3794,
+              "first_audio_mux_packet"
+            ],
+            [
+              5.9986,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 1,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-18c475fe80bb4395bea90c7968eb0c68",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\one_frame\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.003,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 1025,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 2,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "probe_prefix",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 76800,
+          "events": [
+            [
+              0.0273,
+              "pipe_connected"
+            ],
+            [
+              0.3724,
+              "audio_handle_closed"
+            ],
+            [
+              0.3726,
+              "first_audio_mux_packet"
+            ],
+            [
+              5.9874,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 2400,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-1f1f539dd1d44640b4e58392172a6f45",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\probe_prefix\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.992,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 10624,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 11,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "normal_eof",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 115200,
+          "events": [
+            [
+              0.0277,
+              "pipe_connected"
+            ],
+            [
+              0.385,
+              "first_audio_mux_packet"
+            ],
+            [
+              0.3877,
+              "normal_encoding_audio_close"
+            ],
+            [
+              0.3877,
+              "audio_handle_closed"
+            ],
+            [
+              5.9955,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 2400,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-364b849086c64ed481b69be51337e4fa",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\normal_eof\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.001,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 15424,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 16,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "normal_torn_frame",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 115204,
+          "events": [
+            [
+              0.0253,
+              "pipe_connected"
+            ],
+            [
+              0.3848,
+              "first_audio_mux_packet"
+            ],
+            [
+              0.3873,
+              "normal_encoding_audio_close"
+            ],
+            [
+              0.3873,
+              "audio_handle_closed"
+            ],
+            [
+              5.9839,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 2400,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-579e2a337223404ba09581d5406ab321",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\normal_torn_frame\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.989,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 15424,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 16,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "probe_disconnect",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 76800,
+          "events": [
+            [
+              0.0289,
+              "pipe_connected"
+            ],
+            [
+              0.3855,
+              "server_disconnect"
+            ],
+            [
+              0.3855,
+              "audio_handle_closed"
+            ],
+            [
+              0.3862,
+              "first_audio_mux_packet"
+            ],
+            [
+              5.9938,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 2400,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-1f15570d670b48b4bdaf4efe5ca82502",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\probe_disconnect\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.007,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 10624,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 11,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "lead_default_probe",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "audio_bytes_written": 2304000,
+          "events": [
+            [
+              0.0286,
+              "pipe_connected"
+            ],
+            [
+              0.3758,
+              "first_audio_mux_packet"
+            ],
+            [
+              5.9531,
+              "audio_handle_closed"
+            ],
+            [
+              5.9989,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 2400,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.1",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-97511cd87a484ae0a927e12eccc16d0a",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-165738\\lead_default_probe\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.005,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 289024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 283,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        }
+      ]
+    },
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-170138",
+      "results": [
+        {
+          "name": "early_half_frame",
+          "lowprobe": false,
+          "video_packets_written": 23,
+          "mux_progress_frames": 1,
+          "audio_bytes_written": 4,
+          "events": [
+            [
+              0.0258,
+              "pipe_connected"
+            ],
+            [
+              0.0259,
+              "audio_handle_closed"
+            ],
+            [
+              0.3768,
+              "first_audio_mux_packet"
+            ],
+            [
+              0.3818,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 0,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-85c815b50e6d47ceac0052ecf703c9b0",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170138\\early_half_frame\\out.mp4"
+          ],
+          "exit": 69,
+          "elapsed": 0.382,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 256,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 800,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 1,
+          "audio_packets": 0,
+          "video_grid_exact": false,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "lead_video_delayed",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 2304000,
+          "events": [
+            [
+              0.0243,
+              "pipe_connected"
+            ],
+            [
+              1.1269,
+              "first_audio_mux_packet"
+            ],
+            [
+              6.3667,
+              "audio_handle_closed"
+            ],
+            [
+              6.7382,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 24000,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-0f825b07f7d64db3915856425b115c9a",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170138\\lead_video_delayed\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.742,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 289024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 283,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "lead_video_paused",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 768000,
+          "events": [
+            [
+              0.0242,
+              "pipe_connected"
+            ],
+            [
+              0.3725,
+              "first_audio_mux_packet"
+            ],
+            [
+              4.2745,
+              "lead_wait_expired_clean_eof"
+            ],
+            [
+              4.2745,
+              "audio_handle_closed"
+            ],
+            [
+              7.4929,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 24000,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-baa7bec7b24c4a128b5fbe24cbb6a246",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170138\\lead_video_paused\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 7.498,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 97024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 95,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "lead_mux_progress",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 2304000,
+          "events": [
+            [
+              0.0244,
+              "pipe_connected"
+            ],
+            [
+              0.3858,
+              "first_audio_mux_packet"
+            ],
+            [
+              5.9637,
+              "audio_handle_closed"
+            ],
+            [
+              5.9942,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 24000,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-5c6a25b7036e4e2fbf11fe4945c9c07c",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170138\\lead_mux_progress\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.999,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 289024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 283,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        }
+      ]
+    },
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-170642",
+      "results": [
+        {
+          "name": "normal_aac_eof",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 2304000,
+          "events": [
+            [
+              0.0237,
+              "pipe_connected"
+            ],
+            [
+              5.9584,
+              "audio_handle_closed"
+            ],
+            [
+              5.9887,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 31200,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-a015a5f2d2ee4884aa4fa4956f5283c6",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170642\\normal_aac_eof\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.993,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 289024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 283,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "normal_aac_torn_frame",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 2304000,
+          "events": [
+            [
+              0.0265,
+              "pipe_connected"
+            ],
+            [
+              5.962,
+              "audio_handle_closed"
+            ],
+            [
+              5.9928,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 31200,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-2765361a9432410e99b81edc790e1dc6",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170642\\normal_aac_torn_frame\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.999,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 289024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 283,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        }
+      ]
+    },
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-170830",
+      "results": [
+        {
+          "name": "normal_aac_eof",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 172800,
+          "events": [
+            [
+              0.0247,
+              "pipe_connected"
+            ],
+            [
+              0.3913,
+              "first_audio_mux_packet"
+            ],
+            [
+              0.4105,
+              "normal_encoding_audio_close"
+            ],
+            [
+              0.4105,
+              "audio_handle_closed"
+            ],
+            [
+              5.9838,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 21600,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-595d27b2925a4c3081c69479859ca878",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170830\\normal_aac_eof\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 5.992,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 22624,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 23,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        },
+        {
+          "name": "normal_aac_torn_frame",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 172804,
+          "events": [
+            [
+              0.0251,
+              "pipe_connected"
+            ],
+            [
+              0.3855,
+              "first_audio_mux_packet"
+            ],
+            [
+              0.4032,
+              "normal_encoding_audio_close"
+            ],
+            [
+              0.4033,
+              "audio_handle_closed"
+            ],
+            [
+              5.985,
+              "video_input_eof"
+            ]
+          ],
+          "max_audio_lead_frames": 21600,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-119f5a07b72f494197a649b685264b33",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-170830\\normal_aac_torn_frame\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.0,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 22624,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 23,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        }
+      ]
+    },
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-171507",
+      "results": [
+        {
+          "name": "handshake_before_video",
+          "lowprobe": false,
+          "video_packets_written": 0,
+          "mux_progress_frames": 0,
+          "audio_bytes_written": 192000,
+          "events": [
+            [
+              0.0239,
+              "pipe_connected"
+            ],
+            [
+              2.0322,
+              "lead_wait_expired_clean_eof"
+            ],
+            [
+              2.0323,
+              "audio_handle_closed"
+            ]
+          ],
+          "max_audio_lead_frames": 24000,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-cdcd227168874d798faf6e9878364874",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-171507\\handshake_before_video\\out.mp4"
+          ],
+          "video_error": "AssertionError('initial prefix handshake timeout')",
+          "exit": 4294967274,
+          "elapsed": 2.04,
+          "probe_error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 00000221720e2040] moov atom not found\r\nC:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-171507\\handshake_before_video\\out.mp4: Invalid data found when processing input\r\n"
+        }
+      ]
+    },
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-171603",
+      "results": [
+        {
+          "name": "handshake_before_video",
+          "lowprobe": false,
+          "video_packets_written": 360,
+          "mux_progress_frames": 360,
+          "audio_bytes_written": 2304000,
+          "events": [
+            [
+              0.0255,
+              "pipe_connected"
+            ],
+            [
+              0.0257,
+              "complete_prefix_before_video"
+            ],
+            [
+              0.3877,
+              "first_audio_mux_packet"
+            ],
+            [
+              5.9951,
+              "video_input_eof"
+            ],
+            [
+              5.9953,
+              "audio_handle_closed"
+            ]
+          ],
+          "max_audio_lead_frames": 23296,
+          "argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-audio-plan-abc5868e41d34ce7aa082ac7da07d302",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-171603\\handshake_before_video\\out.mp4"
+          ],
+          "exit": 0,
+          "elapsed": 6.003,
+          "streams": [
+            {
+              "index": 0,
+              "codec_type": "video",
+              "codec_name": "h264",
+              "time_base": "1/15360",
+              "start_pts": 0,
+              "duration_ts": 92160,
+              "sample_rate": null
+            },
+            {
+              "index": 1,
+              "codec_type": "audio",
+              "codec_name": "aac",
+              "time_base": "1/48000",
+              "start_pts": 0,
+              "duration_ts": 289024,
+              "sample_rate": "48000"
+            }
+          ],
+          "video_frames": 360,
+          "audio_packets": 283,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "decode_errors": ""
+        }
+      ]
+    },
+    {
+      "directory": "build/perf/qb-audio-003-transport/20261102-fallback",
+      "results": [
+        {
+          "name": "post_spawn_no_connect_video_only_retry",
+          "initial_argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-hide_banner",
+            "-loglevel",
+            "verbose",
+            "-debug_ts",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:1",
+            "-thread_queue_size",
+            "32",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "\\\\.\\pipe\\cb-plan-fallback-ab75bf88dc5342a9b6be769474f7c806",
+            "-thread_queue_size",
+            "32",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "1:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-avoid_negative_ts",
+            "disabled",
+            "-max_interleave_delta",
+            "250000",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-fallback\\unused.mp4"
+          ],
+          "retry_argv": [
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\media-runtime\\windows-x86_64\\bin\\ffmpeg.exe",
+            "-v",
+            "error",
+            "-use_wallclock_as_timestamps",
+            "1",
+            "-r",
+            "60",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "copy",
+            "-bsf:v",
+            "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+            "-avoid_negative_ts",
+            "disabled",
+            "-flush_packets",
+            "1",
+            "-movflags",
+            "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+            "C:\\Users\\Hugo\\Documents\\perso\\Chronobreak\\build\\perf\\qb-audio-003-transport\\20261102-fallback\\out.mp4"
+          ],
+          "initial_video_bytes": 0,
+          "initial_child_exit": 1,
+          "retry_count": 1,
+          "maximum_live_children": 1,
+          "exit": 0,
+          "video_frames": 360,
+          "audio_streams": 0,
+          "video_grid_exact": true,
+          "decode_exit": 0,
+          "elapsed": 0.40119619999313727
+        }
+      ]
+    }
+  ]
+}
