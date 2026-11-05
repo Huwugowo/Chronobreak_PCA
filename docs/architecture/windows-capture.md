@@ -44,6 +44,9 @@ bounded common finalization probe. FFmpeg remains the correct implementation for
 muxing, probing, export/transcoding, and fixture tooling; those uses are not recorder
 backends.
 
+The generated silence input follows video EOF via `-shortest`. System PCM can
+close early while video continues, and video-only capture opens no audio input.
+
 System audio has two independent owners: an MTA WASAPI capture thread, started
 before WGC without waiting for endpoint activation, and an event-driven PCM writer.
 Packet storage is pooled (2 MiB plus one 32-KiB coalescing buffer); pre-epoch queued
@@ -54,6 +57,10 @@ contiguous device positions preserve a run. The fixed delivery allowance is 250 
 Silence inferred after that allowance, confirmed silent packets, discarded/late
 valid frames and timing residuals are distinct counters; late sound is degraded
 coverage, never a promise that waiting guarantees packet availability.
+An active endpoint with no packets counts as inferred idle, even before its first
+packet. Known unavailable fill and lost startup coverage degrade the saved audio
+outcome. Intentional capture shutdown retains the last availability state for the
+final PCM drain.
 
 The writer opens a private 32-KiB named pipe and supplies one complete 4,096-frame
 prefix before video production. Its minimum post-epoch readiness is about 335 ms;

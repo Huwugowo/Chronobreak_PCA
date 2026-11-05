@@ -91,8 +91,14 @@ impl PcmPipe {
     ) -> Result<u32> {
         loop {
             let remaining = deadline().saturating_duration_since(Instant::now());
-            let millis =
-                u32::try_from(remaining.as_millis().saturating_add(1)).unwrap_or(u32::MAX - 1);
+            let millis = if remaining.is_zero() {
+                0
+            } else {
+                remaining
+                    .as_millis()
+                    .saturating_add(1)
+                    .min(u128::from(u32::MAX - 1)) as u32
+            };
             // SAFETY: both handles/operation stay owned and stable for the entire wait.
             let wait =
                 unsafe { WaitForMultipleObjects(&[self.event.handle(), wake], false, millis) };
@@ -104,16 +110,16 @@ impl PcmPipe {
                 }
                 return Ok(count);
             }
-            if wait == WAIT_TIMEOUT && Instant::now() >= deadline() {
-                // Cancellation is not completion. Retain the operation, buffer and event
-                // until the OS acknowledges; this owner has no GPU/video ownership.
-                let count = self.cancel_and_complete(operation);
-                bail!("PCM pipe deadline expired (completed {count} bytes)");
-            }
             if wait != WAIT_TIMEOUT && wait.0 != WAIT_OBJECT_0.0 + 1 {
                 let error = std::io::Error::last_os_error();
                 self.cancel_and_complete(operation);
                 return Err(error).context("PCM pipe wait failed");
+            }
+            if Instant::now() >= deadline() {
+                // Cancellation is not completion. Retain the operation, buffer and event
+                // until the OS acknowledges; this owner has no GPU/video ownership.
+                let count = self.cancel_and_complete(operation);
+                bail!("PCM pipe deadline expired (completed {count} bytes)");
             }
         }
     }
@@ -208,7 +214,7 @@ mod tests {
             released.recv_timeout(Duration::from_secs(5)).unwrap();
             bytes
         });
-        let wake = Event::new(false).unwrap();
+        let wake = Event::new(true).unwrap();
         pipe.connect(wake.handle(), || Instant::now() + Duration::from_secs(1))
             .unwrap();
         let block = vec![0x55; 65_536];
@@ -216,8 +222,10 @@ mod tests {
         pipe.write(&block, wake.handle(), || deadline).unwrap();
         pipe.write(&block, wake.handle(), || deadline).unwrap();
         // The actual reader now waits without consuming the pipe. This third
-        // write exceeds its 32-KiB capacity and must be cancelled/acknowledged.
-        let stop = Instant::now() + Duration::from_millis(100);
+        // write exceeds its capacity. A permanently signaled wake must not
+        // outrank the expired deadline while the actual I/O is still pending.
+        wake.set();
+        let stop = Instant::now();
         let result = pipe.write(&block, wake.handle(), || stop);
         release.send(()).unwrap();
         let bytes = reader.join().unwrap();

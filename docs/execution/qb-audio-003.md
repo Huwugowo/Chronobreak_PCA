@@ -2,7 +2,7 @@
 
 Feature: `QB-AUDIO-003`
 ExecPlan: `docs/exec-plans/qb-audio-003-wasapi-system-loopback-v4.md`
-Updated: 2026-11-04
+Updated: 2026-11-05
 
 ## Current milestone
 
@@ -10,13 +10,14 @@ Milestones 1–3 implemented; milestone 4 integration checks and hardware-depend
 
 ## Active unit
 
-Finish affected-code validation/release builds and retain exact results. Core transport, capture, session integration, strict finalization/recovery and optional metadata are implemented. Native WGC/NVENC acceptance is environment-blocked on the generated window’s non-NVENC adapter; do not reopen the approved design or mark the feature done.
+The implementation review of `cfd9b84` is resolved and verified. The remaining unit is hardware-dependent acceptance on a supported same-adapter WGC/NVENC target.
 
 ## Completed
 
 - Implemented native MTA WASAPI capture/notifications/retry, pooled bounded pre-roll, event-driven PCM pump, signed QPC/run mapping and accountable fill/loss. Private overlapped transport supplies the complete prefix, bounded lead, actual pending-I/O EOF escape and final-stop reservation.
 - Capture begins before WGC; deferred writer creation overlaps PCM readiness with NVENC registration while preserving epoch/CFR. Bootstrap fallback reaps the first child before one video-only retry. Invalid obsolete device requests are nonfatal video-only.
 - Integrated required/optional/absent audio, nonzero AAC sample runs, exact staged recovery, strict optional capture.audio and app-save preservation. Updated affected capture/lifecycle/recorder documentation. Immutable plans/transport evidence remain unchanged.
+- Restored `-shortest` for the native mux's generated silence input. Owned PCM can reach EOF early without stopping video. Count healthy no-packet coverage as inferred idle, preserve the last availability during intentional stop, and degrade saved AAC for known unavailable or startup fill. A wake signal cannot postpone cancellation of pending PCM I/O past its deadline.
 
 - Completed the original one-track planning investigation: DirectShow discovery/silence fallback, native mux, WGC epoch, session lifecycle, metadata and Microsoft WASAPI contracts.
 - Read the user's full engineering review and reread the mandatory canonical feature/checkpoint/plan and workflow/verification/architecture contracts.
@@ -33,7 +34,7 @@ Finish affected-code validation/release builds and retain exact results. Core tr
 
 ## In flight
 
-No code/check process remains running. Final recorder and desktop release builds passed. Milestones 1–3 are implemented and automated integration/builds pass. Hardware-dependent acceptance remains incomplete; status stays in-progress. Results are retained in `build/perf/qb-audio-003-implementation/implementation-results.json` and referenced logs/artifacts.
+No check process remains running. Prior integration/build evidence is retained in `build/perf/qb-audio-003-implementation/implementation-results.json`; it predates this follow-up. The affected-code follow-up checks passed as recorded below.
 
 ## Remaining
 
@@ -43,6 +44,9 @@ No code/check process remains running. Final recorder and desktop release builds
 - No additional acceptance framework, long soak or performance campaign is needed.
 
 ## Verification
+
+- 2026-11-05 review follow-up: `cargo test --locked --manifest-path recorder/Cargo.toml --all-features --lib packaged_silent_and_video_only_mux_finish_after_video_eof -- --ignored --nocapture` passed with `QUEUEBACK_TEST_MEDIA_RUNTIME` set to the staged r6 runtime. Both modes closed through `NativeMuxProcess::finish`, retained all 120 exact-CFR frames at 60 FPS and passed production media validation (required nonempty AAC for silence, absent audio for video-only). The first restricted run reached video-only validation but could not open a read-only ancestor pin; the same test passed with normal access. This generated H.264 regression requires no capture hardware.
+- 2026-11-05 review follow-up: the `native::` suite passed (99 passed / 7 ignored), including real blocked-video EOF and pending PCM cancellation with a continuously signaled wake. `poller::` passed (33 passed / 5 ignored), including saved outcome reconciliation. Recorder rustfmt and all-target/all-feature Clippy passed.
 
 - Final audio hot path avoids repeated outcome-string allocation and packet-arrival pump wakeups: packets do not advance fixed due-time or the video cap. The affected native suite passed again (97 passed / 6 ignored) and final recorder Clippy passed. Both recorder and desktop release outputs rebuilt successfully against this final change.
 - Latest actual endpoint run uses the precompiled ignored test and starts playback only after the real 32-KiB prefix is observed, avoiding compiler/startup timing assumptions. `build/perf/qb-audio-003-implementation/endpoint-synchronized-1793829459105623500/` retains source WAV, raw PCM, counters and analysis. Both distinct source tones are present; the 4:1 channel-isolation assertion failed with cross-channel energy (cause not established), and other background playback prevents an endpoint-quiet claim. Observed 206,400 frames, zero late loss, max delivery delay ~3.595 ms, max residual 2 frames, raw tail 4,096 frames in this simulated-progress audio-only fixture. It is not actual WGC/NVENC/AAC evidence.

@@ -108,6 +108,14 @@ impl Shared {
         self.flow.wake.set();
     }
 
+    fn capture_unavailable(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // Keep the last endpoint state during the intentional final drain.
+        if state.stop.is_none() {
+            state.available = false;
+        }
+    }
+
     fn owner_returned(&self) {
         if self.retained.load(Ordering::Acquire)
             && self
@@ -163,11 +171,7 @@ impl NativeAudio {
                 if let Err(e) = capture::run(&owner) {
                     owner.error(e);
                 }
-                owner
-                    .state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .available = false;
+                owner.capture_unavailable();
                 owner.owner_returned();
             })?;
         Ok(Self {
@@ -559,7 +563,7 @@ fn assemble(
     while cursor < end {
         let Some(mut packet) = s.queue.pop_front() else {
             let missing = end - cursor;
-            count_fill(&mut s, cursor, missing, valid_frames);
+            count_fill(&mut s, cursor, missing);
             output.resize(output.len() + missing as usize * 8, 0);
             break;
         };
@@ -613,7 +617,7 @@ fn assemble(
         }
         if slot > cursor as i64 {
             let gap = (slot as u64).min(end) - cursor;
-            count_fill(&mut s, cursor, gap, valid_frames);
+            count_fill(&mut s, cursor, gap);
             output.resize(output.len() + gap as usize * 8, 0);
             cursor += gap;
         }
@@ -658,14 +662,12 @@ fn assemble(
     Ok((valid_frames, non_silent_frames))
 }
 
-fn count_fill(state: &mut State, cursor: u64, frames: u64, valid_in_block: u64) {
+fn count_fill(state: &mut State, cursor: u64, frames: u64) {
     let startup_loss = frames.min(state.startup_loss_until.saturating_sub(cursor));
     state.summary.startup_missing_frames += startup_loss;
     let other = frames - startup_loss;
     if !state.available {
         state.summary.unavailable_fill_frames += other;
-    } else if state.summary.valid_written_frames == 0 && valid_in_block == 0 {
-        state.summary.startup_missing_frames += other;
     } else {
         state.summary.inferred_idle_frames += other;
     }
@@ -760,6 +762,26 @@ mod tests {
         assert_eq!(state.summary.late_non_silent_frames, 480);
         assert_eq!(state.summary.late_packets, 1);
         assert_eq!(state.summary.discontinuities, 1);
+    }
+
+    #[test]
+    fn quiet_activated_capture_is_inferred_idle_even_during_final_drain() {
+        let shared = state();
+        shared.state.lock().unwrap().available = true;
+        let mut bytes = Vec::new();
+        let mut run = None;
+        assert_eq!(
+            assemble(&shared, 1_000_000, 0, 4096, &mut bytes, &mut run).unwrap(),
+            (0, 0)
+        );
+        shared.state.lock().unwrap().stop = Some((4800, Instant::now()));
+        shared.capture_unavailable();
+        assemble(&shared, 1_000_000, 4096, 4800, &mut bytes, &mut run).unwrap();
+        assert_eq!(bytes, vec![0; 4800 * 8]);
+        let s = shared.state.lock().unwrap();
+        assert_eq!(s.summary.inferred_idle_frames, 4800);
+        assert_eq!(s.summary.startup_missing_frames, 0);
+        assert_eq!(s.summary.unavailable_fill_frames, 0);
     }
     #[test]
     fn silent_packet_never_dereferences_samples_and_split_keeps_ownership() {

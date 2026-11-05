@@ -135,6 +135,8 @@ impl AudioCaptureSummaryV1 {
             || finite
             || self.late_valid_frames > 0
             || self.discarded_frames > 0
+            || self.unavailable_fill_frames > 0
+            || self.startup_missing_frames > 0
             || self.last_error.is_some()
         {
             "degraded"
@@ -476,6 +478,33 @@ mod tests {
     fn calibration_uses_the_middle_sample() {
         let mut candidates = [142_303, 142_301, 180_000, 142_302, 142_300];
         assert_eq!(median(&mut candidates).unwrap(), 142_302);
+    }
+
+    #[test]
+    fn captured_aac_with_known_missing_coverage_is_degraded() {
+        let timeline = test_media_timeline(MediaId::new_v4());
+        let end = timeline.video.replay_end.get();
+        let mut audio = timeline.audio;
+        audio.present = true;
+        audio.replay_end =
+            Some(chronobreak_replay_time::SignedReplayTick::new(end as i64).unwrap());
+        for (idle, unavailable, startup, expected) in [
+            (480, 0, 0, "captured"),
+            (0, 480, 0, "degraded"),
+            (0, 0, 480, "degraded"),
+        ] {
+            let mut summary = AudioCaptureSummaryV1 {
+                valid_written_frames: 960,
+                non_silent_written_frames: 960,
+                inferred_idle_frames: idle,
+                unavailable_fill_frames: unavailable,
+                startup_missing_frames: startup,
+                ..Default::default()
+            };
+            summary.reconcile(&audio, end);
+            assert_eq!(summary.output, "captured_aac");
+            assert_eq!(summary.outcome, expected);
+        }
     }
 
     #[test]

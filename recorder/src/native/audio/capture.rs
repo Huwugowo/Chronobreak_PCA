@@ -185,11 +185,7 @@ fn capture_recover(
             active,
         );
         client_generation += 1;
-        shared
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .available = false;
+        shared.capture_unavailable();
         *active.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if shared
             .state
@@ -286,7 +282,9 @@ fn capture_client(
     }
     {
         let mut s = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-        s.available = true;
+        if s.stop.is_none() {
+            s.available = true;
+        }
         s.summary.reopen_count = s.activations;
         s.activations += 1;
     }

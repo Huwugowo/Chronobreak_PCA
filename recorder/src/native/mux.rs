@@ -101,6 +101,14 @@ impl NativeMuxPlan {
                 &["-map", audio_map, "-c:a", "aac", "-b:a", "192k"],
             );
         }
+        // Generated silence has no EOF of its own. Finite PCM may end early
+        // while native video is still recording.
+        if matches!(
+            audio,
+            AudioSource::Silent | AudioSource::AvFoundationCombined
+        ) {
+            arguments.push("-shortest".into());
+        }
         push_args(&mut arguments, &["-c:v", "copy", "-bsf:v"]);
         arguments.push(
             format!("setts=pts=N:dts=N:duration=1:time_base=1/{frames_per_second}:prescale=1")
@@ -1313,9 +1321,126 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["-movflags", FRAGMENTED_MP4_FLAGS])
         );
-        assert!(!arguments.iter().any(|argument| argument == "-shortest"));
+        assert!(arguments.iter().any(|argument| argument == "-shortest"));
         assert_eq!(arguments.last().map(String::as_str), Some("native.mp4"));
         assert_eq!(plan.output(), Path::new("native.mp4"));
+    }
+
+    #[test]
+    fn finite_pcm_and_video_only_do_not_stop_at_audio_eof() {
+        let output = Path::new("native.mp4");
+        let pcm =
+            NativeMuxPlan::h264(60, &AudioSource::NativePcm("fixture".into()), output).unwrap();
+        assert!(!pcm.arguments().iter().any(|arg| arg == "-shortest"));
+
+        let video =
+            NativeMuxPlan::h264(60, &AudioSource::Unavailable("fixture".into()), output).unwrap();
+        let arguments = strings(&video);
+        assert_eq!(arguments.iter().filter(|arg| *arg == "-i").count(), 1);
+        assert!(arguments.windows(2).any(|pair| pair == ["-map", "0:v:0"]));
+        for audio_option in ["-shortest", "-c:a", "-b:a"] {
+            assert!(!arguments.iter().any(|arg| arg == audio_option));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires QUEUEBACK_TEST_MEDIA_RUNTIME; generated temporary media only"]
+    async fn packaged_silent_and_video_only_mux_finish_after_video_eof() {
+        use chronobreak_replay_time::{
+            AudioExpectation, FinalizationExpectationsV2, FrameBoundary, MediaId,
+            ProducerEvidenceV2, Rational,
+        };
+
+        use crate::finalizer::{CompletedVideoCandidate, validate_candidate};
+
+        let runtime = PathBuf::from(std::env::var_os("QUEUEBACK_TEST_MEDIA_RUNTIME").unwrap());
+        let tools = queueback_media_runtime::resolve_root(&runtime)
+            .await
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("source.h264");
+        let encode = Command::new(tools.ffmpeg())
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=1920x1080:rate=60:duration=2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-threads",
+                "1",
+                "-profile:v",
+                "high",
+                "-bf",
+                "0",
+                "-g",
+                "30",
+                "-f",
+                "h264",
+            ])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            encode.status.success(),
+            "{}",
+            String::from_utf8_lossy(&encode.stderr)
+        );
+        let annex_b = std::fs::read(input).unwrap();
+        let rate = Rational::new(60, 1).unwrap();
+        let count = FrameBoundary::new(120).unwrap();
+
+        for (label, source, expected_audio) in [
+            (
+                "video-only",
+                AudioSource::Unavailable("fixture".into()),
+                AudioExpectation::Absent,
+            ),
+            (
+                "silent",
+                AudioSource::Silent,
+                AudioExpectation::RequiredCodec("aac".into()),
+            ),
+        ] {
+            let output = directory.path().join(format!("{label}.partial.mp4"));
+            let plan = NativeMuxPlan::h264(60, &source, &output).unwrap();
+            let mut mux = NativeMuxProcess::start(tools.ffmpeg(), &plan).unwrap();
+            let mut writer = mux.take_video_writer().unwrap();
+            writer.write_all(&annex_b).unwrap();
+            writer.flush().unwrap();
+            drop(writer);
+
+            let telemetry = mux
+                .finish()
+                .unwrap_or_else(|error| panic!("{label}: {error:#}"));
+            assert_eq!(telemetry.encoded_frames, count.get(), "{label}");
+            let candidate =
+                CompletedVideoCandidate::new(directory.path().into(), output, rate, count).unwrap();
+            let validated = validate_candidate(
+                tools.ffprobe(),
+                candidate,
+                FinalizationExpectationsV2 {
+                    media_id: MediaId::new_v4(),
+                    expected_video_codec: "h264".into(),
+                    expected_audio,
+                    producer: ProducerEvidenceV2 {
+                        backend: "native-mux-fixture".into(),
+                        expected_frame_rate: rate,
+                        expected_frame_count: count,
+                        media_runtime_id: tools.runtime_id().into(),
+                    },
+                    capture: None,
+                    require_zero_video_start: true,
+                },
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{label}: {error:#}"));
+            assert!(validated.timeline().video.exact_cfr, "{label}");
+        }
     }
     #[cfg(feature = "replay-time-fixture")]
     #[test]
