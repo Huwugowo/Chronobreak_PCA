@@ -5210,17 +5210,19 @@
       "dependencies": [],
       "execution": {"workflow": "direct", "plan": null},
       "acceptance_criteria": [
-        "A local Criterion target measures production ten-player telemetry decoding and validation of a bounded committed journal page using deterministic in-memory inputs.",
+        "A local Criterion target measures production decoding of a ten-player midgame roster reconstructed from captured telemetry and validation of a bounded committed journal page using deterministic in-memory inputs.",
         "The target is development-only. Existing recorder, replay and application benchmarks stay intact, with no automatic performance gate.",
-        "The verification guide shows how to run the target and compare against a saved baseline using the same inputs. Both commands are exercised successfully."
+        "The verification guide shows how to run the target and compare against a saved baseline using the same inputs. Both commands are exercised successfully, and a bounded same-build check documents repeatability and its limits."
       ],
       "verification": [
         {"type": "benchmark", "description": "Save a named baseline for both cases and rerun them against it.", "command": "cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data -- --save-baseline before"},
+        {"type": "benchmark", "description": "Inspect the original roster samples and run bounded same-build controls on the original and updated workloads. Retain the samples and comparison limits."},
         {"type": "automated", "description": "Run shared League-data formatting, strict all-target Clippy, locked all-target tests, and canonical validation."}
       ],
       "evidence": [
-        "2026-11-06 on Windows with Rust 1.97.1: optimized Criterion runs saved and compared the named baseline for both cases. The same-build comparison showed approximately 46% mean variation for roster decode, so the results verify the comparison workflow only. The verification guide documents local noise checks.",
-        "League-data formatting, strict all-target Clippy, 33 locked tests and both benchmark smoke cases passed. Criterion is a dev dependency and the existing benchmark runners and CI workflow were untouched."
+        "2026-11-06 on Windows with Rust 1.97.1: the original optimized cases saved and compared baselines. The historical roster sample mean moved from 144.0 to 209.7 microseconds. An unpinned rerun of the original executable reproduced a smaller 12.45% mean shift, with process CPU per iteration moving from 164.6 to 183.2 microseconds and closely tracking elapsed time. The exact historical host cause is unknown. Raw rerun: build/perf/criterion-roster-original-20261106-165513.",
+        "The new fixture reconstructs and anonymizes Swiftplay observation 1412, with ten players and 53 item entries. Two comparisons against one baseline for the same optimized executable on one logical CPU yielded mean changes of -0.75% (95% interval -3.60% to +1.67%) and +0.12% (-2.84% to +2.50%). This supports changes larger than the local noise when repeated under matched conditions. Raw runs: build/perf/criterion-roster-midgame-20261106-165943.",
+        "League-data formatting, strict all-target Clippy, 33 locked tests, both benchmark smoke cases, and the optimized benchmark build passed for the updated fixture. Criterion remains a dev dependency."
       ],
       "notes": "Direct benchmark-only work using existing public APIs and checked-in fixtures."
     }

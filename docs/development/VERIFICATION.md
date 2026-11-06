@@ -427,19 +427,23 @@ The complete live matrix remains an interactive Windows/League check; follow the
 
 ### Local Rust microbenchmarks
 
-Criterion measures two CPU operations in `league-data`. `live_player_list_10`
-decodes and normalizes a 5v5 Live Client response built from the existing endpoint
-fixture. `journal_import_page_32` reads and validates 32 committed batches from
-the checked-in Swiftplay journal, starting at the end of its first page. Fixture
-setup runs outside the timed loops. Both cases run in memory and need only Rust
-and Cargo. They complement the capture and replay protocols above, which measure
-hardware, disk, SQLite and application behavior.
+Criterion measures two in-memory operations in `league-data`.
+`live_player_list_midgame_10` decodes, normalizes and drops a ten-player roster
+with 53 item entries. Its JSON uses the Live Client field names and anonymized
+player identities. The source is the normalized Swiftplay roster at observation
+1412 (about 8:48 on the game clock) in the checked-in preprod journal for `1792431584`.
+`journal_import_page_32` validates 32 committed batches from the same journal,
+starting at the end of its first page. Fixture setup runs outside the timed loops.
+The capture and replay protocols above measure application and hardware behavior.
 
 Run from the repository root. Save the baseline before changing the code under
 test, then compare from the same machine with the same Rust toolchain, checkout
-location, and fixtures. Prebuild each version with `--no-run` and let the machine
-settle before timing. Use a fresh baseline name for each investigation. On an
-unfamiliar machine, compare the same build twice to gauge local variation.
+location, fixtures, and power settings. Prebuild each version with `--no-run` and
+let the machine settle before timing. Use a fresh baseline name for each investigation
+and after fixture changes. Compare the same executable twice on a quiet host to gauge
+local variation. If using CPU affinity, use the same logical CPU for every run.
+Treat changes within the same-build variation as inconclusive and look for the same
+direction in repeat comparisons.
 
 ```powershell
 cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data
