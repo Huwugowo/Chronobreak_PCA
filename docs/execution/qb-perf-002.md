@@ -2,7 +2,7 @@
 
 Feature: `QB-PERF-002`
 ExecPlan: `docs/exec-plans/qb-perf-002-low-overhead-native-windows-capture-v3.md`
-Updated: 2026-11-01
+Updated: 2026-11-02
 
 ## Current milestone
 
@@ -40,6 +40,8 @@ None for the focused duplication correction; implementation, review, recorder ch
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
 
 ## Verification
+
+2026-11-02 focused real-recording investigation (no product changes): restored the November 2 release bundle intact into the configured preprod library and verified it through the freshly built actual application. User confirms the requested manual playback/event/seek checks pass. Full media decode passed previously; 51,443 output frames, 6,468 aggregate CFR duplicates, one detected full-black interval at video 71.166667–75.366667 s and a held-image end tail around 853.3–857.383333 s. Alt-Tab blackouts alone cannot account for the duplicate total; the bundle has no per-tick source/focus trace. User reports League FPS loss of 1–2 FPS during most recording, 5–10 late and approximately 50-FPS fight spikes. Available request timings show no escalating timeouts except terminal shutdown; there is no League frametime/resource/baseline series, so neither causation nor negligible overhead is established. Full-history event polling remains a bounded investigation lead, not a diagnosed defect. The local evidence under `build/analysis/` includes `follow-up-analysis.md`, `frame-scan-summary.json`, and `near-static-periods.csv`. No benchmark campaign or recorder architecture/EOG change was undertaken.
 
 Restart assumptions from the 2026-08-24 checkpoints:
 

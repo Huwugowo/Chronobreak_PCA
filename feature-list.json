@@ -1707,7 +1707,8 @@
       ],
       "evidence": [
         "2026-09-29 planning evidence only: current poller retains a subset of observed roster/local-player fields and omits FirstBlood.Recipient from the normalized event contract. docs/product/league-data-capabilities.md distinguishes available facts from unsupported all-player histories.",
-        "Existing deduplicated 10-second diagnostics establish field availability, not an optimal faster polling cadence or collection overhead budget."
+        "Existing deduplicated 10-second diagnostics establish field availability, not an optimal faster polling cadence or collection overhead budget.",
+        "2026-11-02 read-only inspection of a November 2 release recording: all 4,230 stored roster CS values are multiples of ten. At video 450 seconds the HUD shows 49 CS while adjacent local roster observations at 449.662 and 451.673 seconds retain 40. Recorded CS cannot be presented as exact HUD precision; establish collection/source precision before changing acquisition or projection. No project-side rounding was found in the bounded inspection; the upstream cause remains unverified. Archive and all six source-file SHA-256 checksums passed; the original recording is unchanged."
       ],
       "execution": {
         "workflow": "planned",
@@ -4381,7 +4382,7 @@
       ],
       "verification": [],
       "evidence": [],
-      "notes": "Discovered during QB-REPLAY-020: real Swiftplay later records Primal Smite / SummonerSmiteAvatarDefensive, absent from the cached official 16.20.1 summoner.json. Existing asset resolution reports it unavailable; the overlay retains the slot and recorded-name tooltip. All 20 normal spell icons load at replay 1:45. This asset coverage follow-up is separate from recorded overlay status. 2026-10-22 fixture preflight also finds recorded Unleashed Smite and Unleashed Teleport labels absent from selected 16.21.1 summoner manifest. Existing placeholders remain; recorded follow-up only, with Smite still deferred by user."
+      "notes": "Discovered during QB-REPLAY-020: real Swiftplay later records Primal Smite / SummonerSmiteAvatarDefensive, absent from the cached official 16.20.1 summoner.json. Existing asset resolution reports it unavailable; the overlay retains the slot and recorded-name tooltip. All 20 normal spell icons load at replay 1:45. This asset coverage follow-up is separate from recorded overlay status. 2026-10-22 fixture preflight also finds recorded Unleashed Smite and Unleashed Teleport labels absent from selected 16.21.1 summoner manifest. Existing placeholders remain; recorded follow-up only, with Smite still deferred by user. 2026-11-04 investigation of a recorded Master Yi match confirms Galio, Corki and Yorick slot two changes to Unleashed Teleport at capture 532.239094 seconds. The raw identifier is GeneratedTip_SummonerSpell_S12_SummonerTeleportUpgrade_DisplayName; recorded observations remain intact. The current 16.22.1 summoner.json has ordinary SummonerTeleport/12 but no upgraded entry. The overlay passes the recorded display name to spell_icon_filename, which rejects it; the local asset route returns 404 and ChampionFilter hides that failed image. Ordinary Teleport still resolves. Investigation only: no product/source/cache changes. A repair must use a verified matching upgraded asset through the existing bounded cache and cover forward/backward seeks across the observed transition, offline reuse and retained placeholders for truly unknown spells. Smite remains deferred."
     },
     {
       "id": "QB-CLIP-008",
@@ -4998,6 +4999,30 @@
         "Final focused mutation suite 10 passed; full backend 184 passed / 10 existing opt-in ignored; format and strict Clippy passed. Frontend check/build and 54 focused tests passed. Details: docs/execution/qb-lib-026.md."
       ],
       "notes": "F2 historical two-coordinator reproduction: docs/reviews/implicit-state-machines-2026-11-03.md. Implemented jointly with QB-LIB-025 using the existing worker-owned permit plus a distinct root-relative OS lease; export staging and recorder ownership remain separate. Verification used actual independent processes and temporary libraries, with no whole-app performance or hardware claim."
+    },
+    {
+      "id": "QB-REPLAY-026",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Background TAB scoreboard warmup",
+      "description": "Remove avoidable first-open and newly visited-position loading from the recorded TAB scoreboard through bounded source-owned background data and asset warmup.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-004", "QB-REPLAY-007", "QB-REPLAY-020"],
+      "execution": {"workflow": "planned", "plan": null, "progress": null},
+      "acceptance_criteria": [
+        "Scoreboard warmup can begin before the first Tab press without opening the panel or blocking video readiness.",
+        "Prepared scoreboard data and supported icons remain available across distant forward/backward seeks without requiring users to visit every position.",
+        "Preserve source/revision checks, bounded cache ownership, unavailable-value semantics and priority for video/seek work."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Focused existing controller/component/preloader regressions cover hidden warmup, source disposal, seek priority and retained prepared assets.", "command": null},
+        {"type": "manual", "description": "Use the restored November 2 recording to inspect first Tab and distant seeks after background preparation, distinguishing immediate cold-open limits from recurring loading.", "command": null}
+      ],
+      "evidence": [],
+      "notes": "2026-11-02 investigation: user observes visible first-Tab and new-position loading. Current behavior is explicitly lazy: controller enrichment and asset preloader start only after first open; 32-sample idle pages and image work pause during seeks with a 150ms quiet period; visible icon nodes mount on first visit. Existing background warming continues while closed after activation. This is a confirmed UX limitation of the present design, not evidence of failed recording/indexing. No implementation in this investigation; resolve readiness and visual acceptance budget before a focused plan. Source: replayOverlayController.ts, ReplayScoreboard.tsx, scoreboardPreload.ts and docs/architecture/replay-time.md."
     },
     {
       "id": "QB-LIB-027",
