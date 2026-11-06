@@ -21,6 +21,7 @@ import {
   refreshLibrary,
   loadReplayDescriptor,
   loadSettings,
+  loadStorageUsage,
   openClipsFolder,
   openOutputFolder,
   openUnmatchedRecordingsFolder,
@@ -309,6 +310,12 @@ function App() {
     }
   };
 
+  const recalculateStorage = async () => {
+    const result = await controller.recalculateStorage(loadStorageUsage);
+    if (result.admitted) showNotice("Storage totals updated.");
+    else if (result.error) showError(result.error);
+  };
+
   const rebuildLeagueData = async () => {
     const origin = controller.origin();
     if (!origin) { showError("Rebuilding requires a current library snapshot."); return; }
@@ -560,11 +567,14 @@ function App() {
               usage={usage()!}
               ddragon={ddragon() ?? emptyDdragon}
               saving={busyId() === "settings"}
+              recalculatingStorage={libraryState().busy === "storage"}
+              canRecalculateStorage={libraryState().actionable && !libraryState().busy}
               onBack={closeSettings}
               onChooseFolder={() => void chooseFolder()}
               onOpenFolder={() => void openOutputFolder().catch(showError)}
               onOpenUnmatchedFolder={() => void openUnmatchedRecordingsFolder().catch(showError)}
               archiveError={libraryState().snapshot?.archive_error}
+              onRecalculateStorage={() => void recalculateStorage()}
               onRetention={(days) => void saveSettings(settings()!.output_path, days)}
               onCleanUp={() => void cleanStorage()}
               onRebuildLeagueData={() => void rebuildLeagueData()}

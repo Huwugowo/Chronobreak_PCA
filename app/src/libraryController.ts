@@ -1,4 +1,4 @@
-import type { AppSettings, ClipDuration, ClipDurations, LibrarySnapshot } from "./types";
+import type { AppSettings, ClipDuration, ClipDurations, LibrarySnapshot, StorageUsage } from "./types";
 
 /** An action keeps this identity from selection through dispatch and completion. */
 export type LibraryOrigin = Readonly<{
@@ -60,7 +60,7 @@ export class LibraryController {
   private scanActive = false;
   private scanPending = false;
   private refreshCompletion: ((origin: LibraryOrigin | null) => void) | null = null;
-  private mutationActive = false;
+  private exclusiveActionActive = false;
   private durationActive: DurationIntent | null = null;
   private durationPending: DurationIntent | null = null;
   private durationEpoch = 0;
@@ -127,7 +127,7 @@ export class LibraryController {
     return !this.closed && this.state.root === root ? this.refresh() : Promise.resolve(null);
   }
   private pumpRefresh() {
-    if (this.closed || this.scanActive || this.mutationActive || !this.scanPending) return;
+    if (this.closed || this.scanActive || this.exclusiveActionActive || !this.scanPending) return;
     this.scanPending = false;
     this.scanActive = true;
     const request = this.state.request;
@@ -265,10 +265,10 @@ export class LibraryController {
 
   async mutate<T>(origin: LibraryOrigin, id: string, work: (token: string) => Promise<T>,
     independentExport = false): Promise<OperationResult<T>> {
-    if (!this.mayStart(origin) || (!independentExport && this.mutationActive))
+    if (!this.mayStart(origin) || (!independentExport && this.exclusiveActionActive))
       return { admitted: false, error: "The library changed. Refresh and select the item again." };
     if (!independentExport) {
-      this.mutationActive = true;
+      this.exclusiveActionActive = true;
       this.publish({ busy: id });
     }
     let value: T | undefined;
@@ -276,7 +276,7 @@ export class LibraryController {
     try { value = await work(origin.token); } catch (failure) { error = libraryError(failure); }
     const admitted = this.mayPublish(origin);
     if (!independentExport) {
-      this.mutationActive = false;
+      this.exclusiveActionActive = false;
       this.publish({ busy: null });
     }
     // Includes stale-token rejection and partial-error completion. M2 can reject
@@ -290,8 +290,8 @@ export class LibraryController {
 
   async saveSettings(origin: LibraryOrigin, work: (token: string) => Promise<AppSettings>):
     Promise<OperationResult<AppSettings>> {
-    if (!this.mayStart(origin) || this.mutationActive) return { admitted: false, error: "Refresh the library before changing settings." };
-    this.mutationActive = true;
+    if (!this.mayStart(origin) || this.exclusiveActionActive) return { admitted: false, error: "Refresh the library before changing settings." };
+    this.exclusiveActionActive = true;
     this.publish({ busy: "settings" });
     try {
       const settings = await work(origin.token);
@@ -307,7 +307,27 @@ export class LibraryController {
       if (!this.closed && origin.root === this.state.root) this.refresh();
       return { admitted: false, ...(admitted ? { error: libraryError(error) } : {}) };
     } finally {
-      this.mutationActive = false;
+      this.exclusiveActionActive = false;
+      this.publish({ busy: null });
+      this.pumpRefresh();
+    }
+  }
+
+  async recalculateStorage(work: (token: string) => Promise<StorageUsage>): Promise<OperationResult<StorageUsage>> {
+    const origin = this.origin();
+    if (!origin || !this.mayStart(origin) || this.scanActive || this.exclusiveActionActive)
+      return { admitted: false, error: "Wait for the library to finish refreshing before recalculating storage." };
+    this.exclusiveActionActive = true;
+    this.publish({ busy: "storage" });
+    try {
+      const usage = await work(origin.token);
+      const snapshot = this.state.snapshot;
+      if (snapshot && this.mayStart(origin)) this.publish({ snapshot: { ...snapshot, usage } });
+      return this.mayPublish(origin) ? { admitted: true, value: usage } : { admitted: false };
+    } catch (error) {
+      return { admitted: false, ...(this.mayPublish(origin) ? { error: libraryError(error) } : {}) };
+    } finally {
+      this.exclusiveActionActive = false;
       this.publish({ busy: null });
       this.pumpRefresh();
     }

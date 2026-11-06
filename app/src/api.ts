@@ -307,7 +307,7 @@ export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
 export const refreshLibrary = async (): Promise<LibrarySnapshot> => {
   if (useMockApi()) return {
     token: `mock-${Date.now()}-${++mockSnapshotSequence}`,
-    games: structuredClone(mockGames), clips: structuredClone(mockClips), usage: await loadStorageUsage(),
+    games: structuredClone(mockGames), clips: structuredClone(mockClips), usage: mockStorageUsage(),
   };
   return decodeLibrarySnapshot(await invoke<unknown>("refresh_library"));
 };
@@ -639,16 +639,16 @@ export const exportClip = async (
   return invoke<ClipExportResult>("export_clip", { snapshotToken, request, progress });
 };
 
-export const loadStorageUsage = async (): Promise<StorageUsage> => {
-  if (useMockApi()) {
-    return {
-      games_bytes: mockGames.reduce((total, game) => total + game.video_size_bytes, 0),
-      clips_bytes: mockClips.reduce((total, clip) => total + clip.file_size_bytes, 0),
-      game_count: mockGames.length,
-      clip_count: mockClips.length,
-    };
-  }
-  return invoke<StorageUsage>("get_storage_usage");
+const mockStorageUsage = (): StorageUsage => ({
+  games_bytes: mockGames.reduce((total, game) => total + game.video_size_bytes, 0),
+  clips_bytes: mockClips.reduce((total, clip) => total + clip.file_size_bytes, 0),
+  game_count: mockGames.length,
+  clip_count: mockClips.length,
+});
+
+export const loadStorageUsage = async (snapshotToken: string): Promise<StorageUsage> => {
+  if (useMockApi()) return mockStorageUsage();
+  return invoke<StorageUsage>("get_storage_usage", { snapshotToken });
 };
 
 export const loadSettings = async (): Promise<AppSettings> => {

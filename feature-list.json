@@ -5122,7 +5122,34 @@
         "2026-11-05 Windows app suite passed 194 tests. A three-part generated match verified cross-part event hits, saved and card filters, separate accounts, stable paging, and independent replay and clip delivery. Temporary archives verified byte preservation, safe failure and retention.",
         "Frontend type check, 580 tests and production build passed. Windows app formatting and strict Clippy, 16 generated corpus tests, and canonical validation passed. A 10,000-recording debug fixture measured 18.9 ms default and 20.7 ms event-filtered History p95."
       ],
-      "notes": "2026-11-05 user-approved History requirement supersedes the earlier identity-optional display policy. Loading-screen black screen remains tracked separately in QB-CAP-006."
+      "notes": "2026-11-05 user-approved History requirement supersedes the earlier identity-optional display policy. Loading-screen black screen remains tracked separately in QB-CAP-006. QB-LIB-031 changes how the archived storage subtotal is calculated."
+    },
+    {
+      "id": "QB-LIB-031",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Recalculate library storage on demand",
+      "description": "Use sizes already collected during normal library operations and let users explicitly recalculate storage totals in Settings.",
+      "priority": "P1",
+      "area": "library-storage",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-030"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Ordinary refreshes use the existing inventory of recordings and clips without walking the archive for storage totals.",
+        "Settings Recalculate storage scans recordings, the archive and clips, updates totals for the selected library, and preserves the last available totals on failure.",
+        "Match grouping, archival moves, and retention continue to use their existing rules."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Exercise routine and explicit storage accounting in temporary libraries, including archived and newly discovered media, stale selections, and existing grouping and retention checks.", "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"},
+        {"type": "automated", "description": "Exercise the Settings action, displayed totals, and failed or stale scan handling. Run applicable frontend, backend, and canonical checks.", "command": "npm run test --prefix app"}
+      ],
+      "evidence": [
+        "2026-11-06 temporary library fixtures verified that ordinary refresh keeps live video and clip sizes, accounts for successful moves, and only reads existing archive contents during explicit recalculation. Stale tokens and folder switches were rejected. The Windows backend suite passed 196 tests with 11 opt-in tests ignored. Formatting, strict Clippy, and the replay-benchmark feature check passed.",
+        "All 582 frontend tests passed, including the explicit Settings action, updated totals without a library refresh, failure retention, and library switches. Type checking, production frontend and desktop builds, and canonical validation passed."
+      ],
+      "notes": "2026-11-06 user requested the archive scan move from ordinary refresh to an explicit Settings action. The last archive subtotal is scoped to the current library in memory and includes sizes known from successful moves. Existing archive contents and later changes in the archive are reconciled by the next explicit scan."
     }
   ]
 }

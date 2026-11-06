@@ -2,14 +2,14 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import App from "./App";
-import { refreshLibrary, setGameSaved } from "./api";
+import { loadStorageUsage, refreshLibrary, setGameSaved } from "./api";
 import { resetLeagueIndex } from "./leagueIndex";
 import type { GameSummary, LibrarySnapshot } from "./types";
 
 const harness = vi.hoisted(() => ({ root: "A", destination: "B" }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(), initializeReplayBenchmark: async () => null }));
 vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(),
-  refreshLibrary: vi.fn(), setGameSaved: vi.fn(),
+  loadStorageUsage: vi.fn(), refreshLibrary: vi.fn(), setGameSaved: vi.fn(),
   loadSettings: async () => ({ output_path: harness.root, auto_delete_days: 0 }),
   loadDdragonStatus: () => new Promise(() => {}), ensureHevcCapability: () => new Promise(() => {}),
   chooseOutputFolder: async () => harness.destination,
@@ -26,10 +26,14 @@ vi.mock("./components/AppHeader", () => ({ default: (props: { onSettings: () => 
   <button data-testid="settings" onClick={props.onSettings}>Settings</button>
   <button data-testid="games" onClick={() => props.onTab("games")}>Games</button>
 </> }));
-vi.mock("./components/SettingsScreen", () => ({ default: (props: { onBack: () => void; onChooseFolder: () => void; onRebuildLeagueData: () => void; saving: boolean }) => <>
+vi.mock("./components/SettingsScreen", () => ({ default: (props: {
+  onBack: () => void; onChooseFolder: () => void; onRebuildLeagueData: () => void; saving: boolean;
+  onRecalculateStorage: () => void; canRecalculateStorage: boolean;
+}) => <>
   <button data-testid="back" onClick={props.onBack}>Back</button>
   <button data-testid="root" onClick={props.onChooseFolder}>Root</button>
   <button data-testid="rebuild" disabled={props.saving} onClick={props.onRebuildLeagueData}>Rebuild</button>
+  <button data-testid="storage" disabled={!props.canRecalculateStorage} onClick={props.onRecalculateStorage}>Recalculate storage</button>
 </> }));
 const game: GameSummary = { media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"], timestamp: "1", champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-09-23T00:00:00Z",
   duration_ms: 10000, kills: 1, deaths: 2, assists: 3, items: [], participants: [], summoner_spells: [],
@@ -39,7 +43,7 @@ const snapshot = (token: string, saved = false): LibrarySnapshot => ({ token,
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 let dispose: (() => void) | undefined;
-beforeEach(() => { vi.mocked(refreshLibrary).mockReset().mockResolvedValueOnce(snapshot("a")); vi.mocked(setGameSaved).mockReset(); vi.mocked(resetLeagueIndex).mockReset(); });
+beforeEach(() => { vi.mocked(refreshLibrary).mockReset().mockResolvedValueOnce(snapshot("a")); vi.mocked(setGameSaved).mockReset(); vi.mocked(resetLeagueIndex).mockReset(); vi.mocked(loadStorageUsage).mockReset(); });
 afterEach(() => { dispose?.(); document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); harness.root = "A"; });
 const mount = async () => {
   const host = document.createElement("div"); document.body.append(host); dispose = render(() => <App />, host);
@@ -87,6 +91,18 @@ it("rebuilds searchable data through the admitted settings mutation and refreshe
   reset.resolve({ catalog_recordings: 1 });
   await vi.waitFor(() => expect(refreshLibrary).toHaveBeenCalledTimes(2));
   await vi.waitFor(() => expect(h.host.textContent).toContain("Searchable League data reset."));
+});
+it("updates the storage totals only after the Settings action without refreshing the library", async () => {
+  const scan = deferred<LibrarySnapshot["usage"]>();
+  vi.mocked(loadStorageUsage).mockReturnValueOnce(scan.promise);
+  const h = await mount(); h.click("settings");
+  expect(loadStorageUsage).not.toHaveBeenCalled();
+  h.click("storage"); h.click("storage");
+  expect(loadStorageUsage).toHaveBeenCalledExactlyOnceWith("a");
+  scan.resolve({ games_bytes: 512, clips_bytes: 0, game_count: 2, clip_count: 0 });
+  await vi.waitFor(() => expect(h.host.textContent).toContain("Storage totals updated."));
+  expect(h.host.textContent).toContain("Recordings 512 B");
+  expect(refreshLibrary).toHaveBeenCalledTimes(1);
 });
 it("silently reconciles a rebuild that finishes after navigation", async () => {
   const reset = deferred<{ catalog_recordings: number }>();

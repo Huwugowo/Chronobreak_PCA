@@ -449,8 +449,11 @@ async fn export_clip(
     Ok(result)
 }
 
-#[tauri::command(async)]
-fn get_storage_usage(state: State<'_, AppState>) -> Result<StorageUsage, String> {
+#[tauri::command]
+async fn get_storage_usage(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+) -> Result<StorageUsage, String> {
     #[cfg(feature = "replay-benchmark")]
     let started = Instant::now();
     #[cfg(feature = "replay-benchmark")]
@@ -459,7 +462,10 @@ fn get_storage_usage(state: State<'_, AppState>) -> Result<StorageUsage, String>
             .record_app_event("library_storage_requested", serde_json::json!({}))
             .map_err(error_string)?;
     }
-    let result = library::storage_usage(&state.roots.output_directory());
+    let result = state
+        .library
+        .recalculate_storage(&state.roots, &snapshot_token)
+        .await;
     #[cfg(feature = "replay-benchmark")]
     if let Some(benchmark) = &state.benchmark {
         benchmark
@@ -472,7 +478,10 @@ fn get_storage_usage(state: State<'_, AppState>) -> Result<StorageUsage, String>
             )
             .map_err(error_string)?;
     }
-    result.map_err(error_string)
+    result.map_err(|error| match error {
+        LibraryRefreshError::Failed { message, .. } => message,
+        other => command_error(other),
+    })
 }
 
 #[tauri::command]

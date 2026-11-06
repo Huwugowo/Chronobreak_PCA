@@ -88,6 +88,14 @@ pub(crate) struct LibrarySnapshot {
     pub clips: Vec<LibraryClip>,
     pub usage: StorageUsage,
     pub archive_error: Option<String>,
+    #[serde(skip)]
+    pub newly_archived: RecordingUsage,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RecordingUsage {
+    pub count: u64,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -96,6 +104,13 @@ pub struct StorageUsage {
     pub clips_bytes: u64,
     pub game_count: u64,
     pub clip_count: u64,
+}
+
+impl StorageUsage {
+    pub(crate) fn include_archive(&mut self, archived: RecordingUsage) {
+        self.game_count += archived.count;
+        self.games_bytes += archived.bytes;
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -371,23 +386,27 @@ pub(crate) fn refresh_library_snapshot(
 ) -> Result<LibrarySnapshot> {
     let mut inventory = scan_games(root.path(), &check_current, read_game_summary)?;
     let mut archive_error = None;
+    let mut newly_archived = RecordingUsage::default();
     if inventory.iter().any(unmatched_recording) {
-        let result = LibraryMutation::acquire(logical, root)
-            .and_then(|owner| archive_unmatched(&owner, &mut inventory, &check_current));
+        let result = LibraryMutation::acquire(logical, root).and_then(|owner| {
+            archive_unmatched(&owner, &mut inventory, &check_current, &mut newly_archived)
+        });
         if let Err(error) = result {
             archive_error = Some(format!(
                 "Some unmatched recordings remain in the recording folder. {error:#}"
             ));
         }
     }
-    finish_library_snapshot(
+    let mut snapshot = finish_library_snapshot(
         root.path(),
         origin,
         token,
         check_current,
         inventory,
         archive_error,
-    )
+    )?;
+    snapshot.newly_archived = newly_archived;
+    Ok(snapshot)
 }
 
 fn finish_library_snapshot(
@@ -396,7 +415,7 @@ fn finish_library_snapshot(
     token: String,
     check_current: impl Fn() -> Result<()>,
     inventory: Vec<GameSummary>,
-    mut archive_error: Option<String>,
+    archive_error: Option<String>,
 ) -> Result<LibrarySnapshot> {
     let mut usage = StorageUsage {
         games_bytes: inventory.iter().map(|game| game.video_size_bytes).sum(),
@@ -404,17 +423,6 @@ fn finish_library_snapshot(
         clips_bytes: 0,
         clip_count: 0,
     };
-    match archive_usage(output_directory, &check_current) {
-        Ok((count, bytes)) => {
-            usage.game_count += count;
-            usage.games_bytes += bytes;
-        }
-        Err(error) => {
-            archive_error.get_or_insert_with(|| {
-                format!("Could not read the unmatched recordings folder. {error:#}")
-            });
-        }
-    }
     let games: Vec<_> = inventory.into_iter().filter(usable_recording).collect();
     let sources = games
         .iter()
@@ -466,6 +474,7 @@ fn finish_library_snapshot(
         clips,
         usage,
         archive_error,
+        newly_archived: RecordingUsage::default(),
     })
 }
 
@@ -517,6 +526,7 @@ fn archive_unmatched(
     owner: &LibraryMutation,
     inventory: &mut Vec<GameSummary>,
     check_current: &impl Fn() -> Result<()>,
+    newly_archived: &mut RecordingUsage,
 ) -> Result<()> {
     let games = owner.games()?;
     let destination = owner.unmatched()?;
@@ -525,7 +535,7 @@ fn archive_unmatched(
         if !unmatched_recording(game) {
             return true;
         }
-        let result = (|| -> Result<bool> {
+        let result = (|| -> Result<Option<u64>> {
             check_current()?;
             let source = games.removal_target(std::ffi::OsStr::new(&game.timestamp))?;
             let metadata = read_metadata_file(open_regular(
@@ -537,16 +547,21 @@ fn archive_unmatched(
                 Some(&metadata.media_id) == game.media_id.as_ref(),
                 "recording changed since discovery"
             );
-            recording_video_size(source.path())?;
+            let bytes = recording_video_size(source.path())?;
             if crate::league_match::inspect(source.path(), &metadata.media_id)?.is_some() {
-                return Ok(false);
+                return Ok(None);
             }
             check_current()?;
             source.move_directory_into(&destination)?;
-            Ok(true)
+            Ok(Some(bytes))
         })();
         match result {
-            Ok(moved) => !moved,
+            Ok(Some(bytes)) => {
+                newly_archived.count += 1;
+                newly_archived.bytes += bytes;
+                false
+            }
+            Ok(None) => true,
             Err(cause) => {
                 error.get_or_insert_with(|| cause.context(format!("Recording {}", game.timestamp)));
                 true
@@ -556,11 +571,13 @@ fn archive_unmatched(
     error.map_or(Ok(()), Err)
 }
 
-fn archive_usage(root: &Path, check_current: &impl Fn() -> Result<()>) -> Result<(u64, u64)> {
+fn archive_usage(root: &Path) -> Result<RecordingUsage> {
     let archive = root.join(UNMATCHED_RECORDINGS);
     let metadata = match fs::symlink_metadata(&archive) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RecordingUsage::default());
+        }
         Err(error) => return Err(error.into()),
     };
     reject_reparse(&metadata)?;
@@ -568,7 +585,6 @@ fn archive_usage(root: &Path, check_current: &impl Fn() -> Result<()>) -> Result
     let mut count = 0;
     let mut bytes = 0;
     for entry in fs::read_dir(&archive.path)? {
-        check_current()?;
         let entry = entry?;
         let metadata = fs::symlink_metadata(entry.path())?;
         if !entry.file_name().to_str().is_some_and(valid_game_id)
@@ -585,7 +601,7 @@ fn archive_usage(root: &Path, check_current: &impl Fn() -> Result<()>) -> Result
             bytes += video.len();
         }
     }
-    Ok((count, bytes))
+    Ok(RecordingUsage { count, bytes })
 }
 
 fn scan_games(
@@ -758,11 +774,12 @@ pub fn list_clips(
     Ok(clips)
 }
 
-pub fn storage_usage(output_directory: &Path) -> Result<StorageUsage> {
+pub(crate) fn storage_usage(output_directory: &Path) -> Result<(StorageUsage, RecordingUsage)> {
     // Storage inventory includes retained attempts, independently of history.
     let games = scan_games(output_directory, || Ok(()), read_game_summary)?;
-    let (archived, archived_bytes) = archive_usage(output_directory, &|| Ok(()))?;
-    let games_bytes = archived_bytes + games.iter().map(|game| game.video_size_bytes).sum::<u64>();
+    let archived = archive_usage(output_directory)
+        .context("could not read the unmatched recordings folder")?;
+    let games_bytes = games.iter().map(|game| game.video_size_bytes).sum();
     let clips_directory = output_directory.join("clips");
     let mut clips_bytes = 0;
     let mut clip_count = 0;
@@ -781,12 +798,14 @@ pub fn storage_usage(output_directory: &Path) -> Result<StorageUsage> {
             }
         }
     }
-    Ok(StorageUsage {
+    let mut usage = StorageUsage {
         games_bytes,
         clips_bytes,
-        game_count: games.len() as u64 + archived,
+        game_count: games.len() as u64,
         clip_count,
-    })
+    };
+    usage.include_archive(archived);
+    Ok((usage, archived))
 }
 
 pub(crate) fn save_game(owner: &LibraryMutation, timestamp: &str, saved: bool) -> Result<()> {
@@ -1538,8 +1557,10 @@ pub(crate) mod tests {
         };
         let after = refresh();
         assert_eq!(after.archive_error, None);
-        assert_eq!(after.usage.game_count, before.usage.game_count);
-        assert_eq!(after.usage.games_bytes, before.usage.games_bytes);
+        assert_eq!(after.newly_archived.count, 2);
+        assert_eq!(after.newly_archived.bytes, 2 * RECORDING_VIDEO.len() as u64);
+        assert_eq!(after.usage.game_count, 2);
+        assert_eq!(storage_usage(approved.path()).unwrap().0, before.usage);
         assert_eq!(after.games.len(), 1);
         assert_eq!(after.games[0].timestamp, "102");
         assert!(after.games[0].match_group.is_some());
@@ -1749,7 +1770,7 @@ pub(crate) mod tests {
             snapshot.usage.games_bytes,
             4 * RECORDING_VIDEO.len() as u64 + 68
         );
-        assert_eq!(storage_usage(root.path()).unwrap(), snapshot.usage);
+        assert_eq!(storage_usage(root.path()).unwrap().0, snapshot.usage);
         assert_eq!(snapshot.games.len(), 2);
         assert!(snapshot.games.iter().all(usable_recording));
         assert_eq!(list_games(root.path()).unwrap(), snapshot.games);

@@ -9,7 +9,7 @@ use serde::Serialize;
 use tokio::sync::Semaphore;
 
 use crate::clip_duration::{self, DurationState, ObservedDuration};
-use crate::library::{self, LibrarySnapshot};
+use crate::library::{self, LibrarySnapshot, RecordingUsage, StorageUsage};
 use crate::playback_file::ApprovedRoot;
 use crate::playback_server::{MediaRoots, OutputDirectory};
 
@@ -38,6 +38,7 @@ struct Publication {
     root_epoch: u64,
     selected_token: Option<String>,
     current: Option<PublishedSnapshot>,
+    archived_usage: RecordingUsage,
     active_cancel: Option<Arc<AtomicBool>>,
     duration_cancel: Option<Arc<AtomicBool>>,
     durations: HashMap<String, ObservedDuration>,
@@ -271,7 +272,6 @@ impl LibraryCoordinator {
         })
         .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("library scan worker failed")));
-        let result = result.map(Arc::new);
         let (snapshot, previous) = {
             let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
             let (path, root) = roots.output_pair();
@@ -285,7 +285,7 @@ impl LibraryCoordinator {
             }
             publication.active_cancel = None;
             // Preserve a complete same-root view and report its token on failure.
-            let snapshot = result.map_err(|error| LibraryRefreshError::Failed {
+            let mut snapshot = result.map_err(|error| LibraryRefreshError::Failed {
                 message: format!("{error:#}"),
                 retained_snapshot_token: publication
                     .current
@@ -293,6 +293,11 @@ impl LibraryCoordinator {
                     .filter(|current| current.path == path && current.root == root)
                     .map(|current| current.snapshot.token.clone()),
             })?;
+            let newly_archived = std::mem::take(&mut snapshot.newly_archived);
+            publication.archived_usage.count += newly_archived.count;
+            publication.archived_usage.bytes += newly_archived.bytes;
+            snapshot.usage.include_archive(publication.archived_usage);
+            let snapshot = Arc::new(snapshot);
             let previous = publication.current.replace(PublishedSnapshot {
                 path: capture.path.clone(),
                 root: capture.root.clone(),
@@ -306,11 +311,49 @@ impl LibraryCoordinator {
         Ok((*snapshot).clone())
     }
 
+    pub(crate) async fn recalculate_storage(
+        &self,
+        roots: &MediaRoots,
+        token: &str,
+    ) -> Result<StorageUsage, LibraryRefreshError> {
+        let permit = Arc::new(
+            Arc::clone(&self.scan_slot)
+                .try_acquire_owned()
+                .map_err(slot_error)?,
+        );
+        let capture = self.capture_selection(roots, token, Selection::Library)?;
+        let root = capture.root.clone();
+        let worker_permit = Arc::clone(&permit);
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = worker_permit;
+            let _root_guard = crate::directory_guard::guard_root(&root)?;
+            library::storage_usage(root.path())
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("storage scan worker failed")));
+
+        let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+        if publication.closed
+            || publication.root_epoch != capture.root_epoch
+            || publication.selected_token.as_deref() != Some(token)
+            || roots.output_pair() != (capture.path, capture.root)
+        {
+            return Err(LibraryRefreshError::Superseded);
+        }
+        let (usage, archived) = result.map_err(|error| LibraryRefreshError::Failed {
+            message: format!("{error:#}"),
+            retained_snapshot_token: Some(token.to_owned()),
+        })?;
+        publication.archived_usage = archived;
+        Ok(usage)
+    }
+
     /// Called only after directory validation and settings persistence succeed.
     /// Fixed lock order: coordinator, then MediaRoots. No I/O under either guard.
     pub(crate) fn publish_output_directory(&self, roots: &MediaRoots, directory: OutputDirectory) {
         let previous = {
             let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+            let previous_root = roots.output_pair();
             roots.set_output_directory(directory);
             publication.root_epoch = publication
                 .root_epoch
@@ -318,6 +361,9 @@ impl LibraryCoordinator {
                 .expect("root epoch exhausted");
             publication.invalidate();
             let (path, root) = roots.output_pair();
+            if previous_root.0 != path || previous_root.1 != root {
+                publication.archived_usage = RecordingUsage::default();
+            }
             if publication
                 .current
                 .as_ref()
@@ -532,12 +578,12 @@ impl LibraryCoordinator {
     ) -> Result<T, LibraryRefreshError> {
         let writer = Arc::clone(&self.index_writer_slot)
             .try_acquire_owned()
-            .map_err(index_permit_error)?;
+            .map_err(slot_error)?;
         // This is deliberately a non-waiting all-or-nothing acquisition. If a
         // reader owns either permit, dropping `writer` makes reset report Busy.
         let readers = Arc::clone(&self.index_reader_slots)
             .try_acquire_many_owned(2)
-            .map_err(index_permit_error)?;
+            .map_err(slot_error)?;
         let capture = self.capture_selection(&roots, token, Selection::Library)?;
         let snapshot = {
             let publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
@@ -839,7 +885,7 @@ impl LibraryCoordinator {
     }
 }
 
-fn index_permit_error(error: tokio::sync::TryAcquireError) -> LibraryRefreshError {
+fn slot_error(error: tokio::sync::TryAcquireError) -> LibraryRefreshError {
     match error {
         tokio::sync::TryAcquireError::Closed => LibraryRefreshError::Superseded,
         tokio::sync::TryAcquireError::NoPermits => LibraryRefreshError::Busy,
@@ -1104,6 +1150,58 @@ mod tests {
         ));
         let snapshot = coordinator.refresh(&roots, ORIGIN).await.unwrap();
         assert_eq!(snapshot.clips[0].filename, "100_200");
+    }
+
+    #[tokio::test]
+    async fn storage_recalculation_reads_archive_once_and_preserves_live_inventory_accounting() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let archive = root.join(library::UNMATCHED_RECORDINGS);
+        fs::create_dir(&archive).unwrap();
+        fs::create_dir(archive.join("100")).unwrap();
+        fs::write(archive.join("100/video.mp4"), b"archive").unwrap();
+        let roots = MediaRoots::new(root.into()).unwrap();
+        let coordinator = LibraryCoordinator::new();
+        let first = coordinator.refresh(&roots, ORIGIN).await.unwrap();
+        assert_eq!(first.usage.game_count, 0);
+        let calculated = coordinator
+            .recalculate_storage(&roots, &first.token)
+            .await
+            .unwrap();
+        assert_eq!(calculated.game_count, 1);
+        assert_eq!(calculated.games_bytes, 7);
+
+        // This outside change is only observed by the next explicit calculation.
+        fs::write(archive.join("100/video.mp4"), b"archive plus bytes").unwrap();
+        let unmatched = library::tests::write_game(root, "101", "2026-08-05T10:00:00Z", false);
+        let size = fs::metadata(unmatched.join("video.mp4")).unwrap().len();
+        fs::create_dir(root.join("clips")).unwrap();
+        fs::write(root.join("clips/101_1.mp4"), b"clip").unwrap();
+        let refreshed = coordinator
+            .refresh_with_recovery(&roots, ORIGIN, crate::export_staging::RecoveryMode::Normal)
+            .await
+            .unwrap();
+        assert!(archive.join("101/video.mp4").is_file());
+        assert_eq!(refreshed.usage.game_count, 2);
+        assert_eq!(refreshed.usage.games_bytes, 7 + size);
+        assert_eq!(refreshed.usage.clips_bytes, 4);
+        assert_eq!(
+            coordinator.recalculate_storage(&roots, &first.token).await,
+            Err(LibraryRefreshError::Superseded)
+        );
+        let calculated = coordinator
+            .recalculate_storage(&roots, &refreshed.token)
+            .await
+            .unwrap();
+        assert_eq!(calculated.games_bytes, 18 + size);
+        assert_eq!(calculated.clips_bytes, 4);
+
+        let other = tempdir().unwrap();
+        coordinator
+            .publish_output_directory(&roots, OutputDirectory::new(other.path().into()).unwrap());
+        let switched = coordinator.refresh(&roots, ORIGIN).await.unwrap();
+        assert_eq!(switched.usage.game_count, 0);
+        assert_eq!(switched.usage.clips_bytes, 0);
     }
 
     #[tokio::test]

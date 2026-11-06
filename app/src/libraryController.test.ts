@@ -24,6 +24,29 @@ const snapshot = (token: string, game = token): LibrarySnapshot => ({
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 describe("LibraryController", () => {
+  it("keeps storage totals on failure and discards results after a library switch", async () => {
+    let scans = 0;
+    const controller = new LibraryController({ refresh: async () => snapshot(`scan-${++scans}`),
+      durations: async () => ({ snapshot_token: "", clips: [] }) });
+    controller.setRoot("A"); await flush();
+    const originalUsage = controller.value.snapshot?.usage;
+    await expect(controller.recalculateStorage(async () => { throw new Error("storage scan failed"); }))
+      .resolves.toEqual({ admitted: false, error: "storage scan failed" });
+    expect(controller.value.snapshot?.usage).toEqual(originalUsage);
+
+    const scan = deferred<LibrarySnapshot["usage"]>();
+    const pending = controller.recalculateStorage(() => scan.promise);
+    controller.setRoot("B"); controller.setRoot("A");
+    await flush();
+    expect(scans).toBe(1);
+    scan.resolve({ games_bytes: 40, clips_bytes: 4, game_count: 4, clip_count: 1 });
+    await expect(pending).resolves.toEqual({ admitted: false });
+    await flush();
+    expect(controller.value.snapshot?.token).toBe("scan-2");
+    expect(controller.value.snapshot?.usage).toEqual(originalUsage);
+    controller.dispose();
+  });
+
   it("bounds pending writers by purpose, replaces old intents, and prioritizes maintenance then replay", async () => {
     const held = deferred<string>(), calls: string[] = [];
     const controller = new LibraryController({ refresh: async () => snapshot("token", "1"),

@@ -11,11 +11,14 @@ type Props = {
   usage: StorageUsage;
   ddragon: DdragonStatus;
   saving: boolean;
+  recalculatingStorage: boolean;
+  canRecalculateStorage: boolean;
   onBack: () => void;
   onChooseFolder: () => void;
   onOpenFolder: () => void;
   onOpenUnmatchedFolder: () => void;
   archiveError?: string | null;
+  onRecalculateStorage: () => void;
   onRetention: (days: number) => void;
   onCleanUp: () => void;
   onRebuildLeagueData?: () => void;
@@ -58,7 +61,7 @@ function SettingsScreen(props: Props) {
               class={controlStyles.control}
               type="button"
               onClick={props.onChooseFolder}
-              disabled={props.saving}
+              disabled={props.saving || props.recalculatingStorage}
             >
               Choose folder
             </button>
@@ -69,6 +72,19 @@ function SettingsScreen(props: Props) {
             >
               <span>Open current folder</span>
               <ExternalLinkIcon size={14} />
+            </button>
+          </div>
+        </section>
+
+        <section class={styles.settingsPanel}>
+          <header><div><p>STORAGE</p><h2>Video storage</h2></div></header>
+          <p class={styles.settingDetail}>
+            Scan the recording and clip folders to update the totals, including unmatched recordings.
+          </p>
+          <div class={styles.settingActions}>
+            <button class={controlStyles.control} type="button" onClick={props.onRecalculateStorage}
+              disabled={props.saving || !props.canRecalculateStorage} aria-busy={props.recalculatingStorage}>
+              {props.recalculatingStorage ? "Recalculating storage…" : "Recalculate storage"}
             </button>
           </div>
         </section>
@@ -103,7 +119,7 @@ function SettingsScreen(props: Props) {
             <select
               value={props.settings.auto_delete_days}
               onChange={(event) => props.onRetention(Number(event.currentTarget.value))}
-              disabled={props.saving}
+              disabled={props.saving || props.recalculatingStorage}
             >
               <For each={retentionOptions}>
                 {(option) => <option value={option.value}>{option.label}</option>}
@@ -115,7 +131,7 @@ function SettingsScreen(props: Props) {
               class={controlStyles.control}
               type="button"
               onClick={props.onCleanUp}
-              disabled={props.saving}
+              disabled={props.saving || props.recalculatingStorage}
             >
               Clean up now
             </button>

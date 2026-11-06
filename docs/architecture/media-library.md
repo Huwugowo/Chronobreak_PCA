@@ -39,7 +39,8 @@ eligible summaries. Clips are enumerated once, including MP4s with
 unrecognized names in storage totals while omitting them from displayed cards.
 The core scan never invokes a media probe. The frontend consumes this snapshot
 through one `LibraryController`, which owns the root, token, selections,
-mutations, refresh coalescing, and optional duration enrichment.
+mutations, refresh coalescing, storage recalculation, and optional duration
+enrichment.
 
 Core game summaries carry no inferred roster. Checked history rows add roster
 display data from validated final facts, or one complete indexed observation from
@@ -401,9 +402,14 @@ Explorer. Read-only refreshes leave the filesystem untouched. Partial and failed
 captures stay with recorder recovery. Exported clip files remain independently
 playable if their source is archived.
 
-Storage inventory includes active recordings, retained attempts and archived
-recordings, along with clip MP4s. Age-based `run_auto_delete` applies the same
-published-video, age and saved checks to active and archived recordings.
+Regular refresh derives storage from its existing recordings and clips inventory.
+Settings **Recalculate storage** explicitly scans both collections and the
+archive in the library scan slot and publishes totals for the current selection.
+The coordinator keeps that archive subtotal for the current library and adds
+sizes already known from successful archival moves. Existing archive contents
+and later changes within the archive are reconciled on the next explicit scan.
+Age-based `run_auto_delete` applies the same published-video, age and saved
+checks to active and archived recordings.
 Settings changes update the app's media root. The recorder reads the shared
 setting when it next loads its configuration.
 
