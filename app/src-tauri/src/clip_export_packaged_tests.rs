@@ -173,6 +173,109 @@ async fn audio_peak(tools: &MediaTools, media: &Path) -> f32 {
         .fold(0.0, f32::max)
 }
 
+#[tokio::test]
+#[ignore = "requires staged runtime via QUEUEBACK_TEST_MEDIA_RUNTIME"]
+async fn fractional_endpoint_packaged_export() {
+    let runtime =
+        std::env::var_os("QUEUEBACK_TEST_MEDIA_RUNTIME").expect("set staged runtime root");
+    let tools = queueback_media_runtime::resolve_root(Path::new(&runtime))
+        .await
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("video.mp4");
+    let output = directory.path().join("output.mp4");
+
+    for (numerator, denominator, frames) in [(60, 1, 301), (60_000, 1_001, 300)] {
+        let frame_rate = Rational::positive(numerator, denominator, "fixture rate").unwrap();
+        fixture_command(
+            tools.ffmpeg(),
+            &[
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc2=size=160x90:rate={numerator}/{denominator}:duration=8"),
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=sample_rate=48000:duration=8",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
+            ],
+            Some(&source),
+        )
+        .await;
+        let source_hash = Sha256::digest(fs::read(&source).unwrap());
+        let end_frame = FrameBoundary::new(frames).unwrap();
+        let duration = frame_boundary_to_replay_tick(end_frame, frame_rate, RoundingMode::Exact)
+            .unwrap()
+            .get();
+        let timing = ClipTiming {
+            start_seconds: "0".to_owned(),
+            duration_seconds: replay_ticks_as_ffmpeg_seconds(duration).unwrap(),
+            duration_replay_ticks: duration,
+            source_frame_count: frames,
+            source_frame_rate: frame_rate,
+            source_audio_present: true,
+            media_runtime_id: tools.runtime_id().to_owned(),
+        };
+        for preset in [ClipExportPreset::Horizontal, ClipExportPreset::Discord] {
+            let request = ClipExportRequest {
+                game_timestamp: "1786000000".to_owned(),
+                media_id: MediaId::parse("123e4567-e89b-42d3-a456-426614174000").unwrap(),
+                start_frame: FrameBoundary::new(0).unwrap(),
+                end_frame_exclusive: end_frame,
+                presets: vec![preset],
+                vertical_focus: 0.72,
+                vertical_position: 0.5,
+                music: ClipMusicSource::None,
+                game_audio_volume: 1.0,
+                music_volume: 1.0,
+            };
+            let profile = export_profile(&request, &timing, preset, Some(1_200)).unwrap();
+            let args = ffmpeg_arguments(
+                &source,
+                None,
+                &request,
+                &timing,
+                &profile,
+                H264Encoder::Software,
+                &output,
+            )
+            .unwrap();
+            let args = args
+                .iter()
+                .map(|arg| arg.to_str().unwrap())
+                .collect::<Vec<_>>();
+            fixture_command(tools.ffmpeg(), &args, None).await;
+            let validation =
+                validate_exported_media(tools.ffprobe(), &output, &request, &timing, &profile)
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!("{numerator}/{denominator} {preset:?}: {error:#}")
+                    });
+            if preset == ClipExportPreset::Discord {
+                assert_eq!(validation.frame_count.get(), 151);
+                assert_eq!(
+                    validation.video_replay_end,
+                    151 * (REPLAY_TICKS_PER_SECOND / 30)
+                );
+                assert!(fs::metadata(&output).unwrap().len() < DISCORD_LIMIT_BYTES);
+            } else {
+                assert_eq!(validation.frame_count.get(), frames);
+                assert_eq!(validation.video_replay_end, duration);
+            }
+        }
+        assert_eq!(Sha256::digest(fs::read(&source).unwrap()), source_hash);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires staged runtime via QUEUEBACK_TEST_MEDIA_RUNTIME"]
 async fn silent_source_packaged_export_matrix() {

@@ -472,6 +472,44 @@
       ]
     },
     {
+      "id": "QB-CLIP-014",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Preserve exact frame coverage in MP4 export",
+      "description": "Preserve exact MP4 video coverage when a selected clip ends between millisecond boundaries or a reduced frame-rate preset needs a final partial interval.",
+      "priority": "P1",
+      "area": "export",
+      "status": "done",
+      "parent_id": "EPIC-CLIP",
+      "dependencies": [
+        "QB-CLIP-007",
+        "QB-REPLAY-012"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
+      "acceptance_criteria": [
+        "Exact video coverage survives MP4 muxing for supported fractional-duration ranges. Discord downsampling covers the entire selected range on its output grid while audio remains trimmed to the source range.",
+        "Existing strict frame, audio alignment, codec and size validation remains in force. Successful export preserves source media."
+      ],
+      "verification": [
+        {
+          "type": "automated",
+          "description": "Use the packaged runtime to verify 60 Hz and 60000/1001 Hz sources with partial output intervals, exact duration, audio alignment and source preservation. Run backend tests, Rustfmt, strict Clippy and canonical validation."
+        },
+        {
+          "type": "inspection",
+          "description": "Reproduce the reported recording failure read-only and check corrected outputs in temporary storage for exact frame coverage, full decode and Discord size."
+        }
+      ],
+      "evidence": [
+        "2026-11-05: On the reported recording, the old NVENC horizontal output contained 2401 frames but its MP4 video coverage was 10 track ticks short. Discord produced 1200 of the required 1201 frames. With corrected export arguments, all three presets passed zero-based packet-grid, H.264/AAC full-decode and audio alignment checks. Discord used 7,914,306 bytes. Source SHA-256 was unchanged.",
+        "2026-11-05: Packaged-runtime software regression passed 60 and 60000/1001 Hz horizontal and downsampled Discord ranges. The existing 18-output audio/music/preset matrix passed with invalid-source and cancellation cleanup. Full backend rerun passed 195 tests (11 opt-in ignored) after one transient staging assertion. Strict app Clippy, Rustfmt, Tauri desktop build, portable runtime verification and canonical validation passed."
+      ],
+      "notes": "Reported on a Master Yi pentakill. The production export probe correctly rejected a muxer-rounded video edit duration. The same selected range also exposed a final-frame drop when capped to 30 Hz."
+    },
+    {
       "kind": "feature",
       "priority": "P2",
       "status": "done",

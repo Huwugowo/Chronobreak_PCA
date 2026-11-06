@@ -26,6 +26,7 @@ mod packaged_tests;
 
 const MINIMUM_CLIP_SECONDS: u64 = 5;
 const FFMPEG_TIMESTAMP_DECIMAL_PLACES: u32 = 12;
+const EXPORT_AUDIO_SAMPLE_RATE: u64 = 48_000;
 const DISCORD_LIMIT_BYTES: u64 = 10_000_000;
 const DISCORD_TARGET_BYTES: u64 = 9_400_000;
 const OUTPUT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -666,7 +667,7 @@ fn export_profile(
             };
             let fps_filter = if output_frame_rate != source_frame_rate {
                 format!(
-                    ",fps=fps={}:start_time=0",
+                    ",fps=fps={}:start_time=0:eof_action=pass",
                     ffmpeg_frame_rate(output_frame_rate)?
                 )
             } else {
@@ -803,6 +804,17 @@ fn ffmpeg_arguments(
     output: &Path,
 ) -> Result<Vec<OsString>> {
     let duration = &timing.duration_seconds;
+    let output_frame_count =
+        expected_output_frame_count(timing.duration_replay_ticks, profile.output_frame_rate)?;
+    let output_end = frame_boundary_to_replay_tick(
+        output_frame_count,
+        profile.output_frame_rate,
+        RoundingMode::Exact,
+    )
+    .context("output duration is not exact in replay ticks")?;
+    // FFmpeg rounds -t in encoder time units. Allow the whole final output frame
+    // when it straddles the selected endpoint. The audio trim keeps the source end.
+    let output_duration = replay_ticks_as_ffmpeg_seconds(output_end.get())?;
     let mut arguments = strings(&[
         "-hide_banner",
         "-loglevel",
@@ -824,7 +836,9 @@ fn ffmpeg_arguments(
     let game_audio = if timing.source_audio_present {
         "[0:a]".to_owned()
     } else {
-        format!("anullsrc=channel_layout=stereo:sample_rate=48000:duration={duration},")
+        format!(
+            "anullsrc=channel_layout=stereo:sample_rate={EXPORT_AUDIO_SAMPLE_RATE}:duration={duration},"
+        )
     };
     let audio_filter = if music_path.is_some() {
         format!(
@@ -841,7 +855,7 @@ fn ffmpeg_arguments(
     };
     arguments.extend(strings(&[
         "-t",
-        duration,
+        &output_duration,
         "-filter_complex",
         &format!("{};{}", profile.video_filter, audio_filter),
         "-map",
@@ -870,17 +884,36 @@ fn ffmpeg_arguments(
         "-b:a",
         &format!("{}k", profile.audio_bitrate_kbps),
         "-ar",
-        "48000",
+        &EXPORT_AUDIO_SAMPLE_RATE.to_string(),
         "-ac",
         "2",
         "-movflags",
         "+faststart",
+        "-movie_timescale",
+        &export_movie_timescale(profile.output_frame_rate)?.to_string(),
         "-progress",
         "pipe:1",
         "-nostats",
     ]));
     arguments.push(output.as_os_str().to_owned());
     Ok(arguments)
+}
+
+fn export_movie_timescale(frame_rate: Rational) -> Result<u64> {
+    // MP4 edit lengths use the movie clock. Pick the coarsest clock that can
+    // express both a full video frame and one AAC sample without rounding.
+    let mut frame_ticks = frame_boundary_to_replay_tick(
+        FrameBoundary::new(1).context("failed to construct one output frame")?,
+        frame_rate,
+        RoundingMode::Exact,
+    )
+    .context("output frame rate is not exact in replay ticks")?
+    .get();
+    let mut sample_ticks = REPLAY_TICKS_PER_SECOND / EXPORT_AUDIO_SAMPLE_RATE;
+    while sample_ticks != 0 {
+        (frame_ticks, sample_ticks) = (sample_ticks, frame_ticks % sample_ticks);
+    }
+    Ok(REPLAY_TICKS_PER_SECOND / frame_ticks)
 }
 
 fn gop_frame_count(rate: Rational) -> Result<u64> {
@@ -1327,6 +1360,14 @@ mod tests {
     }
 
     #[test]
+    fn movie_timescale_represents_video_frames_and_aac_samples() {
+        for (numerator, denominator, expected) in [(60, 1, 48_000), (60_000, 1_001, 240_000)] {
+            let rate = Rational::positive(numerator, denominator, "output rate").unwrap();
+            assert_eq!(export_movie_timescale(rate).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn ffmpeg_arguments_use_exact_seek_and_decoded_frame_trim() {
         let request = request(ClipExportPreset::Horizontal, 300);
         let timing = validate_for_metadata(&request, &metadata()).unwrap();
@@ -1351,6 +1392,11 @@ mod tests {
         assert_eq!(arguments[seek + 1], "1.000000000000");
         let duration = arguments.iter().position(|value| value == "-t").unwrap();
         assert_eq!(arguments[duration + 1], "5.000000000000");
+        let timescale = arguments
+            .iter()
+            .position(|value| value == "-movie_timescale")
+            .unwrap();
+        assert_eq!(arguments[timescale + 1], "48000");
         let filter = arguments
             .iter()
             .position(|value| value == "-filter_complex")
