@@ -5199,6 +5199,33 @@
       "notes": "2026-11-06 user requested the archive scan move from ordinary refresh to an explicit Settings action. The last archive subtotal is scoped to the current library in memory and includes sizes known from successful moves. Existing archive contents and later changes in the archive are reconciled by the next explicit scan."
     },
     {
+      "id": "QB-LIB-032",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Eliminate redundant work in cold library preparation",
+      "description": "Measure and reduce complete empty-cache preparation on the current preprod library, targeting a 5–10× speedup over the current production path.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "done",
+      "dependencies": ["QB-LIB-028"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Measure the same eight published recordings from production preparer launch with an empty disposable cache through validated journal import and complete replay and scoreboard materialization, including all 2472 samples.",
+        "Target a 5–10× reduction in total time. If the target cannot be justified within the constraints, measure the remaining limiting work and deliver the best justified targeted improvement.",
+        "Preserve equivalent query and replay data, source integrity, early card readiness, bounded resource and writer usage, cancellation, cache reset and resumability."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Use the existing production preparation benchmark and compare against the complete current-build reference. Measure process CPU, memory and I/O with the same boundary and fixtures."},
+        {"type": "automated", "description": "Run applicable backend and projection regressions, formatting, strict Clippy and canonical checks.", "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"}
+      ],
+      "evidence": [
+        "2026-11-06 three interleaved production empty-cache runs per build: baseline 8.305/8.110/8.149 s; optimized 6.899/8.328/8.083 s. Elapsed differences overlap run variation. Median process CPU fell from 5.50 to 4.17 s, reported reads from 607 to 417 MB, writes from 366 to 280 MB, and database size from 91.0 to 62.4 MB. Median peak working set was 25.5 MB on both builds, with one optimized run at 38.8 MB.",
+        "All runs completed eight recordings and 2472 overlay/scoreboard samples. All 22 data projection tables matched the current reference, recording card/source stamps matched, checked JSON/journal hashes were unchanged and there were no observed card-readiness regressions. The unused raw-journal shadow went from 13888 rows to zero in fresh caches. Raw results: build/perf/cold-preparation-20261106/final-{base,fast}-{1,2,3}.",
+        "Windows backend: 197 passed, 11 opt-in ignored. A pre-existing test raced reader-permit release against the writer-permit assertion on the first run, then passed in isolation and on the full rerun. New coverage verifies source mutation during cached card reuse is rejected. Locked release build, formatting, strict all-target Clippy, canonical validation and diff checks passed."
+      ],
+      "notes": "Follow-up to QB-LIB-028. Removes the unread raw-record copy, reuses current card facts and schema, batches roster membership by referenced IDs, and avoids duplicate SQL writes and source checks. The earlier profile counted 5086 validated commits in 162 journal units. Optimized runs still spent roughly 5–7 seconds in journal import phases, including bounded connection/transaction handoffs, against a 1.63-second 5× target. A checkpoint-on-close experiment showed no clear improvement at comparable resources and was discarded. Existing cache layouts are compatible; new preparations gain the database size reduction. Full preparation remains the measured endpoint."
+    },
+    {
       "id": "QB-DEV-010",
       "kind": "feature",
       "stage": "ready",

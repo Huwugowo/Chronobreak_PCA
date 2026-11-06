@@ -76,7 +76,11 @@ The unit publishes its final checkpoint and committed-prefix rows together;
 interruption rolls back that unit, leaving the previous prefix resumable.
 Prepared SQL statements are reused within the unit. No database connection is
 retained across ownership boundaries, so cache reset cannot leave a worker
-writing an obsolete database. The
+writing an obsolete database. Journal import reuses card facts only when the
+checked source stamp, recording summary and media timeline still match. The
+cache stores queryable projections, while the authoritative journal retains the
+raw records. New imports do not populate the unused legacy `records` table.
+Existing caches remain compatible and are not rebuilt for this change. The
 preparer uses native filesystem notifications, coalesced over one second, to
 refresh and prepare only affected published recordings. Idle ticks do not scan
 the library, hash sources, or open SQLite. Unpublished live journal/manifest

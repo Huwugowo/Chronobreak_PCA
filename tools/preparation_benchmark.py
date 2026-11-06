@@ -23,9 +23,11 @@ def source_hashes(library):
 
 def projection_hashes(database):
     with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as db:
+        # The legacy records table duplicated the source journal. No query or
+        # replay reader consumes it, and new preparations leave it empty.
         tables = [row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        ) if row[0] != "cache_identity"]
+        ) if row[0] not in {"cache_identity", "records"}]
         result = {}
         for table in tables:
             # Column declaration order can differ between equivalent cache

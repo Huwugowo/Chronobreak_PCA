@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS evidence(
   PRIMARY KEY(media_id,run_id,epoch,observation_id)
 );
 CREATE INDEX IF NOT EXISTS evidence_endpoint_time ON evidence(media_id,run_id,epoch,endpoint,end_us);
+-- Legacy v8 shadow of the authoritative journal. No reader uses this table.
+-- Retain the schema so existing caches can be cleared without a migration.
 CREATE TABLE IF NOT EXISTS records(
   media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,
   sequence INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(media_id,sequence)

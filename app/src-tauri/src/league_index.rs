@@ -130,19 +130,29 @@ impl Index {
         db.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=256; PRAGMA journal_size_limit=8388608;
             PRAGMA cache_size=-4096; PRAGMA temp_store=MEMORY;")?;
-        db.execute_batch(include_str!("league_index/schema.sql"))?;
         let root = root.to_str().context("index root encoding")?;
-        let identity: Option<(String, i64)> = db
-            .query_row("SELECT root,version FROM cache_identity", [], |r| {
+        let has_identity_table: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='cache_identity')",
+            [],
+            |r| r.get(0),
+        )?;
+        let identity: Option<(String, i64)> = if has_identity_table {
+            db.query_row("SELECT root,version FROM cache_identity", [], |r| {
                 Ok((r.get(0)?, r.get(1)?))
             })
-            .optional()?;
+            .optional()?
+        } else {
+            None
+        };
         if let Some((existing, version)) = identity {
             ensure!(
                 existing == root && version == VERSION,
                 "index identity/version"
             );
         } else {
+            // Identity is published only after all schema statements succeed.
+            // An interrupted initialization can replay the idempotent schema.
+            db.execute_batch(include_str!("league_index/schema.sql"))?;
             db.execute(
                 "INSERT INTO cache_identity(root,version) VALUES (?1,?2)",
                 params![root, VERSION],
@@ -173,9 +183,11 @@ impl Index {
             [media.as_str()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
+        let stamp = stamp
+            .filter(|_| accepted == bundle)
+            .context("recording index is pending source refresh")?;
         ensure!(
-            accepted == bundle
-                && stamp.as_deref() == Some(&source_stamp(&root.join("games").join(bundle))?),
+            stamp == source_stamp(&root.join("games").join(bundle))?,
             "recording index is pending source refresh"
         );
         Ok(())
@@ -251,6 +263,16 @@ impl Index {
         check: &(impl Fn() -> Result<()> + ?Sized),
     ) -> Result<ImportProgress> {
         let source = self.history_recording(root, summary, rebuild, check)?;
+        self.import_recording_source(root, &source, rebuild, check)
+    }
+
+    fn import_recording_source(
+        &mut self,
+        root: &Path,
+        source: &RecordingSource,
+        rebuild: bool,
+        check: &(impl Fn() -> Result<()> + ?Sized),
+    ) -> Result<ImportProgress> {
         let media = &source.timeline.media_id;
         let old_stamp: Option<String> = self.db.query_row(
             "SELECT source_stamp FROM recordings WHERE media_id=?1",
@@ -278,6 +300,20 @@ impl Index {
         result
     }
 
+    pub(crate) fn prepare_recording(
+        &mut self,
+        root: &Path,
+        summary: &GameSummary,
+        check: &(impl Fn() -> Result<()> + ?Sized),
+    ) -> Result<bool> {
+        let source = self.history_recording(root, summary, false, check)?;
+        let progress = self.import_recording_source(root, &source, false, check)?;
+        if progress.status == "ready" {
+            return self.prepare_overlay(&source.timeline);
+        }
+        Ok(progress.status != "pending")
+    }
+
     /// Publish small, validated card facts independently of journal/overlay work.
     pub(crate) fn history_recording(
         &mut self,
@@ -297,6 +333,28 @@ impl Index {
         // Fingerprint before decoding facts. A result arriving during this read
         // must invalidate this version, rather than bless older decoded facts.
         let stamp = source_stamp(&directory)?;
+        let timeline_json = serde_json::to_string(&descriptor.media_timeline)?;
+        let summary_json = serde_json::to_string(summary)?;
+        if !rebuild {
+            let current: bool = self.db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM recordings WHERE media_id=?1 AND bundle=?2
+                 AND history_stamp=?3 AND summary_json=?4 AND timeline_json=?5 AND facts_current=1)",
+                params![media.as_str(), summary.timestamp, stamp, summary_json, timeline_json],
+                |r| r.get(0),
+            )?;
+            if current {
+                check()?;
+                ensure!(
+                    source_stamp(&directory)? == stamp,
+                    "history source changed during preparation"
+                );
+                return Ok(RecordingSource {
+                    directory,
+                    timeline: descriptor.media_timeline,
+                    stamp,
+                });
+            }
+        }
         let candidate = crate::league_match::read(&directory, &media);
         ensure!(
             candidate.as_ref().map(|candidate| &candidate.group_key)
@@ -343,7 +401,7 @@ impl Index {
             .flatten();
         self.db.execute(
             "UPDATE recordings SET facts_current=0 WHERE media_id=?1 AND (summary_json!=?2 OR result_json IS NOT ?3)",
-            params![media.as_str(), serde_json::to_string(summary)?, result_json],
+            params![media.as_str(), summary_json, result_json],
         )?;
         self.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json,match_group)
             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
@@ -353,7 +411,7 @@ impl Index {
                 result.as_ref().and_then(|r| r.queue_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.queue_id))).map(sql_u64).transpose()?,
                 result.as_ref().and_then(|r| r.map_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.map_id))).map(sql_u64).transpose()?,
                 result.as_ref().map(|r| name(&r.outcome)).transpose()?.unwrap_or_else(|| "unknown".into()),
-                candidate.as_ref().map(|c| c.game_id.as_str()),serde_json::to_string(summary)?,previous_result,summary.match_group])?;
+                candidate.as_ref().map(|c| c.game_id.as_str()),summary_json,previous_result,summary.match_group])?;
         if previous_result != result_json {
             self.final_facts(&media, result.as_ref())?;
             self.db.execute(
@@ -361,7 +419,6 @@ impl Index {
                 params![media.as_str(), result_json],
             )?;
         }
-        let timeline_json = serde_json::to_string(&descriptor.media_timeline)?;
         let old_timeline: Option<String> = self.db.query_row(
             "SELECT timeline_json FROM recordings WHERE media_id=?1",
             [media.as_str()],

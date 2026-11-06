@@ -300,27 +300,7 @@ async fn prepare(
                 };
                 check()?;
                 let mut index = Index::open(&cache, library_root.as_path())?;
-                // Another owner may already have prepared this recording.
-                if index
-                    .prepared_progress(library_root.as_path(), &game)
-                    .is_ok_and(|p| p.status != "pending")
-                {
-                    return Ok(true);
-                }
-                let prepared = (|| {
-                    let progress = index.recording(library_root.as_path(), &game, false, &check)?;
-                    if progress.status == "ready" {
-                        let descriptor = library::replay_descriptor(
-                            library_root.as_path(),
-                            "",
-                            &game.timestamp,
-                            String::new(),
-                        )?;
-                        return index.prepare_overlay(&descriptor.media_timeline);
-                    }
-                    Ok(progress.status != "pending")
-                })();
-                match prepared {
+                match index.prepare_recording(library_root.as_path(), &game, &check) {
                     Ok(ready) => Ok(ready),
                     Err(error) => {
                         check()?;

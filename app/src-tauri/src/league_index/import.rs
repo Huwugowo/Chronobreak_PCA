@@ -180,33 +180,61 @@ impl Index {
     }
 }
 
-fn evidence(db: &Connection, e: &Evidence, tick: Option<GameTick>) -> Result<()> {
+fn evidence(db: &Connection, e: &Evidence, tick: Option<GameTick>, observed: bool) -> Result<()> {
     let s = &e.source;
     // Observation IDs are run-local u64 values; acquisition starts at zero.
     ensure!(e.timing.start_us <= e.timing.end_us, "observation interval");
-    let json = serde_json::to_string(e)?;
     db.prepare_cached("INSERT OR IGNORE INTO scopes(media_id,run_id,epoch) VALUES (?1,?2,?3)")?
         .execute(params![
             s.media_id.as_str(),
             s.run_id.as_str(),
             sql_u64(s.epoch)?
         ])?;
-    let previous: Option<String> = db.prepare_cached("SELECT data FROM evidence WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND observation_id=?4")?.query_row(
-        params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(e.id.0)?], |r| r.get(0)).optional()?;
-    if let Some(previous) = previous {
+    let json = serde_json::to_string(e)?;
+    let inserted = db
+        .prepare_cached(
+            "INSERT INTO evidence(media_id,run_id,epoch,observation_id,endpoint,start_us,end_us,
+            game_tick,game_stats_id,calibration_id,data,observed)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+         ON CONFLICT(media_id,run_id,epoch,observation_id) DO NOTHING",
+        )?
+        .execute(params![
+            s.media_id.as_str(),
+            s.run_id.as_str(),
+            sql_u64(s.epoch)?,
+            sql_u64(e.id.0)?,
+            name(&e.endpoint)?,
+            sql_u64(e.timing.start_us)?,
+            sql_u64(e.timing.end_us)?,
+            tick.map(GameTick::get),
+            e.game_stats.map(|id| sql_u64(id.0)).transpose()?,
+            e.calibration.map(|id| sql_u64(id.0)).transpose()?,
+            json,
+            observed,
+        ])?;
+    if inserted == 0 {
+        let (previous, was_observed): (String, bool) = db.prepare_cached(
+            "SELECT data,observed FROM evidence WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND observation_id=?4",
+        )?.query_row(params![s.media_id.as_str(), s.run_id.as_str(), sql_u64(s.epoch)?, sql_u64(e.id.0)?],
+            |r| Ok((r.get(0)?, r.get(1)?)))?;
         ensure!(
             previous == json,
             "observation ID reused with different evidence"
         );
-        if let Some(tick) = tick {
-            db.prepare_cached("UPDATE evidence SET game_tick=?5 WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND observation_id=?4")?.execute(
-                params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(e.id.0)?,tick.get()])?;
+        if tick.is_some() || (observed && !was_observed) {
+            db.prepare_cached(
+                "UPDATE evidence SET game_tick=COALESCE(?5,game_tick),observed=?6
+                 WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND observation_id=?4",
+            )?
+            .execute(params![
+                s.media_id.as_str(),
+                s.run_id.as_str(),
+                sql_u64(s.epoch)?,
+                sql_u64(e.id.0)?,
+                tick.map(GameTick::get),
+                observed || was_observed
+            ])?;
         }
-    } else {
-        db.prepare_cached("INSERT INTO evidence(media_id,run_id,epoch,observation_id,endpoint,start_us,end_us,game_tick,game_stats_id,calibration_id,data) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")?.execute(
-            params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(e.id.0)?,name(&e.endpoint)?,
-                sql_u64(e.timing.start_us)?,sql_u64(e.timing.end_us)?,tick.map(GameTick::get),
-                e.game_stats.map(|id| sql_u64(id.0)).transpose()?,e.calibration.map(|id| sql_u64(id.0)).transpose()?,json])?;
     }
     Ok(())
 }
@@ -264,12 +292,6 @@ fn import_record(
         Record::IdentityRound { round } => &round.active_player,
     };
     let s = &e.source;
-    db.prepare_cached("INSERT INTO records VALUES (?1,?2,?3)")?
-        .execute(params![
-            s.media_id.as_str(),
-            sequence,
-            serde_json::to_string(&entry.record)?
-        ])?;
     let tick = match &entry.record {
         Record::Observation { observation } => match observation.as_ref() {
             Observation::Success {
@@ -280,15 +302,11 @@ fn import_record(
         },
         _ => None,
     };
-    evidence(db, e, tick)?;
-    if matches!(
+    let observed = matches!(
         &entry.record,
         Record::EventObservation { .. } | Record::RosterObservation { .. }
-    ) || matches!(&entry.record, Record::Observation { observation } if matches!(observation.as_ref(), Observation::Success { .. }))
-    {
-        db.prepare_cached("UPDATE evidence SET observed=1 WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND observation_id=?4")?.execute(
-            params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(e.id.0)?])?;
-    }
+    ) || matches!(&entry.record, Record::Observation { observation } if matches!(observation.as_ref(), Observation::Success { .. }));
+    evidence(db, e, tick, observed)?;
     match &entry.record {
         Record::Observation { observation } => match observation.as_ref() {
             Observation::Gap { reason, .. } => gap(db, sequence, e, e, 1, reason, &entry.record)?,
@@ -322,7 +340,7 @@ fn import_record(
         }
         Record::IdentityRound { round } => {
             if let Some(gs) = &round.game_stats {
-                evidence(db, gs, None)?;
+                evidence(db, gs, None, false)?;
             }
         }
         Record::GapInterval {
@@ -338,7 +356,7 @@ fn import_record(
                     && *attempts > 0,
                 "gap interval scope"
             );
-            evidence(db, first, None)?;
+            evidence(db, first, None, false)?;
             gap(db, sequence, first, last, *attempts, reason, &entry.record)?;
         }
         Record::RosterObservation { roster, .. } => {
@@ -388,22 +406,33 @@ fn import_record(
                     tick,
                     replay_tick
                 ])?;
-            for (ordinal, id) in roster.references.iter().enumerate() {
-                let json: String = db.prepare_cached("SELECT data FROM roster_payloads WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND payload_id=?4")?.query_row(
-                    params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(id.0)?], |r| r.get(0))?;
-                let p: obs::RosterPlayer = serde_json::from_str(&json)?;
-                db.prepare_cached("INSERT INTO roster_members VALUES (?1,?2,?3,?4,?5,?6,?7,?8)")?
-                    .execute(params![
-                        s.media_id.as_str(),
-                        s.run_id.as_str(),
-                        sql_u64(s.epoch)?,
-                        sql_u64(e.id.0)?,
-                        ordinal as i64,
-                        p.participant.map(|p| sql_u64(p.0)).transpose()?,
-                        sql_u64(id.0)?,
-                        tick
-                    ])?;
-            }
+            // Resolve the whole roster in one statement. Payloads have already
+            // been validated and serialized when inserted into the dictionary.
+            // Drive the join from the references, using one dictionary lookup
+            // per ID instead of scanning the growing dictionary for each roster.
+            let references = serde_json::to_string(&roster.references)?;
+            let inserted = db
+                .prepare_cached(
+                    "INSERT INTO roster_members
+                 SELECT ?1,?2,?3,?4,r.key,json_extract(p.data,'$.participant'),p.payload_id,?5
+                 FROM json_each(?6) r CROSS JOIN roster_payloads p
+                   ON p.media_id=?1 AND p.run_id=?2 AND p.epoch=?3 AND p.payload_id=r.value
+                 WHERE r.type='integer' AND typeof(r.value)='integer'
+                   AND (json_type(p.data,'$.participant') IS NULL
+                     OR typeof(json_extract(p.data,'$.participant')) IN ('null','integer'))",
+                )?
+                .execute(params![
+                    s.media_id.as_str(),
+                    s.run_id.as_str(),
+                    sql_u64(s.epoch)?,
+                    sql_u64(e.id.0)?,
+                    tick,
+                    references
+                ])?;
+            ensure!(
+                inserted == roster.references.len(),
+                "missing or invalid roster payload"
+            );
         }
         Record::EventObservation { revisions, .. } => {
             let mut lookup_error = None;

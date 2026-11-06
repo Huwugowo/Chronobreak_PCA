@@ -384,17 +384,17 @@ impl Index {
                 tx.execute("DELETE FROM prepared_overlay_samples WHERE media_id=?1 AND run_id=?2 AND epoch=?3",params![query.media_id.as_str(),query.run_id.as_str(),sql_u64(query.epoch)?])?;
             }
             for sample in &page.samples {
-                tx.execute(
+                tx.prepare_cached(
                     "INSERT OR REPLACE INTO prepared_overlay_samples VALUES (?1,?2,?3,?4,?5,?6)",
-                    params![
-                        query.media_id.as_str(),
-                        query.run_id.as_str(),
-                        sql_u64(query.epoch)?,
-                        sql_u64(sample.replay_tick.get())?,
-                        sql_u64(sample.observation_id)?,
-                        serde_json::to_string(sample)?
-                    ],
-                )?;
+                )?
+                .execute(params![
+                    query.media_id.as_str(),
+                    query.run_id.as_str(),
+                    sql_u64(query.epoch)?,
+                    sql_u64(sample.replay_tick.get())?,
+                    sql_u64(sample.observation_id)?,
+                    serde_json::to_string(sample)?
+                ])?;
             }
             tx.execute(
                 "INSERT OR REPLACE INTO prepared_overlay_sources VALUES (?1,?2,?3,?4,?5,?6)",

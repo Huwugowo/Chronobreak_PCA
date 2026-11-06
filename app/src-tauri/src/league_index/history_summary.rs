@@ -19,7 +19,8 @@ impl Index {
         )?;
         if pending {
             self.db.execute(
-                "UPDATE recordings SET history_flags=31,facts_current=1 WHERE media_id=?1",
+                "UPDATE recordings SET history_flags=31,facts_current=1 WHERE media_id=?1
+                 AND (history_flags!=31 OR facts_current!=1)",
                 [media.as_str()],
             )?;
             return Ok(());

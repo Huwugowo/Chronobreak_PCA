@@ -242,6 +242,29 @@ fn pages_commits_atomically_and_skips_unchanged_sources() {
 }
 
 #[test]
+fn reused_card_facts_recheck_the_source_before_returning() {
+    let mut fixture = Fixture::new(1);
+    let mut index = fixture.index();
+    fixture.ready(&mut index);
+    let checks = std::cell::Cell::new(0);
+    let changed = index.recording(fixture.root.path(), &fixture.summary, false, &|| {
+        checks.set(checks.get() + 1);
+        if checks.get() == 2 {
+            // Change the optional source after the reuse decision but before
+            // the recording can report that its checked facts are current.
+            fs::write(fixture.directory.join(manifest::FILE), b"{}")?;
+        }
+        Ok(())
+    });
+    assert_eq!(
+        changed.unwrap_err().to_string(),
+        "history source changed during preparation"
+    );
+    fixture.game_stats(100, 5_000_000, true);
+    fixture.ready(&mut index);
+}
+
+#[test]
 fn retains_corrections_exact_actors_stale_anchor_and_rebuild_equivalence() {
     let mut f = Fixture::new(1);
     let mut index = f.index();
