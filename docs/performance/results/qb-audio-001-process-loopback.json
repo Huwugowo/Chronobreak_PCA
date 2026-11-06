@@ -1,0 +1,279 @@
+{
+  "schema_version": 1,
+  "feature": "QB-AUDIO-001",
+  "observed_at_utc": "2026-10-31T00:16:27.8753525Z",
+  "scope": "controlled source separation; spectral summaries only",
+  "windows_build": 19045,
+  "windows_revision": 6466,
+  "documented_minimum_build": 20348,
+  "meets_documented_build": false,
+  "prerequisite_passed": true,
+  "observation": {
+    "scope": "two generated tones; spectral summaries only; no captured samples saved",
+    "included_source": "child of target process",
+    "excluded_source": "independent process tree",
+    "sample_rate": 48000,
+    "channels": 2,
+    "include": {
+      "expected_hz": 697,
+      "excluded_hz": 1301,
+      "expected_amplitude": 0.032965495027346844,
+      "excluded_amplitude": 6.414393537483268e-07,
+      "excluded_to_expected_ratio": 1.9457901457758016e-05,
+      "captured_frames": 284160,
+      "packets": 592,
+      "first_qpc_100ns": "265477082639",
+      "last_qpc_100ns": "265536976892",
+      "first_device_frame": "0",
+      "last_device_frame": "0",
+      "device_position_advanced": false,
+      "qpc_device_clock_error_ms": null,
+      "qpc_vs_cumulative_samples_elapsed_ms": 79.42529999999988,
+      "mapping_negative_control_rejected": true,
+      "timing_proven": false,
+      "timestamp_errors": 0,
+      "discontinuities": 0,
+      "passed": true
+    },
+    "exclude": {
+      "expected_hz": 1301,
+      "excluded_hz": 697,
+      "expected_amplitude": 0.022424202366895515,
+      "excluded_amplitude": 1.2965759214139878e-06,
+      "excluded_to_expected_ratio": 5.782038086349514e-05,
+      "captured_frames": 284160,
+      "packets": 592,
+      "first_qpc_100ns": "265477196599",
+      "last_qpc_100ns": "265536958040",
+      "first_device_frame": "0",
+      "last_device_frame": "0",
+      "device_position_advanced": false,
+      "qpc_device_clock_error_ms": null,
+      "qpc_vs_cumulative_samples_elapsed_ms": 66.14410000000044,
+      "mapping_negative_control_rejected": true,
+      "timing_proven": false,
+      "timestamp_errors": 0,
+      "discontinuities": 0,
+      "passed": true
+    },
+    "separation_passed": true,
+    "replay_synchronization_proven": false,
+    "capture_video_alignment_proven": false
+  },
+  "capture_separation_proven": true,
+  "replay_synchronization_proven": false,
+  "observation_date_europe_paris": "2026-10-31",
+  "raw_artifact_root": "build/perf/qb-audio-001/separation-20261031T001621005Z-0fd5f2ee",
+  "interpretation": {
+    "platform": "Observed process-tree include/exclude capture succeeds on Windows 10 22H2 build 19045.6466 despite the Microsoft documented build 20348 minimum; no OS-wide support or overhead claim.",
+    "membership": "697 Hz is rendered by a target child; 1301 Hz by an independent process tree. Both spectral separation and swapped-group rejection pass.",
+    "timing": "All device positions remain zero. A per-packet ledger explains QPC-minus-sample span exactly as positive timestamp gaps, with no overlaps or post-start discontinuity flag. This is not recording-time A/V or replay synchronization proof.",
+    "scope": "Standalone fixtures only. Captured PCM is not retained. No production behavior, real League, export or performance claim."
+  },
+  "packet_accounting": {
+    "schema_version": 1,
+    "feature": "QB-AUDIO-001",
+    "scope": "packet timestamp/sample accounting; no WGC/video or decoded-media comparison",
+    "source_sha256": "aa2399e6e63a0f58c423f63bf33b26fce2765386178119411bd778486bcacded",
+    "include": {
+      "packets": 592,
+      "captured_frames": 284160,
+      "qpc_span_ms": 5999.4253,
+      "sample_duration_ms": 5920.0,
+      "gap_total_ms": 79.4253,
+      "gap_count": 4,
+      "gaps": [
+        {
+          "packet": 158,
+          "duration_ms": 8.0114,
+          "previous_peak": 3.0517578125e-05,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        },
+        {
+          "packet": 161,
+          "duration_ms": 40.7166,
+          "previous_peak": 3.0517578125e-05,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        },
+        {
+          "packet": 413,
+          "duration_ms": 16.1442,
+          "previous_peak": 0.083282470703125,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        },
+        {
+          "packet": 418,
+          "duration_ms": 14.5531,
+          "previous_peak": 0.0191192626953125,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        }
+      ],
+      "overlap_count": 0,
+      "overlaps": [],
+      "timestamp_errors": 0,
+      "post_start_discontinuities": 0,
+      "device_positions_all_zero": true,
+      "span_minus_samples_equals_sum_of_packet_deltas_exactly": true,
+      "arithmetic_reconciliation_passed": true,
+      "contiguous_valid_timestamp_coverage": false,
+      "capture_video_alignment_proven": false
+    },
+    "exclude": {
+      "packets": 592,
+      "captured_frames": 284160,
+      "qpc_span_ms": 5986.1441,
+      "sample_duration_ms": 5920.0,
+      "gap_total_ms": 66.1441,
+      "gap_count": 4,
+      "gaps": [
+        {
+          "packet": 157,
+          "duration_ms": 32.4462,
+          "previous_peak": 3.0517578125e-05,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        },
+        {
+          "packet": 158,
+          "duration_ms": 3.5673,
+          "previous_peak": 3.0517578125e-05,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        },
+        {
+          "packet": 414,
+          "duration_ms": 20.4826,
+          "previous_peak": 0.054443359375,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        },
+        {
+          "packet": 418,
+          "duration_ms": 9.648,
+          "previous_peak": 3.0517578125e-05,
+          "next_peak": 3.0517578125e-05,
+          "discontinuity_flag": false
+        }
+      ],
+      "overlap_count": 0,
+      "overlaps": [],
+      "timestamp_errors": 0,
+      "post_start_discontinuities": 0,
+      "device_positions_all_zero": true,
+      "span_minus_samples_equals_sum_of_packet_deltas_exactly": true,
+      "arithmetic_reconciliation_passed": true,
+      "contiguous_valid_timestamp_coverage": false,
+      "capture_video_alignment_proven": false
+    },
+    "source_separation_passed": true,
+    "capture_video_alignment_proven": false,
+    "replay_synchronization_proven": false,
+    "interpretation": "Contiguous sample concatenation discards observed timestamp gaps. Raw QPC gaps require explicit capture-time coverage policy; they are not a measured A/V drift or permission to compensate in playback."
+  },
+  "limits": [
+    "six-second controlled membership observation",
+    "not an isolated audio environment",
+    "not a production capture-performance benchmark",
+    "not real League",
+    "native timing collector successful path is unverified",
+    "no muxed two-group timing or long-run proof"
+  ],
+  "verification": [
+    {
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_process_loopback.ps1 -RequireAvailable",
+      "exit_code": 0,
+      "result": "both activation modes available",
+      "artifact_root": "build/perf/qb-audio-001/activation-20261031T002322202Z-44123ef3"
+    },
+    {
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_process_loopback.ps1 -ControlledProof",
+      "exit_code": 0,
+      "result": "both source-membership spectral assertions and swapped-group controls pass; timing unproven",
+      "artifact_root": "build/perf/qb-audio-001/separation-20261031T001621005Z-0fd5f2ee"
+    },
+    {
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_process_loopback.ps1 -ControlledProof -TimeoutMilliseconds 3000",
+      "expected_exit_code": 1,
+      "actual_exit_code": 1,
+      "result": "forced timeout verified zero active job processes and no remaining generated fixture processes via System.Diagnostics.Process; no WMI query used",
+      "artifact_root": "build/perf/qb-audio-001/timeout-check-20261031T003122710122Z-9e7ffb67",
+      "job_accounting_zero_observed": true,
+      "independent_remaining_fixture_processes": 0
+    },
+    {
+      "command": "canonical feature-list validator from docs/development/VERIFICATION.md",
+      "exit_code": 0,
+      "result": "105 canonical items and 26 plan/checkpoint pairs validated"
+    },
+    {
+      "command": "git diff --check -- feature-list.json recorder/examples/native_nvenc_probe.rs tools/audio docs/performance/results/qb-audio-001-process-loopback.json docs/performance/results/qb-audio-001-webview-groups.json",
+      "exit_code": 0,
+      "result": "no whitespace errors in tracked diff"
+    },
+    {
+      "command": "python tools/audio/analyze_packet_ledger.py build/perf/qb-audio-001/separation-20261031T001621005Z-0fd5f2ee/result.json --output build/perf/qb-audio-001/separation-20261031T001621005Z-0fd5f2ee/packet-accounting.json",
+      "exit_code": 0,
+      "result": "Exact arithmetic reconciliation; include/exclude gaps 79.4253/66.1441 ms, four each, zero overlaps; contiguous valid timestamp coverage false."
+    },
+    {
+      "command": "cargo build --manifest-path recorder/Cargo.toml --example native_nvenc_probe",
+      "exit_code": 0,
+      "result": "native example builds",
+      "artifact": ".codex/logs/command-20261031-011122.log"
+    },
+    {
+      "command": "cargo check --manifest-path recorder/Cargo.toml --all-targets --all-features",
+      "exit_code": 0,
+      "result": "all recorder targets/features checked",
+      "artifact": ".codex/logs/command-20261031-013013.log"
+    },
+    {
+      "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features",
+      "exit_code": 0,
+      "result": "271 passed, 12 ignored, zero failures across library, integrations and examples",
+      "artifact": ".codex/logs/command-20261031-012342.log"
+    },
+    {
+      "command": "cargo fmt --manifest-path recorder/Cargo.toml -- --check",
+      "exit_code": 0,
+      "result": "format check passed after formatting the changed example"
+    },
+    {
+      "command": "cargo clippy --manifest-path recorder/Cargo.toml --all-targets --all-features -- -D warnings",
+      "exit_code": 0,
+      "result": "all recorder targets/features linted without warnings",
+      "artifact": ".codex/logs/command-20261031-011739.log"
+    },
+    {
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_webview_groups.ps1 -PlaywrightModule $env:CHRONOBREAK_PLAYWRIGHT_MODULE",
+      "exit_code": 0,
+      "result": "matched native/graph rates and group controls/lifecycle passed; isolated-library identity checked and fixture process tree empty",
+      "artifact_root": "build/perf/qb-audio-001/webview-20261031T002825916Z-366e444d"
+    }
+  ],
+  "diagnostic_corrections": [
+    "Initial callback lacked IAgileObject and returned E_ILLEGAL_METHOD_CALL; fixed callback agility before measuring capability. That initial result is not an unsupported-OS observation.",
+    "Initial wrapper had .NET Process exit-code caching and Windows PowerShell JSON array-unrolling mistakes; fixed before accepted reports.",
+    "Initial clock calculation incorrectly assumed advancing device positions. Zero device positions are now recorded explicitly; the invalid device-clock comparison is null and timing remains unproven.",
+    "Per-packet diagnostics distinguish arithmetic reconciliation from valid contiguous coverage. Unflagged timestamp gaps must not be presented as an A/V drift estimate.",
+    "Timing collector targets a separate generated window/697-Hz child; the 1301-Hz process is its sibling, avoiding accidental include-tree membership.",
+    "Timing collector now requires the actual marker-child epoch and records the coordinator release separately. Successful child-epoch handoff remains unverified because encoder startup is blocked."
+  ],
+  "native_timing_attempt": {
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_process_loopback.ps1 -ControlledTimingProof -TimeoutMilliseconds 30000",
+    "artifact_root": "build/perf/qb-audio-001/timing-20261031T001943807Z-ed3252d8",
+    "exit_code": 1,
+    "user_requested_single_retry": true,
+    "retries_after_request": 1,
+    "observed_adapter": "Intel(R) UHD Graphics",
+    "adapter_luid": "0000000000012593",
+    "failure": "NVENCSTATUS 1 (NO_ENCODE_DEVICE) before marker collection",
+    "fixture_process_tree_empty": true,
+    "capture_video_alignment_proven": false,
+    "context": "User confirmed a different display setup. The requested single retry still resolved Intel; no additional retry after that request."
+  }
+}

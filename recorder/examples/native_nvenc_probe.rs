@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 mod windows_probe {
-    use std::fs::File;
+    use std::fs::{File, OpenOptions};
     use std::io::{self, BufWriter, Write};
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -13,6 +13,7 @@ mod windows_probe {
         let mut args = std::env::args().skip(1);
         let mut pid = None;
         let mut output = None;
+        let mut qpc_ledger_path = None;
         let mut duration = Duration::from_secs(10);
         let mut fail_output_after = None;
         let mut block_output_after = None;
@@ -29,6 +30,11 @@ mod windows_probe {
                 "--output" => {
                     output = Some(PathBuf::from(
                         args.next().context("--output requires a path")?,
+                    ));
+                }
+                "--qpc-ledger" => {
+                    qpc_ledger_path = Some(PathBuf::from(
+                        args.next().context("--qpc-ledger requires a new path")?,
                     ));
                 }
                 "--duration-seconds" => {
@@ -60,6 +66,16 @@ mod windows_probe {
         }
         let pid = pid.context("--pid is required")?;
         let output = output.context("--output is required")?;
+        let mut qpc_ledger = qpc_ledger_path
+            .map(|path| {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .map(BufWriter::new)
+                    .with_context(|| format!("could not create QPC ledger at {}", path.display()))
+            })
+            .transpose()?;
         if fail_output_after.is_some() && block_output_after.is_some() {
             bail!("output failure and blocking injection are mutually exclusive");
         }
@@ -76,7 +92,14 @@ mod windows_probe {
             failure_after: fail_output_after,
             block_after: block_output_after,
         };
-        let mut encoder = NativeNvencEncoder::new(&source, &converter, writer)?;
+        let mut encoder =
+            NativeNvencEncoder::new(&source, &converter, writer).with_context(|| {
+                format!(
+                    "could not initialize probe encoder on adapter {:?} ({:016x})",
+                    source.adapter_name(),
+                    source.adapter_luid()
+                )
+            })?;
 
         println!(
             "CHRONOBREAK_NATIVE_NVENC_STARTED adapter_luid={:016x} adapter_name={:?} output={}",
@@ -106,6 +129,13 @@ mod windows_probe {
                 latest_qpc = Some(qpc);
                 if let Some(converted) = converter.convert(&frame)? {
                     encoder.submit(converted)?;
+                    if let Some(ledger) = qpc_ledger.as_mut() {
+                        writeln!(
+                            ledger,
+                            "{{\"frame\":{submitted},\"source_qpc_100ns\":\"{qpc}\"}}"
+                        )
+                        .context("could not write submitted-frame QPC ledger")?;
+                    }
                     submitted = submitted.saturating_add(1);
                 }
                 frame.close()?;
@@ -117,6 +147,9 @@ mod windows_probe {
 
         let capture = source.close()?;
         let encode = encoder.finish()?;
+        if let Some(ledger) = qpc_ledger.as_mut() {
+            ledger.flush().context("could not flush QPC ledger")?;
+        }
         let conversion = converter.telemetry();
         if submitted == 0 {
             bail!("native NVENC probe submitted no frames");

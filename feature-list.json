@@ -3747,7 +3747,7 @@
       "description": "Capture the product-scoped two-group audio model—League audio and everything else—and expose independent mute/volume controls in replay and clip/export production.",
       "priority": "P1",
       "area": "audio",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-AUDIO",
       "dependencies": [
         "QB-CAP-001",
@@ -3755,36 +3755,58 @@
         "QB-CLIP-007",
         "QB-REPLAY-012"
       ],
-      "evidence": [],
+      "evidence": [
+        "2026-10-31 draft feasibility: simultaneous process-tree include/exclude PCM capture passed generated 697/1301-Hz source membership and swapped-group rejection on Windows 10 22H2 build 19045.6466, including a target child. Per-packet QPC accounting exposes unflagged gaps rather than proving A/V synchronization. Evidence: docs/performance/results/qb-audio-001-process-loopback.json.",
+        "2026-10-31 actual WebView2 156.0.4314.56 exposed four AAC channels through one native video/Web Audio graph; independent mute/half-gain, pause/seek and loop/reload/layout passed. The latest matched graph-free/graph run passed presented-frame advancement at every tested speed from 0.25x through 8x; the earlier 4x/8x failure remains recorded with its cause unresolved. Evidence: docs/performance/results/qb-audio-001-webview-groups.json. These are bounded mechanism observations using a pre-existing app executable, not production feature or performance verification.",
+        "The user-requested single NVIDIA timing retry still selected Intel UHD Graphics and failed before encoding (NO_ENCODE_DEVICE); fixture process tree observed empty. Recording-time timing integration remains unproven and no ExecPlan is finalized."
+      ],
       "execution": {
         "workflow": "planned",
         "plan": null
       },
       "acceptance_criteria": [
-        "The supported capture model distinguishes League audio from everything else in a controlled recording; arbitrary Discord, microphone, application, or voice isolation is not required.",
-        "Replay controls independently mute and set volume for League audio and everything else.",
-        "Exported clips preserve the selected two-group mute/volume controls.",
-        "Both groups remain on one synchronized media pipeline when that supports the controls; a parallel path, if required, is explicitly slaved to the canonical replay timeline.",
-        "Capture performance/reliability remains within project budgets."
+        "On a validated capture-capable Windows configuration, two recorded groups distinguish the exact League game process tree's rendered audio from rendered audio outside that tree, including child-process membership and absence of League leakage into everything else; arbitrary Discord, microphone, application, or voice isolation is not required.",
+        "Replay and clip preview independently mute and set each group's volume; the same selected source-group mix reaches every requested export preset without replacing optional music controls.",
+        "Exported H.264/AAC MP4 clips render the selected two-group mute/volume values into the publishable audio mix, preserve exact frame-aligned source ranges and A/V synchronization, and never modify the source recording.",
+        "Both groups retain explicit identity and exact per-group sample/PTS coverage relative to the QB-REPLAY-012 recording epoch and media identity. Late starts, silence, gaps, overlaps and timestamp failures cannot be hidden by assigning both streams a new zero or repairing an unknown capture offset in playback.",
+        "Both groups remain on one synchronized media pipeline when that supports the controls; a necessary parallel audio renderer is explicitly slaved to primary-video presented-frame authority through play/pause, seek, rate, clip loops, recovery, fullscreen/layout and disposal, with measured audible synchronization rather than equal assigned currentTime values.",
+        "Existing supported combined-audio and silent recordings retain truthful combined/unavailable group behavior; source membership is never inferred from stream order, and an unavailable separation capability cannot be presented as two isolated groups.",
+        "Windows 10 support shares the straightforward runtime-capable process-loopback path when validated with little overhead; it does not require drivers, endpoint rerouting, hooks/injection, mix subtraction or a substantial alternate legacy backend.",
+        "Capture lifecycle, bounded-resource and media-integrity checks pass, and a valid applicable capture-performance comparison meets the unchanged project frame/resource budgets; the accepted invalid QB-PERF-001 diagnostic matrix is not performance pass evidence."
       ],
       "verification": [
         {
+          "type": "inspection",
+          "description": "Probe both real process-loopback activation modes without reading audio; activation is a prerequisite only, not proof of separation or OS-wide support.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_process_loopback.ps1 -RequireAvailable"
+        },
+        {
           "type": "automated",
-          "description": "Test track mapping/mix logic with controlled audio fixtures where possible.",
+          "description": "Run generated target-child versus independent-process tones through simultaneous include/exclude capture; assert spectral group membership and swapped-mapping rejection, retain packet/QPC diagnostics, and verify fixture timeout terminates its whole process tree. This does not prove recording-time or replay synchronization.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_process_loopback.ps1 -ControlledProof"
+        },
+        {
+          "type": "inspection",
+          "description": "Characterize one native video with four-channel AAC in actual WebView2 using generated isolated media. Assert channel identity, per-group gain/mute, transport, rate, loop/reload/layout and swapped identity rejection; retain limitations and distinguish pre-existing-binary mechanism evidence from current production verification. An installed Playwright module path is required as documented in tools/audio/README.md.",
+          "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/audio/probe_webview_groups.ps1 -PlaywrightModule $env:CHRONOBREAK_PLAYWRIGHT_MODULE"
+        },
+        {
+          "type": "automated",
+          "description": "Test explicit group/coverage validation, unsupported/combined/silent inputs, source-preserving gain/mute mixing and strict media-identity/frame-range handling with controlled fixtures; decode every export preset to assert spectral amplitudes, audio mapping, full decode, source hashes, thumbnails and existing size/publication gates.",
           "command": null
         },
         {
           "type": "manual",
-          "description": "Record distinguishable sources and verify replay/export control.",
+          "description": "Before finalizing the implementation plan, reconcile both real packet clocks with the WGC epoch and demonstrate the proposed two-group playback mechanism in actual WebView2. Then verify distinguishable early/middle/late markers, independently audible gain/mute, play/pause, seeks, supported rates, loops, recovery and fullscreen/layout/disposal, and require deliberately skewed timing controls to fail.",
           "command": null
         },
         {
           "type": "benchmark",
-          "description": "Run applicable capture-performance regression benchmark.",
+          "description": "Run native lifecycle/media/resource regressions and a valid baseline-versus-two-group League capture comparison under docs/performance/capture-benchmark.md; retain exact hardware/runtime, raw counters and unchanged frame/resource-gate results. The feasibility probe is not an overhead benchmark.",
           "command": null
         }
       ],
-      "notes": "Keep draft until actual Windows capture capabilities and the QB-REPLAY-012 timing integration are demonstrated. Scope is exactly League audio plus everything else; do not expand it into arbitrary multitrack/Discord/microphone/voice isolation. Recording-time A/V relationships remain authoritative and cannot be repaired after capture.",
+      "notes": "Keep draft until actual Windows capture capabilities and the QB-REPLAY-012 timing integration are demonstrated; no implementation ExecPlan is finalized. 2026-10-31 user direction: investigate Windows 10 too, but support it only when straightforward with very little overhead; do not spend substantial work on a separate legacy path. Actual include/exclude PCM capture works on this Windows 10 19045.6466 host despite Microsoft's documented build-20348 floor; share the operational API path without certifying other builds or real League. Packet device positions remain zero; raw per-packet QPC/sample coverage reconciles exactly with unflagged positive gaps, so contiguous concatenation is invalid. Preferred playback hypothesis: one explicit four-channel AAC group contract, after actual WebView2 channel/mute/gain success; current schema-v2 permits one audio stream but does not persist group/channel identity, and no final persistence design is approved. The latest matched WebView run passed graph-free and graph presented-frame advancement at 0.25x, 0.5x, 1x, 2x, 4x and 8x, retained all channels and passed mute/gain/transport/loop/reload/layout; its isolated-library guard was exercised. The earlier 4x/8x failure remains recorded with cause unresolved; one bounded matched success is not sustained stability or production performance evidence. The user confirmed a different display setup; the specifically requested one retry still resolved Intel and failed native NVIDIA-only encoder startup. No further timing retry followed that request. Next readiness action: establish a generated target actually owned by an NVIDIA-connected display, then run the current standalone timing collector and finish paired-marker, gap/overlap, canonical WGC-epoch and skew-rejecting mux verification before finalizing a plan. The collector's successful path/child-epoch handoff remain unverified; collection completion alone does not assert marker membership or synchronization. tools/audio/README.md documents exact probes and limitations; feature-list.json remains the lifecycle/next-action authority. Scope is exactly League audio plus everything else; recording-time A/V relationships cannot be repaired later in playback.",
       "user_value": 4,
       "differentiation": 4,
       "difficulty": 4,

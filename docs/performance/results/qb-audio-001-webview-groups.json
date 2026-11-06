@@ -1,0 +1,2165 @@
+{
+  "schema_version": 1,
+  "feature": "QB-AUDIO-001",
+  "observation_date_europe_paris": "2026-10-31",
+  "scope": "Actual WebView2 mechanism observations using generated quad AAC in a pre-existing app executable; not product verification.",
+  "one_x_mechanism": {
+    "artifact_root": "build/perf/qb-audio-001/webview-20261031T000417786Z-7d265007",
+    "exit_code": 0,
+    "result": {
+      "schema_version": 1,
+      "feature": "QB-AUDIO-001",
+      "observed_at_utc": "2026-10-31T00:04:40.243Z",
+      "scope": "generated four-channel AAC; actual WebView2 capability; standalone native video and Web Audio nodes",
+      "runtime": "156.0.4314.56",
+      "generated_media_only": true,
+      "source_sha256": "44aa6c446beb4ef2b3674738b8335bef9df064e851534568d5f44bd74807b19d",
+      "app_sha256": "e9defaa39b1d6179e37f4b3e5c8699e01faf0496423829e1b801efb551e6664c",
+      "app_build_scope": "pre-existing executable; WebView capability only, not current-tree product verification",
+      "channel_frequencies_hz": [
+        697,
+        941,
+        1301,
+        1709
+      ],
+      "group_channels": {
+        "league_fixture": [
+          0,
+          1
+        ],
+        "other_fixture": [
+          2,
+          3
+        ]
+      },
+      "passed": true,
+      "channel_identity_passed": true,
+      "independent_gain_mute_passed": true,
+      "native_pause_passed": true,
+      "native_seek_passed": true,
+      "after_seek_channels_passed": true,
+      "swapped_identity_rejected": true,
+      "context_sample_rate": 48000,
+      "pipeline_count": 1,
+      "observations": [
+        {
+          "name": "both-groups",
+          "channels": [
+            [
+              0.039972278774245425,
+              0.0002908235716344522,
+              3.1483451279387614e-05,
+              7.078568392258357e-05
+            ],
+            [
+              0.0003162223371736561,
+              0.03998862451805146,
+              0.00017720552228575677,
+              1.0396659535413557e-05
+            ],
+            [
+              3.10875400256914e-05,
+              0.0001832002641533075,
+              0.039952111809822596,
+              0.0001543585820002623
+            ],
+            [
+              6.98381540687042e-05,
+              2.6674609826648935e-05,
+              0.00017263798738974655,
+              0.0399518886790976
+            ]
+          ],
+          "mix": [
+            [
+              0.0399681187354277,
+              0.00040958957326269537,
+              0.03994803062483077,
+              0.00014301808007679802
+            ],
+            [
+              0.00038803141597242176,
+              0.039975316331185784,
+              9.751272637717579e-05,
+              0.039952062133911406
+            ]
+          ],
+          "media_time": 0.730667,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "league-muted",
+          "channels": [
+            [
+              0.03997184569777352,
+              0.00031559800050532207,
+              3.09345694237746e-05,
+              8.398290431673595e-05
+            ],
+            [
+              0.00023071747888406415,
+              0.04001029740267364,
+              0.00023374852720581846,
+              4.261019880556598e-05
+            ],
+            [
+              3.228806632834914e-05,
+              0.0002228402949852642,
+              0.03998600817219907,
+              0.0001564042910800971
+            ],
+            [
+              5.4701619467798614e-05,
+              3.487398815446667e-05,
+              0.00016126153283370159,
+              0.03995811288863784
+            ]
+          ],
+          "mix": [
+            [
+              3.114142708827222e-05,
+              0.00017984627094986684,
+              0.03999718559488508,
+              0.00018284683288757224
+            ],
+            [
+              7.772380679793318e-05,
+              1.9599861605546438e-05,
+              0.0001793748686471186,
+              0.03995811288863784
+            ]
+          ],
+          "media_time": 1.101333,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "other-muted-league-half",
+          "channels": [
+            [
+              0.03998867474683952,
+              0.0002467835812419402,
+              3.23376088818047e-05,
+              4.3218599825927506e-05
+            ],
+            [
+              0.00031121228956534203,
+              0.03991206622942683,
+              0.00018131316651243075,
+              1.4773662587442387e-05
+            ],
+            [
+              3.1185915837796836e-05,
+              0.00019132246998363004,
+              0.03999890161172225,
+              0.00015019939132867872
+            ],
+            [
+              8.326915422928069e-05,
+              1.2104863186344869e-05,
+              0.00018429641729539588,
+              0.039962683896178935
+            ]
+          ],
+          "mix": [
+            [
+              0.01999220302026782,
+              0.00011515900204499929,
+              1.6293984735831114e-05,
+              1.4385864902369885e-05
+            ],
+            [
+              0.00014086264437796714,
+              0.019968207249469693,
+              0.0001025372533924906,
+              1.4975053708460598e-05
+            ]
+          ],
+          "media_time": 1.48,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "after-seek",
+          "channels": [
+            [
+              0.03998460082748416,
+              0.0002469108527267119,
+              3.2259138025784694e-05,
+              4.3287527871422836e-05
+            ],
+            [
+              0.0002395630322849303,
+              0.03999109201045147,
+              0.0002289402917499468,
+              4.079768658434467e-05
+            ],
+            [
+              3.0958788777771e-05,
+              0.00018822274990447154,
+              0.0400025248600797,
+              0.00017906120560149316
+            ],
+            [
+              6.014003430343697e-05,
+              3.262158270294841e-05,
+              0.00016525083293480121,
+              0.039968003946964294
+            ]
+          ],
+          "mix": [
+            [
+              0.039976243937152794,
+              0.00023256352681352244,
+              0.040021666430611204,
+              0.00024314639020597237
+            ],
+            [
+              0.00022259752352866294,
+              0.03995990684387698,
+              0.0003606585346206144,
+              0.039936666502336564
+            ]
+          ],
+          "media_time": 9.370667,
+          "rate": 1,
+          "paused": false
+        }
+      ],
+      "product_controls_verified": false,
+      "production_capture_timing_proven": false
+    }
+  },
+  "extended_transport": {
+    "artifact_root": "build/perf/qb-audio-001/webview-20261031T001739084Z-ace85ec9",
+    "exit_code": 1,
+    "result": {
+      "schema_version": 1,
+      "feature": "QB-AUDIO-001",
+      "observed_at_utc": "2026-10-31T00:18:08.699Z",
+      "scope": "generated four-channel AAC; actual WebView2 capability; standalone native video and Web Audio nodes",
+      "runtime": "156.0.4314.56",
+      "generated_media_only": true,
+      "source_sha256": "44aa6c446beb4ef2b3674738b8335bef9df064e851534568d5f44bd74807b19d",
+      "app_sha256": "e9defaa39b1d6179e37f4b3e5c8699e01faf0496423829e1b801efb551e6664c",
+      "app_build_scope": "pre-existing executable; WebView capability only, not current-tree product verification",
+      "channel_frequencies_hz": [
+        697,
+        941,
+        1301,
+        1709
+      ],
+      "group_channels": {
+        "league_fixture": [
+          0,
+          1
+        ],
+        "other_fixture": [
+          2,
+          3
+        ]
+      },
+      "passed": false,
+      "channel_identity_passed": true,
+      "independent_gain_mute_passed": true,
+      "native_pause_passed": true,
+      "native_seek_passed": true,
+      "after_seek_channels_passed": true,
+      "swapped_identity_rejected": true,
+      "context_sample_rate": 48000,
+      "rates": [
+        {
+          "requested": 0.25,
+          "adopted": 0.25,
+          "callbacks": 12,
+          "observed": 0.250181495633188,
+          "channels_present": true,
+          "passed": true
+        },
+        {
+          "requested": 0.5,
+          "adopted": 0.5,
+          "callbacks": 25,
+          "observed": 0.500250125062531,
+          "channels_present": true,
+          "passed": true
+        },
+        {
+          "requested": 1,
+          "adopted": 1,
+          "callbacks": 51,
+          "observed": 0.9906478839752737,
+          "channels_present": true,
+          "passed": true
+        },
+        {
+          "requested": 2,
+          "adopted": 2,
+          "callbacks": 83,
+          "observed": 2.0203228516562635,
+          "channels_present": true,
+          "passed": true
+        },
+        {
+          "requested": 4,
+          "adopted": 4,
+          "callbacks": 94,
+          "observed": 2.4447411807491832,
+          "channels_present": true,
+          "passed": false
+        },
+        {
+          "requested": 8,
+          "adopted": 8,
+          "callbacks": 95,
+          "observed": 2.6207334053534974,
+          "channels_present": true,
+          "passed": false
+        }
+      ],
+      "native_loop_passed": true,
+      "reload_passed": true,
+      "layout_passed": true,
+      "tested_pipeline_media_elements": 1,
+      "tested_parallel_audio_renderers": 0,
+      "observations": [
+        {
+          "name": "both-groups",
+          "channels": [
+            [
+              0.03995920459245957,
+              0.00023517007181374434,
+              3.276095124838354e-05,
+              3.385501179166626e-05
+            ],
+            [
+              0.00023055520165677653,
+              0.04001030168440143,
+              0.00023384929068053883,
+              4.270749492264892e-05
+            ],
+            [
+              3.158019731519055e-05,
+              0.00020061936582121032,
+              0.03998272354235419,
+              0.00017124704790503337
+            ],
+            [
+              6.731237192507657e-05,
+              2.837336753024205e-05,
+              0.00017074991025302073,
+              0.039960958298542015
+            ]
+          ],
+          "mix": [
+            [
+              0.03997292816919211,
+              0.00020135515548788303,
+              0.040000804123282635,
+              0.0002380482260948061
+            ],
+            [
+              0.00028023302773779574,
+              0.04005228902937998,
+              0.00011900179110791509,
+              0.03999504323560147
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02825207484809105,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.02829045528740752,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.02827103499653421,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028254325963570307,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.677615,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "league-muted",
+          "channels": [
+            [
+              0.03998656660636163,
+              0.0002673497364145018,
+              3.175633095894353e-05,
+              5.745194090091882e-05
+            ],
+            [
+              0.00030169191383372834,
+              0.03999797644994697,
+              0.00020412510660413724,
+              2.9116925957154594e-05
+            ],
+            [
+              3.197079833847427e-05,
+              0.00020932886547270297,
+              0.03998860393368344,
+              0.00016622693341668843
+            ],
+            [
+              8.611858072001876e-05,
+              3.849626150254916e-06,
+              0.00018680503828375533,
+              0.03996900314900387
+            ]
+          ],
+          "mix": [
+            [
+              3.197079833847427e-05,
+              0.00020932886547270297,
+              0.03998860393368344,
+              0.00016622693341668843
+            ],
+            [
+              8.611858072001876e-05,
+              4.2070547636001084e-05,
+              0.0001490624385986018,
+              0.04000553832435075
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028272211296559206,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028293836325333936,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028280529603033344,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02828209239905253,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 1.061333,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "other-muted-league-half",
+          "channels": [
+            [
+              0.03995164066484149,
+              0.0003214278621066618,
+              3.0826692076882455e-05,
+              8.665022151976708e-05
+            ],
+            [
+              0.00028095120138012843,
+              0.03995321641609503,
+              0.00020434390871485679,
+              2.9610909132437016e-05
+            ],
+            [
+              3.097809453217041e-05,
+              0.00017354271214053212,
+              0.040006285730121195,
+              0.00016799510661014128
+            ],
+            [
+              8.349573440415085e-05,
+              1.1645665793412228e-05,
+              0.000184453330502341,
+              0.03993984440175362
+            ]
+          ],
+          "mix": [
+            [
+              0.019979962920693498,
+              0.00015396355661262886,
+              1.5467383059475232e-05,
+              4.003529577628123e-05
+            ],
+            [
+              0.0001505205256318354,
+              0.01996822863440491,
+              9.541883310509713e-05,
+              1.0873070261202793e-05
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028259668001149586,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028243457508761494,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028284182742385294,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02826353055625943,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 1.430645,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "after-seek",
+          "channels": [
+            [
+              0.03998892308272402,
+              0.0002469108527267119,
+              3.2259138025784694e-05,
+              4.3287527871422836e-05
+            ],
+            [
+              0.0002395630322849303,
+              0.03999109201045147,
+              0.0002289402917499468,
+              4.079768658434467e-05
+            ],
+            [
+              3.0958788777771e-05,
+              0.00018822274990447154,
+              0.0400025248600797,
+              0.00018404600355851795
+            ],
+            [
+              6.191598474605352e-05,
+              3.1714881125390934e-05,
+              0.0001668532320434221,
+              0.039968003946964294
+            ]
+          ],
+          "mix": [
+            [
+              0.039976243937152794,
+              0.00023256352681352244,
+              0.040021666430611204,
+              0.00024314639020597237
+            ],
+            [
+              0.00022259752352866294,
+              0.03995990684387698,
+              0.0003606585346206144,
+              0.039944821289225864
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028254150453264865,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028263757316958203,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028285184725860876,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028261554052067553,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 9.381333,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "rate-0.25",
+          "channels": [
+            [
+              0.02210775015680677,
+              0.00014215331176815424,
+              7.753228974885169e-05,
+              4.181488408180903e-05
+            ],
+            [
+              0.00014229403138346137,
+              0.025049994968650603,
+              7.106066910354815e-05,
+              8.683831685437103e-05
+            ],
+            [
+              9.526615025462365e-05,
+              0.00012487546086673127,
+              0.03085297259791893,
+              0.00014288017814202952
+            ],
+            [
+              7.308217945265844e-06,
+              7.285675123274412e-05,
+              4.381664590147792e-05,
+              0.033773577575470434
+            ]
+          ],
+          "mix": [
+            [
+              0.02167403924516143,
+              0.00023659823040604136,
+              0.030916833242785647,
+              0.00012276068971281415
+            ],
+            [
+              0.00014258615933661478,
+              0.025078288649948734,
+              0.00011650927849850028,
+              0.033589783414314435
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02790867295657935,
+              "peak_hz": 691.40625
+            },
+            {
+              "rms": 0.028009196403336788,
+              "peak_hz": 937.5
+            },
+            {
+              "rms": 0.028093604640594832,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02816667991390128,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 2.192521,
+          "rate": 0.25,
+          "paused": false
+        },
+        {
+          "name": "rate-0.5",
+          "channels": [
+            [
+              0.03032106041543346,
+              7.760640424141015e-05,
+              0.00015361010752081548,
+              4.6649602507653354e-05
+            ],
+            [
+              0.0002388820166570699,
+              0.031967133547392355,
+              0.00010143499240652063,
+              0.00010158283000918476
+            ],
+            [
+              8.922394700106168e-05,
+              0.00016542335050428732,
+              0.03517878839485841,
+              0.0001617490883974905
+            ],
+            [
+              3.929410029453358e-06,
+              0.00010686555094126653,
+              7.050196844408771e-05,
+              0.03687693375008484
+            ]
+          ],
+          "mix": [
+            [
+              0.03044293141851801,
+              0.00019821560601809387,
+              0.03547461372514668,
+              0.00014975522522473413
+            ],
+            [
+              0.00031487854922524557,
+              0.0322690780654345,
+              6.265201176335885e-05,
+              0.03696204316377654
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028039356778460044,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.02805571467176266,
+              "peak_hz": 937.5
+            },
+            {
+              "rms": 0.02813434049996657,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028194661622702604,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 2.414022,
+          "rate": 0.5,
+          "paused": false
+        },
+        {
+          "name": "rate-1",
+          "channels": [
+            [
+              0.03998710244023148,
+              0.00023100811143039315,
+              3.266865754026708e-05,
+              2.8986700013224185e-05
+            ],
+            [
+              0.0003114682427237686,
+              0.039934570823549544,
+              0.00018009828888033758,
+              1.36864091958342e-05
+            ],
+            [
+              3.197155864904623e-05,
+              0.0002166820407035227,
+              0.03996716470756134,
+              0.0001603014105626322
+            ],
+            [
+              5.9100398869881683e-05,
+              3.3055534198485266e-05,
+              0.00016452401610704778,
+              0.03994902224745064
+            ]
+          ],
+          "mix": [
+            [
+              0.04001912256471958,
+              8.591551679896294e-05,
+              0.03998946386365022,
+              0.00018344300581434416
+            ],
+            [
+              0.00024775808225606274,
+              0.03993520361486153,
+              0.00033527964541632906,
+              0.03995078156554135
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028271503091756703,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.02824529874234757,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.02825637944747777,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028251374425268427,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 2.869333,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "rate-2",
+          "channels": [
+            [
+              0.013566455718735203,
+              0.00010180030041076006,
+              0.0001141865527711874,
+              2.535581665211042e-05
+            ],
+            [
+              0.00020716820608420992,
+              0.017964485864258226,
+              0.0001559777235435217,
+              8.447117501018076e-05
+            ],
+            [
+              8.869764837365928e-05,
+              3.1040726284120363e-05,
+              0.02604754131569632,
+              8.488725005414215e-05
+            ],
+            [
+              7.390268985596544e-05,
+              7.906498407457937e-05,
+              0.0001303074923624425,
+              0.030077640103416875
+            ]
+          ],
+          "mix": [
+            [
+              0.013243715650551942,
+              0.00011546594764957854,
+              0.025742813654275953,
+              0.00010142365991768821
+            ],
+            [
+              0.0002490255053389196,
+              0.01758702176142662,
+              0.00021462727368856642,
+              0.030062429377373374
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02775453738004214,
+              "peak_hz": 703.125
+            },
+            {
+              "rms": 0.0278649048470005,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028021960369479987,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028119349278391145,
+              "peak_hz": 1705.078125
+            }
+          ],
+          "media_time": 3.694417,
+          "rate": 2,
+          "paused": false
+        },
+        {
+          "name": "rate-4",
+          "channels": [
+            [
+              0.005509088349290399,
+              0.00021843526158193274,
+              6.666440251158134e-05,
+              4.8688127152467624e-05
+            ],
+            [
+              0.00010705645461639043,
+              0.00811223505159484,
+              1.4034719235854357e-05,
+              0.00010880866078922716
+            ],
+            [
+              0.0001299933816649293,
+              0.00015579451077504924,
+              0.01284438107478342,
+              0.00016343732150554742
+            ],
+            [
+              5.303675707533722e-05,
+              4.7289293755619426e-05,
+              0.00015481410334451567,
+              0.00428017213565446
+            ]
+          ],
+          "mix": [
+            [
+              0.0043673627847511205,
+              0.0003354000300657345,
+              0.012601467109852164,
+              0.00014459088356949212
+            ],
+            [
+              8.652217133156743e-05,
+              0.008315232797488513,
+              0.00017502678418397915,
+              0.004358073794554826
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02730685696224161,
+              "peak_hz": 703.125
+            },
+            {
+              "rms": 0.02741333118965665,
+              "peak_hz": 949.21875
+            },
+            {
+              "rms": 0.02787079961180693,
+              "peak_hz": 1294.921875
+            },
+            {
+              "rms": 0.027929685767378927,
+              "peak_hz": 1705.078125
+            }
+          ],
+          "media_time": 5.473405,
+          "rate": 4,
+          "paused": false
+        },
+        {
+          "name": "rate-8",
+          "channels": [
+            [
+              0.037980230059730516,
+              0.00032467387900228685,
+              2.6561910499941344e-05,
+              8.596544210448257e-05
+            ],
+            [
+              0.0001575197548836949,
+              0.01889543663029134,
+              6.551111233683004e-05,
+              0.00010767025356023722
+            ],
+            [
+              0.00011292553192613422,
+              0.00016475874725840173,
+              0.0114334646164177,
+              0.0001607274543939487
+            ],
+            [
+              3.612567637879887e-05,
+              6.763705271213041e-05,
+              0.00011781479159534614,
+              0.03677131025298272
+            ]
+          ],
+          "mix": [
+            [
+              0.03800338773307978,
+              0.0002329548186236082,
+              0.0114052922911043,
+              0.000231335414603343
+            ],
+            [
+              0.00016836730959148246,
+              0.01980015120683499,
+              0.00020506512878172247,
+              0.03621407715392883
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028039527890399,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.027003629405846944,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.027960546694561602,
+              "peak_hz": 1294.921875
+            },
+            {
+              "rms": 0.027904451352663156,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 8.946313,
+          "rate": 8,
+          "paused": false
+        },
+        {
+          "name": "native-loop",
+          "channels": [
+            [
+              0.03998583819293271,
+              0.00031182954729052465,
+              3.054576070178699e-05,
+              8.194986864093946e-05
+            ],
+            [
+              0.0003196812079298801,
+              0.03991771224687162,
+              0.00017411923714265014,
+              5.129526374483196e-06
+            ],
+            [
+              3.1760211683340135e-05,
+              0.00021724151841157944,
+              0.03999878075537043,
+              0.00018554432046021733
+            ],
+            [
+              7.503857548881358e-05,
+              2.1930424202344023e-05,
+              0.00017679390652363924,
+              0.04001064517033239
+            ]
+          ],
+          "mix": [
+            [
+              0.039982773263445924,
+              0.0002172766573029236,
+              0.04001586347576786,
+              0.0002470493183948916
+            ],
+            [
+              0.00039304738724847655,
+              0.03992038271216004,
+              5.08779468153244e-05,
+              0.04001351186666608
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028261016804461837,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028233506500203502,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028281522652647263,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02829521832797505,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.459027,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "same-element-reload",
+          "channels": [
+            [
+              0.03999947399452868,
+              0.0002703875544514419,
+              3.268891493120599e-05,
+              5.86274770485606e-05
+            ],
+            [
+              0.00027553043494290056,
+              0.03993571149359174,
+              0.00019397343344673346,
+              2.3624613445449355e-05
+            ],
+            [
+              3.100363884820469e-05,
+              0.00019548045861863284,
+              0.03995007175100211,
+              0.00017591245587544367
+            ],
+            [
+              7.155196572018e-05,
+              2.531735426331176e-05,
+              0.00017414092972475813,
+              0.04001173492725535
+            ]
+          ],
+          "mix": [
+            [
+              0.03998150502352912,
+              0.00027742920434016836,
+              0.03996388509131597,
+              0.00024171341191761992
+            ],
+            [
+              0.0002266125798305163,
+              0.03993447147645845,
+              0.00029348801824102485,
+              0.040024072118745875
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02827010836594853,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028236953642722752,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028266498372354044,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028294267918518905,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.429333,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "persistent-element-layout-move",
+          "channels": [
+            [
+              0.03999991623879287,
+              0.0003057534910424557,
+              3.1113598785941015e-05,
+              7.908452818820214e-05
+            ],
+            [
+              0.0002382253775891985,
+              0.04001683876289084,
+              0.00022906808855440466,
+              4.088552588359358e-05
+            ],
+            [
+              3.179789401456119e-05,
+              0.00021123684412924443,
+              0.03994602680563209,
+              0.00016441344460123183
+            ],
+            [
+              6.225050840333119e-05,
+              3.16574033760973e-05,
+              0.00017499926176495963,
+              0.03995745624482176
+            ]
+          ],
+          "mix": [
+            [
+              0.040019242502041134,
+              0.00020168359183065631,
+              0.03997432277207939,
+              0.00024268915068274203
+            ],
+            [
+              0.00021957658543873812,
+              0.040001789657329555,
+              0.00035692652637012753,
+              0.03993288509330709
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028284959864937134,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.02829489621487648,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028251670264085166,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028256613930264268,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.8,
+          "rate": 1,
+          "paused": false
+        }
+      ],
+      "product_controls_verified": false,
+      "production_capture_timing_proven": false
+    }
+  },
+  "interpretation": {
+    "channels": "Four distinct decoded channels are available in one MediaElementAudioSourceNode; one tested native video needs no parallel audio player for separate group controls.",
+    "gain": "At 1x, source amplitudes approximately .04FS become .02FS at half gain, while the muted group is below .001FS in the stereo graph output.",
+    "transport": "Native pause/seek, loop, reload and persistent-element layout movement passed. All four graph channels retained signal at every tested rate.",
+    "rates": "The latest matched comparison passed presented-frame advancement at 0.25x, 0.5x, 1x, 2x, 4x and 8x both before creating the audio-source node and with the control graph. The earlier unpaired 4x/8x failure remains recorded; its cause is unresolved. This single bounded comparison is not a sustained stability or production performance claim.",
+    "clock": "Numeric Web Audio graph observations do not establish physical audible A/V latency, current production controller behavior or capture-time alignment."
+  },
+  "limitations": [
+    "pre-existing executable, not current-tree desktop build",
+    "generated 20-second source only",
+    "no controller recovery or actual fullscreen proof",
+    "no device/acoustic latency measurement",
+    "no production export/performance claim",
+    "earlier high-rate failure remains unexplained; one bounded matched success does not establish sustained stability"
+  ],
+  "diagnostic_corrections": [
+    "Initial local diagnostic connections were unavailable in the restricted execution context; actual runtime observations used an allowed desktop context.",
+    "Wait for the Tauri page after CDP connects; initial connection alone precedes page admission.",
+    "Exact-frequency projections can cancel under native pitch processing at non-unit rates. Energy plus dominant frequency measures presence; 1x projections still measure gain.",
+    "The launcher verifies the connected app uses the exact generated library before UI actions; this guard was exercised in the successful matched comparison."
+  ],
+  "product_controls_verified": false,
+  "production_capture_timing_proven": false,
+  "performance_claim": false,
+  "matched_native_graph_comparison": {
+    "artifact_root": "build/perf/qb-audio-001/webview-20261031T002825916Z-366e444d",
+    "exit_code": 0,
+    "fixture_process_tree_empty": true,
+    "connected_library_identity_guard_exercised": true,
+    "comparison": "Same generated native video measured before MediaElementAudioSourceNode creation, then with the four-channel control graph in the same WebView session.",
+    "result": {
+      "schema_version": 1,
+      "feature": "QB-AUDIO-001",
+      "observed_at_utc": "2026-10-31T00:28:59.854Z",
+      "scope": "generated four-channel AAC; actual WebView2 capability; standalone native video and Web Audio nodes",
+      "runtime": "156.0.4314.56",
+      "generated_media_only": true,
+      "source_sha256": "44aa6c446beb4ef2b3674738b8335bef9df064e851534568d5f44bd74807b19d",
+      "app_sha256": "e9defaa39b1d6179e37f4b3e5c8699e01faf0496423829e1b801efb551e6664c",
+      "app_build_scope": "pre-existing executable; WebView capability only, not current-tree product verification",
+      "channel_frequencies_hz": [
+        697,
+        941,
+        1301,
+        1709
+      ],
+      "group_channels": {
+        "league_fixture": [
+          0,
+          1
+        ],
+        "other_fixture": [
+          2,
+          3
+        ]
+      },
+      "passed": true,
+      "channel_identity_passed": true,
+      "independent_gain_mute_passed": true,
+      "native_pause_passed": true,
+      "native_seek_passed": true,
+      "after_seek_channels_passed": true,
+      "swapped_identity_rejected": true,
+      "context_sample_rate": 48000,
+      "native_baseline_rates": [
+        {
+          "requested": 0.25,
+          "adopted": 0.25,
+          "callbacks": 11,
+          "observed": 0.25017562293605516,
+          "passed": true
+        },
+        {
+          "requested": 0.5,
+          "adopted": 0.5,
+          "callbacks": 24,
+          "observed": 0.4517251944378978,
+          "passed": true
+        },
+        {
+          "requested": 1,
+          "adopted": 1,
+          "callbacks": 50,
+          "observed": 0.9663554608922014,
+          "passed": true
+        },
+        {
+          "requested": 2,
+          "adopted": 2,
+          "callbacks": 85,
+          "observed": 1.818181818181818,
+          "passed": true
+        },
+        {
+          "requested": 4,
+          "adopted": 4,
+          "callbacks": 97,
+          "observed": 3.746845661036692,
+          "passed": true
+        },
+        {
+          "requested": 8,
+          "adopted": 8,
+          "callbacks": 97,
+          "observed": 7.878939469734874,
+          "passed": true
+        }
+      ],
+      "rates": [
+        {
+          "requested": 0.25,
+          "adopted": 0.25,
+          "callbacks": 12,
+          "observed": 0.2501132332878584,
+          "passed": true,
+          "channels_present": true
+        },
+        {
+          "requested": 0.5,
+          "adopted": 0.5,
+          "callbacks": 25,
+          "observed": 0.480249729859526,
+          "passed": true,
+          "channels_present": true
+        },
+        {
+          "requested": 1,
+          "adopted": 1,
+          "callbacks": 51,
+          "observed": 1.0003997599039618,
+          "passed": true,
+          "channels_present": true
+        },
+        {
+          "requested": 2,
+          "adopted": 2,
+          "callbacks": 96,
+          "observed": 2.001039740665147,
+          "passed": true,
+          "channels_present": true
+        },
+        {
+          "requested": 4,
+          "adopted": 4,
+          "callbacks": 92,
+          "observed": 4.0009699321047565,
+          "passed": true,
+          "channels_present": true
+        },
+        {
+          "requested": 8,
+          "adopted": 8,
+          "callbacks": 69,
+          "observed": 7.96152521823473,
+          "passed": true,
+          "channels_present": true
+        }
+      ],
+      "native_loop_passed": true,
+      "reload_passed": true,
+      "layout_passed": true,
+      "tested_pipeline_media_elements": 1,
+      "tested_parallel_audio_renderers": 0,
+      "observations": [
+        {
+          "name": "both-groups",
+          "channels": [
+            [
+              0.039972278774245425,
+              0.0002908235716344522,
+              3.1483451279387614e-05,
+              7.078568392258357e-05
+            ],
+            [
+              0.0003162223371736561,
+              0.03998862451805146,
+              0.00017720552228575677,
+              1.0396659535413557e-05
+            ],
+            [
+              3.10875400256914e-05,
+              0.0001832002641533075,
+              0.039952111809822596,
+              0.0001543585820002623
+            ],
+            [
+              6.98381540687042e-05,
+              2.6674609826648935e-05,
+              0.00017263798738974655,
+              0.0399518886790976
+            ]
+          ],
+          "mix": [
+            [
+              0.0399681187354277,
+              0.00040958957326269537,
+              0.03994803062483077,
+              0.00014301808007679802
+            ],
+            [
+              0.00038803141597242176,
+              0.039975316331185784,
+              9.751272637717579e-05,
+              0.039952062133911406
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.0282694613688978,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028274665741178956,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028251002124190693,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028255934035772312,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.736892,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "league-muted",
+          "channels": [
+            [
+              0.03997184569777352,
+              0.00031559800050532207,
+              3.09345694237746e-05,
+              8.398290431673595e-05
+            ],
+            [
+              0.00023071747888406415,
+              0.04001029740267364,
+              0.00023258814704718372,
+              4.15932621714882e-05
+            ],
+            [
+              3.144534426661522e-05,
+              0.00018958806994439425,
+              0.03999267150426174,
+              0.00017781110538742976
+            ],
+            [
+              8.57326953392186e-05,
+              4.941522768798981e-06,
+              0.00018639995633953376,
+              0.039948244825219116
+            ]
+          ],
+          "mix": [
+            [
+              3.144534426661522e-05,
+              0.00018958806994439425,
+              0.03999267150426174,
+              0.00017781110538742976
+            ],
+            [
+              8.57326953392186e-05,
+              4.303732365756146e-05,
+              0.00014717371146596883,
+              0.03998943897877411
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028265888102599845,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028281165613482664,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.02828288760252409,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028270089600726855,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 1.109333,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "other-muted-league-half",
+          "channels": [
+            [
+              0.03996844860851238,
+              0.0002876435781760473,
+              3.150261627380027e-05,
+              6.92378041750258e-05
+            ],
+            [
+              0.00030060931165210307,
+              0.03991897523059618,
+              0.0001908060557208138,
+              2.1594646240458434e-05
+            ],
+            [
+              3.2420348050323356e-05,
+              0.00022449676425155543,
+              0.039996884380246685,
+              0.00015592625160025219
+            ],
+            [
+              8.61040487872434e-05,
+              3.0836471735477787e-06,
+              0.00018673462143483323,
+              0.039991608035244514
+            ]
+          ],
+          "mix": [
+            [
+              0.019986309639892185,
+              0.0001257634574857219,
+              1.6136837486383824e-05,
+              2.3520053392497534e-05
+            ],
+            [
+              0.00014086264437796714,
+              0.019968207249469693,
+              0.0001025372533924906,
+              1.4975053708460598e-05
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028261902469097346,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.02823976099323402,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028288949503116098,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028272217911379002,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 1.48,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "after-seek",
+          "channels": [
+            [
+              0.03998460082748416,
+              0.0002469108527267119,
+              3.2259138025784694e-05,
+              2.935406160221076e-05
+            ],
+            [
+              0.00023138501352201843,
+              0.03999279462927327,
+              0.0002324625244591658,
+              4.221151856686267e-05
+            ],
+            [
+              3.1652311642056034e-05,
+              0.0002094441791294871,
+              0.03999998504161226,
+              0.00016497810250569285
+            ],
+            [
+              8.416169839113951e-05,
+              1.0204713778647135e-05,
+              0.0001852266695018932,
+              0.039952438415534544
+            ]
+          ],
+          "mix": [
+            [
+              0.03995659930704224,
+              0.0003938821691663141,
+              0.03998313792577312,
+              0.00017235470528131945
+            ],
+            [
+              0.00024087407688596753,
+              0.039993356322835544,
+              0.0002802402697310804,
+              0.03996283232439188
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028264880893947276,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028264003390785893,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.02828893842280594,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028273539212501766,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 9.389328,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "rate-0.25",
+          "channels": [
+            [
+              0.022209159961602935,
+              0.0001499938894752645,
+              0.00011662710208365134,
+              5.009584068717013e-05
+            ],
+            [
+              0.00014229403138346137,
+              0.024899175209061788,
+              7.251375542744867e-05,
+              8.52983196458378e-05
+            ],
+            [
+              0.00010590505206532798,
+              0.00012449897163907566,
+              0.030753644668253265,
+              0.00014144036043706155
+            ],
+            [
+              6.8215737073141015e-06,
+              0.0001034882075912171,
+              4.3584679001249386e-05,
+              0.03372190230341336
+            ]
+          ],
+          "mix": [
+            [
+              0.021704312931545826,
+              0.0002526051929257683,
+              0.030846570316409472,
+              0.00011157359321814444
+            ],
+            [
+              0.00015603594130364268,
+              0.024810994279863063,
+              0.0001179891649123421,
+              0.03364192220828585
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02790915151706247,
+              "peak_hz": 691.40625
+            },
+            {
+              "rms": 0.028009399766721742,
+              "peak_hz": 937.5
+            },
+            {
+              "rms": 0.028096245715853167,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028169364279456027,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 2.194891,
+          "rate": 0.25,
+          "paused": false
+        },
+        {
+          "name": "rate-0.5",
+          "channels": [
+            [
+              0.03032106041543346,
+              7.829133079992497e-05,
+              0.00015956818786350512,
+              4.8981597238355455e-05
+            ],
+            [
+              0.00024816802800617984,
+              0.03211746236910559,
+              9.27497828033839e-05,
+              0.00010415011887636608
+            ],
+            [
+              0.0001290985693259446,
+              0.00015390193754954697,
+              0.035163437452273655,
+              0.00016171238499741703
+            ],
+            [
+              5.519185412614494e-06,
+              0.0001060268084285434,
+              7.086629878317467e-05,
+              0.036767883883606634
+            ]
+          ],
+          "mix": [
+            [
+              0.030184469126232814,
+              0.0001361913747723045,
+              0.035187840998579405,
+              0.00020665667495445975
+            ],
+            [
+              0.0002921731727219698,
+              0.03221927786198139,
+              9.055522424895666e-05,
+              0.03692990287539628
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028028813923293476,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028035053507851446,
+              "peak_hz": 937.5
+            },
+            {
+              "rms": 0.02815313548735455,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02821086926136048,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 2.415021,
+          "rate": 0.5,
+          "paused": false
+        },
+        {
+          "name": "rate-1",
+          "channels": [
+            [
+              0.03997518220143574,
+              0.00024940688912304134,
+              3.235757945910709e-05,
+              2.8986700013224185e-05
+            ],
+            [
+              0.0003114682427237686,
+              0.039934570823549544,
+              0.00018009828888033758,
+              1.36864091958342e-05
+            ],
+            [
+              3.197155864904623e-05,
+              0.0002166820407035227,
+              0.03996716470756134,
+              0.0001603014105626322
+            ],
+            [
+              7.490607677343644e-05,
+              2.2789791330084256e-05,
+              0.00017691547372355846,
+              0.03994902224745064
+            ]
+          ],
+          "mix": [
+            [
+              0.04001912256471958,
+              8.591551679896294e-05,
+              0.03998946386365022,
+              0.00018344300581434416
+            ],
+            [
+              0.00035324559442806674,
+              0.03993454457028725,
+              0.00019108124390792476,
+              0.03995492565570665
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.02826624279264304,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028249330093972236,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.02826098768312543,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028251581019084267,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 2.88,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "rate-2",
+          "channels": [
+            [
+              0.013583915561515647,
+              0.00011893443850542113,
+              8.161954262284566e-05,
+              3.34447464134086e-05
+            ],
+            [
+              0.00022817316889380714,
+              0.01761802574897825,
+              0.00015312081725542002,
+              8.867174567980521e-05
+            ],
+            [
+              0.00010383682780773883,
+              3.5019090509356254e-05,
+              0.025756694018435118,
+              8.195536302583434e-05
+            ],
+            [
+              7.28471947896182e-05,
+              9.534896849720445e-05,
+              9.916224192618336e-05,
+              0.03001407510351816
+            ]
+          ],
+          "mix": [
+            [
+              0.013256901443208739,
+              0.00016832417249149377,
+              0.025683372106956377,
+              2.5640099744137796e-05
+            ],
+            [
+              0.00019635867502292064,
+              0.017375930730880618,
+              0.0002290286520536571,
+              0.02993934077932277
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.027753423485388003,
+              "peak_hz": 703.125
+            },
+            {
+              "rms": 0.027894062384123033,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.02801476555315672,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02812636431913542,
+              "peak_hz": 1705.078125
+            }
+          ],
+          "media_time": 3.735021,
+          "rate": 2,
+          "paused": false
+        },
+        {
+          "name": "rate-4",
+          "channels": [
+            [
+              0.005509088349290399,
+              0.00018416964460670797,
+              7.838372465373856e-05,
+              3.501019704789934e-05
+            ],
+            [
+              0.0001026051752200954,
+              0.008127480328623433,
+              1.947897906773717e-05,
+              0.00010067453820704397
+            ],
+            [
+              8.491152020666395e-05,
+              0.0001655295612791114,
+              0.012928075787128849,
+              0.00015685956632538055
+            ],
+            [
+              4.141823372293218e-05,
+              6.154860459283219e-05,
+              0.00013454721585466509,
+              0.004346206145075115
+            ]
+          ],
+          "mix": [
+            [
+              0.0047142952757921585,
+              0.00026265757448838423,
+              0.012989796604935412,
+              0.00016033307072624772
+            ],
+            [
+              7.704569200618523e-05,
+              0.008270454103246151,
+              0.00017227683147259655,
+              0.004394668019124204
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.027312585166235553,
+              "peak_hz": 703.125
+            },
+            {
+              "rms": 0.027416616585392017,
+              "peak_hz": 949.21875
+            },
+            {
+              "rms": 0.027876157662413963,
+              "peak_hz": 1294.921875
+            },
+            {
+              "rms": 0.027927156521304224,
+              "peak_hz": 1705.078125
+            }
+          ],
+          "media_time": 5.439021,
+          "rate": 4,
+          "paused": false
+        },
+        {
+          "name": "rate-8",
+          "channels": [
+            [
+              0.03801761809268202,
+              0.00030793509765281103,
+              2.8307268881319403e-05,
+              8.104055284895006e-05
+            ],
+            [
+              0.00017642819235183426,
+              0.016542690019902332,
+              6.894531852967811e-05,
+              9.32097884841148e-05
+            ],
+            [
+              0.0001391412104162982,
+              0.00015317628751879218,
+              0.01281484184484045,
+              0.00016485272672593542
+            ],
+            [
+              3.612567637879887e-05,
+              4.566940827924579e-05,
+              0.00012652016660218282,
+              0.03665532394238122
+            ]
+          ],
+          "mix": [
+            [
+              0.03781659458505034,
+              0.0004303965768924251,
+              0.010983769554795143,
+              0.00011946347376451647
+            ],
+            [
+              0.00017518017711149977,
+              0.01980015120683499,
+              0.00020506512878172247,
+              0.03621407715392883
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028039527890399,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.027003629405846944,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.027960546694561602,
+              "peak_hz": 1294.921875
+            },
+            {
+              "rms": 0.027904451352663156,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 8.946313,
+          "rate": 8,
+          "paused": false
+        },
+        {
+          "name": "native-loop",
+          "channels": [
+            [
+              0.039985838233413645,
+              0.00031182950699864506,
+              3.0545836432818345e-05,
+              8.194983013821949e-05
+            ],
+            [
+              0.0003196812079298801,
+              0.03991771224687162,
+              0.00017411923714265014,
+              5.129526374483196e-06
+            ],
+            [
+              3.1760211683340135e-05,
+              0.00021724151841157944,
+              0.03998654988998812,
+              0.00018554432046021733
+            ],
+            [
+              7.503857548881358e-05,
+              2.1930424202344023e-05,
+              0.00017679390652363924,
+              0.04001064517033239
+            ]
+          ],
+          "mix": [
+            [
+              0.03998277324440983,
+              0.00021727664374040752,
+              0.04001586347448339,
+              0.00024704934008889785
+            ],
+            [
+              0.00039304738724847655,
+              0.03992038271216004,
+              5.08779468153244e-05,
+              0.04001351186666608
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028261016789601277,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.028233506500203502,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028278340849839337,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.0283141001223458,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.457799,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "same-element-reload",
+          "channels": [
+            [
+              0.03999750758856008,
+              0.0003066212786130445,
+              3.164527978243201e-05,
+              8.672995468200117e-05
+            ],
+            [
+              0.00028069392485872665,
+              0.03993228260910482,
+              0.00020391050008617765,
+              2.9419609040528755e-05
+            ],
+            [
+              3.01922394538663e-05,
+              0.00017269920810367864,
+              0.039955502137519645,
+              0.00018660027137061512
+            ],
+            [
+              3.1151060229144155e-05,
+              4.2272041611924096e-05,
+              0.00014864379350426805,
+              0.0400369091640976
+            ]
+          ],
+          "mix": [
+            [
+              0.040001900318068,
+              0.00027742920434016836,
+              0.03996388509131597,
+              0.00024171341191761992
+            ],
+            [
+              0.0002266125798305163,
+              0.03990980326248341,
+              0.0003661844273015088,
+              0.03999719599731406
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028265155468447642,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.0282340489655414,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028248785678150187,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.02829486930778861,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.418667,
+          "rate": 1,
+          "paused": false
+        },
+        {
+          "name": "persistent-element-layout-move",
+          "channels": [
+            [
+              0.039997317115295,
+              0.000320292142482717,
+              3.081602635507428e-05,
+              8.631163441358766e-05
+            ],
+            [
+              0.00025614143005482247,
+              0.040006597110706955,
+              0.0002202960619387841,
+              3.7089089594941163e-05
+            ],
+            [
+              3.235916570691432e-05,
+              0.00023280626963387036,
+              0.03994060043546046,
+              0.000147142811939357
+            ],
+            [
+              6.225050840333119e-05,
+              3.16574033760973e-05,
+              0.00016669639592303083,
+              0.03995310796118227
+            ]
+          ],
+          "mix": [
+            [
+              0.0399927527494451,
+              0.00040839482565108317,
+              0.0399389179196054,
+              0.00013217206864630176
+            ],
+            [
+              0.0002436279685504319,
+              0.04004707095681409,
+              0.00035692652637012753,
+              0.03993288509330709
+            ]
+          ],
+          "channel_signals": [
+            {
+              "rms": 0.028284959864937134,
+              "peak_hz": 697.265625
+            },
+            {
+              "rms": 0.02829489621487648,
+              "peak_hz": 943.359375
+            },
+            {
+              "rms": 0.028251670264085166,
+              "peak_hz": 1300.78125
+            },
+            {
+              "rms": 0.028256613930264268,
+              "peak_hz": 1710.9375
+            }
+          ],
+          "media_time": 0.8,
+          "rate": 1,
+          "paused": false
+        }
+      ],
+      "product_controls_verified": false,
+      "production_capture_timing_proven": false
+    }
+  }
+}
