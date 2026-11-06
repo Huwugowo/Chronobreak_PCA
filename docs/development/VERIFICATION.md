@@ -401,7 +401,7 @@ The clean-machine installation, login-startup, upgrade, and uninstall procedure 
 
 ## Performance and benchmarks
 
-Two different checks exist and are not interchangeable:
+Use the check that matches the behavior being measured.
 
 - `--diagnose` contains a short synthetic encoder/profile selection benchmark.
 - The [capture benchmark protocol](../performance/capture-benchmark.md) defines the reproducible League baseline-versus-recording matrices, performance budget, raw counter semantics, collector/finalizer commands, and sanitized schema-v1/schema-v2 report workflow.
@@ -424,6 +424,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/capture_benchmark/coll
 For the current `QB-PERF-002` proof, use `tools/capture_benchmark/run_qb_perf_002.ps1`. It performs exactly one capped baseline/capture pair and one uncapped baseline/capture pair, preserves failed roots, uses the packaged runtime, and prompts for required League/tray actions. The historical eight-run runner remains `run_qb_perf_001.ps1` and defaults to schema v1.
 
 The complete live matrix remains an interactive Windows/League check; follow the durable protocol exactly. `QB-PERF-001` is complete by explicit product acceptance of its formally invalid single-monitor matrix as diagnostic pre-change characterization, not as a passing performance claim. Do not claim negligible performance impact until `QB-PERF-002` produces its own valid finalized post-change matrix and passes every unchanged frame/resource gate. If evidence is invalid or genuinely doubtful, preserve it and rerun a fresh complete pair rather than appending selective repetitions.
+
+### Local Rust microbenchmarks
+
+Criterion measures two CPU operations in `league-data`. `live_player_list_10`
+decodes and normalizes a 5v5 Live Client response built from the existing endpoint
+fixture. `journal_import_page_32` reads and validates 32 committed batches from
+the checked-in Swiftplay journal, starting at the end of its first page. Fixture
+setup runs outside the timed loops. Both cases run in memory and need only Rust
+and Cargo. They complement the capture and replay protocols above, which measure
+hardware, disk, SQLite and application behavior.
+
+Run from the repository root. Save the baseline before changing the code under
+test, then compare from the same machine with the same Rust toolchain, checkout
+location, and fixtures. Prebuild each version with `--no-run` and let the machine
+settle before timing. Use a fresh baseline name for each investigation. On an
+unfamiliar machine, compare the same build twice to gauge local variation.
+
+```powershell
+cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data
+cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data -- --save-baseline before
+cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data -- --baseline before
+```
+
+Criterion prints the comparison and stores raw results under
+`league-data/target/criterion/` with the default Cargo target directory.
 
 ## Native import progress characterization
 

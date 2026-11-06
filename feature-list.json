@@ -5197,6 +5197,32 @@
         "All 582 frontend tests passed, including the explicit Settings action, updated totals without a library refresh, failure retention, and library switches. Type checking, production frontend and desktop builds, and canonical validation passed."
       ],
       "notes": "2026-11-06 user requested the archive scan move from ordinary refresh to an explicit Settings action. The last archive subtotal is scoped to the current library in memory and includes sizes known from successful moves. Existing archive contents and later changes in the archive are reconciled by the next explicit scan."
+    },
+    {
+      "id": "QB-DEV-010",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Local Rust microbenchmarks",
+      "description": "Add Criterion measurements for production CPU work in recording telemetry and replay index preparation.",
+      "priority": "P3",
+      "area": "development",
+      "status": "done",
+      "dependencies": [],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "A local Criterion target measures production ten-player telemetry decoding and validation of a bounded committed journal page using deterministic in-memory inputs.",
+        "The target is development-only. Existing recorder, replay and application benchmarks stay intact, with no automatic performance gate.",
+        "The verification guide shows how to run the target and compare against a saved baseline using the same inputs. Both commands are exercised successfully."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Save a named baseline for both cases and rerun them against it.", "command": "cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data -- --save-baseline before"},
+        {"type": "automated", "description": "Run shared League-data formatting, strict all-target Clippy, locked all-target tests, and canonical validation."}
+      ],
+      "evidence": [
+        "2026-11-06 on Windows with Rust 1.97.1: optimized Criterion runs saved and compared the named baseline for both cases. The same-build comparison showed approximately 46% mean variation for roster decode, so the results verify the comparison workflow only. The verification guide documents local noise checks.",
+        "League-data formatting, strict all-target Clippy, 33 locked tests and both benchmark smoke cases passed. Criterion is a dev dependency and the existing benchmark runners and CI workflow were untouched."
+      ],
+      "notes": "Direct benchmark-only work using existing public APIs and checked-in fixtures."
     }
   ]
 }
