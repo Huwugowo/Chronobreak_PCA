@@ -30,7 +30,7 @@ function setup(overrides: Partial<ConstructorParameters<typeof ReplayDataControl
 describe("ReplayDataController", () => {
   it("presents pending, useful partial, unavailable and ready details independently of coverage gaps", () => {
     const { controller } = setup();
-    const idle: OverlayState = { scope: null, status: "idle", error: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, scoreboardStatus: "idle", scoreboardVersion: 0, scoreboardItemIds: [] };
+    const idle: OverlayState = { scope: null, status: "idle", error: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, scoreboardStatus: "idle", scoreboardItemIds: [] };
     const data = { ...controller.value, indexing: "ready" as const };
     expect(replayDetailsStatus(data, idle, undefined, null, true)).toBe("loading");
     expect(replayDetailsStatus(data, idle, undefined, null)).toBe("unavailable");
@@ -126,13 +126,12 @@ describe("ReplayDataController", () => {
       checkedSchedule.mockRestore(); checkedCancel.mockRestore(); vi.useRealTimers();
     }
   });
-  it("loads facts independently, then scopes and a debounced selected source page", async () => {
+  it("loads facts independently and dispatches the initial event window without a timer", async () => {
     vi.useFakeTimers(); const { api, controller } = setup();
     controller.requestWindow(query()); const started = controller.initialize();
     await started; expect(controller.value.facts?.local_player_name).toBe("Me");
-    expect(api.queryReplayWindow).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(120);
     expect(api.queryReplayWindow).toHaveBeenCalledWith("snapshot", "game", expect.objectContaining({ scope: scope.source, limit: 512 }));
+    expect(vi.getTimerCount()).toBe(0);
     expect(controller.value.activeWindow?.events).toHaveLength(1);
     vi.useRealTimers();
   });

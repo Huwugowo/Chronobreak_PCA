@@ -22,79 +22,53 @@ const enriched = (s: OverlaySample, payload = s.observation_id): OverlaySample =
   scoreboard: { payload_id: payload, scores: { kills: payload, deaths: 0, assists: null, creep_score: 15 }, ward_score: 2.25,
     items: [{ item_id: 2003, slot: 0, count: 2 }] } })) });
 
-it("prepares scoreboard during idle time, interns payloads and reuses exact samples through scrubbing and toggles", async () => {
+it("loads and interns the scoreboard with the overlay before first Tab or seek", async () => {
   const early = sample(2), late = sample(20);
-  const query = vi.fn(async (_token, _game, q: OverlayQuery) => page(q.include_scoreboard
-    ? [enriched(early, 7), enriched(late, 7)] : [early, late]));
+  const query = vi.fn(async (_token: string, _game: string, _query: OverlayQuery) =>
+    page([enriched(early, 7), enriched(late, 7)]));
   const controller = setup(query); controller.select(scope);
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
-  for (let i = 0; i < 100; i++) controller.sampleAt(tick(i % 30));
-  expect(query).toHaveBeenCalledOnce();
-  expect(controller.scoreboardFor(early)).toBeNull();
-  controller.setScoreboardOpen(true);
-  await vi.waitFor(() => expect(controller.value.scoreboardStatus).toBe("ready"));
-  expect(query.mock.calls[1][2]).toMatchObject({ include_scoreboard: true, limit: 32, after: null });
+  expect(controller.value.scoreboardStatus).toBe("ready");
+  expect(query.mock.calls[0][2]).toMatchObject({ include_scoreboard: true, limit: 128, after: null });
   const first = controller.scoreboardFor(controller.sampleAt(tick(2)));
   expect(first?.get(1)?.items?.[0].count).toBe(2);
   expect(first?.get(1)?.ward_score).toBe(2.25);
   expect(controller.value.scoreboardItemIds).toEqual([2003]);
   expect(controller.scoreboardFor(controller.sampleAt(tick(1)))).toBeNull();
   expect(controller.scoreboardFor(controller.sampleAt(tick(20)))).toBe(first);
-  controller.setScoreboardOpen(false); controller.setScoreboardOpen(true);
   for (let i = 0; i < 100; i++) expect(controller.scoreboardFor(controller.sampleAt(tick(2 + i / 100)))).toBe(first);
-  expect(query).toHaveBeenCalledTimes(2);
+  expect(query).toHaveBeenCalledOnce();
   controller.dispose();
   expect(controller.scoreboardFor(early)).toBeNull();
 });
 
-it("warms before first open, pauses during seeks and keeps incomplete observations unavailable", async () => {
+it("loads continuation facts once and keeps incomplete observations unavailable", async () => {
   const early = sample(2), late = sample(20), tail = deferred<OverlayPage>();
-  const query = vi.fn().mockResolvedValueOnce(page([early, late])).mockReturnValueOnce(tail.promise)
-    .mockResolvedValueOnce({ ...page([enriched(late)]), identities: null });
+  const cursor = { replay_tick: early.replay_tick, observation_id: early.observation_id };
+  const query = vi.fn().mockResolvedValueOnce(page([enriched(early)], cursor)).mockReturnValueOnce(tail.promise);
   const controller = setup(query); controller.select(scope);
-  await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
   await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
-  controller.setScoreboardOpen(false); controller.setScoreboardBusy(true);
-  tail.resolve(page([enriched(early)], early));
-  await vi.waitFor(() => expect(controller.value.scoreboardVersion).toBe(1));
-  expect(query).toHaveBeenCalledTimes(2);
-  expect(controller.scoreboardFor(late)).toBeNull();
-  expect(controller.sampleAt(tick(20))).toBe(late); // Existing rails never wait for TAB.
-  controller.setScoreboardBusy(false);
-  // Repeated scrubs cancel the quiet-period admission without driving a read.
-  controller.setScoreboardBusy(true);
-  await new Promise(resolve => setTimeout(resolve, 180));
-  expect(query).toHaveBeenCalledTimes(2);
-  controller.setScoreboardBusy(false);
+  expect(controller.value.scoreboardStatus).toBe("loading");
+  expect(controller.sampleAt(tick(20))).toBeNull();
+  expect(controller.scoreboardFor(controller.sampleAt(tick(20)))).toBeNull();
+  tail.resolve({ ...page([enriched(late)]), identities: null });
   await vi.waitFor(() => expect(controller.value.scoreboardStatus).toBe("ready"));
-  expect(query.mock.calls[2][2]).toMatchObject({ after: { replay_tick: early.replay_tick, observation_id: early.observation_id }, revision });
+  expect(query.mock.calls[1][2]).toMatchObject({ include_scoreboard: true, after: cursor, revision });
   expect(controller.scoreboardFor(late)?.get(1)?.scores.kills).toBe(20);
+  expect(query).toHaveBeenCalledTimes(2);
   controller.dispose();
 });
 
-it("isolates changed revisions and stale scoreboard completions from the existing overlay and replacement source", async () => {
-  const s = sample(2), pending = deferred<OverlayPage>();
-  const query = vi.fn().mockResolvedValueOnce(page([s]))
-    .mockResolvedValueOnce({ ...page([enriched(s)]), revision: { ...revision, last_sequence: 2 } });
+it("keeps compact overlay available when a combined scoreboard read fails", async () => {
+  const s = sample(2);
+  const query = vi.fn().mockRejectedValueOnce(new Error("scoreboard unavailable"))
+    .mockResolvedValueOnce(page([s]));
   const controller = setup(query); controller.select(scope);
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
-  controller.setScoreboardOpen(true);
-  await vi.waitFor(() => expect(controller.value.scoreboardStatus).toBe("error"));
+  expect(query.mock.calls.map(call => call[2].include_scoreboard)).toEqual([true, false]);
+  expect(controller.value.scoreboardStatus).toBe("error");
   expect(controller.sampleAt(tick(2))).toBe(s);
   expect(controller.value.error).toBeNull();
-  expect(controller.value.scoreboardItemIds).toEqual([]);
-  controller.setScoreboardOpen(false);
-  query.mockResolvedValueOnce(page([s])).mockReturnValueOnce(pending.promise);
-  controller.select(scope, true);
-  await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
-  controller.setScoreboardOpen(true);
-  await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(4));
-  const replacement = { ...scope, source: { ...source, epoch: 1 } };
-  query.mockResolvedValueOnce({ ...page([s]), source: replacement.source });
-  controller.select(replacement); controller.setScoreboardOpen(false);
-  pending.resolve(page([enriched(s)]));
-  await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
-  expect(controller.value.scope).toEqual(replacement);
   expect(controller.scoreboardFor(s)).toBeNull();
   expect(controller.value.scoreboardItemIds).toEqual([]);
   controller.dispose();
@@ -150,12 +124,14 @@ it("serializes source replacement and rejects stale completions and changed revi
   const nextScope = { ...scope, source: { ...source, epoch: 1 } };
   controller.select(nextScope);
   expect(query).toHaveBeenCalledTimes(1); // No second in-flight SQL request.
-  old.resolve(page([sample(2)]));
+  old.resolve(page([enriched(sample(2))]));
   await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
   expect(controller.value.identities).toEqual([]);
-  fresh.resolve({ ...page([sample(900)]), source: nextScope.source });
+  fresh.resolve({ ...page([enriched(sample(900))]), source: nextScope.source });
   await vi.waitFor(() => expect(controller.value.status).toBe("ready"));
   expect(controller.sampleAt(tick(900))?.replay_tick).toBe(tick(900));
+  expect(controller.scoreboardFor(sample(2))).toBeNull();
+  expect(controller.scoreboardFor(sample(900))?.get(1)?.scores.kills).toBe(900);
   controller.select(scope);
   expect(controller.value.initialLoadout).toBeNull();
   controller.dispose();

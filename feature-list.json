@@ -5252,6 +5252,57 @@
         "League-data formatting, strict all-target Clippy, 33 locked tests, both benchmark smoke cases, and the optimized benchmark build passed for the updated fixture. Criterion remains a dev dependency."
       ],
       "notes": "Direct benchmark-only work using existing public APIs and checked-in fixtures."
+    },
+    {
+      "id": "QB-REPLAY-029",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Reduce complete replay opening latency",
+      "description": "Reduce recording selection to fully usable replay on representative recordings with a prepared local library.",
+      "priority": "P1",
+      "area": "replay-performance",
+      "status": "in-progress",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-LIB-029", "QB-REPLAY-020"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Use the same representative recordings and the same selection-to-complete boundary before and after. Require presented video, populated initial timeline and events, complete selected-source overlay and TAB data, and usable initial rendering.",
+        "Target a 10× speedup. If measured limiting work makes that impractical within the constraints, identify it and deliver the best justified targeted improvement.",
+        "Preserve selected-source and revision validation, bounded work, recorded-state availability, and existing media and timeline behavior."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Run a bounded matched release-WebView comparison with independent video, timeline/overlay and full TAB readiness timings."},
+        {"type": "automated", "description": "Run affected controller and viewer regressions, frontend checks and canonical validation.", "command": "npm run test --prefix app"}
+      ],
+      "evidence": [
+        "2026-11-07 controlled matched release WebView2 probe on five gameplay recordings. Both builds used the same diagnostic app-data override and isolated WebView profile settings. Two pairs reached presented video, rendered events and complete TAB: Master Yi 5014 to 5126 ms, Graves 4688 to 4391 ms. Three recordings entered video recovery and did not complete in either arm. No reliable complete-opening speedup or 10× pass.",
+        "Across the two successful pairs, TAB readiness moved from 4993 to 614 ms and 4667 to 384 ms, with combined overlay reads dropping from 17 to 4 and 15 to 3. Candidate timeline and TAB data settled in 384–715 ms across all five recordings. The candidate loads all selected-source observations and scores in one bounded pass and admits initial events without the viewport debounce. Frontend tests 585/585, production frontend build and canonical validation passed.",
+        "The production WebView request trace reached near EOF before the first frame. In a standalone Edge control on the same Master Yi footage, the original used 419–431 requests and 2.40–2.51 s to present frame zero. A stream-copy fragmented control with a front SIDX used 3 requests and 156 ms, while a conventional faststart stream-copy control used 1 request and 151 ms. Filling only duration fields on the original fragmented layout did not remove the scan. Raw traces and local probes: build/perf/complete-open-20261106."
+      ],
+      "notes": "Separate from cold preparation, cached partial display and seek latency. The default WebView launch was environment-blocked. The matched diagnostic runs use identical disposable launch accommodations and current user recordings read-only. The controlled remuxes isolate container cost and are outside the complete-opening comparison. Complete-opening acceptance remains open on the native fragmented-MP4 path, tracked by QB-REPLAY-030."
+    },
+    {
+      "id": "QB-REPLAY-030",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Avoid fragment scans when opening existing recordings",
+      "description": "Use verified MP4 indexing information to eliminate the hundreds of range requests that Chromium makes before presenting frame zero on current native fragmented recordings.",
+      "priority": "P1",
+      "area": "replay-performance",
+      "status": "not-started",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-012", "QB-REPLAY-011"],
+      "execution": {"workflow": "planned", "plan": null},
+      "acceptance_criteria": [
+        "Reduce first-frame opening latency and range-request amplification on the existing representative recordings without rewriting source files, skipping validation, or adding a hidden full-file copy or remux.",
+        "Preserve protected range delivery, source generation, exact video and audio timeline, seeking, export behavior and compatibility with older supported recordings."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Use the QB-REPLAY-029 complete-opening endpoint and retain native media phases and range traces on the same recordings."},
+        {"type": "automated", "description": "Verify affected range, exact presentation, seek and export boundaries for original and indexed delivery."}
+      ],
+      "evidence": [],
+      "notes": "Discovered in QB-REPLAY-029. The front-index and conventional faststart stream-copy controls establish container layout as the dominant observed cost. They are disposable diagnostic files with muxer-derived duration differences and do not qualify as a production solution."
     }
   ]
 }

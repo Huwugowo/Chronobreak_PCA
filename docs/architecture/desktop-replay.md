@@ -150,9 +150,11 @@ Data Dragon, optional clip durations and full replay details do not gate that mo
 A single persistent video element is shared between windowed and fullscreen layouts;
 changing layout does not remount the decoder.
 
-After two animation frames provide a paint opportunity, the viewer loads optional
-recording facts, reads background preparation status, then requests source scopes and bounded
-event/overlay pages. Pending work includes scheduled viewport reads. Useful
+After the synchronous media mount, the viewer starts recording facts and source
+queries while native media loads. It reads background preparation status before
+requesting source scopes and bounded event and overlay pages. The first event
+window dispatches without the viewport debounce. Later viewport changes retain
+debounced, latest-wins admission. Useful
 same-source facts and pages remain visible while replacement work runs. A compact
 header outside the picture shows loading, limited details or unavailable details;
 stopped work never remains labelled loading. Source choices use segment labels.

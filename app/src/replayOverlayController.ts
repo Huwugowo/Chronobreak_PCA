@@ -3,20 +3,21 @@ import { participantKey, sameSource } from "./leagueSource";
 import type { InitialSpellLoadout, ParticipantSpellAssets } from "./replayProjection";
 import type { ReplayRead } from "./libraryController";
 import type { ReplayTick } from "./replayTime";
-import { scheduleScoreboardWork } from "./scoreboardPreload";
 
 type Dependencies = { gameTimestamp: string; replayEnd: ReplayTick; readReplay: ReplayRead;
   queryOverlayPage: (token: string, game: string, query: OverlayQuery) => Promise<OverlayPage> };
 export type OverlayState = { scope: SourceScope | null; identities: ReplayIdentity[]; spellAssets: ParticipantSpellAssets; initialLoadout: InitialSpellLoadout | null; sampleCount: number; bytes: number;
   status: "idle" | "loading" | "ready" | "error"; error: string | null;
-  scoreboardStatus: "idle" | "loading" | "ready" | "error"; scoreboardVersion: number; scoreboardItemIds: readonly number[] };
+  scoreboardStatus: "idle" | "loading" | "ready" | "error"; scoreboardItemIds: readonly number[] };
 export type ScoreboardSnapshot = ReadonlyMap<number, ScoreboardFacts>;
 const MAX_SAMPLES = 131_072;
 const MAX_BYTES = 64 * 1024 * 1024;
+const PAGE_SIZE = 128;
+const encodedSize = (samples: OverlaySample[]) => new TextEncoder().encode(JSON.stringify(samples)).length;
 
 /** One recorded source, one bounded page in flight, no seek-triggered reads. */
 export class ReplayOverlayController {
-  private state: OverlayState = { scope: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, status: "idle", error: null, scoreboardStatus: "idle", scoreboardVersion: 0, scoreboardItemIds: [] };
+  private state: OverlayState = { scope: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, status: "idle", error: null, scoreboardStatus: "idle", scoreboardItemIds: [] };
   private assets = new Map<string, [Set<string>, Set<string>]>();
   private samples: OverlaySample[] = [];
   private listeners = new Set<(state: OverlayState) => void>();
@@ -24,14 +25,7 @@ export class ReplayOverlayController {
   private active = false;
   private pending: { scope: SourceScope; generation: number } | null = null;
   private closed = false;
-  private scoreboardRequested = false;
-  private scoreboardBusy = false;
-  private scoreboardResumeAt = 0;
-  private cancelScoreboardWork: (() => void) | null = null;
   private scoreboardItems = new Set<number>();
-  private revision: OverlayPage["revision"] | null = null;
-  private scoreboardOffset = 0;
-  private scoreboardBytes = 0;
   private scoreboards = new Map<number, ScoreboardSnapshot>();
   private scoreboardPayloads = new Map<number, ScoreboardFacts>();
   private scoreboardVariants = new Map<string, ScoreboardSnapshot>();
@@ -47,26 +41,14 @@ export class ReplayOverlayController {
     if (this.closed || (!restart && scope && this.state.scope && sameSource(scope.source, this.state.scope.source)
       && scope.local_participant === this.state.scope.local_participant)) return;
     const generation = ++this.generation;
-    this.cancelScoreboardWork?.(); this.cancelScoreboardWork = null;
-    this.scoreboardRequested = true;
-    this.scoreboardItems.clear();
     this.samples = [];
     this.assets.clear();
-    this.revision = null; this.scoreboardOffset = 0; this.scoreboardBytes = 0;
-    this.scoreboards.clear(); this.scoreboardPayloads.clear(); this.scoreboardVariants.clear();
+    this.clearScoreboards();
     this.pending = scope ? { scope, generation } : null;
-    this.publish({ scope: scope ?? null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, status: scope ? "loading" : "idle", error: null, scoreboardStatus: "idle", scoreboardVersion: 0, scoreboardItemIds: [] });
+    this.publish({ scope: scope ?? null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, status: scope ? "loading" : "idle", error: null, scoreboardStatus: scope ? "loading" : "idle", scoreboardItemIds: [] });
     this.pump();
   }
   retry() { if (this.state.scope) this.select(this.state.scope, true); }
-  /** Enrichment starts in idle time before the panel is first opened. */
-  setScoreboardOpen(open: boolean) { this.scoreboardRequested ||= open; this.pump(); }
-  setScoreboardBusy(busy: boolean) {
-    if (busy === this.scoreboardBusy) return;
-    this.scoreboardBusy = busy;
-    this.cancelScoreboardWork?.(); this.cancelScoreboardWork = null;
-    if (!busy) { this.scoreboardResumeAt = Date.now() + 150; this.pump(); }
-  }
   scoreboardFor(sample: OverlaySample | null): ScoreboardSnapshot | null {
     return sample && this.state.scoreboardStatus !== "error" ? this.scoreboards.get(sample.observation_id) ?? null : null;
   }
@@ -83,32 +65,34 @@ export class ReplayOverlayController {
     return this.samples[low - 1] ?? null;
   }
   private pump() {
-    if (this.closed || this.active) return;
-    if (!this.pending) {
-      if (this.scoreboardRequested && !this.scoreboardBusy && !this.cancelScoreboardWork && this.state.scope && this.state.status === "ready"
-        && (this.state.scoreboardStatus === "idle" || this.state.scoreboardStatus === "loading")) {
-        this.cancelScoreboardWork = scheduleScoreboardWork(() => {
-          this.cancelScoreboardWork = null;
-          void this.loadScoreboard(this.state.scope!, this.generation);
-        }, Math.max(0, this.scoreboardResumeAt - Date.now()));
-      }
-      return;
-    }
+    if (this.closed || this.active || !this.pending) return;
     const { scope, generation } = this.pending;
     this.pending = null;
     this.active = true;
     const current = () => !this.closed && generation === this.generation;
     void (async () => {
       let after: OverlayQuery["after"] = null, revision: OverlayQuery["revision"] = null;
+      let includeScoreboard = true, scoreboardBytes = 0;
       try {
         do {
-          const page = await this.api.readReplay(token => this.api.queryOverlayPage(token, this.api.gameTimestamp,
-            { scope: scope.source, after, revision, limit: 128 }), "overlay");
+          const readPage = () => this.api.readReplay(token => this.api.queryOverlayPage(token, this.api.gameTimestamp,
+            { scope: scope.source, after, revision, limit: PAGE_SIZE, include_scoreboard: includeScoreboard }), "overlay");
+          let page: OverlayPage;
+          try {
+            page = await readPage();
+          } catch (error) {
+            if (!current()) return;
+            if (!includeScoreboard) throw error;
+            // Preserve the compact overlay when optional scoreboard facts cannot be read.
+            includeScoreboard = false;
+            this.clearScoreboards();
+            page = await readPage();
+          }
           if (!current()) return;
           if (!sameSource(page.source, scope.source) || page.local_participant !== scope.local_participant)
             throw new Error("Overlay source identity changed");
           if (revision && JSON.stringify(revision) !== JSON.stringify(page.revision)) throw new Error("Overlay revision changed");
-          if (page.samples.length > 128) throw new Error("Overlay page capacity");
+          if (page.samples.length > PAGE_SIZE) throw new Error("Overlay page capacity");
           let previous = after;
           for (const sample of page.samples) {
             if (sample.replay_tick > this.api.replayEnd || (previous && compareOverlayCursor(sample, previous) <= 0))
@@ -117,7 +101,14 @@ export class ReplayOverlayController {
           }
           if (page.next && (!previous || !page.samples.length || compareOverlayCursor(page.next, previous) !== 0))
             throw new Error("Overlay continuation did not advance");
-          const bytes = this.state.bytes + new TextEncoder().encode(JSON.stringify(page.samples)).length;
+          if (includeScoreboard) {
+            scoreboardBytes += encodedSize(page.samples);
+            includeScoreboard = scoreboardBytes <= MAX_BYTES && this.storeScoreboards(page.samples);
+            if (!includeScoreboard) this.clearScoreboards();
+            // Keep only the compact observations and interned scoreboard facts.
+            for (const sample of page.samples) for (const player of sample.players) delete player.scoreboard;
+          }
+          const bytes = this.state.bytes + encodedSize(page.samples);
           if (bytes > MAX_BYTES || this.samples.length + page.samples.length > MAX_SAMPLES) throw new Error("Recorded overlay exceeds its memory capacity");
           this.samples.push(...page.samples);
           let assetsChanged = false;
@@ -131,7 +122,6 @@ export class ReplayOverlayController {
             }
           }
           revision = page.revision;
-          this.revision = revision;
           after = page.next;
           const first = this.samples[0];
           this.publish({ identities: page.identities ?? this.state.identities,
@@ -139,12 +129,17 @@ export class ReplayOverlayController {
             initialLoadout: !after && first ? { replay_tick: first.replay_tick,
               players: first.players.map(({ participant, spells }) => ({ participant, spells })) } : null,
             sampleCount: this.samples.length, bytes,
-            status: after ? "loading" : "ready" });
+            status: after ? "loading" : "ready",
+            scoreboardStatus: includeScoreboard ? (after ? "loading" : "ready") : "error",
+            scoreboardItemIds: this.scoreboardItems.size === this.state.scoreboardItemIds.length
+              ? this.state.scoreboardItemIds : [...this.scoreboardItems] });
         } while (after && current());
       } catch (error) {
         if (current()) {
           this.samples = [];
-          this.publish({ initialLoadout: null, sampleCount: 0, bytes: 0, status: "error", error: error instanceof Error ? error.message : String(error) });
+          this.clearScoreboards();
+          this.publish({ initialLoadout: null, sampleCount: 0, bytes: 0, status: "error", scoreboardStatus: "error",
+            scoreboardItemIds: [], error: error instanceof Error ? error.message : String(error) });
         }
       } finally {
         this.active = false;
@@ -152,60 +147,33 @@ export class ReplayOverlayController {
       }
     })();
   }
-  private async loadScoreboard(scope: SourceScope, generation: number) {
-    this.active = true;
-    const current = () => !this.closed && generation === this.generation;
-    this.publish({ scoreboardStatus: "loading" });
-    try {
-      const previous = this.samples[this.scoreboardOffset - 1];
-      const page = await this.api.readReplay(token => this.api.queryOverlayPage(token, this.api.gameTimestamp,
-        { scope: scope.source, after: previous ? { replay_tick: previous.replay_tick, observation_id: previous.observation_id } : null,
-          revision: previous ? this.revision : null, limit: 32, include_scoreboard: true }), "overlay");
-      if (!current()) return;
-      if (!sameSource(page.source, scope.source) || page.local_participant !== scope.local_participant
-        || JSON.stringify(page.revision) !== JSON.stringify(this.revision)) throw new Error("Scoreboard source revision changed");
-      if (page.samples.length > 32) throw new Error("Scoreboard page capacity");
-      const bytes = this.scoreboardBytes + new TextEncoder().encode(JSON.stringify(page.samples)).length;
-      if (bytes > MAX_BYTES) throw new Error("Recorded scoreboard exceeds its memory capacity");
-      for (const sample of page.samples) {
-        const base = this.samples[this.scoreboardOffset];
-        if (!base || compareOverlayCursor(sample, base) !== 0 || sample.players.length !== base.players.length)
-          throw new Error("Scoreboard observation changed");
-        const facts = new Map<number, ScoreboardFacts>();
-        for (const player of sample.players) {
-          if (!player.scoreboard || !base.players.some(p => p.participant === player.participant)) throw new Error("Scoreboard participant changed");
-          const id = player.scoreboard.payload_id;
-          if (!this.scoreboardPayloads.has(id)) {
-            this.scoreboardPayloads.set(id, player.scoreboard);
-            for (const item of player.scoreboard.items ?? []) {
-              if (item.item_id && this.scoreboardItems.size < 512) this.scoreboardItems.add(item.item_id);
-            }
+  private storeScoreboards(samples: OverlaySample[]): boolean {
+    for (const sample of samples) {
+      const facts = new Map<number, ScoreboardFacts>();
+      for (const player of sample.players) {
+        if (!player.scoreboard) return false;
+        const id = player.scoreboard.payload_id;
+        if (!this.scoreboardPayloads.has(id)) {
+          this.scoreboardPayloads.set(id, player.scoreboard);
+          for (const item of player.scoreboard.items ?? []) {
+            if (item.item_id && this.scoreboardItems.size < 512) this.scoreboardItems.add(item.item_id);
           }
-          facts.set(player.participant, this.scoreboardPayloads.get(id)!);
         }
-        const key = [...facts].map(([participant, f]) => `${participant}:${f.payload_id}`).join(",");
-        if (!this.scoreboardVariants.has(key)) this.scoreboardVariants.set(key, facts);
-        this.scoreboards.set(sample.observation_id, this.scoreboardVariants.get(key)!);
-        this.scoreboardOffset++;
+        facts.set(player.participant, this.scoreboardPayloads.get(id)!);
       }
-      const last = page.samples[page.samples.length - 1];
-      if (page.next ? !last || compareOverlayCursor(page.next, last) !== 0 || this.scoreboardOffset >= this.samples.length
-        : this.scoreboardOffset !== this.samples.length) throw new Error("Scoreboard continuation changed");
-      this.scoreboardBytes = bytes;
-      this.publish({ scoreboardStatus: page.next ? "loading" : "ready", scoreboardVersion: this.state.scoreboardVersion + 1,
-        scoreboardItemIds: this.scoreboardItems.size === this.state.scoreboardItemIds.length ? this.state.scoreboardItemIds : [...this.scoreboardItems] });
-    } catch {
-      if (current()) {
-        this.scoreboards.clear(); this.scoreboardPayloads.clear(); this.scoreboardVariants.clear();
-        this.scoreboardItems.clear();
-        this.publish({ scoreboardStatus: "error", scoreboardVersion: this.state.scoreboardVersion + 1, scoreboardItemIds: [] });
-      }
-    } finally { this.active = false; this.pump(); }
+      const key = [...facts].map(([participant, f]) => `${participant}:${f.payload_id}`).join(",");
+      if (!this.scoreboardVariants.has(key)) this.scoreboardVariants.set(key, facts);
+      this.scoreboards.set(sample.observation_id, this.scoreboardVariants.get(key)!);
+    }
+    return true;
+  }
+  private clearScoreboards() {
+    this.scoreboards.clear(); this.scoreboardPayloads.clear(); this.scoreboardVariants.clear();
+    this.scoreboardItems.clear();
   }
   dispose() {
-    this.cancelScoreboardWork?.(); this.cancelScoreboardWork = null; this.scoreboardItems.clear();
     this.closed = true; this.generation++; this.pending = null; this.samples = []; this.assets.clear(); this.listeners.clear();
-    this.scoreboards.clear(); this.scoreboardPayloads.clear(); this.scoreboardVariants.clear();
-    this.state = { scope: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, status: "idle", error: null, scoreboardStatus: "idle", scoreboardVersion: 0, scoreboardItemIds: [] };
+    this.clearScoreboards();
+    this.state = { scope: null, identities: [], spellAssets: new Map(), initialLoadout: null, sampleCount: 0, bytes: 0, status: "idle", error: null, scoreboardStatus: "idle", scoreboardItemIds: [] };
   }
 }

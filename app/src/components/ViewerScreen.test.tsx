@@ -131,7 +131,7 @@ it("toggles TAB without driving media, follows observed frames through seeks, an
     expect(vi.mocked(primary.pause).mock.calls).toHaveLength(pausedCalls);
     expect(primary.currentTime).toBe(0);
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-    key("ArrowRight"); // Lazy optional SQL has no authority over this seek.
+    key("ArrowRight"); // The pending overlay page has no authority over this seek.
     expect(primary.currentTime).toBe(15);
     finish(detail);
     await vi.waitFor(() => expect(panel.textContent).not.toContain("Loading recorded"));
@@ -165,7 +165,7 @@ it("toggles TAB without driving media, follows observed frames through seeks, an
     expect(host.querySelector('[data-testid="video-frame"]')?.getAttribute("data-fullscreen")).toBe("true");
     key("Tab"); expect(panel.hidden).toBe(false);
     expect(host.querySelector("video")).toBe(primary);
-    expect(queryOverlayPage).toHaveBeenCalledTimes(2);
+    expect(queryOverlayPage).toHaveBeenCalledOnce();
     expect(queryReplayWindow).toHaveBeenCalledOnce();
   } finally {
     dispose(); names.forEach((name, i) => {
@@ -738,7 +738,7 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
     expect([...champion.querySelectorAll('[class*="spell"] img')]).toEqual(spellImages);
     await new Promise(resolve => setTimeout(resolve, 150));
     expect(vi.mocked(queryReplayWindow).mock.calls.length).toBe(queryCount);
-    expect(queryOverlayPage).toHaveBeenCalledTimes(2);
+    expect(queryOverlayPage).toHaveBeenCalledOnce();
   } finally {
     dispose();
     ["requestVideoFrameCallback", "cancelVideoFrameCallback"].forEach((name, index) => {
@@ -1066,6 +1066,10 @@ it.each([
     stolen: null, recipient: null, kill_streak: null, acer: null, acing_team: null, turret: null, inhibitor: null,
     result: null, relation: "ally" }));
   setFixture(probe);
+  // Keep the frozen action trace anchored at its original fake-clock detail
+  // arrival, independent of the viewer's opening-time scheduling.
+  vi.mocked(queryReplayWindow).mockImplementationOnce(() => new Promise(resolve =>
+    setTimeout(() => resolve(resolvedWindow(probe)), 152)));
   vi.mocked(loadReplayDescriptor).mockResolvedValue({ snapshot_token: "snapshot", game_timestamp: "1",
     video_url: probe.video_url, media_timeline: probe.media_timeline });
   const trace: string[] = [];

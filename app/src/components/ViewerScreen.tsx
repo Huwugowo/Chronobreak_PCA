@@ -199,7 +199,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   const [scoreboardOpen, setScoreboardOpen] = createSignal(false);
   const [scoreboardMounted, setScoreboardMounted] = createSignal(true);
   const toggleScoreboard = () => { setScoreboardMounted(true); setScoreboardOpen(open => !open); };
-  createEffect(() => overlayData.setScoreboardOpen(scoreboardOpen()));
   const activeScope = createMemo(() => data().scopes.find(scope => sourceKey(scope.source) === selectedSource())
     ?? data().scopes[data().scopes.length - 1]);
   const activeWindow = createMemo(() => {
@@ -223,7 +222,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     const noticeTimer = window.setTimeout(() => setShowDetailsLoading(true), REPLAY_DETAILS_NOTICE_DELAY_MS);
     onCleanup(() => window.clearTimeout(noticeTimer));
   });
-  let detailsPaint: number | undefined;
   let payloadReported = false;
   let detailsFailureReported = false;
   onMount(() => {
@@ -232,14 +230,12 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
       void replayData.prepared().then(() => {if (!disposed) overlayData.retry();});
     });
     onCleanup(unsubscribePrepared);
-    detailsPaint = requestAnimationFrame(() => {
-      detailsPaint = requestAnimationFrame(() => {
-        if (!disposed) { void replayData.initialize(); setDetailsScheduled(false); }
-      });
+    // The media mount starts synchronously. Let details overlap native loading.
+    queueMicrotask(() => {
+      if (!disposed) { void replayData.initialize(); setDetailsScheduled(false); }
     });
   });
   onCleanup(() => {
-    if (detailsPaint !== undefined) cancelAnimationFrame(detailsPaint);
     unsubscribeData(); replayData.dispose();
     unsubscribeOverlay(); overlayData.dispose();
   });
@@ -285,7 +281,6 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     const snapshot = playback();
     return !snapshot || snapshot.readiness !== "ready" || snapshot.queue !== "IDLE" || snapshot.media.seeking;
   });
-  createEffect(() => overlayData.setScoreboardBusy(scoreboardBusy()));
   const [replayPosition, setReplayPosition] = createSignal<ReplayTick>(0 as ReplayTick);
   const [timelineViewport, setTimelineViewport] = createSignal<TimelineViewport>(
     wholeTimelineViewport(replayEnd as ReplayTick),
@@ -357,7 +352,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   });
   const scoreboardSnapshot = createMemo(() => {
     if (!scoreboardOpen()) return null;
-    overlay().scoreboardVersion;
+    if (overlay().scoreboardStatus === "error") return null;
     return overlayData.scoreboardFor(overlaySample());
   });
   const recordedScores = () => overlaySample()?.local_scores;

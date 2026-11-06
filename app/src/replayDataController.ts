@@ -241,7 +241,9 @@ export class ReplayDataController {
       sourceKey(scope.source) === sourceKey(this.deferredWindow!.query.scope))) return;
     if (this.debounce !== null) this.cancelSchedule(this.debounce);
     this.setLoading("window", true);
-    this.debounce = this.schedule(() => {
+    const scheduled = this.deferredWindow;
+    const dispatch = () => {
+      if (this.deferredWindow !== scheduled) return;
       this.debounce = null;
       const intent = this.deferredWindow;
       this.deferredWindow = null;
@@ -249,7 +251,10 @@ export class ReplayDataController {
         sameSource(scope.source, intent.query.scope))) return;
       this.windowPending = intent;
       this.pumpWindow();
-    }, VIEWPORT_DEBOUNCE_MS);
+    };
+    // Initial replay has no viewport gesture to coalesce.
+    if (this.state.activeWindow || this.windowActive) this.debounce = this.schedule(dispatch, VIEWPORT_DEBOUNCE_MS);
+    else queueMicrotask(dispatch);
   }
 
   private pumpWindow() {

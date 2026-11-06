@@ -84,23 +84,21 @@ Every native candidate also passes an independent empty-moov fragmented-MP4 timi
 
 The reader shares the five-second probe deadline, retains the million-box-visit limit and 24-hour video bound, reads sample tables in 4-KiB chunks, and seeks past encoded payload. Work is O(box visits + explicit sample-table entries), with O(1) memory; inherited constant-duration runs are checked algebraically. For the observed native layout, sample sizes cost four table bytes per frame (about 0.864 MB/hour at 60 FPS), plus fragment/header reads. Payload size alone does not increase scan bytes; a synthetic 8-GiB `mdat` is tested without reading its contents. The blocking reader remains owned until joined; OS I/O can outlast a cooperative deadline. No decoding, extra process, GPU work or background finalization is added. Existing inline finalization scheduling is retained by explicit product direction. This proves the container presentation grid and observed stream format, not decoded-frame correctness, frozen-picture absence, later in-band parameter changes, or full payload integrity.
 
-The replay TAB scoreboard lazily enriches that same overlay timeline through
-`include_scoreboard` pages, only after the panel is first opened. Ordinary overlay
-queries do not inspect inventory. The controller serializes small enrichment
-pages, checks the original committed revision and every observation cursor, and
-joins nullable scores, vision and item slot/count facts to existing source-scoped
-participants. Payloads and repeated roster variants are interned in memory.
-After the first open, enrichment continues while closed, one small page per idle
-admission, retaining the bounded cache until source disposal. Pending seeks,
-frame settlement and media loading/recovery pause new optional work; a 150 ms
-quiet period follows settlement. An already admitted page/image may finish.
+The viewer reads the overlay and TAB scoreboard from the same prepared pages,
+including while the panel is closed. One bounded page is in flight. Each page
+checks source, revision, cursor order and media coverage before publication.
+The same observation supplies nullable scores, vision and item slot/count facts.
+The controller interns scoreboard payloads and roster variants and retains compact
+overlay observations. If the scoreboard read fails or exceeds its capacity,
+the controller keeps the compact overlay and reports the scoreboard unavailable.
 Seeks never query or parse scoreboard data. The panel follows the existing
 observed-position sample, freezes while closed, and updates only on snapshot
 changes. Only visited icon variants mount asynchronously through the existing
 Data Dragon cache and keep their image nodes for backward seeks. New icon nodes
 wait for seek settlement. Source identities, known spell variants and unique
 item IDs collected once per interned payload feed a source-owned background warm
-cache after the first TAB open, including while closed. It loads/decodes one
+cache, including while closed. Native loading, recovery and seeks pause new
+image work and a 150 ms quiet period follows settlement. The cache loads/decodes one
 low-priority image at a time in idle callbacks, retains at most 512 images and
 releases them on source/base-URL change or disposal. It never selects inventory
 or reads snapshots on the frame clock. Successful versioned icon responses allow
