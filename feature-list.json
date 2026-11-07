@@ -5284,7 +5284,7 @@
     {
       "id": "QB-REPLAY-030",
       "kind": "feature",
-      "stage": "draft",
+      "stage": "ready",
       "name": "Avoid fragment scans when opening existing recordings",
       "description": "Use verified MP4 indexing information to eliminate the hundreds of range requests that Chromium makes before presenting frame zero on current native fragmented recordings.",
       "priority": "P1",
@@ -5292,17 +5292,22 @@
       "status": "not-started",
       "parent_id": "EPIC-REPLAY",
       "dependencies": ["QB-REPLAY-012", "QB-REPLAY-011"],
-      "execution": {"workflow": "planned", "plan": null},
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-replay-030-front-fragment-index.md",
+        "progress": "docs/execution/qb-replay-030.md"
+      },
       "acceptance_criteria": [
         "Reduce first-frame opening latency and range-request amplification on the existing representative recordings without rewriting source files, skipping validation, or adding a hidden full-file copy or remux.",
-        "Preserve protected range delivery, source generation, exact video and audio timeline, seeking, export behavior and compatibility with older supported recordings."
+        "Preserve protected range delivery, source generation, exact video and audio timeline, seeking, export behavior and compatibility with older supported recordings.",
+        "Verify a material improvement at the complete-opening endpoint on the matched recordings that complete in both release arms. Report timeouts and video-recovery phases separately across the full representative set."
       ],
       "verification": [
         {"type": "benchmark", "description": "Use the QB-REPLAY-029 complete-opening endpoint and retain native media phases and range traces on the same recordings."},
         {"type": "automated", "description": "Verify affected range, exact presentation, seek and export boundaries for original and indexed delivery."}
       ],
       "evidence": [],
-      "notes": "Discovered in QB-REPLAY-029. The front-index and conventional faststart stream-copy controls establish container layout as the dominant observed cost. They are disposable diagnostic files with muxer-derived duration differences and do not qualify as a production solution."
+      "notes": "Discovered in QB-REPLAY-029. The production design serves a verified front index with original initialization and media bytes through protected replay delivery. The index-only Edge control and current release baseline are recorded in the execution checkpoint. Video-recovery failures remain separately tracked in the release evidence."
     }
   ]
 }
