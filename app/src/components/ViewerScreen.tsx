@@ -14,6 +14,7 @@ import {
 import {
   loadReplayDescriptor,
   loadServerMetrics,
+  releaseReplayIndex,
 } from "../api";
 import {
   emitReplayBenchmarkEvent,
@@ -119,13 +120,39 @@ function ViewerScreen(props: Props) {
   const observer = replayBenchmarkObserver();
   const opening = benchmarkViewerOpening(observer, props.gameTimestamp);
   let alive = true;
-  onCleanup(() => { alive = false; });
+  let activeDescriptor: ReplayDescriptor | undefined;
+  const releaseDescriptor = (value: ReplayDescriptor | undefined) => {
+    if (!value) return;
+    const token = new URL(value.video_url, window.location.href).searchParams.get("qb_index");
+    // Let the playback surface dispose the video element before revoking its URL.
+    if (token) queueMicrotask(() => releaseReplayIndex(token));
+  };
+  onCleanup(() => {
+    alive = false;
+    releaseDescriptor(activeDescriptor);
+  });
   const [descriptor, { refetch }] = createResource(() => props.gameTimestamp,
     async id => {
+      releaseDescriptor(activeDescriptor);
+      activeDescriptor = undefined;
       if (opening && replayBenchmarkObserver() === observer) observer!.emitOpening("opening_descriptor_requested", opening);
-      const value = await props.readReplay(token => loadReplayDescriptor(id, token));
-      if (opening && alive && replayBenchmarkObserver() === observer) observer!.emitOpening("opening_descriptor_ready", opening);
-      return value;
+      let opened: ReplayDescriptor | undefined;
+      try {
+        const value = await props.readReplay(async token => {
+          opened = await loadReplayDescriptor(id, token, true);
+          return opened;
+        });
+        if (alive) {
+          activeDescriptor = value;
+          if (opening && replayBenchmarkObserver() === observer) observer!.emitOpening("opening_descriptor_ready", opening);
+        } else {
+          releaseDescriptor(value);
+        }
+        return value;
+      } catch (error) {
+        releaseDescriptor(opened);
+        throw error;
+      }
     });
   let failureReported = false;
 

@@ -1,4 +1,3 @@
-#[cfg(feature = "replay-benchmark")]
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -20,6 +19,7 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use axum::routing::any;
 use axum::{Extension, Router};
+use chronobreak_replay_time::MediaTimelineV2;
 use serde::Serialize;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf, SeekFrom};
@@ -30,11 +30,14 @@ use tokio_util::io::ReaderStream;
 use crate::ddragon;
 use crate::library::{valid_clip_asset, valid_game_id};
 use crate::music;
-use crate::playback_file::{self, ApprovedRoot, FileScope};
+use crate::playback_file::{self, ApprovedRoot, FileFacts, FileScope};
 use crate::playback_policy::{self, BoundServer, DeliveryPolicy};
+use crate::replay_index::{self, ReplayIndex};
 
 const HEVC_PROBE: &[u8] = include_bytes!("../resources/hevc-probe.mp4");
 const MAX_CONNECTIONS: usize = 64;
+const INDEX_CACHE_CAPACITY: usize = 4;
+const INDEX_LEASE_CAPACITY: usize = 8;
 #[cfg(feature = "replay-benchmark")]
 const BENCHMARK_REQUEST_CAPACITY: usize = 4096;
 
@@ -404,13 +407,32 @@ impl Drop for RequestTracker {
 pub(crate) struct OutputDirectory {
     path: PathBuf,
     root: ApprovedRoot,
+    indexes: VecDeque<Arc<IndexedRecording>>,
+    leases: Vec<IndexLease>,
 }
 
 impl OutputDirectory {
     pub(crate) fn new(path: PathBuf) -> Result<Self> {
         let root = ApprovedRoot::new(&path)?;
-        Ok(Self { path, root })
+        Ok(Self {
+            path,
+            root,
+            indexes: VecDeque::new(),
+            leases: Vec::new(),
+        })
     }
+}
+
+pub(crate) struct IndexedRecording {
+    facts: FileFacts,
+    timeline: MediaTimelineV2,
+    index: ReplayIndex,
+}
+
+struct IndexLease {
+    token: String,
+    game: String,
+    recording: Arc<IndexedRecording>,
 }
 
 pub struct MediaRoots {
@@ -450,6 +472,107 @@ impl MediaRoots {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .root
             .clone()
+    }
+
+    pub(crate) fn prepare_replay_index(
+        &self,
+        root: &ApprovedRoot,
+        game: &str,
+        timeline: &MediaTimelineV2,
+    ) -> Option<Arc<IndexedRecording>> {
+        let path = game_video_path(root, game);
+        let mut file = playback_file::open_file(&path, FileScope::Root(root)).ok()?;
+        let facts = playback_file::file_facts(&file).ok()?;
+        {
+            let directory = self
+                .output_directory
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if &directory.root != root || directory.leases.len() == INDEX_LEASE_CAPACITY {
+                return None;
+            }
+            if let Some(recording) = directory
+                .indexes
+                .iter()
+                .chain(directory.leases.iter().map(|lease| &lease.recording))
+                .find(|recording| recording.facts == facts && &recording.timeline == timeline)
+            {
+                return Some(Arc::clone(recording));
+            }
+        }
+        let index = replay_index::prepare(&mut file, facts.length(), timeline)?;
+        if playback_file::file_facts(&file).ok()? != facts {
+            return None;
+        }
+        Some(Arc::new(IndexedRecording {
+            facts,
+            timeline: timeline.clone(),
+            index,
+        }))
+    }
+
+    pub(crate) fn lease_replay_index(
+        &self,
+        root: &ApprovedRoot,
+        game: String,
+        recording: Arc<IndexedRecording>,
+    ) -> Option<String> {
+        let token = playback_policy::random_capability().ok()?;
+        let mut directory = self
+            .output_directory
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if &directory.root != root || directory.leases.len() == INDEX_LEASE_CAPACITY {
+            return None;
+        }
+        directory
+            .indexes
+            .retain(|entry| !Arc::ptr_eq(entry, &recording));
+        if directory.indexes.len() == INDEX_CACHE_CAPACITY {
+            directory.indexes.pop_front();
+        }
+        directory.indexes.push_back(Arc::clone(&recording));
+        // An active URL owns its layout independently of the reusable cache.
+        directory.leases.push(IndexLease {
+            token: token.clone(),
+            game,
+            recording,
+        });
+        Some(token)
+    }
+
+    pub(crate) fn release_replay_index(&self, token: &str) {
+        self.output_directory
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .leases
+            .retain(|lease| lease.token != token);
+    }
+
+    fn replay_delivery(
+        &self,
+        game: &str,
+        query: Option<&str>,
+    ) -> Option<(ApprovedRoot, Option<Arc<IndexedRecording>>)> {
+        let directory = self
+            .output_directory
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut index = None;
+        for pair in query.unwrap_or_default().split('&') {
+            let (key, token) = pair.split_once('=').unwrap_or((pair, ""));
+            if key == "qb_index" {
+                if index.is_some() {
+                    return None;
+                }
+                let lease = directory
+                    .leases
+                    .iter()
+                    .find(|lease| lease.game == game && lease.token == token)?;
+                index = Some(Arc::clone(&lease.recording));
+            }
+        }
+        Some((directory.root.clone(), index))
     }
 
     pub(crate) fn set_output_directory(&self, directory: OutputDirectory) {
@@ -751,8 +874,13 @@ async fn game_video(
     if !valid_game_id(&timestamp) {
         return empty_response(StatusCode::NOT_FOUND, "video/mp4");
     }
-    let root = state.roots.output_root();
-    let path = root.path().join("games").join(timestamp).join("video.mp4");
+    let Some((root, index)) = state
+        .roots
+        .replay_delivery(&timestamp, request.uri().query())
+    else {
+        return empty_response(StatusCode::NOT_FOUND, "video/mp4");
+    };
+    let path = game_video_path(&root, &timestamp);
     serve_file(
         state,
         request,
@@ -760,8 +888,13 @@ async fn game_video(
         FileScope::Root(&root),
         "video/mp4",
         RouteClass::GameVideo,
+        index,
     )
     .await
+}
+
+fn game_video_path(root: &ApprovedRoot, game: &str) -> PathBuf {
+    root.path().join("games").join(game).join("video.mp4")
 }
 
 async fn clip_asset(
@@ -786,6 +919,7 @@ async fn clip_asset(
         FileScope::Root(&root),
         content_type,
         RouteClass::Clip,
+        None,
     )
     .await
 }
@@ -845,6 +979,7 @@ async fn imported_music_preview(
         FileScope::Exact(&path),
         content_type,
         RouteClass::ImportedMusic,
+        None,
     )
     .await
 }
@@ -881,6 +1016,7 @@ async fn ddragon_asset(
         FileScope::Root(&root),
         "image/png",
         RouteClass::Ddragon,
+        None,
     )
     .await;
     // Versioned icons are immutable. Browser reuse avoids repeated local requests
@@ -973,6 +1109,7 @@ async fn serve_file(
     scope: FileScope<'_>,
     content_type: &'static str,
     route_class: RouteClass,
+    indexed: Option<Arc<IndexedRecording>>,
 ) -> Response<Body> {
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
     #[cfg(feature = "replay-benchmark")]
@@ -1001,8 +1138,16 @@ async fn serve_file(
     let opened = match scope {
         FileScope::Root(root) => {
             let root = root.clone();
+            let expected = indexed.as_ref().map(|recording| recording.facts.clone());
             open_file_blocking(connection, move || {
-                playback_file::open_file(&path, FileScope::Root(&root))
+                let file = playback_file::open_file(&path, FileScope::Root(&root))?;
+                if let Some(expected) = expected {
+                    anyhow::ensure!(
+                        playback_file::file_facts(&file)? == expected,
+                        "indexed recording changed"
+                    );
+                }
+                Ok(file)
             })
             .await
         }
@@ -1014,7 +1159,7 @@ async fn serve_file(
             .await
         }
     };
-    let (mut file, total_length) = match opened {
+    let (mut file, source_length) = match opened {
         Ok(opened) => opened,
         Err(status) => {
             #[cfg(feature = "replay-benchmark")]
@@ -1022,6 +1167,9 @@ async fn serve_file(
             return empty_response(status, content_type);
         }
     };
+    let total_length = indexed
+        .as_ref()
+        .map_or(source_length, |entry| entry.index.length);
     if total_length == 0 {
         if request.headers().contains_key(RANGE) {
             state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
@@ -1055,8 +1203,27 @@ async fn serve_file(
         return range_not_satisfiable(total_length, content_type);
     };
     let response_length = end - start + 1;
+    let (prefix, file_start) = indexed.as_ref().map_or_else(
+        || (Bytes::new(), start),
+        |entry| {
+            let index = &entry.index;
+            let prefix_length = index.prefix.len() as u64;
+            let prefix = index
+                .prefix
+                .slice(start.min(prefix_length) as usize..(end + 1).min(prefix_length) as usize);
+            (
+                prefix,
+                index.source_start + start.saturating_sub(prefix_length),
+            )
+        },
+    );
+    let file_length = response_length - prefix.len() as u64;
 
-    if start > 0 && file.seek(SeekFrom::Start(start)).await.is_err() {
+    if request.method() != Method::HEAD
+        && file_length > 0
+        && file_start > 0
+        && file.seek(SeekFrom::Start(file_start)).await.is_err()
+    {
         #[cfg(feature = "replay-benchmark")]
         finish_immediate(
             pending,
@@ -1083,21 +1250,14 @@ async fn serve_file(
         );
         Body::empty()
     } else {
+        let stream = std::io::Cursor::new(prefix).chain(file.take(file_length));
         #[cfg(feature = "replay-benchmark")]
         let request = pending.map(|pending| pending.stream(status, (start, end), response_length));
         #[cfg(feature = "replay-benchmark")]
-        let reader = CountingReader::new(
-            file.take(response_length),
-            Arc::clone(&state.metrics),
-            response_length,
-            request,
-        );
+        let reader =
+            CountingReader::new(stream, Arc::clone(&state.metrics), response_length, request);
         #[cfg(not(feature = "replay-benchmark"))]
-        let reader = CountingReader::new(
-            file.take(response_length),
-            Arc::clone(&state.metrics),
-            response_length,
-        );
+        let reader = CountingReader::new(stream, Arc::clone(&state.metrics), response_length);
         Body::from_stream(ReaderStream::new(reader))
     };
     build_response(body, status, start, end, total_length, content_type)

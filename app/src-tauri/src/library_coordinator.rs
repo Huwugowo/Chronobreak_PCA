@@ -443,7 +443,7 @@ impl LibraryCoordinator {
         roots: &MediaRoots,
         token: &str,
         game: &str,
-        build: impl FnOnce(&std::path::Path) -> anyhow::Result<T> + Send + 'static,
+        build: impl FnOnce(&RootCapture) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, LibraryRefreshError> {
         let permit =
             Arc::clone(&self.replay_slot)
@@ -453,10 +453,10 @@ impl LibraryCoordinator {
                     tokio::sync::TryAcquireError::NoPermits => LibraryRefreshError::Busy,
                 })?;
         let capture = self.capture_selection(roots, token, Selection::Game(game))?;
-        let path = capture.path.clone();
+        let worker_capture = capture.clone();
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            build(&path)
+            build(&worker_capture)
         })
         .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("replay read worker failed")));

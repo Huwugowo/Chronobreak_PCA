@@ -53,6 +53,10 @@ pub(crate) struct FileFacts {
 }
 
 impl FileFacts {
+    pub(crate) fn length(&self) -> u64 {
+        self.length
+    }
+
     /// Stable only for this opened file generation; appending does not change it.
     pub(crate) fn generation_key(&self) -> String {
         format!("{:08x}-{:016x}", self.volume, self.index)

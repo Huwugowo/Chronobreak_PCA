@@ -100,6 +100,103 @@ fn client() -> reqwest::Client {
 }
 
 #[tokio::test]
+async fn indexed_ranges_survive_cache_eviction_until_the_viewer_releases_them() {
+    let fixture = WireFixture::start().await;
+    let roots = &fixture.roots;
+    let root = roots.output_root();
+    let game = "1786000000";
+    let path = game_video_path(&root, game);
+    let facts = playback_file::file_facts(&std::fs::File::open(&path).unwrap()).unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/preprod-library/library/games/1792431584/metadata.json"
+    ))
+    .unwrap();
+    let timeline: MediaTimelineV2 =
+        serde_json::from_value(metadata["media_timeline"].clone()).unwrap();
+    let recording = |prefix: &'static [u8]| {
+        Arc::new(IndexedRecording {
+            facts: facts.clone(),
+            timeline: timeline.clone(),
+            index: ReplayIndex {
+                prefix: Bytes::from_static(prefix),
+                source_start: 4,
+                length: 14,
+            },
+        })
+    };
+    let active = recording(b"MP");
+    let lease = roots
+        .lease_replay_index(&root, game.into(), Arc::clone(&active))
+        .unwrap();
+    for _ in 0..INDEX_CACHE_CAPACITY {
+        let disposable = roots
+            .lease_replay_index(&root, game.into(), recording(b"XX"))
+            .unwrap();
+        roots.release_replay_index(&disposable);
+    }
+    assert!(
+        !roots
+            .output_directory
+            .read()
+            .unwrap()
+            .indexes
+            .iter()
+            .any(|entry| Arc::ptr_eq(entry, &active))
+    );
+
+    let client = client();
+    let base = &fixture.base;
+    let url = format!("{base}/games/{game}/video.mp4?qb_index={lease}&qb_playback_session=1");
+    let response = client
+        .get(&url)
+        .header(RANGE, "bytes=1-4")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-4/14");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), b"P456");
+    let head = client
+        .head(&url)
+        .header(RANGE, "bytes=-2")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.headers()[CONTENT_RANGE], "bytes 12-13/14");
+    assert!(head.bytes().await.unwrap().is_empty());
+    for invalid in [
+        format!("{url}&qb_index={lease}"),
+        format!("{base}/games/1786000001/video.mp4?qb_index={lease}"),
+    ] {
+        assert_eq!(
+            client.get(invalid).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    roots.release_replay_index(&lease);
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let lease = roots
+        .lease_replay_index(&root, game.into(), active)
+        .unwrap();
+    let url = format!("{base}/games/{game}/video.mp4?qb_index={lease}");
+    std::fs::write(&path, b"changed").unwrap();
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    let raw = client
+        .get(format!("{base}/games/{game}/video.mp4"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(raw.bytes().await.unwrap().as_ref(), b"changed");
+}
+
+#[tokio::test]
 async fn every_route_enforces_the_same_capability_and_http_contract() {
     let fixture = WireFixture::start().await;
     let client = client();

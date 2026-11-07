@@ -5289,7 +5289,7 @@
       "description": "Use verified MP4 indexing information to eliminate the hundreds of range requests that Chromium makes before presenting frame zero on current native fragmented recordings.",
       "priority": "P1",
       "area": "replay-performance",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-REPLAY",
       "dependencies": ["QB-REPLAY-012", "QB-REPLAY-011"],
       "execution": {
@@ -5306,8 +5306,11 @@
         {"type": "benchmark", "description": "Use the QB-REPLAY-029 complete-opening endpoint and retain native media phases and range traces on the same recordings."},
         {"type": "automated", "description": "Verify affected range, exact presentation, seek and export boundaries for original and indexed delivery."}
       ],
-      "evidence": [],
-      "notes": "Discovered in QB-REPLAY-029. The production design serves a verified front index with original initialization and media bytes through protected replay delivery. The index-only Edge control and current release baseline are recorded in the execution checkpoint. Video-recovery failures remain separately tracked in the release evidence."
+      "evidence": [
+        "Windows production WebView opened Graves in 319–384 ms including cold index preparation versus 5,131 ms before, with 1 versus 363 requests before frame zero. Reopening took 308–320 ms. Four prior timeouts completed in 529–902 ms across indexed runs; the recovery cause remains unverified.",
+        "Matched exact Graves seek frames and 321 hashed video and audio packets across early, middle and late windows. All ten source and metadata hashes were unchanged."
+      ],
+      "notes": "The replay viewer alone requests virtual SIDX preparation. Unchanged sources reuse verified layouts and active URLs retain them through cache eviction. See the execution checkpoint for the separate recovery evidence and verification limits."
     }
   ]
 }

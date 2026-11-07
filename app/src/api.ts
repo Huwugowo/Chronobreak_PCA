@@ -455,16 +455,27 @@ export const decodeReplayDescriptor = (value: unknown): ReplayDescriptor => {
   };
 };
 
-export const loadReplayDescriptor = async (gameTimestamp: string, snapshotToken: string): Promise<ReplayDescriptor> => {
+export const loadReplayDescriptor = async (
+  gameTimestamp: string, snapshotToken: string, preparePlayback = false,
+): Promise<ReplayDescriptor> => {
   if (useMockApi()) {
     const game=mockGames.find(game => game.timestamp === gameTimestamp);
     if (!game?.media_id) throw new Error("Recording not found");
     return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: mockReplayUrl(), media_timeline: { ...MOCK_MEDIA_TIMELINE, mediaId: game.media_id } };
   }
-  const descriptor = decodeReplayDescriptor(await invoke<unknown>("get_replay_descriptor", { gameTimestamp, snapshotToken }));
-  if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp)
+  const descriptor = decodeReplayDescriptor(await invoke<unknown>("get_replay_descriptor", {
+    gameTimestamp, snapshotToken, ...(preparePlayback ? { preparePlayback } : {}),
+  }));
+  if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp) {
+    const token = new URL(descriptor.video_url).searchParams.get("qb_index");
+    if (token) releaseReplayIndex(token);
     throw new Error("Replay descriptor selection mismatch");
+  }
   return descriptor;
+};
+
+export const releaseReplayIndex = (token: string): void => {
+  void invoke("release_replay_index", { token }).catch(() => {});
 };
 
 export const setGameSaved = async (gameTimestamp: string, saved: boolean, snapshotToken: string): Promise<void> => {

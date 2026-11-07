@@ -30,8 +30,9 @@ The OS CSPRNG supplies a 256-bit per-instance secret. Failure to bind or obtain
 randomness fails startup. Every media/static URL begins
 `http://127.0.0.1:<port>/cap/<secret>/`. Port randomness is not authorization.
 The server compares the capability before dispatching a route, then strips its
-prefix while preserving the controller's `qb_playback_session` query. That query
-identifies a playback load; it cannot authorize access.
+prefix while preserving the query. The controller's `qb_playback_session` value
+identifies a playback load. The optional `qb_index` value selects a game-specific
+byte layout after ordinary admission. Neither query value authorizes access.
 
 Exactly one Host must match the reserved numeric loopback authority, including
 port. Alternate localhost names, ports and absolute-form request targets are
@@ -149,6 +150,16 @@ A stalled body reader may occupy one bounded slot until it disconnects. There is
 no total playback lifetime timeout or claim of interrupting a stalled OS file open.
 
 File bodies retain the existing bounded ReaderStream chunks and range slices.
+For eligible native fragmented MP4s, a viewer opening can serve a virtual byte
+layout with the original initialization boxes, an in-memory SIDX prefix and the
+original fragment bytes. Preparation reads only bounded container metadata.
+The cache reuses verified layouts for unchanged file facts and media timelines.
+Active viewer URLs lease their layouts independently of cache eviction. Each
+indexed request verifies the file generation on the handle it will stream.
+Changing the approved library root or releasing the viewer's lease revokes
+future indexed requests. Unsupported layouts use the raw game route. Library
+indexing, clip previews and export continue to use the original recording.
+
 Embedded assets use borrowed static byte slices rather than full-asset copies per
 request. Production counters report requests/ranges/bytes/completion/cancellation,
 active/peak file streams, active/peak connections and rejected admissions. Parser

@@ -36,6 +36,15 @@ impl Binding {
                     }
                 })
         };
+        let mut query = url.query_pairs().peekable();
+        if let Some((_, token)) = query.next_if(|(key, _)| key == "qb_index")
+            && (token.len() != 64
+                || !token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+        {
+            return Err("invalid primary playback diagnostic binding".into());
+        }
         if !uuid(&self.session_token)
             || !uuid(&self.media_id)
             || url.scheme() != "http"
@@ -46,11 +55,12 @@ impl Binding {
             || self.url.len() > MAX_TEXT
             || self.codec.len() > 32
             || self.profile.as_ref().is_some_and(|value| value.len() > 64)
-            || url.query_pairs().collect::<Vec<_>>()
-                != [(
+            || query.next()
+                != Some((
                     "qb_playback_session".into(),
                     self.session_token.as_str().into(),
-                )]
+                ))
+            || query.next().is_some()
         {
             return Err("invalid primary playback diagnostic binding".into());
         }
@@ -454,6 +464,20 @@ mod tests {
         assert_eq!(monitor.snapshot.platform_decoder, None);
         assert!(monitor.snapshot.reason.contains("current-load provenance"));
     }
+
+    #[test]
+    fn binding_accepts_only_a_valid_index_token_with_the_playback_session() {
+        let mut indexed = binding();
+        indexed.url = indexed
+            .url
+            .replace("?", &format!("?qb_index={}&", "a".repeat(64)));
+        assert!(indexed.validate().is_ok());
+        indexed.url.push_str("&qb_index=duplicate");
+        assert!(indexed.validate().is_err());
+        indexed.url = binding().url.replace("?", "?qb_index=bad&");
+        assert!(indexed.validate().is_err());
+    }
+
     #[test]
     fn binding_is_monotonic_idempotent_and_rejects_same_generation_conflicts() {
         let mut monitor = Monitor::new("owner".into());

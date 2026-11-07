@@ -24,6 +24,7 @@ mod playback_file;
 mod playback_policy;
 mod playback_server;
 mod recorder_supervisor;
+mod replay_index;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -216,20 +217,44 @@ async fn get_replay_descriptor(
     state: State<'_, AppState>,
     snapshot_token: String,
     game_timestamp: String,
+    prepare_playback: Option<bool>,
 ) -> Result<library::ReplayDescriptor, String> {
     let origin = state.playback_origin.clone();
     let id = game_timestamp.clone();
     let token = snapshot_token.clone();
-    state
+    let roots = Arc::clone(&state.roots);
+    let (mut descriptor, prepared) = state
         .library
         .read_replay(
             &state.roots,
             &snapshot_token,
             &game_timestamp,
-            move |path| library::replay_descriptor(path, &origin, &id, token),
+            move |capture| {
+                let descriptor = library::replay_descriptor(&capture.path, &origin, &id, token)?;
+                let prepared = if prepare_playback == Some(true) {
+                    roots
+                        .prepare_replay_index(&capture.root, &id, &descriptor.media_timeline)
+                        .map(|index| (capture.root.clone(), index))
+                } else {
+                    None
+                };
+                Ok((descriptor, prepared))
+            },
         )
         .await
-        .map_err(command_error)
+        .map_err(command_error)?;
+    if let Some((root, index)) = prepared
+        && let Some(lease) = state.roots.lease_replay_index(&root, game_timestamp, index)
+    {
+        descriptor.video_url.push_str("?qb_index=");
+        descriptor.video_url.push_str(&lease);
+    }
+    Ok(descriptor)
+}
+
+#[tauri::command]
+fn release_replay_index(state: State<'_, AppState>, token: String) {
+    state.roots.release_replay_index(&token);
 }
 
 #[tauri::command]
@@ -1413,6 +1438,7 @@ pub fn run() {
         list_games,
         list_clips,
         get_replay_descriptor,
+        release_replay_index,
         save_game,
         delete_game,
         delete_clip,
@@ -1467,6 +1493,7 @@ pub fn run() {
         list_games,
         list_clips,
         get_replay_descriptor,
+        release_replay_index,
         save_game,
         delete_game,
         delete_clip,
