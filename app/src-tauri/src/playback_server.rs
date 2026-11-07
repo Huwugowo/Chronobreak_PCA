@@ -409,6 +409,7 @@ pub(crate) struct OutputDirectory {
     root: ApprovedRoot,
     indexes: VecDeque<Arc<IndexedRecording>>,
     leases: Vec<IndexLease>,
+    replay_lease_epoch: u64,
 }
 
 impl OutputDirectory {
@@ -419,6 +420,7 @@ impl OutputDirectory {
             root,
             indexes: VecDeque::new(),
             leases: Vec::new(),
+            replay_lease_epoch: 0,
         })
     }
 }
@@ -513,6 +515,7 @@ impl MediaRoots {
 
     pub(crate) fn lease_replay_index(
         &self,
+        epoch: u64,
         root: &ApprovedRoot,
         game: String,
         recording: Arc<IndexedRecording>,
@@ -522,7 +525,10 @@ impl MediaRoots {
             .output_directory
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if &directory.root != root || directory.leases.len() == INDEX_LEASE_CAPACITY {
+        if epoch != directory.replay_lease_epoch
+            || &directory.root != root
+            || directory.leases.len() == INDEX_LEASE_CAPACITY
+        {
             return None;
         }
         directory
@@ -539,6 +545,22 @@ impl MediaRoots {
             recording,
         });
         Some(token)
+    }
+
+    pub(crate) fn replay_lease_epoch(&self) -> u64 {
+        self.output_directory
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replay_lease_epoch
+    }
+
+    pub(crate) fn reset_replay_leases(&self) {
+        let mut directory = self
+            .output_directory
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        directory.replay_lease_epoch = directory.replay_lease_epoch.wrapping_add(1);
+        directory.leases.clear();
     }
 
     pub(crate) fn release_replay_index(&self, token: &str) {
@@ -575,13 +597,15 @@ impl MediaRoots {
         Some((directory.root.clone(), index))
     }
 
-    pub(crate) fn set_output_directory(&self, directory: OutputDirectory) {
+    pub(crate) fn set_output_directory(&self, mut directory: OutputDirectory) {
         // Publish the logical path and validated delivery snapshot together, after
         // the caller has successfully persisted settings.
-        *self
+        let mut current = self
             .output_directory
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = directory;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        directory.replay_lease_epoch = current.replay_lease_epoch.wrapping_add(1);
+        *current = directory;
     }
 
     pub fn register_imported_music_preview(&self, path: PathBuf) -> Result<String> {

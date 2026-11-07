@@ -12,6 +12,20 @@ describe("decodeReplayDescriptor", () => {
   it("admits media authority independently of index data", () => { const descriptor = decodeReplayDescriptor(descriptorWire()); expect(descriptor.media_timeline.video.replayEnd).toBe(96_000_000); expect(Object.keys(descriptor)).toHaveLength(4); });
   it("sends the selected token and rejects a mismatched reply", async () => { vi.mocked(isTauri).mockReturnValue(true); vi.mocked(invoke).mockResolvedValueOnce(descriptorWire()); await expect(loadReplayDescriptor("1787904000", "current")).resolves.toMatchObject({ snapshot_token: "current" }); expect(invoke).toHaveBeenCalledWith("get_replay_descriptor", { gameTimestamp: "1787904000", snapshotToken: "current" }); vi.mocked(invoke).mockResolvedValueOnce({ ...descriptorWire(), snapshot_token: "old" }); await expect(loadReplayDescriptor("1787904000", "current")).rejects.toThrow("selection mismatch"); });
   it("rejects malformed or expanded payloads", () => { for (const invalid of [{ ...descriptorWire(), snapshot_token: "" }, { ...descriptorWire(), game_timestamp: "../1" }, { ...descriptorWire(), events: [] }, { ...descriptorWire(), video_url: null }, { ...descriptorWire(), media_timeline: { ...descriptorWire().media_timeline, schema_version: 1 } }]) expect(() => decodeReplayDescriptor(invalid)).toThrow(); });
+  it("releases the index when an indexed response fails validation", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    const wire = descriptorWire();
+    const token = "a".repeat(64);
+    vi.mocked(invoke).mockResolvedValueOnce({
+      ...wire,
+      video_url: `${wire.video_url}?qb_index=${token}`,
+      media_timeline: { ...wire.media_timeline, schema_version: 1 },
+    }).mockResolvedValueOnce(undefined);
+
+    await expect(loadReplayDescriptor(wire.game_timestamp, wire.snapshot_token, true))
+      .rejects.toThrow("unsupported_schema_version");
+    expect(invoke).toHaveBeenNthCalledWith(2, "release_replay_index", { token });
+  });
 });
 describe("decodeLibrarySnapshot", () => { const valid = () => ({ token: "snapshot-a", archive_error: null, games: [game()], clips: [{ filename: "1_2", game_timestamp: "1", clip_timestamp: "2", duration_ms: null, file_size_bytes: 10, thumbnail_path: null, thumbnail_url: null, video_url: "", source_champion: null, source_date: null }], usage: { games_bytes: 10, clips_bytes: 10, game_count: 1, clip_count: 1 } }); it("admits a tokenized snapshot and rejects expanded records", () => { expect(decodeLibrarySnapshot(valid()).clips[0]?.duration_ms).toBeNull(); const value = valid(); Object.assign(value.clips[0]!, { unexpected: true }); expect(() => decodeLibrarySnapshot(value)).toThrow("invalid schema"); }); });
 describe("decodeClipDurations", () => { it("keeps unavailable and available results explicit", () => expect(decodeClipDurations({ snapshot_token: "a", clips: [{ clip_id: "x", duration: { state: "unavailable" } }, { clip_id: "y", duration: { state: "available", duration_ms: 42 } }] }).clips[1]?.duration).toEqual({ state: "available", duration_ms: 42 })); it("rejects invalid response shapes", () => { expect(() => decodeClipDurations({ snapshot_token: "", clips: [] })).toThrow(); expect(() => decodeClipDurations({ snapshot_token: "a", clips: [{ clip_id: "x", duration: { state: "available" } }] })).toThrow(); }); });

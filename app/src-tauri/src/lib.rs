@@ -223,6 +223,7 @@ async fn get_replay_descriptor(
     let id = game_timestamp.clone();
     let token = snapshot_token.clone();
     let roots = Arc::clone(&state.roots);
+    let lease_epoch = (prepare_playback == Some(true)).then(|| roots.replay_lease_epoch());
     let (mut descriptor, prepared) = state
         .library
         .read_replay(
@@ -231,7 +232,7 @@ async fn get_replay_descriptor(
             &game_timestamp,
             move |capture| {
                 let descriptor = library::replay_descriptor(&capture.path, &origin, &id, token)?;
-                let prepared = if prepare_playback == Some(true) {
+                let prepared = if lease_epoch.is_some() {
                     roots
                         .prepare_replay_index(&capture.root, &id, &descriptor.media_timeline)
                         .map(|index| (capture.root.clone(), index))
@@ -243,8 +244,11 @@ async fn get_replay_descriptor(
         )
         .await
         .map_err(command_error)?;
-    if let Some((root, index)) = prepared
-        && let Some(lease) = state.roots.lease_replay_index(&root, game_timestamp, index)
+    if let Some(epoch) = lease_epoch
+        && let Some((root, index)) = prepared
+        && let Some(lease) = state
+            .roots
+            .lease_replay_index(epoch, &root, game_timestamp, index)
     {
         descriptor.video_url.push_str("?qb_index=");
         descriptor.video_url.push_str(&lease);
@@ -1154,6 +1158,15 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_page_load(|webview, page| {
+            if webview.label() == "main"
+                && matches!(page.event(), tauri::webview::PageLoadEvent::Started)
+                && let Some(state) = webview.try_state::<AppState>()
+            {
+                // A document reload discards its viewers without running their cleanup.
+                state.roots.reset_replay_leases();
+            }
+        })
         .setup(move |app| {
             #[cfg(feature = "replay-benchmark")]
             let launch = benchmark_launch.clone();

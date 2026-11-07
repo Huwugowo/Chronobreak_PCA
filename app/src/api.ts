@@ -463,15 +463,23 @@ export const loadReplayDescriptor = async (
     if (!game?.media_id) throw new Error("Recording not found");
     return { snapshot_token: snapshotToken, game_timestamp: gameTimestamp, video_url: mockReplayUrl(), media_timeline: { ...MOCK_MEDIA_TIMELINE, mediaId: game.media_id } };
   }
-  const descriptor = decodeReplayDescriptor(await invoke<unknown>("get_replay_descriptor", {
+  const reply = await invoke<unknown>("get_replay_descriptor", {
     gameTimestamp, snapshotToken, ...(preparePlayback ? { preparePlayback } : {}),
-  }));
-  if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp) {
-    const token = new URL(descriptor.video_url).searchParams.get("qb_index");
-    if (token) releaseReplayIndex(token);
-    throw new Error("Replay descriptor selection mismatch");
+  });
+  try {
+    const descriptor = decodeReplayDescriptor(reply);
+    if (descriptor.snapshot_token !== snapshotToken || descriptor.game_timestamp !== gameTimestamp)
+      throw new Error("Replay descriptor selection mismatch");
+    return descriptor;
+  } catch (error) {
+    // Native preparation can lease a layout before the response passes frontend validation.
+    const url = (reply as { video_url?: unknown } | null)?.video_url;
+    if (typeof url === "string" && URL.canParse(url)) {
+      const token = new URL(url).searchParams.get("qb_index");
+      if (token) releaseReplayIndex(token);
+    }
+    throw error;
   }
-  return descriptor;
 };
 
 export const releaseReplayIndex = (token: string): void => {

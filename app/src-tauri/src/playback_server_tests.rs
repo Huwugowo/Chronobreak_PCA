@@ -99,38 +99,38 @@ fn client() -> reqwest::Client {
         .unwrap()
 }
 
+fn indexed_fixture(path: &Path, prefix: &'static [u8]) -> Arc<IndexedRecording> {
+    let facts = playback_file::file_facts(&std::fs::File::open(path).unwrap()).unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/preprod-library/library/games/1792431584/metadata.json"
+    ))
+    .unwrap();
+    Arc::new(IndexedRecording {
+        facts,
+        timeline: serde_json::from_value(metadata["media_timeline"].clone()).unwrap(),
+        index: ReplayIndex {
+            prefix: Bytes::from_static(prefix),
+            source_start: 4,
+            length: 14,
+        },
+    })
+}
+
 #[tokio::test]
 async fn indexed_ranges_survive_cache_eviction_until_the_viewer_releases_them() {
     let fixture = WireFixture::start().await;
     let roots = &fixture.roots;
     let root = roots.output_root();
+    let epoch = roots.replay_lease_epoch();
     let game = "1786000000";
     let path = game_video_path(&root, game);
-    let facts = playback_file::file_facts(&std::fs::File::open(&path).unwrap()).unwrap();
-    let metadata: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../fixtures/preprod-library/library/games/1792431584/metadata.json"
-    ))
-    .unwrap();
-    let timeline: MediaTimelineV2 =
-        serde_json::from_value(metadata["media_timeline"].clone()).unwrap();
-    let recording = |prefix: &'static [u8]| {
-        Arc::new(IndexedRecording {
-            facts: facts.clone(),
-            timeline: timeline.clone(),
-            index: ReplayIndex {
-                prefix: Bytes::from_static(prefix),
-                source_start: 4,
-                length: 14,
-            },
-        })
-    };
-    let active = recording(b"MP");
+    let active = indexed_fixture(&path, b"MP");
     let lease = roots
-        .lease_replay_index(&root, game.into(), Arc::clone(&active))
+        .lease_replay_index(epoch, &root, game.into(), Arc::clone(&active))
         .unwrap();
     for _ in 0..INDEX_CACHE_CAPACITY {
         let disposable = roots
-            .lease_replay_index(&root, game.into(), recording(b"XX"))
+            .lease_replay_index(epoch, &root, game.into(), indexed_fixture(&path, b"XX"))
             .unwrap();
         roots.release_replay_index(&disposable);
     }
@@ -180,7 +180,7 @@ async fn indexed_ranges_survive_cache_eviction_until_the_viewer_releases_them() 
     );
 
     let lease = roots
-        .lease_replay_index(&root, game.into(), active)
+        .lease_replay_index(epoch, &root, game.into(), active)
         .unwrap();
     let url = format!("{base}/games/{game}/video.mp4?qb_index={lease}");
     std::fs::write(&path, b"changed").unwrap();
@@ -194,6 +194,37 @@ async fn indexed_ranges_survive_cache_eviction_until_the_viewer_releases_them() 
         .await
         .unwrap();
     assert_eq!(raw.bytes().await.unwrap().as_ref(), b"changed");
+}
+
+#[tokio::test]
+async fn reloading_the_viewer_reclaims_leases_and_blocks_stale_preparation() {
+    let fixture = WireFixture::start().await;
+    let roots = &fixture.roots;
+    let root = roots.output_root();
+    let game = "1786000000";
+    let recording = indexed_fixture(&game_video_path(&root, game), b"MP");
+    let old_epoch = roots.replay_lease_epoch();
+    let acquire =
+        |epoch| roots.lease_replay_index(epoch, &root, game.into(), Arc::clone(&recording));
+    let leases: Vec<_> = (0..INDEX_LEASE_CAPACITY)
+        .map(|_| acquire(old_epoch).unwrap())
+        .collect();
+    assert!(acquire(old_epoch).is_none());
+
+    roots.reset_replay_leases();
+    assert!(acquire(old_epoch).is_none());
+    for token in leases {
+        assert!(
+            roots
+                .replay_delivery(game, Some(&format!("qb_index={token}")))
+                .is_none()
+        );
+    }
+    let cached = roots
+        .prepare_replay_index(&root, game, &recording.timeline)
+        .unwrap();
+    assert!(Arc::ptr_eq(&cached, &recording));
+    assert!(acquire(roots.replay_lease_epoch()).is_some());
 }
 
 #[tokio::test]

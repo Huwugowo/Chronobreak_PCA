@@ -543,3 +543,185 @@ pub(crate) fn prepare(
         source_start,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chronobreak_replay_time::{
+        AudioTimelineV2, ContainerTimelineV2, FrameBoundary, MediaId, MediaPts, ProducerEvidenceV2,
+        REPLAY_TIME_SCHEMA_VERSION, Rational, ReplayTick, SignedReplayTick, VideoTimelineV2,
+    };
+    use std::io::Cursor;
+
+    // FFmpeg fixtures: 16x16 black at 60 fps for 3 s, libx264 ultrafast,
+    // -threads 1 -g 60 -bf 0 -sc_threshold 0 and the recorder's movflags.
+    // The AAC variant adds 0.5 s of 48 kHz mono silence via anullsrc.
+    const VIDEO_ONLY: &[u8] = include_bytes!("../testdata/replay-index-video-only.mp4");
+    const FINITE_AAC: &[u8] = include_bytes!("../testdata/replay-index-finite-aac.mp4");
+    const VIDEO_INIT_END: usize = 804;
+    const VIDEO_MEDIA_END: usize = 4095;
+
+    fn timeline(aac: bool) -> MediaTimelineV2 {
+        let rate = Rational::new(60, 1).unwrap();
+        let frames = FrameBoundary::new(180).unwrap();
+        let timeline = MediaTimelineV2 {
+            schema_version: REPLAY_TIME_SCHEMA_VERSION,
+            replay_ticks_per_second: REPLAY_TICKS_PER_SECOND,
+            media_id: MediaId::parse("123e4567-e89b-42d3-a456-426614174000").unwrap(),
+            video: VideoTimelineV2 {
+                codec: "h264".into(),
+                profile: None,
+                time_base: Rational::new(1, 15_360).unwrap(),
+                first_pts: MediaPts::new(0),
+                frame_rate: rate,
+                frame_count: frames,
+                one_past_last_pts: MediaPts::new(46_080),
+                replay_end: ReplayTick::new(3 * REPLAY_TICKS_PER_SECOND).unwrap(),
+                exact_cfr: true,
+            },
+            audio: AudioTimelineV2 {
+                present: aac,
+                codec: aac.then(|| "aac".into()),
+                sample_rate: aac.then_some(48_000),
+                time_base: aac.then(|| Rational::new(1, 48_000).unwrap()),
+                first_pts: aac.then(|| MediaPts::new(0)),
+                replay_start: aac.then(|| SignedReplayTick::new(0).unwrap()),
+                replay_end: aac.then(|| SignedReplayTick::new(25_024_000).unwrap()),
+            },
+            container: ContainerTimelineV2 {
+                start_seconds: Rational::new(0, 1).unwrap(),
+                duration_seconds: Rational::new(3, 1).unwrap(),
+            },
+            producer: ProducerEvidenceV2 {
+                backend: "generated-fixture".into(),
+                expected_frame_rate: rate,
+                expected_frame_count: frames,
+                media_runtime_id: "fixture".into(),
+            },
+            capture: None,
+        };
+        timeline.validate().unwrap();
+        timeline
+    }
+
+    fn index(source: &[u8], timeline: &MediaTimelineV2) -> Option<ReplayIndex> {
+        prepare(Cursor::new(source), source.len() as u64, timeline)
+    }
+
+    fn assert_sidx(
+        prefix: &mut &[u8],
+        track: u32,
+        timescale: u32,
+        first_offset: u64,
+        references: &[(u32, u32)],
+    ) {
+        let (kind, sidx) = next_box(prefix).unwrap();
+        assert_eq!(kind, *b"sidx");
+        assert_eq!(&sidx[..4], &[1, 0, 0, 0]);
+        assert_eq!(number(sidx, 4), Some(track));
+        assert_eq!(number(sidx, 8), Some(timescale));
+        assert_eq!(sidx[12..20], [0; 8]);
+        assert_eq!(sidx[20..28], first_offset.to_be_bytes());
+        assert_eq!(number(sidx, 28), Some(references.len() as u32));
+        assert_eq!(sidx.len(), 32 + 12 * references.len());
+        for (entry, &(size, duration)) in sidx[32..].chunks_exact(12).zip(references) {
+            assert_eq!(number(entry, 0), Some(size));
+            assert_eq!(number(entry, 4), Some(duration));
+            assert_eq!(number(entry, 8), Some(0x9000_0000));
+        }
+    }
+
+    #[test]
+    fn video_only_index_covers_all_fragments_with_or_without_a_trailer() {
+        for source in [VIDEO_ONLY, &VIDEO_ONLY[..VIDEO_MEDIA_END]] {
+            let index = index(source, &timeline(false)).unwrap();
+            assert_eq!(index.source_start, VIDEO_INIT_END as u64);
+            assert_eq!(&index.prefix[..VIDEO_INIT_END], &source[..VIDEO_INIT_END]);
+            let mut boxes = &index.prefix[VIDEO_INIT_END..];
+            assert_sidx(
+                &mut boxes,
+                1,
+                15_360,
+                0,
+                &[(1496, 15_360), (898, 15_360), (897, 15_360)],
+            );
+            assert!(boxes.is_empty());
+            assert_eq!(index.length, (VIDEO_MEDIA_END + 76) as u64);
+        }
+    }
+
+    #[test]
+    fn finite_aac_index_preserves_priming_edit_and_independent_endpoint() {
+        let layout = index(FINITE_AAC, &timeline(true)).unwrap();
+        let init_end = 1319;
+        assert_eq!(layout.source_start, init_end as u64);
+        assert_eq!(&layout.prefix[..init_end], &FINITE_AAC[..init_end]);
+        let mut boxes = &layout.prefix[init_end..];
+        assert_sidx(&mut boxes, 2, 48_000, 76, &[(1889, 25_024)]);
+        assert_sidx(
+            &mut boxes,
+            1,
+            15_360,
+            0,
+            &[(1889, 15_360), (898, 15_360), (897, 15_360)],
+        );
+        assert!(boxes.is_empty());
+        assert_eq!(layout.length, 5003 + 52 + 76);
+
+        let mut timeline = timeline(true);
+        timeline.audio.replay_end = Some(SignedReplayTick::new(24_000_000).unwrap());
+        assert!(index(FINITE_AAC, &timeline).is_none());
+    }
+
+    #[test]
+    fn rejects_malformed_boxes_runs_and_trailers() {
+        let video = timeline(false);
+        // Offsets below refer to boxes or fields in the checked-in video fixture.
+        for (reason, offset, value) in [
+            ("zero-size ftyp", 0, 0),
+            ("short moov", 28, 7),
+            ("oversized traf child", 828, u32::MAX),
+            ("unknown fragment header", 816, u32::from_be_bytes(*b"free")),
+            ("absolute fragment addressing", 844, 0x39),
+            ("sample count exceeds trun", 896, 61),
+            ("sample offset precedes mdat", 900, 351),
+            ("sample offset extends beyond mdat", 900, 353),
+            ("non-sync first sample", 904, 0x0101_0000),
+            ("noncontiguous second decode time", 2376, 15_361),
+            ("wrong mfra size in mfro", 4196, 106),
+        ] {
+            let mut source = VIDEO_ONLY.to_vec();
+            source[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+            assert!(index(&source, &video).is_none(), "{reason}");
+        }
+        for length in [7, VIDEO_INIT_END, VIDEO_MEDIA_END - 1, VIDEO_ONLY.len() - 1] {
+            assert!(
+                index(&VIDEO_ONLY[..length], &video).is_none(),
+                "length {length}"
+            );
+        }
+        let mut source = FINITE_AAC.to_vec();
+        // Place the audio run inside the first video run while still inside mdat.
+        source[1735..1739].copy_from_slice(&628_u32.to_be_bytes());
+        assert!(index(&source, &timeline(true)).is_none());
+    }
+
+    #[test]
+    fn initialization_limit_accepts_the_boundary_and_rejects_the_next_byte() {
+        let video = timeline(false);
+        for padding in [
+            MAX_BOX_BYTES - VIDEO_INIT_END,
+            MAX_BOX_BYTES - VIDEO_INIT_END + 1,
+        ] {
+            // Extend the ftyp payload; offsets inside moof remain relative to moof.
+            let mut source = VIDEO_ONLY[..28].to_vec();
+            source[..4].copy_from_slice(&((28 + padding) as u32).to_be_bytes());
+            source.resize(28 + padding, 0);
+            source.extend_from_slice(&VIDEO_ONLY[28..VIDEO_MEDIA_END]);
+            assert_eq!(
+                index(&source, &video).is_some(),
+                VIDEO_INIT_END + padding == MAX_BOX_BYTES
+            );
+        }
+    }
+}

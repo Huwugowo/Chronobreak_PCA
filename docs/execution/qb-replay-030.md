@@ -26,7 +26,7 @@ No implementation work is in flight.
 
 ## Remaining
 
-The focused run did not cover the full planned generated video-only and finite-AAC comparison or the complete project-wide backend suite.
+The video-only and finite-AAC layouts have parser-level coverage. The full generated-media playback comparison and complete project-wide backend suite remain open.
 
 ## Verification
 
@@ -42,6 +42,7 @@ The focused run did not cover the full planned generated video-only and finite-A
 - The packaged export fixture passed with silent and audible canonical sources across all three presets and music choices, including cancellation and source preservation. The protected-route regression passed with range crossing, ranged HEAD, active cache eviction, release, wrong-game and duplicate tokens, changed file facts and raw compatibility.
 - All 35 focused backend playback tests passed with the replay-benchmark feature enabled, including decoder binding and protected wire delivery. All 585 frontend tests and the canonical roadmap validator passed. The unrestricted backend test selection hit a clip-duration cancellation failure and four stalled process tests. The full run was stopped.
 - App Clippy passed with warnings denied and the replay-benchmark feature enabled. Formatting passed for the changed Rust files. The crate-wide formatting check reported existing edits in `league_index/import.rs`.
+- The focused follow-up passed four parser tests on generated video-only and finite-AAC fixtures, nine protected playback server tests, and 57 frontend tests. The Windows release reproduced lease exhaustion on the ninth open after eight reloads before the fix. With the fix all nine opens retained the index. A reload clears the departed page's leases, preserves the cache, and rejects earlier preparations. The frontend also releases the lease when descriptor validation fails.
 
 ## Deviations
 

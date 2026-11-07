@@ -157,8 +157,10 @@ The cache reuses verified layouts for unchanged file facts and media timelines.
 Active viewer URLs lease their layouts independently of cache eviction. Each
 indexed request verifies the file generation on the handle it will stream.
 Changing the approved library root or releasing the viewer's lease revokes
-future indexed requests. Unsupported layouts use the raw game route. Library
-indexing, clip previews and export continue to use the original recording.
+future indexed requests. Reloading the main WebView clears the old page's
+leases while retaining verified indexes for reuse. Unsupported layouts use the
+raw game route. Library indexing, clip previews and export continue to use the
+original recording.
 
 Embedded assets use borrowed static byte slices rather than full-asset copies per
 request. Production counters report requests/ranges/bytes/completion/cancellation,
