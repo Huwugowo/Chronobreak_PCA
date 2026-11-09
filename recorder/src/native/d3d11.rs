@@ -154,6 +154,20 @@ pub(super) struct NativeSourceTexture<'frame> {
 }
 
 impl<'frame> NativeSourceTexture<'frame> {
+    #[cfg(test)]
+    pub(super) fn test_texture(texture: ID3D11Texture2D, width: u32, height: u32) -> Self {
+        Self {
+            texture,
+            desc: D3D11_TEXTURE2D_DESC {
+                Width: width,
+                Height: height,
+                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+                ..Default::default()
+            },
+            _frame: PhantomData,
+        }
+    }
+
     pub(super) fn from_frame(frame: &'frame Direct3D11CaptureFrame) -> Result<Self> {
         let surface: IDirect3DSurface = frame
             .Surface()

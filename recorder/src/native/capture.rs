@@ -1561,6 +1561,37 @@ mod tests {
     }
 
     #[test]
+    fn future_pending_does_not_mask_out_of_order_eligible_handoff() {
+        for predeadline_receive in [false, true] {
+            let mut pending = PendingFrame::default();
+            let (sender, receiver) = sync_channel(NATIVE_WGC_HANDOFF_CAPACITY);
+            assert_eq!(
+                pending.offer_for_tick(120, 90, 110, |qpc| *qpc),
+                PendingOffer::Stored
+            );
+            sender.try_send(100).unwrap();
+
+            // Skipping every occupied pending slot would repeat the old snapshot
+            // despite an eligible queued source, then reject 100 as stale later.
+            let outcome = if predeadline_receive {
+                pending
+                    .receive_for_tick(&receiver, Duration::ZERO, 90, 110, |qpc| *qpc)
+                    .unwrap()
+            } else {
+                pending
+                    .poll_for_tick(&receiver, 90, 110, |qpc| *qpc)
+                    .unwrap()
+            };
+            assert_eq!(outcome, Some(PendingOffer::Replaced));
+            assert_eq!(pending.take_through(110, |qpc| *qpc), Some(100));
+            assert_eq!(pending.replacements, 1);
+            assert_eq!(pending.high_water_mark, 1);
+            assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(2, 1 + pending.replacements);
+        }
+    }
+
+    #[test]
     fn early_delivery_does_not_halve_fresh_cfr_frames() {
         use super::super::NativeCfrClock;
 
