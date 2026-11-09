@@ -10,6 +10,8 @@ Superseding-plan Milestone 5: valid target League capped/uncapped performance pr
 
 ## Active unit
 
+2026-11-09 worker-discard reduction request, baseline `0d9bd0b`: attribute actual discard causes on the same generated-window workload, implement the highest-impact justified correction, and compare frame selection/correctness plus CPU/GPU cost. The target is a 10x reduction without increased resource overhead. Do not count relocation into handoff/upstream losses as an improvement, change the rendered workload/output rate, or hide counter categories. Include any additional fresh-frame copies/conversions and WGC pool backpressure in the resource and coverage assessment. The existing formal League matrix remains a separate gate.
+
 2026-11-09 recorder performance challenge: the user chose generated-window testing on the Philips 241E1/RTX 3050 Ti. Implemented and measured reuse of the current NV12 image in a returned encoder slot. The local comparison isolates avoided conversions and lower 3D-engine use. Interactive League FPS, frametime and the target-hardware matrix remain unverified.
 
 2026-11-01 focused duplication correction: reproduced and corrected premature worker discards of early-delivered future frames. Source-only timing evidence, ownership/CFR regressions and recorder checks are recorded below. This correction does not complete the outstanding formal performance matrix or establish every cause of the October 31 duplication rate. Existing unrelated app/audio edits are preserved.
@@ -31,10 +33,11 @@ Do not substitute current-workstation generated-window evidence, the historical 
 - Corrected fragmented-MP4 finalized-media validation: a private fixed-memory header reader supplies the missing actual sample count, skips media payload, enforces the shared five-second deadline, and rejects malformed/truncated fragments. Shared replay-time checks and producer reconciliation remain unchanged. Finalization errors now log their full cause chain.
 - Eliminated redundant BGRA-to-NV12 blits for repeated images when the selected free slot still contains the current snapshot. The slot is reused only after NVENC unmaps it. Fresh snapshots and processor reconfiguration invalidate reuse. Source selection, four-slot ownership, encoder submissions, and the 60 FPS output clock are unchanged.
 - Added deterministic regression coverage for `215002f`: new-snapshot invalidation, completed-slot reuse, and resize. Test-only COM call recording exercises the converter methods without a capture window, GPU, NVENC driver, or timing dependency; production code is unchanged.
+- Investigated the remaining worker discards on the unchanged Philips/RTX 3050 Ti generated-window workload. Measured and rejected both future-retention experiments: the broad guard masks eligible out-of-order input; the narrower wait-only guard reduces discards over 30x but increases GPU work. Restored the exact production policy and retained an out-of-order handoff regression plus the measurements below. No cost-neutral discard reduction is claimed.
 
 ## In flight
 
-None for the local NV12 reuse unit. Recorder automation, the locked release build, and the generated-window validation are complete. Real recordings remain untouched.
+None for the worker-discard investigation. The no-extra-overhead target was not achieved; both measured policy experiments and temporary tracing were removed. Only a deterministic eligibility regression and execution evidence remain, with final recorder checks passing. The formal target League matrix remains outstanding.
 
 ## Remaining
 
@@ -44,6 +47,35 @@ None for the local NV12 reuse unit. Recorder automation, the locked release buil
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
 
 ## Verification
+
+2026-11-09 worker-discard investigation, baseline `0d9bd0b`:
+
+- Attribution used the real `PendingFrame::offer_for_tick` on an otherwise unchanged release graph, with temporary feature-gated logging of incoming, retained, last-staged and tick-cutoff QPC. The 15-second run had 787 admitted sources, 327 snapshot copies, zero replacements and 460 worker discards: 458 were later future candidates rejected while an earlier future frame was retained; the remaining two were the bounded pending/handoff shutdown tail. There were no stale timestamp rejections, resize or unusable-size transitions. Rejected source QPC exceeded the current tick cutoff by a median 33.542 ms (range 16.657–266.717 ms, including startup catch-up). This is relative to the media cutoff, **not** a measured wall-clock arrival lead. Raw trace and parsed attribution are in `build/perf/worker-discards-20261109/diagnostic-baseline/`.
+- The first experiment guarded both receive and due-poll whenever pending was occupied. It reduced a 15-second run from 447 worker discards to one, but raised fresh copies from 332 to 457, blits from 355 to 473, and combined compositor/recorder 3D use. It also fails the out-of-order case `after=90, through=110, pending=120, handoff=100`: skipping the due poll masks the eligible source. Rejected.
+- The narrower experiment changed only the pre-deadline receive guard from `has_through(through, &timestamp)` to `value.is_some()`. Due-poll eligibility, original QPC epoch/cutoffs, all ownership capacities, resolution, output FPS, encoder settings, audio mode and rendered fixture stayed unchanged. It preserved the out-of-order due-poll behavior. Two preliminary 30-second candidate runs had 31 and 54 worker discards against 880 in the intervening baseline, but their combined GPU samples were inconclusive. This triggered the longer comparison rather than a no-overhead claim.
+- Final release **baseline / wait-only candidate / baseline**, 60 seconds each, on the same exact 1920x1080 generated window, Philips display, adapter LUID `0000000000012a3e`, RTX 3050 Ti Laptop GPU, driver 581.32 and Windows build 19045. All used the verified r6 runtime and System Audio. The same frozen fixture executable drove all arms; its independent draw counters measured 112.543 / 112.548 / 112.395 draws/s. The fixture did not slow to manufacture the reduced discard count.
+
+| Final 60-second arm | Baseline A | Wait-only trial | Baseline B |
+| --- | ---: | ---: | ---: |
+| Worker discards | 1,594 | 41 | 1,344 |
+| WGC arrivals / admitted | 3,144 / 3,123 | 2,391 / 2,371 | 3,418 / 3,397 |
+| Callback handoff drops | 21 | 20 | 21 |
+| Fresh snapshot copies / NV12 blits | 1,529 / 1,626 | 2,330 / 2,392 | 2,053 / 2,121 |
+| Held-snapshot output ticks | 2,071 | 1,270 | 1,547 |
+| Recorder 3D mean (%) | 9.121 | 13.555 | 7.536 |
+| Same-adapter DWM + recorder 3D mean (%) | 21.864 | 25.459 | 22.143 |
+| Video Encode mean (%) | 40.720 | 41.573 | 33.044 |
+| Recorder + mux CPU mean (% of one logical core) | 6.184 | 6.515 | 7.003 |
+| Graphics / video clock mean (MHz) | 513.9 / 597.0 | 613.3 / 674.3 | 581.3 / 748.0 |
+| NVIDIA board power mean (W) | 10.630 | 10.682 | 11.594 |
+| Probe lifetime CPU seconds | 3.219 | 3.266 | 3.469 |
+
+- GPU statistics use valid engine samples on the capture adapter; steady samples exclude the first five and final two seconds (20 / 20 / 19 samples). CPU deltas include the recorder and its only FFmpeg child; protected DWM CPU was unavailable. Total-system CPU was not retained by the collector, so no total-system CPU claim is made. Raw samples include other GPU processes; compositor attribution and dynamic clocks remain limitations. Power did not establish an increase, but it also cannot negate the higher engine use and changed clocks. The candidate's combined 3D mean exceeded **both** bracketing baselines by 15.0–16.4%; it therefore fails the user's no-extra-GPU-overhead condition. CPU results do not establish a repeatable decrease across the bracket.
+- All final arms had exactly 3,600 scheduled/submitted/completed/muxed H.264 High 1920x1080@60 frames plus AAC, strict full decode without errors, and exact admitted-source accounting (`admitted = copies + replacements + worker_discards`). Frame hashes cover all 3,600 decoded frames and show changing final-second output. Hash uniqueness is **not** counted as fresh source coverage because compression can alter decoded repeats; snapshot/QPC accounting supplies that evidence. All used the existing diagnostic encoder-slot retry allowance (44 / 46 / 42 retries, startup catch-up max about 346 / 346 / 348 ms), so these are diagnostic comparisons rather than strict zero-retry fixture passes. System Audio reported the same existing WASAPI-clock degradation/fallback-only AAC in all three arms; no healthy audible-capture claim is made.
+- The mechanism is bounded WGC backpressure, not a worker counter reclassification: retaining pending plus handoff checks out both WGC pool surfaces and prevents some upstream capture production. Callback drops stayed 20–21 and fresh snapshots increased, but fewer rejected source frames did **not** mean less downstream GPU work. Rejections already happen before snapshot copy/conversion; supplying more distinct images defeats some of the `215002f` NV12 reuse savings. The extra copy/blit work exceeded the observed compositor savings. This explains why the worker target alone improved 32.8–38.9x while the combined requirement failed.
+- Limits of this conclusion: no universal impossibility or optimality proof is claimed. Within this measured two-WGC-surface / one-handoff / one-pending / four-NV12 design, holding more future images applies producer backpressure, accepting them before their media cutoff violates frame timing, and selecting more distinct snapshots requires GPU copy/conversion work. Source rates above output rate also require coalescing. `MinUpdateInterval` is only available starting at Windows build 26100 ([Microsoft API contract](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.minupdateinterval)); it is unavailable on this build 19045 host. Producer pacing cannot be asserted as a fix for the measured 60-Hz source without separate evidence. No tested change met every requested condition, so the largest justified **production** change from this investigation is none.
+- Frozen binaries, SHA-256 hashes, candidate source patch, exact measurement runner, analyzer, resource series, fixture draw logs, media/probe/hash/decode outputs and `final-comparison.json` are retained under `build/perf/worker-discards-20261109/`. The final sequence used `measure.ps1 -Arm final-baseline-a -DurationSeconds 60 -CaptureExe <baseline/bin/native_mp4_probe.exe>`, then `final-candidate` with `wait-only-final/bin/native_mp4_probe.exe`, then `final-baseline-b` with the baseline binary. No build ran during those capture intervals. Both policy changes and temporary trace logging were restored out of production code after the failed cost gate.
+- The retained CPU-only regression verifies that an occupied future slot cannot mask a queued eligible out-of-order source in either receive or due-poll. Final locked all-target/all-feature recorder tests passed (284 library, 7 binary and 6 example tests; 16 opt-in library tests ignored), along with check, strict Clippy and formatting. Canonical validation passed for 122 items and 32 plan/checkpoint pairs; diff hygiene passed. A fresh independent review found no production policy/tracing residue or evidence discrepancy. Final check logs are retained under `build/verification/worker-discards/`.
 
 2026-11-09 deterministic NV12 reuse regressions for `215002f`:
 
@@ -150,6 +182,8 @@ The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target
 The Philips display now exercises the supported NVIDIA graph on this workstation. The local generated-window result has no League frametime, fight-load, or live-poller evidence. System Audio slot retry timing and Video Encode transients remain unattributed. No evidence establishes the requested 5–10× gameplay improvement or a fundamental limit on it.
 
 ## Next action
+
+Do not reintroduce either future-retention trial based on the lower worker counter alone. A later candidate must preserve out-of-order eligibility, retain independent rendered-stimulus evidence and full source accounting, and demonstrate no increased combined GPU/CPU cost despite additional fresh-frame conversion. Any larger buffering/conversion design requires its own justified design and measurements. The current investigation found no qualifying production optimization; the original production policy is retained.
 
 For the performance challenge, obtain a matched recorder-off/on League trace on the Philips with the existing collector, then compare the baseline and reuse revisions if the overhead is measurable. Correlate frametime tails with copied source QPC, worker discards, encoder-slot retries, and audio startup. The Philips source already delivered about 60 Hz in the local fixture. A producer pacing experiment is relevant only where WGC delivers faster than needed and the OS exposes `MinUpdateInterval` (build 26100 or later).
 
