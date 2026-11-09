@@ -454,6 +454,22 @@ cargo bench --locked --manifest-path league-data/Cargo.toml --bench league_data 
 Criterion prints the comparison and stores raw results under
 `league-data/target/criterion/` with the default Cargo target directory.
 
+### Simulated long-match Live Client profile
+
+Run the Windows release profile on one quiet machine for each comparison.
+
+```powershell
+cargo test --locked --manifest-path recorder/Cargo.toml --release --lib contract_growing_match_profile -- --ignored --nocapture --test-threads=1
+```
+
+The virtual clock runs the production scheduler against generated API bodies
+and the midgame roster fixture above. The test driver reproduces the writer's
+batch deadlines on that clock and uses the production journal and checkpoint
+code to write and sync temporary files. It excludes HTTP/TLS and the blocking
+worker's channel and wait overhead. Output includes process CPU, per-stage
+CPU cycles, elapsed P95/P99, and allocator calls and bytes. Compare the
+recovered event digest and counts as well as the performance metrics.
+
 ## Native import progress characterization
 
 The normal backend suite covers torn and complete-but-uncommitted journal tails,

@@ -164,6 +164,7 @@ impl Charge for Payload {
                 .saturating_add(map_storage::<[u8; 32], roster::SharedPlayer>(v.len()))
                 .saturating_add(v.len().saturating_mul(256)),
             Self::Events(v) => v.charge().saturating_add(v.len().saturating_mul(512)),
+            Self::RepeatedEvents { previous } => previous.charge(),
             Self::EndOfGame(v) => v.charge(),
         })
     }

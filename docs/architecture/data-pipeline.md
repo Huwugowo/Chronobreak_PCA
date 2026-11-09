@@ -12,6 +12,17 @@ multikills), and player snapshots with dead/alive and respawn state still come
 from the existing Live Client collector. This change does not replace those
 facts with minute-spaced match-history timeline frames. Replay APIs are unused.
 
+The Live Client event collector compares each fetched body with the last
+queue-admitted, strictly decoded body in the same source epoch. A byte-identical
+repeat can reference that observation when every source event has an ID. The
+writer checks the reference in queue order and commits fresh timing evidence
+with empty revisions, or repeats the base response's normalization gap.
+Changed bodies and bodies with unidentified events take the full path.
+The cache owns at most one 4 MiB allocation, including spare buffer capacity,
+separately from the writer queue. Oversized allocations take the full path.
+The reference is transient. Source resets clear it, and journal progress
+still advances only after the batch is flushed.
+
 After recording closes, the service submits the confirmed match/account binding
 to two independent acquisition paths:
 

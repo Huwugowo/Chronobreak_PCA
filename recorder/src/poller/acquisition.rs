@@ -148,6 +148,7 @@ struct Completed {
     bytes: usize,
     parse_us: u64,
     payload: Result<Payload, GapReason>,
+    event_body: Option<Vec<u8>>,
     source: SourceEpoch,
     refs: (Option<ObservationId>, Option<ObservationId>),
 }
@@ -259,6 +260,7 @@ pub async fn run<S: Source>(
     let mut local_identity = None;
     let mut pending_identity = None;
     let mut pending_reset = None;
+    let mut last_events: Option<(ObservationId, Arc<Vec<u8>>)> = None;
     for (index, endpoint) in ENDPOINTS.iter().enumerate() {
         let e = evidence(
             &scope,
@@ -401,6 +403,11 @@ pub async fn run<S: Source>(
                 source: source_scope.clone(),
                 refs,
             });
+            let cached = if endpoint == Endpoint::Events {
+                last_events.clone()
+            } else {
+                None
+            };
             tasks.spawn(async move {
                 let result = tokio::time::timeout(NETWORK_DEADLINE, source.fetch(endpoint))
                     .await
@@ -409,12 +416,27 @@ pub async fn run<S: Source>(
                 let received_at = wall_time();
                 let bytes = result.as_ref().map_or(0, Vec::len);
                 let parse_start = std::time::Instant::now();
+                #[cfg(all(test, windows))]
+                let _profile = profile::enter("decode", Some(endpoint));
+                let mut event_body = None;
                 let payload = result.and_then(|bytes| {
                     if bytes.len() > body_limit(endpoint) {
-                        Err(GapReason::BodyLimit)
-                    } else {
-                        decode::live(endpoint, &bytes)
+                        return Err(GapReason::BodyLimit);
                     }
+                    if let Some((previous, body)) = cached
+                        && bytes == *body
+                    {
+                        return Ok(Payload::RepeatedEvents { previous });
+                    }
+                    let payload = decode::live(endpoint, &bytes)?;
+                    // Unidentified rows must still be emitted on every poll.
+                    // The retained cache is separate from queue credits. Bound
+                    // its allocation, including spare transport-buffer capacity.
+                    if bytes.capacity() <= body_limit(Endpoint::Events)
+                        && matches!(&payload, Payload::Events(events) if events.iter().all(|event| event.source_id.is_some())) {
+                        event_body = Some(bytes);
+                    }
+                    Ok(payload)
                 });
                 Completed {
                     index,
@@ -425,6 +447,7 @@ pub async fn run<S: Source>(
                     bytes,
                     parse_us: micros(parse_start.elapsed()),
                     payload,
+                    event_body,
                     source: source_scope,
                     refs,
                 }
@@ -444,6 +467,8 @@ pub async fn run<S: Source>(
             completed = tasks.join_next(), if !tasks.is_empty() => {
                 let Some(Ok(mut completed)) = completed else { break; };
                 let endpoint = ENDPOINTS[completed.index];
+                #[cfg(all(test, windows))]
+                let profile = profile::enter("process", Some(endpoint));
                 slots[completed.index].in_flight = None;
                 let counters = summary.endpoints.entry(endpoint).or_default();
                 counters.bytes = counters.bytes.saturating_add(completed.bytes as u64);
@@ -466,6 +491,7 @@ pub async fn run<S: Source>(
                             identity_rounds.clear_context();
                             if pending_identity.take().is_some() { summary.unreported_identity_rounds += 1; }
                             participants = identity::Participants::new(scope.clone());
+                            last_events = None;
                             local_identity = None;
                             e.calibration = None; e.game_stats = None;
                             let mut boundary = e.clone();
@@ -500,6 +526,7 @@ pub async fn run<S: Source>(
                 if let Ok(Payload::Events(events)) = &mut completed.payload {
                     for event in events { event.actors = Some(events::resolve_actors(event, &participants)); }
                 }
+                let full_event_response = matches!(&completed.payload, Ok(Payload::Events(_)));
                 let failed = completed.payload.is_err();
                 if failed { counters.failures += 1; }
                 let identity_context = match &completed.payload {
@@ -522,9 +549,16 @@ pub async fn run<S: Source>(
                     && let Some(participant) = staged.local() {
                     rows.push(Record::LocalParticipant { evidence: e.clone(), participant });
                 }
+                #[cfg(all(test, windows))]
+                drop(profile);
                 let accepted = record_batch(sink, &mut slots[completed.index], &e, rows);
                 if accepted {
                     pending_reset = None;
+                    // A rejected payload never becomes a reference target. A
+                    // gap does not change the writer's event state.
+                    if full_event_response {
+                        last_events = completed.event_body.map(|body| (completed.id, Arc::new(body)));
+                    }
                     if let Some(staged) = staged_participants { participants = staged; }
                     if endpoint == Endpoint::ActivePlayer && participants.local().is_none() { local_identity = active_id.clone(); }
                 }
@@ -619,6 +653,9 @@ fn cadence(endpoint: Endpoint, calibrated: bool, failed: bool) -> Duration {
     }
 }
 
+#[cfg(all(test, windows))]
+mod profile;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -644,6 +681,7 @@ mod tests {
         delays: BTreeMap<Endpoint, Duration>,
         clock: Vec<f64>,
         rosters: Vec<Value>,
+        event_spare_capacity: bool,
         starts: Mutex<BTreeMap<Endpoint, Vec<Instant>>>,
     }
     impl FixtureSource {
@@ -654,6 +692,7 @@ mod tests {
                 delays: BTreeMap::new(),
                 clock: Vec::new(),
                 rosters: Vec::new(),
+                event_spare_capacity: false,
                 starts: Mutex::new(BTreeMap::new()),
             }
         }
@@ -694,7 +733,13 @@ mod tests {
                 Endpoint::Events => "ev",
                 _ => unreachable!(),
             };
-            Ok(serde_json::to_vec(&fixture[key]).unwrap())
+            let body = serde_json::to_vec(&fixture[key]).unwrap();
+            if endpoint == Endpoint::Events && self.event_spare_capacity {
+                let mut spare = Vec::with_capacity(MAX_BODY_BYTES + 1);
+                spare.extend_from_slice(&body);
+                return Ok(spare);
+            }
+            Ok(body)
         }
     }
     #[derive(Default)]
@@ -736,7 +781,7 @@ mod tests {
             Ok(())
         }
     }
-    fn scope() -> SourceEpoch {
+    pub(super) fn scope() -> SourceEpoch {
         SourceEpoch {
             media_id: MediaId::parse("10000000-0000-4000-8000-000000000001").unwrap(),
             run_id: MediaId::parse("10000000-0000-4000-8000-000000000002").unwrap(),
@@ -787,6 +832,40 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn event_repeat_cache_bounds_retained_transport_capacity() {
+        for oversized in [false, true] {
+            let mut source = FixtureSource::new();
+            source.event_spare_capacity = oversized;
+            let (sink, summary) = exercise(
+                Arc::new(source),
+                FixtureSink::default(),
+                Duration::from_secs(3),
+                None,
+            )
+            .await;
+            assert_eq!(summary.endpoints[&Endpoint::Events].failures, 0);
+            let events = observations(&sink, Endpoint::Events);
+            assert!(matches!(
+                events[0],
+                Observation::Success {
+                    payload: Payload::Events(_),
+                    ..
+                }
+            ));
+            assert_eq!(
+                events[1..].iter().any(|event| matches!(
+                    event,
+                    Observation::Success {
+                        payload: Payload::RepeatedEvents { .. },
+                        ..
+                    }
+                )),
+                !oversized,
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -1440,15 +1519,13 @@ mod tests {
     #[derive(Default)]
     struct CountingSink {
         records: u64,
-        maximum_record_bytes: usize,
+        maximum_record_charge: usize,
     }
     impl Sink for CountingSink {
         fn try_records(&mut self, records: Vec<Record>) -> Result<(), Vec<Record>> {
             for record in &records {
                 self.records += 1;
-                self.maximum_record_bytes = self
-                    .maximum_record_bytes
-                    .max(serde_json::to_vec(record).unwrap().len());
+                self.maximum_record_charge = self.maximum_record_charge.max(record.queue_charge());
             }
             Ok(())
         }
@@ -1676,7 +1753,7 @@ mod tests {
         assert!(!summary.endpoints.contains_key(&Endpoint::ActivePlayer));
         println!(
             "contract_virtual_day {}",
-            serde_json::json!({"summary":summary,"records":sink.records,"maximum_record_bytes":sink.maximum_record_bytes,"wall_us":start.elapsed().as_micros()})
+            serde_json::json!({"summary":summary,"records":sink.records,"maximum_record_charge":sink.maximum_record_charge,"wall_us":start.elapsed().as_micros()})
         );
     }
 }

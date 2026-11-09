@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 
+[features]
+acquisition-profile = []
+
 [dependencies]
 chronobreak-replay-time = { path = "../replay-time" }
 serde = { version = "1", features = ["derive"] }

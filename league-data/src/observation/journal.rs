@@ -1,6 +1,9 @@
 //! Incremental telemetry framing. Only checksum-validated, flushed commits are
 //! acknowledged. The caller owns directory/media authorization and async queues.
-use super::{GapReason, Observation, Payload, Record, SourceEpoch, events::EventTracker};
+use super::{
+    Endpoint, GapReason, Observation, ObservationId, Payload, Record, SourceEpoch,
+    events::EventTracker,
+};
 use chronobreak_replay_time::MediaId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -194,6 +197,8 @@ impl<W: DurableWrite> Writer<W> {
             .last_sequence
             .checked_add(1)
             .ok_or(Error::Capacity)?;
+        #[cfg(feature = "acquisition-profile")]
+        let encode_profile = super::profile::enter("encode_and_checksum", None);
         let mut batch = BoundedBuffer {
             bytes: Vec::new(),
             limit: MAX_BATCH_BYTES,
@@ -227,6 +232,10 @@ impl<W: DurableWrite> Writer<W> {
             .checked_add(bytes.len() as u64)
             .and_then(|n| n.checked_add(suffix.len() as u64))
             .ok_or(Error::Capacity)?;
+        #[cfg(feature = "acquisition-profile")]
+        drop(encode_profile);
+        #[cfg(feature = "acquisition-profile")]
+        let _write_profile = super::profile::enter("write_and_sync", None);
         if let Err(e) = self
             .output
             .write_all(&bytes)
@@ -332,6 +341,7 @@ pub struct RetainingWriter<W> {
     writer: Writer<W>,
     scope: SourceEpoch,
     events: EventTracker,
+    last_event_result: Option<(ObservationId, Result<(), GapReason>)>,
     roster: super::roster::RosterStore,
     event_capacity: usize,
 }
@@ -348,6 +358,7 @@ impl<W: DurableWrite> RetainingWriter<W> {
         Self {
             writer,
             events: EventTracker::with_capacity(scope.clone(), capacity),
+            last_event_result: None,
             roster: super::roster::RosterStore::new(scope.clone()),
             scope,
             event_capacity: capacity.min(super::MAX_EVENTS),
@@ -391,6 +402,7 @@ impl<W: DurableWrite> RetainingWriter<W> {
         let mut replacement = None;
         let mut roster_replacement = None;
         let mut next_scope = self.scope.clone();
+        let mut last_event_result = self.last_event_result;
         let mut pending = Vec::new();
         let mut pending_roster = Vec::<super::roster::PreparedRoster>::new();
         for record in records {
@@ -407,6 +419,7 @@ impl<W: DurableWrite> RetainingWriter<W> {
                     return Err(Error::Invalid("source epoch transition"));
                 }
                 next_scope = evidence.source.clone();
+                last_event_result = None;
                 pending.clear();
                 pending_roster.clear();
                 replacement = Some(EventTracker::with_capacity(
@@ -427,8 +440,20 @@ impl<W: DurableWrite> RetainingWriter<W> {
                         evidence,
                         payload: Payload::Events(events),
                     } => {
+                        #[cfg(feature = "acquisition-profile")]
+                        let _profile =
+                            super::profile::enter("normalize", Some(super::Endpoint::Events));
                         let tracker = replacement.as_ref().unwrap_or(&self.events);
-                        match tracker.prepare_following(&evidence.source, events, &pending) {
+                        let cacheable = evidence.endpoint == Endpoint::Events
+                            && events.iter().all(|event| event.source_id.is_some());
+                        let result = tracker.prepare_following(&evidence.source, events, &pending);
+                        last_event_result = cacheable.then(|| {
+                            (
+                                evidence.id,
+                                result.as_ref().map(|_| ()).map_err(|&reason| reason),
+                            )
+                        });
+                        match result {
                             Ok(mut prepared) => {
                                 output.push(Record::EventObservation {
                                     evidence,
@@ -454,8 +479,39 @@ impl<W: DurableWrite> RetainingWriter<W> {
                     }
                     Observation::Success {
                         evidence,
+                        payload: Payload::RepeatedEvents { previous },
+                    } => {
+                        #[cfg(feature = "acquisition-profile")]
+                        let _profile = super::profile::enter("normalize", Some(Endpoint::Events));
+                        let Some((id, result)) = last_event_result else {
+                            return Err(Error::Invalid("missing event response reference"));
+                        };
+                        if id != previous
+                            || previous.0 >= evidence.id.0
+                            || evidence.endpoint != Endpoint::Events
+                        {
+                            return Err(Error::Invalid("invalid event response reference"));
+                        }
+                        // Each poll still records its own evidence. Replaying an
+                        // identical set of identified variants would emit no new
+                        // revisions, or hit the same normalization limit.
+                        output.push(match result {
+                            Ok(()) => Record::EventObservation {
+                                evidence,
+                                revisions: Vec::new(),
+                            },
+                            Err(reason) => Record::Observation {
+                                observation: Box::new(Observation::Gap { evidence, reason }),
+                            },
+                        });
+                    }
+                    Observation::Success {
+                        evidence,
                         payload: Payload::PlayerList(players),
                     } => {
+                        #[cfg(feature = "acquisition-profile")]
+                        let _profile =
+                            super::profile::enter("normalize", Some(super::Endpoint::PlayerList));
                         let store = pending_roster
                             .last()
                             .map(super::roster::PreparedRoster::state)
@@ -497,6 +553,7 @@ impl<W: DurableWrite> RetainingWriter<W> {
         self.roster
             .acknowledge_batch(pending_roster)
             .map_err(|_| Error::Invalid("roster commit acknowledgement"))?;
+        self.last_event_result = last_event_result;
         committed(&output, &position);
         Ok(position)
     }

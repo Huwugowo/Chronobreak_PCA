@@ -435,6 +435,71 @@ fn committed_events_rebuild_the_same_lookup_and_reject_forged_revisions() {
 }
 
 #[test]
+fn repeat_reference_matches_full_event_normalization_across_commits() {
+    let full = |id| fixture_record(id, Endpoint::Events, "ev");
+    let repeat = |id, previous| Record::Observation {
+        observation: Box::new(Observation::Success {
+            evidence: evidence(id, Endpoint::Events),
+            payload: Payload::RepeatedEvents {
+                previous: ObservationId(previous),
+            },
+        }),
+    };
+    for capacity in [0, MAX_EVENTS] {
+        let baseline = Memory::default();
+        let mut writer = RetainingWriter::with_event_capacity(
+            Writer::new(baseline.clone(), Header::new(&scope())).unwrap(),
+            capacity,
+        );
+        writer.commit_acquired(&[full(1), full(2)]).unwrap();
+        writer.commit_acquired(&[full(3)]).unwrap();
+
+        let optimized = Memory::default();
+        let mut writer = RetainingWriter::with_event_capacity(
+            Writer::new(optimized.clone(), Header::new(&scope())).unwrap(),
+            capacity,
+        );
+        assert!(writer.commit_acquired(&[repeat(2, 1)]).is_err());
+        writer.commit_acquired(&[full(1), repeat(2, 1)]).unwrap();
+        writer.commit_acquired(&[repeat(3, 1)]).unwrap();
+        assert_eq!(baseline.0.borrow().bytes, optimized.0.borrow().bytes);
+        assert!(writer.commit_acquired(&[full(4), repeat(5, 1)]).is_err());
+        assert!(serde_json::to_vec(&repeat(4, 1)).is_err());
+        // An invalid speculative batch must leave the durable reference usable.
+        writer.commit_acquired(&[repeat(6, 1)]).unwrap();
+
+        let mut unidentified = full(7);
+        if let Record::Observation { observation } = &mut unidentified
+            && let Observation::Success {
+                payload: Payload::Events(events),
+                ..
+            } = observation.as_mut()
+        {
+            events[0].source_id = None;
+        }
+        writer.commit_acquired(&[unidentified]).unwrap();
+        assert!(writer.commit_acquired(&[repeat(8, 7)]).is_err());
+
+        writer.commit_acquired(&[full(9)]).unwrap();
+        let mut next_evidence = evidence(10, Endpoint::GameStats);
+        next_evidence.source.epoch = 1;
+        writer
+            .commit_acquired(&[Record::SourceReset {
+                evidence: next_evidence,
+                previous_epoch: 0,
+            }])
+            .unwrap();
+        let mut stale = repeat(11, 9);
+        if let Record::Observation { observation } = &mut stale
+            && let Observation::Success { evidence, .. } = observation.as_mut()
+        {
+            evidence.source.epoch = 1;
+        }
+        assert!(writer.commit_acquired(&[stale]).is_err());
+    }
+}
+
+#[test]
 fn unchanged_rosters_share_payloads_and_reader_reconstructs_every_observation() {
     let output = Memory::default();
     let mut writer =

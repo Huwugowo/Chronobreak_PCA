@@ -75,6 +75,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [dev-dependencies]
+chronobreak-league-data = { path = "../league-data", features = ["acquisition-profile"] }
 tempfile = "3"
 tokio = { version = "1", features = ["test-util"] }
 

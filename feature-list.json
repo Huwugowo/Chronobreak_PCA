@@ -1756,6 +1756,33 @@
       "stage": "draft"
     },
     {
+      "id": "QB-DATA-005",
+      "kind": "feature",
+      "name": "Reduce cumulative Live Client event processing cost",
+      "description": "Reduce recorder CPU growth as the Live Client Events response accumulates match history.",
+      "priority": "P1",
+      "area": "match-data",
+      "status": "done",
+      "stage": "ready",
+      "dependencies": ["QB-DATA-001"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Use an accelerated 60-minute fixture through production acquisition, decoding, normalization and durable journal code. Compare CPU and allocations across builds, including minute 5, 15, 30, 45 and 60 and per-stage endpoint P95/P99.",
+        "Preserve endpoint cadence and payloads requested, every required observation and timestamp, corrections and gaps, and journal persistence guarantees.",
+        "Aim for a tenfold match CPU reduction. If the measured reduction falls short, retain the largest justified bounded change and report the remaining cost."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Compare optimized Windows builds on the same growing fixture and reconcile journal readback and request counts.", "command": "cargo test --locked --manifest-path recorder/Cargo.toml --release --lib contract_growing_match_profile -- --ignored --nocapture --test-threads=1"},
+        {"type": "automated", "description": "Run shared League-data and recorder checks, including repeat-reference, capacity-gap, acquisition cadence and durable journal regressions."}
+      ],
+      "evidence": [
+        "2026-11-09 final interleaved release comparison: median simulated-hour process CPU fell from 5,742.2 to 1,835.9 ms (3.13x, 68.0% lower). Events decoding, processing, queue charging and normalization fell 12.32x in measured thread cycles. Allocation calls fell from 16.58M to 6.71M and cumulative allocated bytes from 2.27GB to 0.81GB. The whole-match 10x target was not reached. Per-minute, endpoint and stage P95/P99 measurements, individual-run variation, provenance and raw results are retained in docs/performance/live-acquisition-cpu.md and its linked evidence.",
+        "All four final runs made identical endpoint requests and fetched identical byte totals, including 3,600 Events requests. Recovery validated 9,021 records, 3,600 event observations and 326 revisions with matching event evidence/revision digest and zero tail bytes. Changed historical events and a later reversion survived readback.",
+        "Shared League-data tests and existing benchmark smoke cases passed. Recorder all-target/all-feature check/tests, formatting and strict Clippy passed, plus focused capacity-bound acquisition and repeat-reference journal regressions. Backend all-target check and canonical validation passed. Initial publication-test directory-access failures were resolved by rerunning with the required access. Synthetic transport and virtual batching exclude HTTP/TLS, blocking-channel overhead, hardware and live-game impact."
+      ],
+      "notes": "Completed bounded direct optimization of the existing contract. Exact byte repeats reference the last admitted strictly decoded all-ID response. The retaining writer expands references to ordinary event observations or the same normalization gap, staging state until durable commit. Changed bodies and unidentified rows retain full processing. Cache allocation including spare capacity is capped at 4 MiB outside queue credits. No additional API fields or live-game validation campaign."
+    },
+    {
       "id": "QB-REPLAY-001",
       "kind": "feature",
       "name": "League-native Timeline Interaction",

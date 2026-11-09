@@ -14,6 +14,8 @@ mod final_facts;
 pub mod identity;
 pub mod journal;
 pub mod manifest;
+#[cfg(feature = "acquisition-profile")]
+pub mod profile;
 mod queue_charge;
 pub mod roster;
 
@@ -292,6 +294,12 @@ pub enum Payload {
     ActivePlayer(ActiveIdentity),
     PlayerList(Vec<RosterPlayer>),
     Events(Vec<Event>),
+    /// In-memory queue reference to a byte-identical, previously admitted
+    /// Events body. The retaining writer expands it before journal encoding.
+    #[serde(skip)]
+    RepeatedEvents {
+        previous: ObservationId,
+    },
     EndOfGame(Box<FinalFacts>),
 }
 

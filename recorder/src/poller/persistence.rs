@@ -18,10 +18,10 @@ pub const QUEUE_BYTES: usize = 4 * 1024 * 1024;
 const CONTROL_BYTES: usize = 64 * 1024;
 const QUEUE_SLOTS: usize = 128;
 const CONTROL_SLOTS: usize = 8;
-const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
+pub(super) const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
-const FLUSH_INTERVAL: Duration = Duration::from_secs(2);
-const FLUSH_BYTES: usize = 256 * 1024;
+pub(super) const FLUSH_INTERVAL: Duration = Duration::from_secs(2);
+pub(super) const FLUSH_BYTES: usize = 256 * 1024;
 const MAX_WRITERS: usize = 4;
 // Serde derives fixed arrays through length 32 in this workspace. The final
 // bucket saturates at 2^30 microseconds (about 18 minutes), far beyond a
@@ -218,7 +218,7 @@ impl QueueSink {
     }
 }
 
-fn queue_charge(rows: &Vec<Record>) -> usize {
+pub(super) fn queue_charge(rows: &Vec<Record>) -> usize {
     rows.iter().fold(
         rows.capacity()
             .saturating_mul(std::mem::size_of::<Record>())

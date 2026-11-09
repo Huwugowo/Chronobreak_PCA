@@ -167,6 +167,9 @@ impl State {
                             }
                             Payload::PlayerList(_) | Payload::Events(_) | Payload::EndOfGame(_) => {
                             }
+                            Payload::RepeatedEvents { .. } => {
+                                return Err(Error::Invalid("unexpanded event response"));
+                            }
                         }
                         (evidence, Some(Coverage::Observed))
                     }
