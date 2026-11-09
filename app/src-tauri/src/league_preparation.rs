@@ -1,6 +1,6 @@
 //! Window-independent, resumable preparation. No media decoder or WebView is needed.
 use crate::{
-    league_index::{self, Index},
+    league_index::{self, ImportWork, Index},
     library,
     playback_file::ApprovedRoot,
 };
@@ -290,6 +290,10 @@ async fn prepare(
             let game = game.clone();
             let cancelled = Arc::clone(stop);
             let result = tokio::task::spawn_blocking(move || {
+                let work = ImportWork::Background {
+                    deadline: Instant::now() + Duration::from_millis(35),
+                    cancelled: &cancelled,
+                };
                 let check = || {
                     ensure!(!cancelled.load(Ordering::Acquire), "preparation stopped");
                     ensure!(
@@ -300,7 +304,7 @@ async fn prepare(
                 };
                 check()?;
                 let mut index = Index::open(&cache, library_root.as_path())?;
-                match index.prepare_recording(library_root.as_path(), &game, &check) {
+                match index.prepare_recording(library_root.as_path(), &game, work, &check) {
                     Ok(ready) => Ok(ready),
                     Err(error) => {
                         check()?;

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
+use std::ops::ControlFlow;
 use std::path::Path;
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -514,7 +515,7 @@ pub struct Recovery {
 /// Interior corruption is an error; only an incomplete/uncommitted suffix is a tail.
 pub fn recover(
     mut input: impl BufRead,
-    committed: impl FnMut(&[Entry], &Position) -> Result<(), Error>,
+    mut committed: impl FnMut(&[Entry], &Position) -> Result<(), Error>,
 ) -> Result<Recovery, Error> {
     let (header_bytes, complete) = read_line(&mut input)?;
     if !complete {
@@ -531,7 +532,11 @@ pub fn recover(
         last_sequence: 0,
         checksum: Sha256::digest(&header_bytes).into(),
     };
-    Ok(recover_commits(input, header, position, None, committed)?.recovery)
+    Ok(recover_commits(input, header, position, |entries, next| {
+        committed(entries, next)?;
+        Ok(ControlFlow::Continue(()))
+    })?
+    .recovery)
 }
 
 /// A bounded import page. An unfinished page has not examined the remaining
@@ -545,15 +550,35 @@ pub struct RecoveryPage {
 /// against its checksum chain. The caller must discard this acceleration state
 /// on source replacement/version invalidation; explicit rebuild starts at zero.
 pub fn recover_after(
-    mut input: impl BufRead + Seek,
+    input: impl BufRead + Seek,
     header: &Header,
     position: &Position,
     max_batches: usize,
-    committed: impl FnMut(&[Entry], &Position) -> Result<(), Error>,
+    mut committed: impl FnMut(&[Entry], &Position) -> Result<(), Error>,
 ) -> Result<RecoveryPage, Error> {
     if !(1..=64).contains(&max_batches) {
         return Err(Error::Capacity);
     }
+    let mut batches = 0;
+    recover_after_until(input, header, position, |entries, next| {
+        committed(entries, next)?;
+        batches += 1;
+        if batches == max_batches {
+            Ok(ControlFlow::Break(()))
+        } else {
+            Ok(ControlFlow::Continue(()))
+        }
+    })
+}
+
+/// Like [recover_after], but the caller bounds the page by returning Break
+/// after a validated commit. An error leaves publication to the caller.
+pub fn recover_after_until(
+    mut input: impl BufRead + Seek,
+    header: &Header,
+    position: &Position,
+    committed: impl FnMut(&[Entry], &Position) -> Result<ControlFlow<()>, Error>,
+) -> Result<RecoveryPage, Error> {
     input.seek(SeekFrom::Start(0))?;
     let (bytes, complete) = read_line(&mut input)?;
     if !complete {
@@ -572,37 +597,19 @@ pub fn recover_after(
         return Err(Error::Invalid("cached source anchor"));
     }
     input.seek(SeekFrom::Start(position.end_offset))?;
-    recover_commits(
-        input,
-        actual,
-        position.clone(),
-        Some(max_batches),
-        committed,
-    )
+    recover_commits(input, actual, position.clone(), committed)
 }
 
 fn recover_commits(
     mut input: impl BufRead,
     header: Header,
     mut position: Position,
-    max_batches: Option<usize>,
-    mut committed: impl FnMut(&[Entry], &Position) -> Result<(), Error>,
+    mut committed: impl FnMut(&[Entry], &Position) -> Result<ControlFlow<()>, Error>,
 ) -> Result<RecoveryPage, Error> {
-    let mut batches = 0;
     let mut total = position.end_offset;
     let mut batch_bytes = Vec::new();
     let mut entries = Vec::new();
     loop {
-        if max_batches.is_some_and(|max| batches == max) {
-            return Ok(RecoveryPage {
-                recovery: Recovery {
-                    header,
-                    position,
-                    tail_bytes: 0,
-                },
-                complete: false,
-            });
-        }
         let (bytes, complete) = read_line(&mut input)?;
         total = total
             .checked_add(bytes.len() as u64)
@@ -651,9 +658,17 @@ fn recover_commits(
                     last_sequence: last,
                     checksum: commit.checksum,
                 };
-                committed(&entries, &next)?;
+                if committed(&entries, &next)?.is_break() {
+                    return Ok(RecoveryPage {
+                        recovery: Recovery {
+                            header,
+                            position: next,
+                            tail_bytes: 0,
+                        },
+                        complete: false,
+                    });
+                }
                 position = next;
-                batches += 1;
                 entries.clear();
                 batch_bytes.clear();
             }

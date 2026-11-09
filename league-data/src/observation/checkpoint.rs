@@ -124,6 +124,23 @@ impl State {
         records: &[Record],
         position: &journal::Position,
     ) -> Result<(), journal::Error> {
+        self.apply_records(records.iter(), position)
+    }
+
+    /// Apply committed journal entries without copying their records.
+    pub fn apply_entries(
+        &mut self,
+        entries: &[journal::Entry],
+        position: &journal::Position,
+    ) -> Result<(), journal::Error> {
+        self.apply_records(entries.iter().map(|entry| &entry.record), position)
+    }
+
+    fn apply_records<'a>(
+        &mut self,
+        records: impl ExactSizeIterator<Item = &'a Record> + Clone,
+        position: &journal::Position,
+    ) -> Result<(), journal::Error> {
         use journal::Error;
         if self
             .checkpoint
@@ -137,7 +154,7 @@ impl State {
         }
         // Stage only the fallible roster changes. Validate the entire batch
         // before mutating the checkpoint instead of cloning its full payloads.
-        let roster_reader = self.prepare_roster(records)?;
+        let roster_reader = self.prepare_roster(records.clone())?;
         let next = &mut self.checkpoint;
         let mut roster_evidence = None;
         for record in records {
@@ -232,9 +249,9 @@ impl State {
         Ok(())
     }
 
-    fn prepare_roster(
+    fn prepare_roster<'a>(
         &self,
-        records: &[Record],
+        records: impl Iterator<Item = &'a Record>,
     ) -> Result<Option<roster::RosterReader>, journal::Error> {
         use journal::Error;
         let mut source = &self.checkpoint.source;

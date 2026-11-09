@@ -67,11 +67,13 @@ card facts before importing any full journal. Card freshness has its own source
 stamp and `history_ready` status; it does not imply replay readiness. Journal
 imports retain validated card facts between bounded batches. A real result or
 source change must revalidate those facts rather than preserving old enrichment.
-Each preparation unit streams at most 32 committed journal batches into one
+Each background preparation unit streams committed journal batches into one
 atomic SQL transaction, or reconstructs one bounded overlay page, then releases
-the writer and connection and yields without a fixed inter-unit delay. Every
-journal commit still passes checksum, sequence, scope and checkpoint-state
-validation, with cancellation/root checks before and after its SQL projection.
+the writer and connection and yields. Journal units stop after a commit crosses
+a time, byte or batch limit. Foreground imports retain the 32-batch page limit.
+Every journal commit still passes checksum, sequence, scope and checkpoint-state
+validation. Cancellation is checked around each SQL projection, and the logical
+root is revalidated before work starts and before the transaction publishes.
 The unit publishes its final checkpoint and committed-prefix rows together;
 interruption rolls back that unit, leaving the previous prefix resumable.
 Prepared SQL statements are reused within the unit. No database connection is

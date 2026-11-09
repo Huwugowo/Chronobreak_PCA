@@ -1,6 +1,30 @@
 use super::*;
 use crate::playback_file::{self, ApprovedRoot, FileScope};
 use obs::{Evidence, Observation, Payload, Record};
+use std::{ops::ControlFlow, sync::atomic::Ordering};
+
+impl ImportWork<'_> {
+    fn check_commit(self, check: &(impl Fn() -> Result<()> + ?Sized)) -> Result<()> {
+        match self {
+            Self::Interactive => check(),
+            Self::Background { cancelled, .. } => {
+                ensure!(!cancelled.load(Ordering::Acquire), "preparation stopped");
+                Ok(())
+            }
+        }
+    }
+
+    fn reached_limit(self, batches: usize, bytes: u64) -> bool {
+        match self {
+            Self::Interactive => batches == IMPORT_BATCHES,
+            // Let small commits share the setup and flush. Bound writer
+            // ownership by elapsed time and work, checked after each commit.
+            Self::Background { deadline, .. } => {
+                batches == 256 || bytes >= 1024 * 1024 || Instant::now() >= deadline
+            }
+        }
+    }
+}
 
 impl Index {
     pub(super) fn import(
@@ -9,6 +33,7 @@ impl Index {
         directory: &Path,
         timeline: &chronobreak_replay_time::MediaTimelineV2,
         stamp: &str,
+        work: ImportWork<'_>,
         check: &(impl Fn() -> Result<()> + ?Sized),
     ) -> Result<ImportProgress> {
         let media = &timeline.media_id;
@@ -63,27 +88,26 @@ impl Index {
         let start = state.snapshot().position.clone();
         let mut batches = 0;
         let mut failure = None;
+        let mut last_scope = None;
         // Publish one bounded unit atomically. Each source commit is still
         // checksum-validated and applied in order, but the current checkpoint
         // only needs to be persisted once at the unit's final committed prefix.
         let tx = self.db.transaction()?;
-        let page = journal::recover_after(
+        let page = journal::recover_after_until(
             BufReader::new(file),
             &header,
             &start,
-            IMPORT_BATCHES,
             |entries, position| {
                 let imported = (|| -> Result<()> {
-                    check()?;
-                    let records: Vec<_> = entries.iter().map(|e| e.record.clone()).collect();
-                    state.apply(&records, position)?;
+                    work.check_commit(check)?;
+                    state.apply_entries(entries, position)?;
                     let cp = state.snapshot();
                     for entry in entries {
-                        import_record(&tx, entry, timeline)?;
+                        import_record(&tx, entry, timeline, &mut last_scope)?;
                     }
                     tx.prepare_cached("INSERT INTO commits(media_id,sequence,position_json,epoch) VALUES (?1,?2,?3,?4)")?.execute(
                     params![media.as_str(),sql_u64(position.last_sequence)?,serde_json::to_string(position)?,sql_u64(cp.source.epoch)?])?;
-                    check()?;
+                    work.check_commit(check)?;
                     batches += 1;
                     Ok(())
                 })();
@@ -91,7 +115,11 @@ impl Index {
                     failure = Some(error);
                     return Err(journal::Error::Invalid("index import"));
                 }
-                Ok(())
+                if work.reached_limit(batches as usize, position.end_offset - start.end_offset) {
+                    Ok(ControlFlow::Break(()))
+                } else {
+                    Ok(ControlFlow::Continue(()))
+                }
             },
         );
         if let Some(error) = failure {
@@ -101,23 +129,23 @@ impl Index {
         check()?;
         // A valid stale manifest is allowed, but its exact commit and epoch must
         // have been validated. Importing beyond it does not invent a new anchor.
-        let anchor = if manifest.committed.last_sequence == 0 {
-            manifest.committed == header.initial_position()? && manifest.source_epoch == 0
-        } else {
-            let cached: Option<(String, u64)> = tx
-                .query_row(
-                    "SELECT position_json,epoch FROM commits WHERE media_id=?1 AND sequence=?2",
-                    params![media.as_str(), sql_u64(manifest.committed.last_sequence)?],
-                    |r| Ok((r.get(0)?, unsigned(r, 1)?)),
-                )
-                .optional()?;
-            cached.is_some_and(|(json, epoch)| {
-                epoch == manifest.source_epoch
-                    && serde_json::from_str::<journal::Position>(&json)
-                        .is_ok_and(|p| p == manifest.committed)
-            })
-        };
         if page.complete {
+            let anchor = if manifest.committed.last_sequence == 0 {
+                manifest.committed == header.initial_position()? && manifest.source_epoch == 0
+            } else {
+                let cached: Option<(String, u64)> = tx
+                    .query_row(
+                        "SELECT position_json,epoch FROM commits WHERE media_id=?1 AND sequence=?2",
+                        params![media.as_str(), sql_u64(manifest.committed.last_sequence)?],
+                        |r| Ok((r.get(0)?, unsigned(r, 1)?)),
+                    )
+                    .optional()?;
+                cached.is_some_and(|(json, epoch)| {
+                    epoch == manifest.source_epoch
+                        && serde_json::from_str::<journal::Position>(&json)
+                            .is_ok_and(|p| p == manifest.committed)
+                })
+            };
             ensure!(anchor, "optional telemetry manifest anchor");
         }
         let current = playback_file::open_file(&path, FileScope::Root(&approved))?;
@@ -126,7 +154,7 @@ impl Index {
             "journal replaced during import"
         );
         let unchanged = source_stamp(directory)? == stamp;
-        let ready = page.complete && anchor && unchanged;
+        let ready = page.complete && unchanged;
         // Empty journals still need a resumable, validated initial checkpoint.
         let cp = state.snapshot();
         if ready {
@@ -180,16 +208,25 @@ impl Index {
     }
 }
 
-fn evidence(db: &Connection, e: &Evidence, tick: Option<GameTick>, observed: bool) -> Result<()> {
+fn evidence(
+    db: &Connection,
+    e: &Evidence,
+    tick: Option<GameTick>,
+    observed: bool,
+    last_scope: &mut Option<obs::SourceEpoch>,
+) -> Result<()> {
     let s = &e.source;
     // Observation IDs are run-local u64 values; acquisition starts at zero.
     ensure!(e.timing.start_us <= e.timing.end_us, "observation interval");
-    db.prepare_cached("INSERT OR IGNORE INTO scopes(media_id,run_id,epoch) VALUES (?1,?2,?3)")?
-        .execute(params![
-            s.media_id.as_str(),
-            s.run_id.as_str(),
-            sql_u64(s.epoch)?
-        ])?;
+    if last_scope.as_ref() != Some(s) {
+        db.prepare_cached("INSERT OR IGNORE INTO scopes(media_id,run_id,epoch) VALUES (?1,?2,?3)")?
+            .execute(params![
+                s.media_id.as_str(),
+                s.run_id.as_str(),
+                sql_u64(s.epoch)?
+            ])?;
+        *last_scope = Some(s.clone());
+    }
     let json = serde_json::to_string(e)?;
     let inserted = db
         .prepare_cached(
@@ -275,6 +312,7 @@ fn import_record(
     db: &Connection,
     entry: &journal::Entry,
     timeline: &chronobreak_replay_time::MediaTimelineV2,
+    last_scope: &mut Option<obs::SourceEpoch>,
 ) -> Result<()> {
     let sequence = sql_u64(entry.sequence)?;
     let e = match &entry.record {
@@ -306,7 +344,7 @@ fn import_record(
         &entry.record,
         Record::EventObservation { .. } | Record::RosterObservation { .. }
     ) || matches!(&entry.record, Record::Observation { observation } if matches!(observation.as_ref(), Observation::Success { .. }));
-    evidence(db, e, tick, observed)?;
+    evidence(db, e, tick, observed, last_scope)?;
     match &entry.record {
         Record::Observation { observation } => match observation.as_ref() {
             Observation::Gap { reason, .. } => gap(db, sequence, e, e, 1, reason, &entry.record)?,
@@ -340,7 +378,7 @@ fn import_record(
         }
         Record::IdentityRound { round } => {
             if let Some(gs) = &round.game_stats {
-                evidence(db, gs, None, false)?;
+                evidence(db, gs, None, false, last_scope)?;
             }
         }
         Record::GapInterval {
@@ -356,20 +394,18 @@ fn import_record(
                     && *attempts > 0,
                 "gap interval scope"
             );
-            evidence(db, first, None, false)?;
+            evidence(db, first, None, false, last_scope)?;
             gap(db, sequence, first, last, *attempts, reason, &entry.record)?;
         }
         Record::RosterObservation { roster, .. } => {
             let tick = referenced_tick(db, e)?;
             for payload in &roster.payloads {
                 let json = serde_json::to_string(&payload.player)?;
-                let previous: Option<String> = db.prepare_cached("SELECT data FROM roster_payloads WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND payload_id=?4")?.query_row(
-                    params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(payload.id.0)?], |r| r.get(0)).optional()?;
-                ensure!(
-                    previous.as_ref().is_none_or(|p| p == &json),
-                    "roster payload ID changed"
-                );
-                db.prepare_cached("INSERT OR IGNORE INTO roster_payloads VALUES (?1,?2,?3,?4,?5)")?
+                let inserted = db
+                    .prepare_cached(
+                        "INSERT INTO roster_payloads VALUES (?1,?2,?3,?4,?5)
+                     ON CONFLICT(media_id,run_id,epoch,payload_id) DO NOTHING",
+                    )?
                     .execute(params![
                         s.media_id.as_str(),
                         s.run_id.as_str(),
@@ -377,22 +413,45 @@ fn import_record(
                         sql_u64(payload.id.0)?,
                         json
                     ])?;
+                if inserted == 0 {
+                    let previous: String = db.prepare_cached("SELECT data FROM roster_payloads WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND payload_id=?4")?.query_row(
+                        params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(payload.id.0)?], |r| r.get(0))?;
+                    ensure!(previous == json, "roster payload ID changed");
+                }
                 if let Some(id) = payload.player.participant {
                     let p = &payload.player;
                     // Identity is exact and immutable; champion/team are observed
                     // descriptors and may change without creating a participant.
-                    let previous: Option<Option<String>> = db.prepare_cached("SELECT riot_id FROM participants WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND participant_id=?4")?.query_row(
-                        params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(id.0)?], |r| r.get(0)).optional()?;
-                    ensure!(
-                        previous
-                            .flatten()
-                            .as_ref()
-                            .is_none_or(|prior| Some(prior) == p.riot_id.as_ref()),
-                        "participant identity changed"
-                    );
-                    db.prepare_cached("INSERT INTO participants VALUES (?1,?2,?3,?4,?5,?6,?7)
-                        ON CONFLICT(media_id,run_id,epoch,participant_id) DO UPDATE SET riot_id=COALESCE(excluded.riot_id,riot_id),champion=excluded.champion,team=excluded.team")?.execute(
-                        params![s.media_id.as_str(),s.run_id.as_str(),sql_u64(s.epoch)?,sql_u64(id.0)?,p.riot_id,p.champion_name,p.team])?;
+                    let epoch = sql_u64(s.epoch)?;
+                    let id = sql_u64(id.0)?;
+                    let media_id = s.media_id.as_str();
+                    let run_id = s.run_id.as_str();
+                    let fields = params![
+                        media_id,
+                        run_id,
+                        epoch,
+                        id,
+                        p.riot_id,
+                        p.champion_name,
+                        p.team
+                    ];
+                    let (compatible, unchanged) = db
+                        .prepare_cached(
+                            "SELECT riot_id IS NULL OR riot_id IS ?5,
+                                riot_id IS ?5 AND champion IS ?6 AND team IS ?7
+                         FROM participants
+                         WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND participant_id=?4",
+                        )?
+                        .query_row(fields, |r| Ok((r.get::<_, bool>(0)?, r.get::<_, bool>(1)?)))
+                        .optional()?
+                        .unwrap_or((true, false));
+                    ensure!(compatible, "participant identity changed");
+                    if !unchanged {
+                        db.prepare_cached("INSERT INTO participants VALUES (?1,?2,?3,?4,?5,?6,?7)
+                            ON CONFLICT(media_id,run_id,epoch,participant_id) DO UPDATE SET
+                              riot_id=excluded.riot_id,champion=excluded.champion,team=excluded.team")?
+                            .execute(fields)?;
+                    }
                 }
             }
             let replay_tick =

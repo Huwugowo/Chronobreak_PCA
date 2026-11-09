@@ -1251,6 +1251,7 @@ fn interrupted_unit_keeps_the_previous_published_prefix_and_resumes() {
                 &f.directory,
                 &f.timeline(),
                 &source_stamp(&f.directory).unwrap(),
+                ImportWork::Interactive,
                 &check
             )
             .is_err()
@@ -1282,6 +1283,48 @@ fn interrupted_unit_keeps_the_previous_published_prefix_and_resumes() {
             .unwrap(),
         (IMPORT_BATCHES + 3) as i64
     );
+}
+
+#[test]
+fn background_deadline_yields_a_durable_prefix_and_rejection_keeps_it() {
+    let f = Fixture::new(3);
+    let cancelled = AtomicBool::new(false);
+    let work = ImportWork::Background {
+        deadline: Instant::now(),
+        cancelled: &cancelled,
+    };
+    let root = f.root.path();
+    {
+        let mut index = f.index();
+        assert!(
+            !index
+                .prepare_recording(root, &f.summary, work, &|| Ok(()))
+                .unwrap()
+        );
+    }
+    let mut index = f.index();
+    let prefix = index.progress(&f.source.media_id, 0).unwrap();
+    assert_eq!(prefix.status, "pending");
+    assert!(prefix.position.is_some());
+    let source = index
+        .history_recording(root, &f.summary, false, &|| Ok(()))
+        .unwrap();
+    assert!(
+        index
+            .import_recording_source(root, &source, false, work, &|| {
+                bail!("preparation root changed")
+            })
+            .is_err()
+    );
+    let after = index.progress(&f.source.media_id, 0).unwrap();
+    assert_eq!(after.status, "pending");
+    assert_eq!(after.position, prefix.position);
+    let commits: i64 = index
+        .db
+        .query_row("SELECT count(*) FROM commits", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(commits, 1);
+    f.ready(&mut index);
 }
 
 #[test]

@@ -14,6 +14,8 @@ use std::{
     fs,
     io::{BufReader, Read},
     path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
+    time::Instant,
 };
 
 mod actors;
@@ -38,9 +40,17 @@ pub(crate) use query::{
 const VERSION: i64 = 8;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
-// Journal batches are streamed and checked individually. Group their SQL writes
-// into a bounded prefix rather than reopening/checkpointing every few records.
+// Keep the foreground import page within the IPC contract.
 const IMPORT_BATCHES: usize = 32;
+
+#[derive(Clone, Copy)]
+pub(crate) enum ImportWork<'a> {
+    Interactive,
+    Background {
+        deadline: Instant,
+        cancelled: &'a AtomicBool,
+    },
+}
 
 pub(crate) struct Index {
     db: Connection,
@@ -263,7 +273,7 @@ impl Index {
         check: &(impl Fn() -> Result<()> + ?Sized),
     ) -> Result<ImportProgress> {
         let source = self.history_recording(root, summary, rebuild, check)?;
-        self.import_recording_source(root, &source, rebuild, check)
+        self.import_recording_source(root, &source, rebuild, ImportWork::Interactive, check)
     }
 
     fn import_recording_source(
@@ -271,6 +281,7 @@ impl Index {
         root: &Path,
         source: &RecordingSource,
         rebuild: bool,
+        work: ImportWork<'_>,
         check: &(impl Fn() -> Result<()> + ?Sized),
     ) -> Result<ImportProgress> {
         let media = &source.timeline.media_id;
@@ -287,12 +298,14 @@ impl Index {
             &source.directory,
             &source.timeline,
             &source.stamp,
+            work,
             check,
         );
         if result.is_err() {
+            // Supersession rolls back this unit without discarding its
+            // previously published prefix.
+            check()?;
             self.clear_telemetry(media)?;
-            // A superseded job must leave resumable work, not cache an optional
-            // source failure for the next accepted snapshot.
             check()?;
             self.db.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1", params![media.as_str(),source.stamp])?;
         }
@@ -304,10 +317,11 @@ impl Index {
         &mut self,
         root: &Path,
         summary: &GameSummary,
+        work: ImportWork<'_>,
         check: &(impl Fn() -> Result<()> + ?Sized),
     ) -> Result<bool> {
         let source = self.history_recording(root, summary, false, check)?;
-        let progress = self.import_recording_source(root, &source, false, check)?;
+        let progress = self.import_recording_source(root, &source, false, work, check)?;
         if progress.status == "ready" {
             return self.prepare_overlay(&source.timeline);
         }
