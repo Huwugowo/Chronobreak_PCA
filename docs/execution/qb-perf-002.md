@@ -2,13 +2,15 @@
 
 Feature: `QB-PERF-002`
 ExecPlan: `docs/exec-plans/qb-perf-002-low-overhead-native-windows-capture-v3.md`
-Updated: 2026-11-02
+Updated: 2026-11-09
 
 ## Current milestone
 
 Superseding-plan Milestone 5: valid target League capped/uncapped performance proof, support-matrix disposition, and final completion verification.
 
 ## Active unit
+
+2026-11-09 recorder performance challenge: the user chose generated-window testing on the Philips 241E1/RTX 3050 Ti. Implemented and measured reuse of the current NV12 image in a returned encoder slot. The local comparison isolates avoided conversions and lower 3D-engine use. Interactive League FPS, frametime and the target-hardware matrix remain unverified.
 
 2026-11-01 focused duplication correction: reproduced and corrected premature worker discards of early-delivered future frames. Source-only timing evidence, ownership/CFR regressions and recorder checks are recorded below. This correction does not complete the outstanding formal performance matrix or establish every cause of the October 31 duplication rate. Existing unrelated app/audio edits are preserved.
 
@@ -27,10 +29,11 @@ Do not substitute current-workstation generated-window evidence, the historical 
 - Reproduced the subsequent practice-tool error with a generated 1x1 window transition, then prevented unusable NV12 crop sizes from reaching pool recreation. Resize preparation now shares the close/count staging path, and the watchdog follows copied source QPC rather than callback admission. Added bounded first-size logging, native unusable-size telemetry, and a hardware regression that proves actual 1x1 frames were discarded and video resumed after restore.
 - Corrected the League end-of-game lifecycle: an exact selected HWND closure is now treated as the terminal capture boundary and routed through graceful native worker stop, mux flush, metadata publication, and `Idle` projection; replaced/foreign HWND identity failures remain explicit partial failures. Added a service classification test and documented the lifecycle contract.
 - Corrected fragmented-MP4 finalized-media validation: a private fixed-memory header reader supplies the missing actual sample count, skips media payload, enforces the shared five-second deadline, and rejects malformed/truncated fragments. Shared replay-time checks and producer reconciliation remain unchanged. Finalization errors now log their full cause chain.
+- Eliminated redundant BGRA-to-NV12 blits for repeated images when the selected free slot still contains the current snapshot. The slot is reused only after NVENC unmaps it. Fresh snapshots and processor reconfiguration invalidate reuse. Source selection, four-slot ownership, encoder submissions, and the 60 FPS output clock are unchanged.
 
 ## In flight
 
-None for the focused duplication correction; implementation, review, recorder checks and release build are complete. Fragmented-MP4 correction remains complete; real recordings remain untouched.
+None for the local NV12 reuse unit. Recorder automation, the locked release build, and the generated-window validation are complete. Real recordings remain untouched.
 
 ## Remaining
 
@@ -40,6 +43,24 @@ None for the focused duplication correction; implementation, review, recorder ch
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
 
 ## Verification
+
+2026-11-09 local NVIDIA attribution and NV12 reuse, release fixture from source revision `47848b5` plus the targeted working-tree change:
+
+- The fixture selected the 1920×1080 Philips 241E1 on the RTX 3050 Ti Laptop GPU (DXGI LUID `0000000000012a3e`). Source-only delivered 780 arrivals over 13 seconds, about 60 Hz with no handoff drops, compared with about 120 Hz on the Intel-attached panel on November 6. Bracketed source-only runs raised the median NVIDIA compositor 3D counter from roughly 16–18% to 21–26%. The WGC-plus-conversion probe converted 781 frames, with 6.76% median 3D use attributed to that process and no steady-state video encoding. These process counters separate stages imperfectly because compositor attribution also changed across phases.
+- The unmodified 17-second full graph encoded and muxed 1,020 frames. Of those, 457 used the held source snapshot, but the baseline ran the color conversion for every tick. The full graph recorded 337 worker discards, zero pending replacements and 19 handoff drops. The source-selection reason for the worker discards remains unproven. Bitstream writer calls took 6.27 ms in total with zero slow writes. Generated input exercises the media graph and does not exercise the League Live Client poller.
+- In the 15-second System Audio baseline/reuse/baseline comparison, the candidate skipped 555 of 900 blits (61.7%) and median recorder 3D use fell from 14.83% to 7.68% against the closest baseline (566 vs 572 duplicate ticks). Median combined compositor/recorder 3D use went from 28.06% to 20.02%. The second baseline measured 17.12% recorder 3D with fewer repeats (373). A reverse-order check with comparable repeats (571 baseline, 575 reuse) skipped 562 of 900 blits. Recorder 3D went from 14.56% to 6.53% and combined compositor/recorder 3D from 27.35% to 18.23%. Each arm produced exactly 900 H.264 High 1080p60 frames and AAC and passed full strict decode. The System Audio endpoint was idle and supplied no observed sound packets.
+- The first comparison showed Video Encode median 28.35% baseline vs 30.96% reuse and higher peaks in reuse. The reverse-order medians were 28.31% vs 28.74%, with peaks and video clock changes still present on reuse. The measurements do not establish the cause of those transients. System Audio encoder-slot retry counts were 22 vs 45 on the closest initial pair and 33 vs 42 on the reverse-order pair. Each pair had similar catch-up and maximum lateness around 350 ms and reconciled every output tick. Both revisions exceeded the strict zero-retry fixture limit with System Audio, so the comparisons used the existing diagnostic retry ceiling and do not count as strict System Audio passes. The initial strict baseline wrapper also raised a PowerShell `Count` error after capture. Its raw probe reported 37 retries and its media had 1,200 1080p60 frames.
+- Strict steady, 1x1/restore and 1600x900/restore fixtures with generated silent AAC passed full decode with 600 frames each and zero encoder-slot retries. The last second had 59, 60 and 59 distinct decoded hashes respectively. The normal resize performed two real processor recreations. The focused ownership review found no new input-lease or timing issue.
+- Recorder formatting, locked all-target/all-feature check, tests and strict Clippy passed. Tests reported 280 library, 7 binary and 6 example tests passed with 16 opt-in tests ignored. The locked production release build, canonical roadmap validation (123 items and 32 plan/checkpoint pairs), and diff hygiene passed.
+- Raw local evidence is under `build/perf/recorder-impact-20261109/` (`phases.json`, `conversion/`, `reuse-ab/`, `reuse-check/`, and `reuse-validation/`). No League FPS or frametime ratio was measured.
+
+2026-11-06 local recorder attribution, source revision `6174f3c`:
+
+- Built the current release native fixture and attempted `run_native_fixture.ps1 -Scenario steady -DurationSeconds 30 -CollectResources -ResourceSampleSeconds 2 -SystemAudio` twice, with fresh dedicated output roots. Restricted execution failed at WGC support (`0x8007000E`). Desktop execution passed source initialization but failed at `nvEncOpenEncodeSessionEx` with `NO_ENCODE_DEVICE` and completed source cleanup. The generated window's DXGI display adapter was Intel UHD Graphics (LUID `000000000001263a`), while the NVIDIA RTX 3050 Ti Laptop GPU had no active display. No encoded-frame, audio, mux or end-to-end performance result was obtained.
+- Current release `native_wgc_source_probe --timing-only` delivered 2,399 1920×1080 frames over 20.000 s of source time, with no handoff drops, callback errors or pool recreations. Median source interval was 8.332 ms and median lead over receipt was 11.54 ms. WGC delivered about 120 frames/s in a graph configured to produce 60 output frames/s. The probe consumes each arrival and bypasses conversion, NVENC, audio and mux, so this measures available source cadence, not recorded frame coverage.
+- On the same changing GDI window, sampled the Intel adapter's GPU engines during off/source-only/off phases (ten one-second samples each). Desktop Window Manager's median 3D-engine utilization was 17.77%, 30.90%, and 17.91%, respectively. Its lowest capture sample (30.76%) exceeded both off-phase maxima (23.25% and 22.79%). This isolates a local compositor cost upstream of recorder conversion/encoding. System CPU varied across phases and the probe emits a line per arrival, so neither its CPU time nor the GPU result measures production League impact.
+- The existing `league_data/live_player_list_midgame_10` release microbenchmark measured 274.45–275.54 µs per roster decode. At one poll per two seconds that is about 0.014% of one logical CPU for the measured decode alone. HTTP, League-side serialization, event-history work and journal sync are outside that measurement. The historical 30-second successful native fixture `20261021-142053-steady-none-cbd1ce92` reported 5.69 ms of cumulative bitstream writer wall time across 1,800 frames, no slow writes and no full-slot admission failures. That run cannot rule out stalls under gameplay load.
+- Trace and counter artifacts: `build/perf/recorder-impact-20261106/` (notably `aba-counters.json`, `source-timing.log`, `adapter-target.log`, both fixture failure roots and `roster-decode.log`). All capture attempts targeted generated windows and dedicated outputs. No League FPS or frametime ratio was measured.
 
 2026-11-02 focused real-recording investigation (no product changes): restored the November 2 release bundle intact into the configured preprod library and verified it through the freshly built actual application. User confirms the requested manual playback/event/seek checks pass. Full media decode passed previously; 51,443 output frames, 6,468 aggregate CFR duplicates, one detected full-black interval at video 71.166667–75.366667 s and a held-image end tail around 853.3–857.383333 s. Alt-Tab blackouts alone cannot account for the duplicate total; the bundle has no per-tick source/focus trace. User reports League FPS loss of 1–2 FPS during most recording, 5–10 late and approximately 50-FPS fight spikes. Available request timings show no escalating timeouts except terminal shutdown; there is no League frametime/resource/baseline series, so neither causation nor negligible overhead is established. Full-history event polling remains a bounded investigation lead, not a diagnosed defect. The local evidence under `build/analysis/` includes `follow-up-analysis.md`, `frame-scan-summary.json`, and `near-static-periods.csv`. No benchmark campaign or recorder architecture/EOG change was undertaken.
 
@@ -118,7 +139,11 @@ The first 1,800-second wrapper discarded its in-memory resource samples after a 
 
 The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target has not been run. The combined release now has a successful real short-session finalization and user-confirmed app playback, but that is not the required sustained capture/performance matrix. Generated-window or short-session evidence cannot substitute for that matrix.
 
+The Philips display now exercises the supported NVIDIA graph on this workstation. The local generated-window result has no League frametime, fight-load, or live-poller evidence. System Audio slot retry timing and Video Encode transients remain unattributed. No evidence establishes the requested 5–10× gameplay improvement or a fundamental limit on it.
+
 ## Next action
+
+For the performance challenge, obtain a matched recorder-off/on League trace on the Philips with the existing collector, then compare the baseline and reuse revisions if the overhead is measurable. Correlate frametime tails with copied source QPC, worker discards, encoder-slot retries, and audio startup. The Philips source already delivered about 60 Hz in the local fixture. A producer pacing experiment is relevant only where WGC delivers faster than needed and the OS exposes `MinUpdateInterval` (build 26100 or later).
 
 On a subsequent ordinary recording trial, inspect copied snapshots, worker discards, latest callback source QPC versus copied QPC, catch-up ticks and maximum source age. These distinguish remaining source delivery, selection and scheduling effects without another blanket timeout or a mandatory long validation campaign.
 

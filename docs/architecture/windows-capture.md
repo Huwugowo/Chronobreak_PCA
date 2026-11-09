@@ -34,6 +34,8 @@ The WGC callback never waits for the GPU worker, encoder, muxer, disk, or runtim
 
 Full video frames remain GPU-resident through acquisition, resize/color conversion, and encoder submission. There is no per-frame full-surface readback, CPU pixel conversion, or raw-frame transfer. WGC, conversion, and encoder surfaces may still require bounded GPU-to-GPU copies, so the path is described as GPU-resident rather than universally zero-copy.
 
+A duplicate CFR tick can reuse NV12 pixels when the selected free encoder slot still contains the current source snapshot. NVENC unmaps the input before releasing the slot. Staging a new snapshot or reconfiguring the video processor invalidates reuse. Each tick still submits its own frame to NVENC.
+
 ## FFmpeg boundary
 
 The native recorder starts one supervised FFmpeg child, but FFmpeg performs no video

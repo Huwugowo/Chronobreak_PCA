@@ -116,6 +116,7 @@ impl NativeNv12SlotStates {
 struct NativeNv12Slot {
     texture: ID3D11Texture2D,
     output_view: ID3D11VideoProcessorOutputView,
+    holds_latest_snapshot: bool,
 }
 
 struct CachedInputView {
@@ -333,6 +334,7 @@ impl NativeNv12Converter {
         self.latest_source = latest_source;
         for (slot, view) in self.slots.iter_mut().zip(output_views) {
             slot.output_view = view;
+            slot.holds_latest_snapshot = false;
         }
         self.input_width = input_width;
         self.input_height = input_height;
@@ -410,6 +412,9 @@ impl NativeNv12Converter {
             );
         }
         self.latest_source.populated = true;
+        for slot in &mut self.slots {
+            slot.holds_latest_snapshot = false;
+        }
         self.telemetry.source_snapshot_copies =
             self.telemetry.source_snapshot_copies.saturating_add(1);
         Ok(true)
@@ -419,7 +424,7 @@ impl NativeNv12Converter {
         self.slot_states.free_count() > 0
     }
 
-    /// Convert the persistent latest-source snapshot at an exact CFR tick.
+    /// Prepare the persistent latest-source snapshot for an exact CFR tick.
     /// A full four-slot ring rejects this admission attempt without waiting or
     /// allocating a fifth slot; the media clock remains the caller's concern.
     pub fn convert_staged<'converter>(
@@ -439,13 +444,19 @@ impl NativeNv12Converter {
             return Ok(None);
         };
 
-        let input_view = self.latest_source.view.clone();
-        if let Err(error) = self.blit_input_view(input_view, slot_index) {
-            self.slot_states.release_converted(slot_index);
-            return Err(error);
+        // Completion unmaps the NVENC input before releasing its slot. Reuse
+        // its NV12 pixels if this is still the current snapshot.
+        if self.slots[slot_index].holds_latest_snapshot {
+            self.output_frame_index = self.output_frame_index.wrapping_add(1);
+        } else {
+            let input_view = self.latest_source.view.clone();
+            if let Err(error) = self.blit_input_view(input_view, slot_index) {
+                self.slot_states.release_converted(slot_index);
+                return Err(error);
+            }
+            self.slots[slot_index].holds_latest_snapshot = true;
         }
 
-        self.telemetry.converted_frames = self.telemetry.converted_frames.saturating_add(1);
         Ok(Some(ConvertedNv12Frame {
             converter: self,
             slot_index,
@@ -475,6 +486,7 @@ impl NativeNv12Converter {
             return Ok(None);
         };
 
+        self.slots[slot_index].holds_latest_snapshot = false;
         let result = self.convert_into_slot(frame, slot_index);
         if let Err(error) = result {
             self.slot_states.release_converted(slot_index);
@@ -482,7 +494,6 @@ impl NativeNv12Converter {
         }
 
         let qpc_100ns = frame.qpc_100ns();
-        self.telemetry.converted_frames = self.telemetry.converted_frames.saturating_add(1);
         Ok(Some(ConvertedNv12Frame {
             converter: self,
             slot_index,
@@ -562,6 +573,7 @@ impl NativeNv12Converter {
         // ManuallyDrop field above, after the synchronous API call returned.
         unsafe { ManuallyDrop::drop(&mut stream.pInputSurface) };
         blit.context("D3D11 video processor BGRA-to-NV12 conversion failed")?;
+        self.telemetry.converted_frames = self.telemetry.converted_frames.saturating_add(1);
         self.output_frame_index = self.output_frame_index.wrapping_add(1);
         Ok(())
     }
@@ -829,6 +841,7 @@ fn create_slots(
         slots.push(NativeNv12Slot {
             texture,
             output_view,
+            holds_latest_snapshot: false,
         });
     }
     slots.try_into().map_err(|slots: Vec<NativeNv12Slot>| {
