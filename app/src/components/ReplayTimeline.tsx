@@ -9,6 +9,7 @@ import {
   onMount,
 } from "solid-js";
 import { formatDuration } from "../format";
+import type { SeekOptions } from "../playbackController";
 import {
   REPLAY_TICKS_PER_SECOND,
   type ReplayTick,
@@ -53,7 +54,7 @@ type Props = {
   events: readonly TimelineEvent[];
   localPlayerName: string | null;
   clip: ClipWindow | null;
-  onSeek: (tick: ReplayTick) => void;
+  onSeek: (tick: ReplayTick, options?: Pick<SeekOptions, "scrubCommit">) => void;
   onEventSelect: (event: TimelineEvent) => void;
   onClipEndpointEditStart: (endpoint: "start" | "end") => void;
   onClipEndpointPreview: (endpoint: "start" | "end", tick: ReplayTick) => void;
@@ -472,7 +473,7 @@ function ReplayTimeline(props: Props) {
     if (seekPointer) {
       if (seekPointer.id !== event.pointerId) return;
       setHoverRatio(ratio);
-      seekAtPointer(event.clientX);
+      props.onSeek(timelineTickAtRatio(ratio, viewport()));
       return;
     }
 
@@ -495,7 +496,7 @@ function ReplayTimeline(props: Props) {
     const bounds = rail.getBoundingClientRect();
     const localY = event.clientY - bounds.top;
 
-    seekAtPointer(event.clientX);
+    props.onSeek(timelineTickAtRatio(ratio, viewport()), { scrubCommit: true });
     cancelSeek();
     setHoverRatio(
       localY >= SCRUB_HOVER_MIN_Y_PX

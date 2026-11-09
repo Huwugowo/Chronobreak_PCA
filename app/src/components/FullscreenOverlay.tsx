@@ -1,5 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { formatDuration } from "../format";
+import type { SeekOptions } from "../playbackController";
 import type {
   ClipRange,
   ReplayParticipant,
@@ -58,7 +59,7 @@ type Props = {
   onPlayerToggle: (summonerName: string) => void;
   onPlayerClear: () => void;
   onTogglePlayback: () => void;
-  onSeek: (replayTick: ReplayTick) => void;
+  onSeek: (replayTick: ReplayTick, options?: Pick<SeekOptions, "scrubCommit">) => void;
   onActivateClip: () => void;
   onEventSelect: (event: ViewerEvent) => void;
   onClipEndpointEditStart: (endpoint: "start" | "end") => void;

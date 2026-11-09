@@ -1,14 +1,13 @@
 import { buildScenarioActions, isOpeningScenario, openingPayload, replayBenchmarkObserver,
   type OpeningCycle, type ReplayBenchmarkObserver } from "./benchmark";
 import { REPLAY_TICKS_PER_SECOND, type ReplayTick } from "./replayTime";
-import type { PlaybackEvent, PlaybackOutcome, PlaybackRate, PlaybackSnapshot, SeekOutcome } from "./playbackController";
+import type { PlaybackEvent, PlaybackOutcome, PlaybackRate, PlaybackSnapshot, SeekOptions, SeekOutcome } from "./playbackController";
 import type { ServerMetrics } from "./types";
 import { createBenchmarkSeekEvidence } from "./benchmarkSeekEvidence";
 import { runBenchmarkDesktopResize, type BenchmarkResizeSubject } from "./benchmarkResize";
 import { benchmarkRenderObservation, waitForBenchmarkRenderedReplay, type BenchmarkRenderSubject } from "./benchmarkRender";
 import type { BenchmarkEventMeta, ScenarioAction } from "./benchmark";
 
-type SeekRequest = Readonly<{ reason?: string; playAfter?: boolean; actionId?: string }>;
 type ClipEndpoint = "start" | "end";
 /** Live capabilities of the actual Viewer. Ownership stays with its mount. */
 export type BenchmarkViewerHost = {
@@ -18,7 +17,7 @@ export type BenchmarkViewerHost = {
   play(): Promise<PlaybackOutcome>;
   pause(): PlaybackOutcome;
   setRate(rate: PlaybackRate): void;
-  requestSeek(target: ReplayTick, request: SeekRequest): Promise<SeekOutcome>;
+  requestSeek(target: ReplayTick, request: SeekOptions): Promise<SeekOutcome>;
   prepareEventJump(target: ReplayTick): Readonly<{ target: ReplayTick; eventType?: string }>;
   editClipEndpoint(endpoint: ClipEndpoint, target: ReplayTick): Readonly<{ target: ReplayTick; start: ReplayTick; end: ReplayTick }>;
   finishClipEndpointEdit(): void;
@@ -374,11 +373,13 @@ export function createBenchmarkViewer(observer: ReplayBenchmarkObserver, host: B
         let settle = Promise.resolve();
         for (const [index, targetMs] of action.targetsMs.entries()) {
           assertEligible();
+          const scrubCommit = index === action.targetsMs.length - 1;
           settle = seekTo(millisecondsToReplayTick(targetMs, replayEnd), {
             reason: observer.scenario().kind === "whole_app" ? "benchmark-scrub" : "benchmark",
-            awaitBenchmarkEvidence: index === action.targetsMs.length - 1,
+            awaitBenchmarkEvidence: scrubCommit,
+            scrubCommit: scrubCommit ? true : undefined,
           });
-          if (index < action.targetsMs.length - 1) await waitForBenchmark(action.intervalMs);
+          if (!scrubCommit) await waitForBenchmark(action.intervalMs);
         }
         await withBenchmarkTimeout(settle, "scrub settle");
         emit(
@@ -511,14 +512,14 @@ export function createBenchmarkViewer(observer: ReplayBenchmarkObserver, host: B
   };
 
 
-  const seekTo = (target: ReplayTick, options: { reason?: string; playAfter?: boolean; onBenchmarkDispatch?: () => void; awaitBenchmarkEvidence?: boolean } = {}): Promise<void> => {
+  const seekTo = (target: ReplayTick, options: Omit<SeekOptions, "actionId"> & { onBenchmarkDispatch?: () => void; awaitBenchmarkEvidence?: boolean } = {}): Promise<void> => {
     assertEligible();
     const actionId = observer.nextActionId("seek");
     const evidence = options.awaitBenchmarkEvidence ? createBenchmarkSeekEvidence(mediaGeneration, actionId) : undefined;
     if (evidence) benchmarkSeekObservers.add(evidence.observe);
     if (options.onBenchmarkDispatch) dispatchObservers.set(actionId, options.onBenchmarkDispatch);
     // Registration precedes the production operation: its events can be synchronous.
-    const operation = host.requestSeek(target, { reason: options.reason, playAfter: options.playAfter, actionId });
+    const operation = host.requestSeek(target, { reason: options.reason, playAfter: options.playAfter, scrubCommit: options.scrubCommit, actionId });
     const settled = operation.then(result => {
       dispatchObservers.delete(actionId);
       if (!eligible()) throw benchmarkAbortError();

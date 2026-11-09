@@ -53,7 +53,7 @@ import {
   wholeTimelineViewport,
   type TimelineViewport,
 } from "../replayTimelineGeometry";
-import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot, type SeekOutcome } from "../playbackController";
+import { createPlaybackController, type PlaybackController, type PlaybackEvent, type PlaybackSnapshot, type SeekOptions, type SeekOutcome } from "../playbackController";
 import { createHtmlVideoPlaybackAdapter } from "../htmlVideoPlaybackAdapter";
 import { createPlaybackDiagnostics } from "../playbackDiagnostics";
 import { createBenchmarkViewer, benchmarkViewerOpening, type BenchmarkViewer } from "../benchmarkViewer";
@@ -440,7 +440,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
 
   // Shared production operation: current clip loop and requested preview are
   // applied identically for user and harness seeks. Evidence policy stays outside.
-  const requestSeek = (target: ReplayTick, options: { reason?: string; playAfter?: boolean; actionId?: string } = {}): Promise<SeekOutcome> => {
+  const requestSeek = (target: ReplayTick, options: SeekOptions = {}): Promise<SeekOutcome> => {
     controller.setLoopRange(clipRange());
     const operation = controller.seek(target, options);
     const preview = controller.snapshot().seek.requestedPreview;
@@ -448,11 +448,11 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     return operation;
   };
 
-  const seekTo = (target: ReplayTick, options: { reason?: SeekReason; playAfter?: boolean } = {}): Promise<void> => {
+  const seekTo = (target: ReplayTick, options: Omit<SeekOptions, "reason" | "actionId"> & { reason?: SeekReason } = {}): Promise<void> => {
     if (!controller) return Promise.resolve();
     const currentObserver = replayBenchmarkObserver();
     const actionId = currentObserver?.nextActionId("seek");
-    return requestSeek(target, { reason: options.reason, playAfter: options.playAfter, actionId }).then(result => {
+    return requestSeek(target, { ...options, actionId }).then(result => {
       if (currentObserver && (result.status === "failed" || result.status === "unavailable")) throw new Error(result.reason ?? result.status);
     });
   };

@@ -132,6 +132,35 @@ describe("concrete playback controller", () => {
     expect(await latest).toMatchObject({ status: "presented", target: tick(30) });
   });
 
+  it.each([
+    { commitWhileActive: false, repeated: true },
+    { commitWhileActive: true, repeated: true },
+    { commitWhileActive: true, repeated: false },
+  ])("dispatches a scrub commit as soon as possible ($commitWhileActive, $repeated)", async ({ commitWhileActive, repeated }) => {
+    const { media, controller } = setup(); media.metadata();
+    const first = controller.seek(tick(10));
+    vi.advanceTimersByTime(20);
+    const latest = controller.seek(tick(20));
+    if (!commitWhileActive) media.seeked(tick(10));
+    expect(media.seeks).toEqual([tick(10)]);
+
+    const target = tick(repeated ? 20 : 30);
+    const commit = controller.seek(target, { scrubCommit: true });
+    if (repeated) expect(commit).toBe(latest);
+    else expect(await latest).toMatchObject({ status: "superseded" });
+    if (commitWhileActive) {
+      expect(media.seeks).toEqual([tick(10)]);
+      media.seeked(tick(10));
+    }
+    expect(media.seeks).toEqual([tick(10), target]);
+    expect(await first).toMatchObject({ status: "superseded" });
+    media.seeked(target);
+    media.frame(target);
+    expect(await commit).toMatchObject({ status: "presented", target, presented: target });
+    vi.advanceTimersByTime(100);
+    expect(media.seeks).toHaveLength(2);
+  });
+
   it("deduplicates within half a frame only after that frame was presented", async () => {
     const { media, controller } = setup(); media.metadata(); media.update({ tick: tick(10 + 1 / 240) });
     media.frame(tick(10)); media.update({ tick: tick(10 + 1 / 240) });

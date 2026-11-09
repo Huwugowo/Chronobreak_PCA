@@ -5256,6 +5256,41 @@
       "notes": "Direct benchmark-only work using existing public APIs and checked-in fixtures."
     },
     {
+      "id": "QB-REPLAY-028",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Reduce exact replay seek and scrub latency",
+      "description": "Target a 5–10× reduction from seek input to correct frame presentation on the same representative recordings, including rapid consecutive seeks.",
+      "priority": "P1",
+      "area": "replay-performance",
+      "status": "blocked",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-008", "QB-REPLAY-012"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Compare matched directed seeks and rapid scrub bursts on the same representative recordings from input to exact requested frame presentation. Report p50, p95, p99, stale and superseded outcomes, and dispatch, native and presentation phases separately.",
+        "Target a 5–10× improvement. If the measured limiting work prevents it, identify the limiting phase and deliver the best justified targeted change.",
+        "Preserve exact frame accuracy, playback continuity, timeline/TAB/overlay synchronization, source integrity and bounded CPU, memory and native seek work. Keep existing native seek ownership and authoritative presentation."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Run a bounded before/after release WebView comparison on disposable copies with exact RVFC frame qualification and resource checks. Report the legacy adjacent-frame tolerance separately if needed for historical comparison."},
+        {"type": "automated", "description": "Verify latest-wins scrub settlement, native seek ownership and existing viewer interaction behavior. Run frontend checks and canonical validation.", "command": "npm run test --prefix app"}
+      ],
+      "evidence": [
+        "Retained production synthetic-motion trace motion-01 has 160 directed seeks. Request-to-RVFC p50/p95/p99 are 82.9/188.2/260.1 ms under the legacy tolerance, with request-to-dispatch 0/0.1/0.2 ms. Decode distance from the preceding keyframe correlates 0.918 with dispatch-to-RVFC latency. In five final scrubs, dispatch queueing reached 91.9 ms but waiting after the native slot was free reached 50.7 ms, with a second 14.0 ms wait. The legacy tolerance accepted adjacent frames in 136/160 directed samples and 5/5 scrub finals. Both staged gameplay copies have exact 120-frame keyframe intervals and matching before/after video hashes.",
+        "Scrub release dispatches the final target immediately once the native slot is free. Deterministic cases remove an 80 ms scheduler wait with unchanged native seek count, latest-wins settlement and authoritative frame qualification. Pointer integration and benchmark final-action routing are covered. All 585 frontend tests passed before concurrent opening edits. The subsequent shared-tree check had five ViewerScreen failures involving overlay request counts and readiness-dependent traces. The same focused check isolated from those edits passed 180/180. TypeScript, production frontend and desktop builds passed.",
+        "Matched release comparison is outstanding. The ordinary baseline and rebuilt WebViews stalled or disconnected before replay opened, and the project runner reported APP_STARTUP_TIMEOUT before frontend initialization. Raw attempts are under build/perf/replay-latency-20261106 and build/perf/p5motion/.chronobreak-replay-benchmark/results/seek-renderer-check-20261106.",
+        "2026-11-07 startup diagnosis: crash dumps for the archived before and rebuilt after binaries both contain SBOX_ERROR_CANNOT_CREATE_RESTRICTED_TOKEN. A fresh before launch repeated the signature and its WebView log showed repeated GPU-process access denied (0xC0000022). This matches the restricted-token failure documented by QB-REPLAY-008. Both exact binaries subsequently reached match history and the replay viewer from ordinary PowerShell.",
+        "2026-11-07 ordinary launches of both exact builds then hit the same pre-existing five-second media metadata limit on Syndra. Earlier protected range traces show repeated reads advancing through the fragmented file and resets at the limit for Syndra and the older Master Yi. Both original fixture copies presented frame zero in standalone Edge, in 3.83/3.88 s after 637/491 range requests. The shared opening bottleneck is tracked by QB-REPLAY-030. The probe now captures an actual first frame or reports the app's failure.",
+        "2026-11-07 supplemental ordinary WebView runs on the newer Master Yi and Graves: both opened in each arm. Of 96 matched paused clicks per arm, the same 62 hit the requested frame and the same 34 showed the preceding frame. Estimated display p50/p95/p99 among the shared exact hits were 103.6/204.2/330.7 ms before and 115.5/200.5/348.7 ms after. Input-to-dispatch p99 was under 5 ms on both. Duplicate native dispatch occurred in one before and two after clicks when pointer-up followed completion at the same coordinate. Video hashes match the staged copies. The 100 drag trials in each arm are ineligible: CDP button:none moves released pointer capture. Reproduced with the actual timeline in Edge and verified button:left preserves capture and reaches the release target. Corrected scrub-only replay measurements are pending. Raw logs: build/perf/replay-latency-20261106/desktop-seek-{before,after}-1794008920030.",
+        "2026-11-07 exact-frame diagnostic: all 34 early WebView frames were requested frame indices congruent to 1 modulo 3 at 60 fps. Standalone Edge with the same two copies reproduced 20/30 exact boundary seeks and achieved 30/30 when the browser seek started one quarter frame inside the requested frame. This supports timestamp rounding as the cause; product behavior has yet to be changed or validated.",
+        "2026-11-07 shortened ordinary Graves baseline completed six captured drags with exact release frames in 76.2-143.9 ms. The updated arm presented frame zero but settled with limited match details before any timed drag. Both stopped index caches have complete overlay data and identical logical rows. The same updated executable previously loaded Graves with full details. The after-only retry seeds from that stopped, successful cache and retains the full details gate and baseline samples. Raw pair: build/perf/replay-latency-20261106/desktop-scrub-{before,after}-1794049770665.",
+        "2026-11-09: All 586 frontend tests, TypeScript checks and the production frontend build passed on the current checkout. The managed-session attempt failed before WebView navigation with SBOX_ERROR_CANNOT_CREATE_RESTRICTED_TOKEN and GPU process exits 0xC0000022. Evidence: build/perf/replay-latency-20261106/desktop-scrub-after-1794213015963.",
+        "2026-11-09 ordinary PowerShell: six Graves release targets matched the saved baseline and both arms presented all six exact frames. Before/after p50, p95 and p99 were 52.4/80.4/84.3 vs 19.1/49.8/55.2 ms from release to dispatch, 50.4/84.4/87.9 vs 91.3/152.8/153.9 ms from dispatch to estimated display, and 102.1/139.9/143.1 vs 106.3/202.6/209.2 ms end to end. The updated arm's drag gestures ran longer and total native dispatches rose from 14 to 17. Two candidate traces lack a final seeked after the corresponding seeking event. This small diagnostic does not isolate the timing cause or establish synchronization, bounded resources or a product latency improvement. Raw updated trace: build/perf/replay-latency-20261106/desktop-scrub-after-1794213252796/raw.json. The archived binaries predate commit a927654."
+      ],
+      "notes": "Direct scope preserves the existing one-active-plus-latest native seek contract and changes only pacing for the completed scrub gesture. Further release verification requires matched input cadence, attributed native settlement, exact-frame synchronization and resource evidence on the two staged gameplay copies. The observed native phase constrains scheduling-only wins. No matched 5–10× result has been established."
+    },
+    {
       "id": "QB-REPLAY-029",
       "kind": "feature",
       "stage": "ready",

@@ -216,11 +216,14 @@ performance comparison.
 `htmlVideoPlaybackAdapter.ts`: source/load, native play/pause, seek scheduling,
 presentation callbacks, recovery, preferences, metrics and disposal. The viewer
 retains layout and clip-selection policy and routes benchmark actions through the
-same controller. Seeks explicitly settle superseded play operations, pause the
-element and await natural target presentation. Native seek completion and the
-qualifying frame callback may arrive in either order; automatic resumption waits
-for both and preserves current pause/rate intent. A synchronous user play during
-that wait retains its operation rather than being restarted by seek completion.
+same controller. The native seek slot retains one replaceable pending request.
+Timeline pointer movement keeps the 100 ms dispatch interval. Pointer release
+commits the final target as soon as the native slot is free, including when it
+repeats the pending frame from the last move. Seeks settle superseded play
+operations, pause the element and await natural target presentation. Native seek
+completion and the qualifying frame callback may arrive in either order.
+Automatic resumption waits for both and preserves current pause/rate intent. A
+synchronous user play during that wait retains ownership of its operation.
 Separate 1500 ms native-seek and presentation deadlines enter bounded recovery;
 no temporary low-rate play pulse is used. Invalid open inputs are rejected before
 the current generation changes.

@@ -624,7 +624,7 @@ it("seeks, zooms and pans the actual rail using the shared viewport before detai
   pointer(h.rail, "pointermove", 600, 99);
   expect(h.seek).toHaveBeenCalledTimes(1);
   pointer(h.rail, "pointerup", 500);
-  expect(h.seek).toHaveBeenLastCalledWith(tick(50)); expect(c.held.size).toBe(0);
+  expect(h.seek).toHaveBeenLastCalledWith(tick(50), { scrubCommit: true }); expect(c.held.size).toBe(0);
   const slider = h.host.querySelector<HTMLElement>('[role="slider"]')!;
   expect(document.activeElement).toBe(slider);
   slider.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));

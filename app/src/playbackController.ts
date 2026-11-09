@@ -82,10 +82,11 @@ const browserClock: PlaybackClock = {
   clearTimeout: (handle) => globalThis.clearTimeout(handle),
   token: () => crypto.randomUUID(),
 };
-type SeekOptions = { reason?: string; playAfter?: boolean; actionId?: string };
+export type SeekOptions = { reason?: string; playAfter?: boolean; actionId?: string; scrubCommit?: boolean };
 type PendingSeek = {
   target: ReplayTick;
   preview: ReplayTick;
+  scrubCommit?: boolean;
   reason: string;
   actionId?: string;
   generation: number;
@@ -494,7 +495,7 @@ export function createPlaybackController(
     clearTimer("dispatch");
     if (active || !pending || readiness !== "ready" || !metadataReady) return;
     const delay = lastDispatchAt + 100 - clock.now();
-    if (delay > 0) { later("dispatch", delay, dispatchPending); return; }
+    if (!pending.scrubCommit && delay > 0) { later("dispatch", delay, dispatchPending); return; }
     const request = pending;
     pending = undefined;
     const current = media.read().tick;
@@ -549,6 +550,11 @@ export function createPlaybackController(
       repeated.preview = preview;
       state = requestPreview(state, preview);
       emit("seek_deduped", { target_ms: ms(dispatched), reason, in_flight: true }, settings);
+      // Pointer-up can commit the frame already queued by the last move.
+      if (settings.scrubCommit && repeated === pending) {
+        repeated.scrubCommit = true;
+        dispatchPending();
+      }
       publish();
       return repeated.result;
     }
@@ -565,7 +571,7 @@ export function createPlaybackController(
     state = requestPreview(state, preview);
     let resolve!: (outcome: SeekOutcome) => void;
     const result = new Promise<SeekOutcome>(complete => { resolve = complete; });
-    pending = { target: dispatched, preview, reason, actionId: settings.actionId, generation: state.generation,
+    pending = { target: dispatched, preview, scrubCommit: settings.scrubCommit, reason, actionId: settings.actionId, generation: state.generation,
       intent, epoch: 0, requestedAt: clock.now(), dispatchedAt: 0, from: media.read().tick ?? state.presented ?? zero,
       presented: null, settled: false, result, resolve };
     emit("seek_requested", { requested_preview_ms: ms(preview), raw_requested_ms: ms(target), from_ms: ms(pending!.from), reason }, pending);
