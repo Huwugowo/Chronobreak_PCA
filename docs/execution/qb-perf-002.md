@@ -30,6 +30,7 @@ Do not substitute current-workstation generated-window evidence, the historical 
 - Corrected the League end-of-game lifecycle: an exact selected HWND closure is now treated as the terminal capture boundary and routed through graceful native worker stop, mux flush, metadata publication, and `Idle` projection; replaced/foreign HWND identity failures remain explicit partial failures. Added a service classification test and documented the lifecycle contract.
 - Corrected fragmented-MP4 finalized-media validation: a private fixed-memory header reader supplies the missing actual sample count, skips media payload, enforces the shared five-second deadline, and rejects malformed/truncated fragments. Shared replay-time checks and producer reconciliation remain unchanged. Finalization errors now log their full cause chain.
 - Eliminated redundant BGRA-to-NV12 blits for repeated images when the selected free slot still contains the current snapshot. The slot is reused only after NVENC unmaps it. Fresh snapshots and processor reconfiguration invalidate reuse. Source selection, four-slot ownership, encoder submissions, and the 60 FPS output clock are unchanged.
+- Added deterministic regression coverage for `215002f`: new-snapshot invalidation, completed-slot reuse, and resize. Test-only COM call recording exercises the converter methods without a capture window, GPU, NVENC driver, or timing dependency; production code is unchanged.
 
 ## In flight
 
@@ -43,6 +44,13 @@ None for the local NV12 reuse unit. Recorder automation, the locked release buil
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
 
 ## Verification
+
+2026-11-09 deterministic NV12 reuse regressions for `215002f`:
+
+- Three tests exercise the real `stage_source_texture`, `convert_staged`, slot submission/completion, and `reconfigure_input` paths. They cover invalidation of all four slots while submitted, mandatory reconversion after a new snapshot, reuse only after completion, fresh tick timestamps and frame-index advancement without extra blits, full-ring rejection, leased resize rejection, same-size no-op, retained output textures, and the fresh-snapshot requirement after resize.
+- The focused converter suite passed 11/11 tests. Removing new-snapshot invalidation, disabling completed-slot reuse, and removing resize invalidation each caused its corresponding new test to fail at the intended assertion. The exact original converter source was restored before final checks. Mutation logs are under `build/verification/nv12-reuse-mutations/`.
+- Locked all-target/all-feature recorder check, tests, and strict Clippy passed; formatting passed. The final suite reported 283 library, 7 binary, and 3 example tests passed, with 16 opt-in library tests ignored. Canonical validation passed for 122 items and 32 plan/checkpoint pairs; diff hygiene passed. Check logs are under `build/verification/nv12-reuse/`. The required command logger initially could not write its protected log directory; rerunning with log access succeeded.
+- No production defect was found. These CPU-only tests verify cache decisions, ownership transitions, and graphics-call counts; no new physical GPU, decoded-media, or League performance validation is claimed. The feature remains blocked on the existing formal target matrix.
 
 2026-11-09 local NVIDIA attribution and NV12 reuse, release fixture from source revision `47848b5` plus the targeted working-tree change:
 

@@ -1060,6 +1060,10 @@ fn input_cache_insertion(current_len: usize, next_replacement: usize) -> (usize,
 }
 
 #[cfg(test)]
+#[path = "convert_reuse_tests.rs"]
+mod reuse_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
