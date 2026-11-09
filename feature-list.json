@@ -51,6 +51,7 @@
       ],
       "notes": "User explicitly revised the plan and bypassed the normal planning/milestone workflow on 2026-11-01. Implement the coherent lifecycle directly, run proportionate checks, and commit. No five-minute lost-window cutoff, mandatory long soaks or new verification framework. Startup policy, audio and library UX remain separate features."
     },
+
     {
       "id": "QB-LIB-024",
       "kind": "feature",
@@ -100,8 +101,13 @@
       "area": "capture",
       "status": "in-progress",
       "parent_id": "EPIC-CAP-REL",
-      "dependencies": ["QB-CAP-001"],
-      "execution": {"workflow": "direct", "plan": null},
+      "dependencies": [
+        "QB-CAP-001"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null
+      },
       "acceptance_criteria": [
         "Every native capture session requests IsBorderRequired=false before StartCapture.",
         "Unsupported border suppression does not prevent recording and its API error is logged.",
