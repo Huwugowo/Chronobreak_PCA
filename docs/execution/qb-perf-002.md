@@ -10,7 +10,7 @@ Superseding-plan Milestone 5: valid target League capped/uncapped performance pr
 
 ## Active unit
 
-None. The fresh-frame investigation is complete without a qualifying production change; Milestone 5 remains blocked on the formal target League matrix. The dated paragraphs below preserve the scope of completed local units.
+None. The fresh-frame GPU cost investigation is complete. The formal League matrix remains separate.
 
 2026-11-09 fresh-frame coverage request, baseline `c61956c`: measure actual callback/worker QPC against source QPC and CFR deadlines on the unchanged generated workload. Identify scheduling/catch-up losses and test only a justified cost-neutral improvement. Fresh selected source frames, total GPU/CPU work and unchanged timestamp correctness are the acceptance criteria; discard counts alone are not. Temporary bounded timing instrumentation is diagnostic only. The formal League matrix remains separate.
 
@@ -39,8 +39,11 @@ Do not substitute current-workstation generated-window evidence, the historical 
 - Added deterministic regression coverage for `215002f`: new-snapshot invalidation, completed-slot reuse, and resize. Test-only COM call recording exercises the converter methods without a capture window, GPU, NVENC driver, or timing dependency; production code is unchanged.
 - Investigated the remaining worker discards on the unchanged Philips/RTX 3050 Ti generated-window workload. Measured and rejected both future-retention experiments: the broad guard masks eligible out-of-order input; the narrower wait-only guard reduces discards over 30x but increases GPU work. Restored the exact production policy and retained an out-of-order handoff regression plus the measurements below. No cost-neutral discard reduction is claimed.
 - Measured actual callback receipt, source QPC, selection and CFR deadlines on a common QPC clock. Current full-graph and immediate-close source-only runs both deliver about 37–41 WGC frames/s; steady selection in the 60-second trace matches both eligible-arrival replays at 40.28 fresh frames/s. No meaningful cost-neutral scheduling correction was identified. Removed all temporary instrumentation and retained the unchanged production graph plus the bounded evidence below.
+- Measured per-fresh and total GPU engine time for direct NV12 staging and cached-slot preference. Rejected direct staging because of the combined GPU results and a padded-surface pixel mismatch. Kept cached-slot preference, which eliminates a redundant blit when a returned slot already holds the current image. Archived both trials.
 
 ## In flight
+
+None for the fresh-frame GPU cost investigation. Cached-slot preference extends the original NV12 reuse. All temporary instrumentation is archived outside the source tree.
 
 None for the fresh-frame investigation. No qualifying production improvement was found under the measured current source-delivery limit. All temporary instrumentation is removed. The earlier 52–57-arrival / 25–34-copy regime did not recur, so this result does not establish its unmeasured wall-clock delivery phase or a universal WGC limit. The formal target League matrix remains outstanding.
 
@@ -52,6 +55,29 @@ None for the fresh-frame investigation. No qualifying production improvement was
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
 
 ## Verification
+
+2026-11-09 fresh-frame GPU cost investigation, baseline `fbf8fa6`.
+
+- Used the frozen steady 1920x1080 generated window on the Philips display and RTX 3050 Ti Laptop adapter `0000000000012a3e`, Windows 19045 and verified r6 runtime. The 45-second recordings used the same System Audio and H.264 High 1080p60 settings and diagnostic retry ceiling. A temporary opt-in tick trace recorded each committed cutoff, selected source QPC, fresh count and actual commit QPC, then wrote its buffer after the worker shut down. The 38-second sample window starts five seconds after the first source epoch and ends two seconds before the requested duration. Windows GPU engine running-time deltas and fresh commits use that window. Engine milliseconds sum concurrent engines. The combined column includes DWM, recorder and FFmpeg GPU work. DWM includes shared desktop activity. The whole-adapter column also includes unrelated processes.
+
+| Arm | WGC arrivals/s | Fresh/s | Recorder 3D | DWM | Video Encode | Combined | Whole adapter | Combined ms/fresh |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline A | 53.07 | 22.68 | 83.32 | 132.20 | 417.91 | 633.42 | 732.00 | 27.92 |
+| Baseline C | 53.22 | 30.13 | 105.48 | 129.15 | 378.06 | 612.69 | 710.79 | 20.33 |
+| Baseline D | 51.93 | 22.79 | 82.67 | 127.33 | 384.53 | 594.52 | 689.14 | 26.09 |
+| Baseline E | 52.47 | 22.71 | 87.36 | 137.23 | 417.41 | 642.01 | 742.62 | 28.27 |
+| NV12 staging A | 51.49 | 23.18 | 65.03 | 148.02 | 422.39 | 635.44 | 743.69 | 27.41 |
+| NV12 staging B | 52.04 | 25.87 | 72.92 | 148.60 | 422.57 | 644.09 | 750.39 | 24.90 |
+| Cached-slot preference A | 52.02 | 24.63 | 92.82 | 136.77 | 409.80 | 639.39 | 739.59 | 25.96 |
+| Cached-slot preference B | 52.33 | 27.32 | 101.82 | 135.36 | 389.27 | 626.45 | 723.76 | 22.93 |
+
+GPU columns other than the last are engine ms/s. Arrival rates use the full recording. Baseline B missed recorder engine instances during Windows counter registration and was excluded. The earlier cached WGC-view trial also lowered recorder 3D (62.21 ms/s) with higher DWM (153.16 ms/s) and a comparable combined total (631.12 ms/s at 23.26 fresh/s). The revised trial released input views before returning WGC frames, following the surface lifetime contract. [Microsoft WGC frame handling](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture)
+
+- The NV12 trial replaced the owned 8,294,400-byte BGRA staging image with a 3,110,400-byte NV12 image. It converted each selected source once and copied the smaller image into a free encoder slot on a cache miss. In Baseline A versus revised staging A at comparable fresh coverage, full-run blits fell from 1,104 to 1,036 and nominal texture copy payload fell from 8.49 GB to 3.42 GB (1,024 BGRA copies versus 1,099 NV12 copies). Recorder 3D per fresh frame fell from 3.67 to 2.80 engine ms, while the combined total rose from 633.42 to 635.44 engine ms/s and the whole adapter rose from 732.00 to 743.69. The repeated trial had higher combined and adapter work than each valid baseline. The DWM increase is observed, with cause unresolved. A fixture-only run also had substantial compositor activity (175.02 engine ms/s), which makes subtraction of that one run unreliable as a WGC overhead estimate.
+- The physical NV12 readback matched all 3,110,400 visible bytes at 1920x1080, a 1600x900 upscale and a 2048x1024 crop, including held repeats. With 1600x900 content in a surface padded by 32 pixels on the right and bottom, direct conversion differed from the bounded BGRA copy path by 997 NV12 bytes. A source rectangle alone did not reproduce the old edge pixels on this driver. Rejected NV12 staging on total GPU cost and pixel correctness. The timestamp-query microbenchmark returned identical start/end timestamps for isolated video processor batches on this driver, so there is no separate trustworthy blit-duration estimate.
+- Cached-slot preference keeps the BGRA snapshot and existing conversion. It atomically reserves a free slot with the current NV12 pixels if possible and falls back to the original first-free search. Repeat blits per 1,000 duplicate ticks went from 47.6–51.5 across the valid baselines to 46.5 and 46.2. The adjacent Baseline E had 87 repeat blits, compared with 74 and 67 in the preference arms. Recorder plus FFmpeg CPU time was 69.16 CPU ms/s in Baseline E and 56.19 and 54.63 in the preference arms. Combined GPU time fell by 0.4% and 2.4% versus E but stayed within the range of valid baselines. Fresh rate varied even across identical baseline binaries. The lower combined time per fresh frame versus E therefore cannot be assigned to the slot preference. The deterministic regression verifies that the targeted blit is skipped, submitted cached slots remain unavailable, stale free slots remain usable, and CFR time advances.
+- All valid recordings had 2,700 H.264 High 1920x1080 frames at exact 1/60-second PTS/DTS spacing, AAC and full strict decode. The tick traces verified monotonic selected source QPCs at or before each cutoff and exact submitted/completed/muxed counts. System Audio was idle or used fallback AAC, so this is video timing and quality evidence. Video Encode used 378–418 engine ms/s (62–66% of the baseline combined time) for the existing 60 submissions/s. Even removing every other measured operation would leave over six times the budget for a 10x reduction at the same fresh coverage. Submitting a single latest texture to NVENC would also couple its reuse to the encoder lease. Existing mapping/unmapping and four independent slots keep capture and submission bounded through catch-up. [NVIDIA NVENC input resource handling](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/nvenc-video-encoder-api-prog-guide/index.html)
+- Raw counter data, aligned tick traces, packets, media, trial patches, test logs and measurement scripts are in `build/perf/fresh-gpu-cost-20261109/`.
 
 2026-11-09 fresh-frame timing investigation, baseline `c61956c`:
 
@@ -207,6 +233,8 @@ The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target
 The Philips display now exercises the supported NVIDIA graph on this workstation. The local generated-window result has no League frametime, fight-load, or live-poller evidence. System Audio slot retry timing and Video Encode transients remain unattributed. No evidence establishes the requested 5–10× gameplay improvement or a fundamental limit on it.
 
 ## Next action
+
+The fresh-frame GPU cost unit is complete with cached-slot preference. Keep the bounded BGRA staging path. A future replacement needs to save combined engine work at comparable fresh coverage and reproduce edge pixels for surfaces larger than the valid WGC content.
 
 The fresh-frame unit is complete without production changes. If the earlier 52–57-arrival / 25–34-copy regime recurs, reuse the archived opt-in common-QPC diagnostic to measure its actual delivery phase before proposing a scheduler or timestamp change. Do not count the unchanged binary's current higher copy rate as an optimization, generalize the present endpoint limit, add buffering, or rerun a broad campaign without a concrete new hypothesis.
 

@@ -47,15 +47,20 @@ impl NativeNv12SlotStates {
     }
 
     fn try_acquire_converted(&self) -> Option<usize> {
-        self.states.iter().position(|state| {
-            state
-                .compare_exchange(
-                    NV12_SLOT_FREE,
-                    NV12_SLOT_CONVERTED,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
+        self.try_acquire_converted_matching(|_| true)
+    }
+
+    fn try_acquire_converted_matching(&self, eligible: impl Fn(usize) -> bool) -> Option<usize> {
+        self.states.iter().enumerate().position(|(index, state)| {
+            eligible(index)
+                && state
+                    .compare_exchange(
+                        NV12_SLOT_FREE,
+                        NV12_SLOT_CONVERTED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
         })
     }
 
@@ -436,7 +441,13 @@ impl NativeNv12Converter {
             "native CFR tick requested before the first source snapshot"
         );
         ensure!(qpc_100ns > 0, "native CFR tick timestamp must be positive");
-        let Some(slot_index) = self.slot_states.try_acquire_converted() else {
+        // A returned slot can already hold this snapshot even when a lower
+        // slot is free. Prefer that image without waiting for submitted slots.
+        let slot_index = self
+            .slot_states
+            .try_acquire_converted_matching(|index| self.slots[index].holds_latest_snapshot)
+            .or_else(|| self.slot_states.try_acquire_converted());
+        let Some(slot_index) = slot_index else {
             self.telemetry.no_free_slot_admission_failures = self
                 .telemetry
                 .no_free_slot_admission_failures

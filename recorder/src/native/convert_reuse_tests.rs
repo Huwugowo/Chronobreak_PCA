@@ -303,6 +303,37 @@ fn completed_slot_reuses_nv12_but_still_advances_each_tick() {
 }
 
 #[test]
+fn completed_slot_with_current_snapshot_is_preferred_over_stale_free_slot() {
+    let calls = Rc::new(Calls::default());
+    let mut converter = converter(&calls);
+    stage(&mut converter, &calls);
+    let first = converter.convert_staged(100).unwrap().unwrap();
+    assert_eq!(first.mark_submitted().unwrap(), (0, 100));
+
+    stage(&mut converter, &calls);
+    let fresh = converter.convert_staged(200).unwrap().unwrap();
+    assert_eq!(fresh.mark_submitted().unwrap(), (1, 200));
+    converter.slot_states.complete_submitted(0).unwrap();
+
+    // Slot 1 is still mapped, so a free stale slot must be converted.
+    let repeat = converter.convert_staged(300).unwrap().unwrap();
+    assert_eq!(repeat.mark_submitted().unwrap(), (0, 300));
+    converter.slot_states.complete_submitted(1).unwrap();
+
+    stage(&mut converter, &calls);
+    let fresh = converter.convert_staged(400).unwrap().unwrap();
+    assert_eq!(fresh.mark_submitted().unwrap(), (1, 400));
+    converter.slot_states.complete_submitted(0).unwrap();
+    converter.slot_states.complete_submitted(1).unwrap();
+
+    let repeat = converter.convert_staged(500).unwrap().unwrap();
+    assert_eq!((repeat.slot_index(), repeat.qpc_100ns()), (1, 500));
+    repeat.release();
+    assert_eq!(*calls.blits.borrow(), [0, 1, 2, 3]);
+    assert_eq!(converter.output_frame_index, 5);
+}
+
+#[test]
 fn new_snapshot_invalidates_every_slot_including_submitted_slots() {
     let calls = Rc::new(Calls::default());
     let mut converter = converter(&calls);
