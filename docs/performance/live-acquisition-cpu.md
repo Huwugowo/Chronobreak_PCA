@@ -116,3 +116,58 @@ The complete rerun with access passed. No live-game or hardware run was needed
 for this synthetic CPU comparison.
 The focused acquisition test also confirms that a valid body with excessive
 spare allocation capacity takes the full path on every response.
+
+## Follow-up: roster checkpoints and journal allocations
+
+`QB-DATA-006` removes two full roster copies from the common commit path. The
+checkpoint validates roster changes transactionally by sharing immutable player
+payloads, then builds a full roster when a snapshot is requested. The app index
+reads the current epoch directly during import. The journal also reuses its entry
+and commit-frame buffers. That trades per-commit allocations for scratch capacity
+held by the writer, with growth requests capped at the existing byte limits.
+
+The comparison used the same fixture and instrumentation described above, with
+the completed Events optimization in both arms. Two frozen Windows release
+builds ran in baseline, candidate, candidate, baseline order. The first baseline
+ran before implementation. The other three ran consecutively after compilation.
+The table reports medians of two runs per build. All four runs issued the same
+requests and received the same body byte totals, with zero skips and failures.
+Recovery validated 2,072 commits containing 9,021 records and no tail bytes. The
+3,600 event observations and 326 revisions matched digest `2c005530fbd92dfa`.
+
+| Measurement | Baseline | Candidate |
+| --- | ---: | ---: |
+| Process CPU per simulated match, ms | 1,578.1 | 1,593.8 |
+| Allocation calls, millions | 6.71 | 5.19 |
+| Cumulative allocated MB | 810.51 | 676.58 |
+| Checkpoint projection, million thread cycles | 539.4 | 106.5 |
+| Checkpoint projection wall time, p95 / p99 µs | 225.4 / 278.7 | 59.0 / 109.9 |
+| Checkpoint and manifest publication, million thread cycles | 418.7 | 380.9 |
+| Journal encoding and checksum, million thread cycles | 214.9 | 166.8 |
+| Journal encoding and checksum allocation calls | 34,708 | 23 |
+
+Checkpoint projection used 80.3% fewer measured cycles. Snapshot construction
+moves some allocation into checkpoint publication, and the combined checkpoint
+stages still made about 88% fewer allocation calls. Total allocation calls fell
+22.6% and cumulative allocated bytes fell 16.5%. Process CPU was mixed. The first
+baseline and candidate used 1,671.9 and 1,531.3 ms respectively, while the second
+candidate and baseline used 1,656.3 and 1,484.4 ms. This comparison leaves any
+whole-workload CPU gain unresolved.
+
+PlayerList decoding remains the largest measured stage at about 1,252 million
+cycles. Roster normalization accounts for about 509 million more. The journal's
+write and sync stage accounts for about 818 million cycles, with the same sync
+boundary per commit. These are synthetic data pipeline measurements. The test
+scope excludes gameplay and the rest of the recorder.
+
+Shared League-data tests passed, including 20 journal tests, 15 observation
+tests, and both Criterion smoke cases. The journal regressions cover rejected
+partially encoded batches, checkpoint equivalence when snapshots are deferred,
+invalid references, and source resets. Recorder all-target and all-feature
+checking, 299 tests and strict Clippy passed. The app backend passed 218 tests
+and strict Clippy. Formatting, frontend type checking, the frontend production
+build, 586 frontend tests, and canonical roadmap validation passed.
+
+The [four release runs and executable hashes](evidence/live-acquisition-remaining-20261109/results.json)
+retain the stage latency, allocation and cycle measurements. Raw logs and the
+frozen executables are under `build/perf/live-acquisition-remaining-20261109/`.

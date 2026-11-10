@@ -320,7 +320,7 @@ impl WriterSession {
                     };
                 }
             };
-            let state = checkpoint::State::new(header, writer.position().clone());
+            let mut state = checkpoint::State::new(header, writer.position().clone());
             let initial_manifest = task_budget
                 .ensure_owned()
                 .and_then(|()| manifest::Manifest::from_checkpoint(state.snapshot()).encode())
@@ -527,14 +527,14 @@ fn run_worker<W: journal::DurableWrite>(
             break;
         }
         if checkpoint_at.elapsed() >= CHECKPOINT_INTERVAL {
-            persist_checkpoint(&state, &checkpoint_output, &budget, &mut report);
-            persist_manifest(&state, &checkpoint_output, &budget, &mut report);
+            persist_checkpoint(&mut state, &checkpoint_output, &budget, &mut report);
+            persist_manifest(&mut state, &checkpoint_output, &budget, &mut report);
             checkpoint_at = Instant::now();
         }
     }
     if !report.failed {
-        persist_checkpoint(&state, &checkpoint_output, &budget, &mut report);
-        persist_manifest(&state, &checkpoint_output, &budget, &mut report);
+        persist_checkpoint(&mut state, &checkpoint_output, &budget, &mut report);
+        persist_manifest(&mut state, &checkpoint_output, &budget, &mut report);
     }
     report.queue_high_water_bytes = budget.maximum_bytes.load(Ordering::Relaxed);
     report.rejected_batches = budget.rejected.load(Ordering::Relaxed);
@@ -545,7 +545,7 @@ fn run_worker<W: journal::DurableWrite>(
 // is recoverable through the journal; publish it with periodic checkpoints and
 // after a graceful drain rather than replacing/syncing it for every commit.
 fn persist_manifest(
-    state: &checkpoint::State,
+    state: &mut checkpoint::State,
     output: &Option<DirectoryGuard>,
     budget: &Budget,
     report: &mut WriterReport,
@@ -571,7 +571,7 @@ fn persist_manifest(
 }
 
 fn persist_checkpoint(
-    state: &checkpoint::State,
+    state: &mut checkpoint::State,
     output: &Option<DirectoryGuard>,
     budget: &Budget,
     report: &mut WriterReport,

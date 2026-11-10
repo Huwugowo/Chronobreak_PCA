@@ -451,7 +451,7 @@ fn roster_age_and_latest_empty_roster_do_not_resurrect_players_or_stats() {
 
 #[test]
 fn tail_and_corrupt_anchor_stay_optional_to_healthy_media() {
-    let f = Fixture::new(1);
+    let mut f = Fixture::new(1);
     let mut index = f.index();
     f.ready(&mut index);
     fs::OpenOptions::new()

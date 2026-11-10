@@ -77,12 +77,12 @@ impl Index {
                     check()?;
                     let records: Vec<_> = entries.iter().map(|e| e.record.clone()).collect();
                     state.apply(&records, position)?;
-                    let cp = state.snapshot();
+                    let source_epoch = state.source().epoch;
                     for entry in entries {
                         import_record(&tx, entry, timeline)?;
                     }
                     tx.prepare_cached("INSERT INTO commits(media_id,sequence,position_json,epoch) VALUES (?1,?2,?3,?4)")?.execute(
-                    params![media.as_str(),sql_u64(position.last_sequence)?,serde_json::to_string(position)?,sql_u64(cp.source.epoch)?])?;
+                    params![media.as_str(),sql_u64(position.last_sequence)?,serde_json::to_string(position)?,sql_u64(source_epoch)?])?;
                     check()?;
                     batches += 1;
                     Ok(())

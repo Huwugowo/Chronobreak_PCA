@@ -171,7 +171,9 @@ impl RosterStore {
 #[derive(Clone, Default)]
 pub struct RosterReader {
     scope: Option<SourceEpoch>,
-    current: BTreeMap<PayloadId, RosterPlayer>,
+    // Speculative checkpoint validation clones the dictionary, not the immutable
+    // player payloads. No mutable player references escape the reader.
+    current: BTreeMap<PayloadId, std::sync::Arc<RosterPlayer>>,
     references: Vec<PayloadId>,
 }
 impl RosterReader {
@@ -184,7 +186,7 @@ impl RosterReader {
         Ok(self
             .references
             .iter()
-            .map(|id| self.current[id].clone())
+            .map(|id| self.current[id].as_ref().clone())
             .collect())
     }
 
@@ -213,7 +215,7 @@ impl RosterReader {
                 && self
                     .current
                     .get(&payload.id)
-                    .is_some_and(|previous| previous != &payload.player)
+                    .is_some_and(|previous| previous.as_ref() != &payload.player)
             {
                 return Err(GapReason::InvalidShape);
             }
@@ -231,7 +233,7 @@ impl RosterReader {
         for payload in &row.payloads {
             self.current
                 .entry(payload.id)
-                .or_insert_with(|| payload.player.clone());
+                .or_insert_with(|| std::sync::Arc::new(payload.player.clone()));
         }
         self.scope = Some(scope.clone());
         self.references.clone_from(&row.references);
@@ -249,7 +251,7 @@ impl RosterReader {
                 .iter()
                 .map(|(id, player)| SharedPlayer {
                     id: *id,
-                    player: player.clone(),
+                    player: player.as_ref().clone(),
                 })
                 .collect(),
         }

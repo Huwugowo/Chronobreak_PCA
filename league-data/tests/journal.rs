@@ -253,7 +253,10 @@ fn scope_and_capacity_errors_write_nothing_and_do_not_poison_writer() {
         evidence: bad,
         active: true,
     };
-    assert!(matches!(writer.commit(&[bad]), Err(Error::Invalid(_))));
+    assert!(matches!(
+        writer.commit(&[fixture_record(1, Endpoint::GameStats, "gs"), bad]),
+        Err(Error::Invalid(_))
+    ));
     let huge = Record::Observation {
         observation: Box::new(Observation::Success {
             evidence: evidence(2, Endpoint::ActivePlayer),
@@ -269,6 +272,11 @@ fn scope_and_capacity_errors_write_nothing_and_do_not_poison_writer() {
         .commit(&[fixture_record(3, Endpoint::GameStats, "gs")])
         .unwrap();
     assert_eq!(writer.position().last_sequence, 1);
+    let (recovered, rows) = replay(&output.0.borrow().bytes);
+    assert_eq!(&recovered.position, writer.position());
+    assert_eq!(recovered.tail_bytes, 0);
+    assert_eq!(rows, [fixture_record(3, Endpoint::GameStats, "gs")]);
+    assert_eq!(output.0.borrow().syncs, 2);
     let oversized = vec![b'x'; MAX_BATCH_BYTES + 1];
     assert!(matches!(
         recover(Cursor::new(oversized), |_, _| Ok(())),
@@ -856,6 +864,103 @@ fn checkpoint_contains_only_committed_current_state_and_resumes_roster_reference
     )
     .unwrap();
     assert_eq!(rebuilt.snapshot(), state.snapshot());
+}
+
+#[test]
+fn deferred_checkpoint_matches_each_commit_snapshots_through_rejection_and_reset() {
+    fn commit(
+        writer: &mut RetainingWriter<Memory>,
+        eager: &mut checkpoint::State,
+        deferred: &mut checkpoint::State,
+        records: &[Record],
+    ) {
+        writer
+            .commit_acquired_with(records, |rows, position| {
+                eager.apply(rows, position).unwrap();
+                eager.snapshot();
+                deferred.apply(rows, position).unwrap();
+            })
+            .unwrap();
+    }
+
+    let header = Header::new(&scope());
+    let writer = Writer::new(Memory::default(), header.clone()).unwrap();
+    let mut eager = checkpoint::State::new(header.clone(), writer.position().clone());
+    let mut deferred = checkpoint::State::new(header, writer.position().clone());
+    let mut writer = RetainingWriter::new(writer);
+    for id in 1..=4 {
+        let mut row = fixture_record(id, Endpoint::PlayerList, "pl");
+        if id == 3
+            && let Record::Observation { observation } = &mut row
+            && let Observation::Success {
+                payload: Payload::PlayerList(players),
+                ..
+            } = observation.as_mut()
+        {
+            players[0].scores = None;
+            players[0]
+                .issues
+                .insert("scores".into(), FieldIssue::SourceError);
+        }
+        commit(&mut writer, &mut eager, &mut deferred, &[row]);
+    }
+    // Rejection must preserve the latest committed roster even when it has
+    // never yet been materialized into a full checkpoint.
+    let mut future = writer.position().clone();
+    future.last_sequence += 2;
+    future.end_offset += 1;
+    assert!(
+        deferred
+            .apply(
+                &[
+                    fixture_record(5, Endpoint::GameStats, "gs"),
+                    Record::RosterObservation {
+                        evidence: evidence(6, Endpoint::PlayerList),
+                        roster: roster::RosterObservation {
+                            full: false,
+                            references: vec![roster::PayloadId(999)],
+                            payloads: vec![],
+                        },
+                    },
+                ],
+                &future,
+            )
+            .is_err()
+    );
+    assert_eq!(deferred.snapshot(), eager.snapshot());
+
+    commit(
+        &mut writer,
+        &mut eager,
+        &mut deferred,
+        &[fixture_record(5, Endpoint::PlayerList, "pl")],
+    );
+    let mut reset = evidence(6, Endpoint::GameStats);
+    reset.source.epoch = 1;
+    commit(
+        &mut writer,
+        &mut eager,
+        &mut deferred,
+        &[Record::SourceReset {
+            evidence: reset,
+            previous_epoch: 0,
+        }],
+    );
+    assert_eq!(deferred.source().epoch, 1);
+    assert_eq!(deferred.snapshot(), eager.snapshot());
+    assert!(deferred.snapshot().roster.is_none());
+    let mut row = fixture_record(7, Endpoint::PlayerList, "pl");
+    if let Record::Observation { observation } = &mut row
+        && let Observation::Success { evidence, .. } = observation.as_mut()
+    {
+        evidence.source.epoch = 1;
+    }
+    commit(&mut writer, &mut eager, &mut deferred, &[row]);
+    assert_eq!(deferred.snapshot(), eager.snapshot());
+    assert_eq!(
+        deferred.snapshot().roster.as_ref().unwrap().0.source.epoch,
+        1
+    );
 }
 
 #[test]

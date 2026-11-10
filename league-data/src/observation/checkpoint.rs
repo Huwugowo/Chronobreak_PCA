@@ -47,6 +47,7 @@ impl Checkpoint {
 pub struct State {
     checkpoint: Checkpoint,
     roster: roster::RosterReader,
+    pending_roster: Option<Evidence>,
 }
 impl State {
     pub fn new(header: journal::Header, position: journal::Position) -> Self {
@@ -69,10 +70,20 @@ impl State {
                 local_participant: None,
             },
             roster: roster::RosterReader::default(),
+            pending_roster: None,
         }
     }
-    pub fn snapshot(&self) -> &Checkpoint {
+    /// Materialize the full current roster only when a consumer needs a snapshot.
+    /// Committed reference updates remain validated and applied immediately.
+    pub fn snapshot(&mut self) -> &Checkpoint {
+        if let Some(evidence) = self.pending_roster.take() {
+            self.checkpoint.roster = Some((evidence, self.roster.full_state()));
+        }
         &self.checkpoint
+    }
+
+    pub fn source(&self) -> &SourceEpoch {
+        &self.checkpoint.source
     }
 
     /// The caller must obtain this header/position from validated journal framing,
@@ -114,7 +125,11 @@ impl State {
                 return Err(Error::Invalid("checkpoint evidence scope"));
             }
         }
-        Ok(Self { checkpoint, roster })
+        Ok(Self {
+            checkpoint,
+            roster,
+            pending_roster: None,
+        })
     }
 
     /// Apply only a complete checksum-validated committed batch. Errors preserve
@@ -226,9 +241,10 @@ impl State {
             }
         }
         if let Some(roster_reader) = roster_reader {
-            if let Some(evidence) = roster_evidence {
-                next.roster = Some((evidence.clone(), roster_reader.full_state()));
-            }
+            // Discard a superseded full snapshot instead of rebuilding it after
+            // every commit. A reset also clears any unmaterialized old roster.
+            next.roster = None;
+            self.pending_roster = roster_evidence.cloned();
             self.roster = roster_reader;
         }
         next.position = position.clone();

@@ -1783,6 +1783,32 @@
       "notes": "Completed bounded direct optimization of the existing contract. Exact byte repeats reference the last admitted strictly decoded all-ID response. The retaining writer expands references to ordinary event observations or the same normalization gap, staging state until durable commit. Changed bodies and unidentified rows retain full processing. Cache allocation including spare capacity is capped at 4 MiB outside queue credits. No additional API fields or live-game validation campaign."
     },
     {
+      "id": "QB-DATA-006",
+      "kind": "feature",
+      "name": "Reduce remaining Live Client processing allocations",
+      "description": "Remove measured redundant work in roster processing and journal checkpoint projection after the cumulative Events optimization.",
+      "priority": "P1",
+      "area": "match-data",
+      "status": "done",
+      "stage": "ready",
+      "dependencies": ["QB-DATA-005"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Use the existing simulated 60-minute production acquisition/journal workload to compare frozen release builds on the same host. Retain per-stage CPU, allocations and latency plus whole-workload CPU; retain the largest justified bounded improvements and report remaining costs without a whole-recorder or gameplay claim.",
+        "Preserve endpoint requests and cadence, strict input validation and missing/unknown-data behavior, every observation and timestamp, event corrections, queue bounds, batching deadlines, journal/checkpoint schemas, crash recovery and durable sync guarantees.",
+        "Verify changed paths against representative and malformed fixtures, journal/recovery equivalence, existing acquisition contracts, applicable shared-data/recorder/backend checks and canonical validation. No new persistent cache or persistence protocol, delayed durability, capture/audio change or lowered data quality."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Interleave frozen before/after Windows release profile executables; compare total CPU/allocations and stage measurements while reconciling requests, committed observations and recovered evidence.", "command": "cargo test --locked --manifest-path recorder/Cargo.toml --release --lib contract_growing_match_profile -- --ignored --nocapture --test-threads=1"},
+        {"type": "automated", "description": "Run focused roster and checkpoint regressions, shared-data and recorder suites, strict Clippy/formatting and applicable backend consumer checks."}
+      ],
+      "evidence": [
+        "Four frozen Windows release runs in docs/performance/evidence/live-acquisition-remaining-20261109/results.json retained identical request and record counts, 2,072 commits, zero recovery tail, and event digest 2c005530fbd92dfa. Checkpoint projection cycles fell 80.3%, allocation calls fell 22.6%, and allocated bytes fell 16.5%. Median whole-workload process CPU was 1,578.1 versus 1,593.8 ms, with mixed results across pairs.",
+        "Journal recovery and deferred checkpoint regressions passed. Shared League-data suites, recorder all-target/all-feature checks and tests, backend tests, strict Clippy, formatting, frontend checks/tests/build, and canonical validation passed."
+      ],
+      "notes": "Direct follow-up to QB-DATA-005. Checkpoint projection shares immutable player payloads during validation and constructs the full roster on snapshot. The journal reuses bounded serialization buffers. Polling, validation, journal and checkpoint formats, batch boundaries, and durable sync were preserved. PlayerList decoding and normalization and durable I/O dominate the remaining measured stages. Scope, tradeoffs and results are recorded in docs/performance/live-acquisition-cpu.md."
+    },
+    {
       "id": "QB-REPLAY-001",
       "kind": "feature",
       "name": "League-native Timeline Interaction",

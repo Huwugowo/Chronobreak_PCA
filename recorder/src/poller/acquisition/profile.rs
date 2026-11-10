@@ -276,7 +276,7 @@ impl SimulatedWriter {
             header.clone(),
         )
         .unwrap();
-        let state = checkpoint::State::new(header, writer.position().clone());
+        let mut state = checkpoint::State::new(header, writer.position().clone());
         let manifest = manifest::Manifest::from_checkpoint(state.snapshot())
             .encode()
             .unwrap();

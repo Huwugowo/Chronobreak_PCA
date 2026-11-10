@@ -134,6 +134,8 @@ pub struct Writer<W> {
     header: Header,
     position: Position,
     poisoned: bool,
+    batch: BoundedBuffer,
+    suffix: BoundedBuffer,
 }
 
 impl Writer<File> {
@@ -172,6 +174,8 @@ impl<W: DurableWrite> Writer<W> {
             header,
             position,
             poisoned: false,
+            batch: BoundedBuffer::new(MAX_BATCH_BYTES),
+            suffix: BoundedBuffer::new(MAX_LINE_BYTES),
         })
     }
 
@@ -199,10 +203,7 @@ impl<W: DurableWrite> Writer<W> {
             .ok_or(Error::Capacity)?;
         #[cfg(feature = "acquisition-profile")]
         let encode_profile = super::profile::enter("encode_and_checksum", None);
-        let mut batch = BoundedBuffer {
-            bytes: Vec::new(),
-            limit: MAX_BATCH_BYTES,
-        };
+        self.batch.bytes.clear();
         let mut last = first;
         for (index, record) in records.iter().enumerate() {
             validate_scope(&self.header, record)?;
@@ -213,11 +214,11 @@ impl<W: DurableWrite> Writer<W> {
                     record,
                 },
             };
-            serde_json::to_writer(&mut batch, &line).map_err(|_| Error::Capacity)?;
-            batch.write_all(b"\n").map_err(|_| Error::Capacity)?;
+            serde_json::to_writer(&mut self.batch, &line).map_err(|_| Error::Capacity)?;
+            self.batch.write_all(b"\n").map_err(|_| Error::Capacity)?;
         }
-        let bytes = batch.bytes;
-        let checksum = digest(self.position.checksum, &bytes);
+        let bytes = &self.batch.bytes;
+        let checksum = digest(self.position.checksum, bytes);
         let commit = Commit {
             first,
             last,
@@ -225,7 +226,8 @@ impl<W: DurableWrite> Writer<W> {
             bytes: bytes.len() as u64,
             checksum,
         };
-        let suffix = encode(&Line::Commit { commit }, MAX_LINE_BYTES)?;
+        self.suffix.encode(&Line::Commit { commit })?;
+        let suffix = &self.suffix.bytes;
         let end_offset = self
             .position
             .end_offset
@@ -238,8 +240,8 @@ impl<W: DurableWrite> Writer<W> {
         let _write_profile = super::profile::enter("write_and_sync", None);
         if let Err(e) = self
             .output
-            .write_all(&bytes)
-            .and_then(|()| self.output.write_all(&suffix))
+            .write_all(bytes)
+            .and_then(|()| self.output.write_all(suffix))
             .and_then(|()| self.output.flush())
             .and_then(|()| self.output.sync_data())
         {
@@ -266,10 +268,33 @@ struct BoundedBuffer {
     bytes: Vec<u8>,
     limit: usize,
 }
+impl BoundedBuffer {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+        }
+    }
+
+    fn encode(&mut self, value: &impl Serialize) -> Result<(), Error> {
+        self.bytes.clear();
+        serde_json::to_writer(&mut *self, value).map_err(|_| Error::Capacity)?;
+        self.write_all(b"\n").map_err(|_| Error::Capacity)
+    }
+}
 impl Write for BoundedBuffer {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if bytes.len() > self.limit - self.bytes.len() {
             return Err(io::Error::other("batch capacity"));
+        }
+        let required = self.bytes.len() + bytes.len();
+        if required > self.bytes.capacity() {
+            // Retain scratch space between commits, capping geometric growth
+            // requests at the serialized-byte limit.
+            let capacity = required
+                .max(self.bytes.capacity().saturating_mul(2))
+                .min(self.limit);
+            self.bytes.reserve_exact(capacity - self.bytes.len());
         }
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -279,12 +304,8 @@ impl Write for BoundedBuffer {
     }
 }
 pub(super) fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, Error> {
-    let mut out = BoundedBuffer {
-        bytes: Vec::new(),
-        limit,
-    };
-    serde_json::to_writer(&mut out, value).map_err(|_| Error::Capacity)?;
-    out.write_all(b"\n").map_err(|_| Error::Capacity)?;
+    let mut out = BoundedBuffer::new(limit);
+    out.encode(value)?;
     Ok(out.bytes)
 }
 

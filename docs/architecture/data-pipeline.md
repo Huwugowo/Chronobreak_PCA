@@ -23,6 +23,15 @@ separately from the writer queue. Oversized allocations take the full path.
 The reference is transient. Source resets clear it, and journal progress
 still advances only after the batch is flushed.
 
+Committed checkpoint updates validate roster references transactionally using
+shared immutable player payloads. They materialize a full current roster only
+when a checkpoint snapshot is requested, including before serialization; source
+resets also discard any pending roster. Index imports read the current epoch
+without forcing a full roster after each commit. Journal writers reuse entry
+and commit-frame serialization buffers, with growth requests capped at the
+existing byte limits. Every commit retains its existing checksum, write, flush
+and file-sync boundary, and stored journal/checkpoint formats are unchanged.
+
 After recording closes, the service submits the confirmed match/account binding
 to two independent acquisition paths:
 
