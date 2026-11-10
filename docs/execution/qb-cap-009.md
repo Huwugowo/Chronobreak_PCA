@@ -2,15 +2,16 @@
 
 Feature: `QB-CAP-009`
 ExecPlan: `docs/exec-plans/qb-cap-009-process-owned-recording.md`
-Updated: 2026-11-04
+Updated: 2026-11-10
 
 ## Current milestone
-Attached-source silence recovery implemented and validated with real WGC/NVENC capture, full decode and canonical publication. The corrected portable recorder is running with the previously validated fast app/helper build.
+Focused service process-observation correction implemented and validated: live original-process handles bypass system-wide enumeration. Ordinary Windows-process lifecycle tests, recorder baseline checks and a short optimized CPU/count comparison passed. Prior capture/source recovery work remains accepted.
 
 ## Active unit
-None. Lightweight implementation and focused validation complete; real League alt-tab confirmation remains an acceptance observation.
+None for the process-observation correction. Real League alt-tab confirmation remains a separate acceptance observation for the overall feature.
 
 ## Completed
+- 2026-11-10: service polling now uses `ProcessWatcher::refresh_for_original` with the existing active -> starting -> blocked owner priority. A live owner returns its exact identity without enumerating; confirmed exit performs same-tick discovery and excludes the retired identity. Query errors still propagate before discovery. No cadence, retry, capture or publication behavior was changed.
 - Retained limited-rights Windows `OwnedHandle` shared through `Arc<OriginalProcess>` from readiness through capture/stop. A different watcher selection cannot replace the still-live original owner. No new unsafe Send/Sync implementation.
 - WGC leaf detaches/replaces on the existing GPU worker; device/MTA, converter, encoder, mux, last image and CFR epoch persist. Reuse existing resize handling and bounded two-tick catch-up. Reacquisition is limited to once per two seconds.
 - Typed window disappearance is recoverable. Other WGC/driver/callback/encoder/mux failures remain terminal. Callback quiescence is required before leaf release; unproven cleanup retains the whole guarded context and suppresses new capture until relaunch.
@@ -22,12 +23,25 @@ None. Lightweight implementation and focused validation complete; real League al
 - Publication-wait/kill errors now remain inside the exercise result until service shutdown/join and fixture reap complete. Primary and cleanup errors are both retained.
 
 ## In flight
-None. Unrelated app/audio/probe changes and the separate library proposal remain untouched.
+None.
 
 ## Remaining
-Actual League alt-tab behavior remains unverified. Generated-window silent-source rebuild, same-process recreation and minimize/restore now pass on the current hardware. No long soak or performance campaign is required for this implementation.
+Actual League alt-tab behavior remains unverified. Prior generated-window silent-source rebuild, same-process recreation and minimize/restore results remain accepted; League and NVENC were unavailable for the 2026-11-10 correction and were not required for its ordinary-process checks. No long soak or performance campaign is required for this implementation.
 
 ## Verification
+- 2026-11-10 pre-push integration: rebased the correction cleanly onto `origin/main` at `04be404`, preserving incoming data/allocation and library/replay changes. Recorder all-target/all-feature check/tests, format and strict Clippy passed again (287 library passed / 18 ignored, 7 integration and 6 example tests passed), plus canonical and diff validation. Log: `build/perf/process-observation-20261110/command-20261110-165517.log`. The isolated enumeration/handle paths and their measurement code are unchanged by integration; the earlier CPU/count result remains scoped to its recorded build.
+- 2026-11-10: recorder all-target/all-feature check, tests, format check and strict Clippy passed. Tests: 286 library passed / 17 ignored (hardware/runtime/opt-in cases), 7 integration passed, 6 example tests passed. Existing service tests cover no-window admission, bounded retry schedule, terminal same-generation blocking, cancellation/cleanup and unexpected backend exit. Log: `build/perf/process-observation-20261110/command-20261110-161502.log`. Canonical validator passed (122 items / 32 plan-checkpoint pairs); diff whitespace check passed.
+- 2026-11-10: `cargo test --manifest-path recorder/Cargo.toml --lib watcher::tests -- --nocapture` passed (11 passed, one opt-in measurement ignored). New disposable-process coverage proves idle appearance, zero refreshes with a live owner despite a second matching process, fail-closed identity errors without enumeration, same-tick replacement after original exit, disappearance and resumed idle discovery. Log: `build/perf/process-observation-20261110/command-20261110-161409.log`. Initial measurement compilation used the wrong Windows API module; corrected to the test-only WindowsProgramming feature. One restricted command-log write failed before execution; the permitted rerun passed.
+- 2026-11-10: `cargo test --manifest-path recorder/Cargo.toml --release --lib retained_owner_observation_cost -- --ignored --nocapture --test-threads=1` passed (one test, 7.73 seconds after compilation). Log: `build/perf/process-observation-20261110/command-20261110-161622.log`. Rust 1.97.1, optimized release profile, Windows 10.0.19045, 16 logical CPUs, 364 discovered processes. One executable compares the exact previous eager-refresh decision with the production helper, 500 observations per pass, warmed discovery caches, order before/after/after/before; counters include all threads in this isolated test process. No capture or League is started.
+
+  | Path/pass | Enumerations | Process CPU ms | Process CPU cycles | Wall ms |
+  | --- | ---: | ---: | ---: | ---: |
+  | Before 1 | 500 | 3843.75 | 8,845,387,674 | 3843.8889 |
+  | After 1 | 0 | 0 observed | 597,004 | 0.1409 |
+  | After 2 | 0 | 0 observed | 659,814 | 0.1388 |
+  | Before 2 | 500 | 3843.75 | 8,847,932,348 | 3845.4768 |
+
+  Enumeration work fell 100%; mean measured process cycles fell 99.9929%. Before used 7.6875 ms process CPU per observation. After's CPU-time delta is below `GetProcessTimes` accounting resolution, not proof of zero CPU; the nonzero cycle counter measures the remaining handle-query cost (mean 1,256.818 cycles/observation). This is isolated observation-path overhead with back-to-back polls, not a paced whole-service, gameplay FPS or NVENC performance result. No extended test campaign was run.
 - 2026-11-04 source-silence fix: all-target/all-feature recorder tests passed (271 library tests, 12 ignored; 7 integration tests; 3 lifecycle-fixture and 3 WGC-fixture example tests). Log: `.codex/logs/command-20261104-150900.log`. Coverage includes 120 seconds of visible source silence with healthy encode/mux progress, clean stop during silence, generation/visibility changes without false resumption, fresh-QPC resumption, observer-gap confirmation without source progress, and preserved encoder/mux/protocol failure precedence. The final obsolete test-only source branch was removed and its stop-time failure test rerun successfully (`.codex/logs/command-20261104-151213.log`).
 - Current all-target/all-feature check, format check and strict Clippy passed: `.codex/logs/command-20261104-151007.log`. Production release build passed without `native-failure-injection`: `.codex/logs/command-20261104-150506.log`.
 - Real generated-window `33 silent_restore` passed: `build/qb-data-003/capture-fixtures/a504eb17-abdc-47d6-8e83-24cda06ec6c0/result.json`. A feature-gated fault silences only the first leaf's callbacks after six seconds; replacement clears it. Logs prove an actual same-device leaf rebuild, fresh-QPC resumption, continued encoder/mux progress and no watchdog failure. Service events retain the same recording directory; full H.264 decode proves the restored green epoch and four moving samples, followed by canonical publication after original-process exit.
@@ -58,4 +72,4 @@ Window interruption and attached-source silence are recoverable and do not inval
 None for this implementation. The previous NVENC `NO_ENCODE_DEVICE` restriction did not recur in the current interactive session. Real League acceptance remains an observation, not an automated fixture claim. Startup readiness, audio and library UX remain separate work.
 
 ## Next action
-Confirm a real League alt-tab longer than 15 seconds returns to fresh footage in the same recording with the running fixed build. No further review or optimization campaign is required.
+No further work for the process-observation correction. When League is available, confirm a real alt-tab longer than 15 seconds returns to fresh footage in the same recording; the overall feature stays in progress pending that separate observation.

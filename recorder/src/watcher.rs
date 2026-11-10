@@ -200,6 +200,22 @@ impl ProcessWatcher {
             })
     }
 
+    /// Discover only when no retained owner is alive. A signaled handle permits
+    /// same-tick replacement discovery; query errors never imply process exit.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn refresh_for_original(
+        &mut self,
+        original: Option<&OriginalProcess>,
+    ) -> anyhow::Result<Option<LeagueProcess>> {
+        match original {
+            Some(original) if !original.has_ended()? => Ok(Some(original.identity())),
+            Some(original) => Ok(self
+                .refresh()
+                .filter(|process| *process != original.identity())),
+            None => Ok(self.refresh()),
+        }
+    }
+
     /// Enumeration and watcher selection never authorize publication.
     #[cfg(target_os = "windows")]
     pub(crate) fn confirms_process_ended(&self, original: &OriginalProcess) -> bool {
@@ -266,6 +282,187 @@ fn _pid_is_send(_: Pid) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    struct ProcessFixture(std::process::Child);
+
+    #[cfg(target_os = "windows")]
+    impl ProcessFixture {
+        fn spawn(executable: &std::path::Path) -> Self {
+            use std::os::windows::process::CommandExt;
+            use std::process::{Command, Stdio};
+
+            Self(
+                Command::new(executable)
+                    .args(["--exact", "watcher::tests::process_exit_child_fixture"])
+                    .env("QUEUEBACK_PROCESS_EXIT_CHILD", "1")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                    .spawn()
+                    .unwrap(),
+            )
+        }
+
+        fn exit(&mut self) {
+            use std::io::Write;
+            self.0.stdin.take().unwrap().write_all(&[1]).unwrap();
+            assert!(self.0.wait().unwrap().success());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    impl Drop for ProcessFixture {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn retained_owner_skips_discovery_until_exit_then_finds_rapid_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let name = format!(
+            "chronobreak-process-{}.exe",
+            directory.path().file_name().unwrap().to_string_lossy()
+        );
+        let executable = directory.path().join(&name);
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        let mut watcher = ProcessWatcher::new(name);
+        assert_eq!(watcher.refresh_for_original(None).unwrap(), None);
+
+        let mut first = ProcessFixture::spawn(&executable);
+        let identity = watcher.refresh_for_original(None).unwrap().unwrap();
+        assert_eq!(identity.pid, first.0.id());
+        assert_eq!(
+            transition(None, Some(identity)),
+            ProcessTransition::Appeared(identity)
+        );
+        let original = OriginalProcess::open(identity).unwrap();
+        let before = watcher.telemetry();
+        let mut replacement = ProcessFixture::spawn(&executable);
+        for _ in 0..10 {
+            // The same retained owner is used during startup, capture and blocking.
+            let observed = watcher.refresh_for_original(Some(&original)).unwrap();
+            assert_eq!(observed, Some(identity));
+            assert_eq!(
+                transition(Some(identity), observed),
+                ProcessTransition::Unchanged
+            );
+        }
+        assert_eq!(watcher.telemetry(), before);
+
+        // A query/identity error must propagate without falling back to discovery.
+        let invalid = OriginalProcess {
+            identity: LeagueProcess {
+                started_at: identity.started_at + 1,
+                ..identity
+            },
+            handle: original.handle.try_clone().unwrap(),
+        };
+        assert!(watcher.refresh_for_original(Some(&invalid)).is_err());
+        assert_eq!(watcher.telemetry(), before);
+
+        first.exit();
+        let next = watcher
+            .refresh_for_original(Some(&original))
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.pid, replacement.0.id());
+        assert_eq!(
+            transition(Some(identity), Some(next)),
+            ProcessTransition::Replaced(next)
+        );
+        assert_eq!(watcher.telemetry().refreshes, before.refreshes + 1);
+        let next_owner = OriginalProcess::open(next).unwrap();
+        replacement.exit();
+        let absent = watcher.refresh_for_original(Some(&next_owner)).unwrap();
+        assert_eq!(absent, None);
+        assert_eq!(
+            transition(Some(next), absent),
+            ProcessTransition::Disappeared
+        );
+        assert_eq!(watcher.telemetry().refreshes, before.refreshes + 2);
+        assert_eq!(watcher.refresh_for_original(None).unwrap(), None);
+        assert_eq!(watcher.telemetry().refreshes, before.refreshes + 3);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "short isolated process-observation CPU/count comparison; run single-threaded"]
+    fn retained_owner_observation_cost() {
+        use std::hint::black_box;
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        use windows::Win32::System::WindowsProgramming::QueryProcessCycleTime;
+
+        fn cpu() -> (u64, u64) {
+            let (mut created, mut exited, mut kernel, mut user) = (
+                FILETIME::default(),
+                FILETIME::default(),
+                FILETIME::default(),
+                FILETIME::default(),
+            );
+            let mut cycles = 0;
+            // SAFETY: the current-process pseudo handle is valid and all output
+            // pointers refer to distinct live local values.
+            unsafe {
+                let process = GetCurrentProcess();
+                GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user)
+                    .unwrap();
+                QueryProcessCycleTime(process, &mut cycles).unwrap();
+            }
+            let ticks = |time: FILETIME| {
+                (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+            };
+            (ticks(kernel) + ticks(user), cycles)
+        }
+
+        let original = OriginalProcess::open(LeagueProcess {
+            pid: std::process::id(),
+            started_at: process_creation_time(std::process::id()).unwrap(),
+        })
+        .unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let name = executable.file_name().unwrap().to_string_lossy();
+        // Matched observation counts, warmed discovery cache, reversed second pair.
+        // No sleeps: this measures observation work, not capture or game overhead.
+        for (pass, legacy) in [true, false, false, true].into_iter().enumerate() {
+            let mut watcher = ProcessWatcher::new(name.as_ref());
+            watcher.refresh();
+            let before = watcher.telemetry();
+            let cpu_before = cpu();
+            let started = Instant::now();
+            let observations = 500;
+            for _ in 0..observations {
+                let current = if legacy {
+                    let discovered = watcher.refresh();
+                    if !original.has_ended().unwrap() {
+                        Some(original.identity())
+                    } else {
+                        discovered.filter(|process| *process != original.identity())
+                    }
+                } else {
+                    watcher.refresh_for_original(Some(&original)).unwrap()
+                };
+                assert_eq!(black_box(current), Some(original.identity()));
+            }
+            let elapsed = started.elapsed();
+            let cpu_after = cpu();
+            let after = watcher.telemetry();
+            let enumerations = after.refreshes - before.refreshes;
+            assert_eq!(enumerations, if legacy { observations } else { 0 });
+            println!(
+                "PROCESS_OBSERVATION_COST pass={pass} legacy={legacy} observations={observations} enumerations={enumerations} known_processes={} elapsed_100ns={} cpu_100ns={} cpu_cycles={}",
+                after.known_processes,
+                elapsed.as_nanos() / 100,
+                cpu_after.0 - cpu_before.0,
+                cpu_after.1 - cpu_before.1,
+            );
+        }
+    }
 
     #[cfg(target_os = "windows")]
     #[test]

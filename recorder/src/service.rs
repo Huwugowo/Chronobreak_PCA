@@ -615,17 +615,14 @@ pub async fn run(
                 }
             }
             _ = interval.tick() => {
+                #[cfg(not(windows))]
                 let current_process = watcher.refresh();
                 #[cfg(windows)]
                 let current_process = {
                     let owner = active.as_ref().map(|recording: &ActiveRecording| &recording.original_process)
                         .or_else(|| starting.as_ref().and_then(|attempt: &StartingRecording| attempt.original_process.as_ref()))
                         .or(blocked_original.as_ref());
-                    match owner {
-                        Some(original) if !original.has_ended()? => Some(original.identity()),
-                        Some(original) => current_process.filter(|process| *process != original.identity()),
-                        None => current_process,
-                    }
+                    watcher.refresh_for_original(owner.map(Arc::as_ref))?
                 };
                 match transition(previous_process, current_process) {
                     ProcessTransition::Appeared(process) => {

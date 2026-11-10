@@ -7,7 +7,7 @@ Process ownership, availability and login registration are described in
 
 `recorder/src/main.rs` loads configuration, initializes daily non-blocking logs, and selects diagnostics, headless, or tray mode. Production tray mode runs the UI event loop while the recording service runs on Tokio.
 
-The service resolves the immutable packaged media runtime and audio request mode once, then checks League process presence every two seconds. WASAPI resolves the current default playback endpoint independently for each recording. Historical recovery does no work during startup or the watcher loop. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
+The service resolves the immutable packaged media runtime and audio request mode once, then checks League process presence every two seconds. On Windows, a retained original-process handle from active capture, startup or a blocked attempt is checked before discovery; a live owner skips system-wide process enumeration. With no retained owner or after confirmed original exit, enumeration discovers the current process on that same tick. WASAPI resolves the current default playback endpoint independently for each recording. Historical recovery does no work during startup or the watcher loop. Windows capture planning deliberately waits for the real League HWND because its monitor and DXGI adapter are part of the recording contract.
 
 League process presence remains the automatic lifecycle authority:
 

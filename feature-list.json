@@ -26,6 +26,7 @@
       },
       "acceptance_criteria": [
         "One service session pins the original League process generation with the existing authoritative Windows handle; selected-window closure and watcher selection changes alone never establish process termination.",
+        "While an authoritative original-process handle remains live, Windows service ticks perform no system-wide process enumeration. Idle discovery and confirmed-exit replacement discovery retain the existing cadence, lifecycle transitions, error propagation and retry policy; ordinary Windows processes provide focused enumeration-count and CPU-cost evidence without requiring League or NVENC.",
         "Temporary source unavailability preserves the recording epoch and CFR/encoder/mux timeline using the last valid image; a same-process, same-supported-adapter replacement HWND can resume fresh source frames without replacing the encoder or media identity.",
         "Window-first and process-first exit orderings reach the same joined validation/publication result when capture is otherwise healthy; later process exit never erases an earlier real encoder, mux, protocol or callback-cleanup failure.",
         "Source detach/reattach retains safe worker-affine MTA/device ownership, one source at a time, callback quiescence, bounded resources/cadence and cancellation. Unprovable cleanup retains the whole guarded context and disables further capture in that recorder owner until Quit/relaunch; unsupported adapter transition fails explicitly. Neither outcome starts an uncontrolled reconstruction loop.",
@@ -39,6 +40,11 @@
           "type": "automated",
           "description": "Focused Rust tests/checks plus short generated-window service runs; decode footage to check continuity and fresh frames after recreation. Reuse existing callback and encoder/mux negative checks.",
           "command": null
+        },
+        {
+          "type": "benchmark",
+          "description": "Short isolated Windows process-observation comparison of the prior eager-enumeration path and retained-owner polling, with equal observation counts, process CPU time/cycles and watcher enumeration counters. Run single-threaded; this measures observation overhead, not gameplay or capture performance.",
+          "command": "cargo test --manifest-path recorder/Cargo.toml --release --lib retained_owner_observation_cost -- --ignored --nocapture --test-threads=1"
         }
       ],
       "evidence": [
@@ -47,7 +53,9 @@
         "Short existing-service recreate fixture attempted with generated media only: WGC item creation succeeded, NVENC returned NO_ENCODE_DEVICE and cleanup completed. Decoded recreation/minimize continuity and real League behavior remain unverified; implementation is committed without imposing long hardware gates.",
         "2026-11-01 review of 833c1dc: no actionable production-lifetime regression; fixed fixture restore-duration/fresh-frame evidence, publication-error cleanup and waiting/resume assertions. Six example tests, real WGC rollback at four injected failure points, synthetic H.264 pixel/decode check and strict Rust checks passed. Real NVENC recreation/minimize remained unverified at that date; see execution checkpoint.",
         "2026-11-04: attached WGC silence now requests deduplicated leaf-only recovery instead of terminating recording. Fresh worker QPC/generation invalidates stale requests; foreground gates repair only, existing two-second cadence and all downstream/cleanup failures remain enforced. One watchdog state drives waiting/fresh-frame resumption. Recorder tests passed (271 library, 7 integration, 6 example tests; 12 ignored), plus check/format/strict Clippy and production release build.",
-        "2026-11-04: real generated-window WGC/NVENC silent-source rebuild, 18-second minimize/restore and same-process recreation passed with same recording identity, full decode, moving restored footage and canonical publication. Fixed recorder is running from build/release/watchdog-recovery-20261104 with the validated fast app/helper pair. Detailed commands, fixture roots, earlier fixture-only failures and hashes are retained in docs/execution/qb-cap-009.md; real League alt-tab acceptance remains unverified."
+        "2026-11-04: real generated-window WGC/NVENC silent-source rebuild, 18-second minimize/restore and same-process recreation passed with same recording identity, full decode, moving restored footage and canonical publication. Fixed recorder is running from build/release/watchdog-recovery-20261104 with the validated fast app/helper pair. Detailed commands, fixture roots, earlier fixture-only failures and hashes are retained in docs/execution/qb-cap-009.md; real League alt-tab acceptance remains unverified.",
+        "2026-11-10: live authoritative handles now bypass service-wide process enumeration during startup, capture and retained blocking; confirmed exit discovers replacements on the same tick. Disposable Windows processes verify idle/appearance/live-owner/replacement/exit/query-error boundaries; existing failure/retry tests and recorder check/tests/format/strict Clippy passed (286 library, 7 integration, 6 example tests).",
+        "2026-11-10: optimized ordinary-process A/B, two 500-poll passes per path with 364 processes: enumerations 500 -> 0 per pass; prior process CPU 3843.75 ms/pass, corrected below CPU-time counter resolution; mean process CPU cycles reduced 99.9929%. Isolated observation overhead only; no League/NVENC or gameplay claim. Detailed results and retained log paths: docs/execution/qb-cap-009.md."
       ],
       "notes": "User explicitly revised the plan and bypassed the normal planning/milestone workflow on 2026-11-01. Implement the coherent lifecycle directly, run proportionate checks, and commit. No five-minute lost-window cutoff, mandatory long soaks or new verification framework. Startup policy, audio and library UX remain separate features."
     },
