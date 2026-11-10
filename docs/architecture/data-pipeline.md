@@ -104,10 +104,17 @@ Existing caches remain compatible and are not rebuilt for this change. The
 preparer uses native filesystem notifications, coalesced over one second, to
 refresh and prepare only affected published recordings. Idle ticks do not scan
 the library, hash sources, or open SQLite. Unpublished live journal/manifest
-writes require no preparation. Clip inventory is never scanned by this worker.
+writes require no preparation. Windows can also report a bundle directory
+modified as its children change. A directory modification alone does not
+request discovery. Bundle creation, removal and renames and changes to the
+final metadata or video remain discovery hints. A targeted discovery that
+finds no previously or currently published bundle stops before opening SQLite.
+Clip inventory is never scanned by this worker.
 Startup, root/cache replacement and notification errors/overflow request an
 authoritative games scan. A five-minute recovery scan catches missed events or
-filesystems without notifications. Transient writer contention retains the dirty
+filesystems without notifications. Recovery fingerprints each source once for
+the cache readiness check and still checks completed overlays against their
+committed revisions. Transient writer contention retains the dirty
 work with a five-second backoff; each bounded page checks ownership independently
 without repeating catalog reconciliation. Unchanged summaries keep their search
 facts current when other recordings enter/leave the catalog. A bad recording

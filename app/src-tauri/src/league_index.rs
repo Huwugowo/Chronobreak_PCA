@@ -482,27 +482,59 @@ impl Index {
             progress.status = "pending".into();
             return Ok(progress);
         }
-        if progress.status == "ready" {
-            for source in self.scopes(media)? {
-                let scope = ScopeQuery {
-                    media_id: source.source.media_id,
-                    run_id: source.source.run_id,
-                    epoch: source.source.epoch,
-                };
-                let expected = serde_json::to_string(
-                    &self
-                        .whole_source_coverage(&scope)?
-                        .committed
-                        .context("source revision")?,
-                )?;
-                let ready:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM prepared_overlay_sources WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND complete=1 AND revision=?4)",params![scope.media_id.as_str(),scope.run_id.as_str(),sql_u64(scope.epoch)?,expected],|r|r.get(0))?;
-                if !ready {
-                    progress.status = "pending".into();
-                    break;
-                }
-            }
+        if progress.status == "ready" && !self.overlays_prepared(media)? {
+            progress.status = "pending".into();
         }
         Ok(progress)
+    }
+
+    /// Background reconciliation already fingerprinted the source. Check that
+    /// this cache still has the settled projection for that exact version.
+    pub(crate) fn preparation_is_current(
+        &self,
+        summary: &GameSummary,
+        stamp: &str,
+    ) -> Result<bool> {
+        let media = summary
+            .media_id
+            .as_ref()
+            .context("recording media unavailable")?;
+        let status: Option<String> = self
+            .db
+            .prepare_cached(
+                "SELECT telemetry_status FROM recordings
+                 WHERE media_id=?1 AND bundle=?2 AND source_stamp=?3",
+            )?
+            .query_row(params![media.as_str(), summary.timestamp, stamp], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        match status.as_deref() {
+            None | Some("pending") => Ok(false),
+            Some("ready") => self.overlays_prepared(media),
+            Some(_) => Ok(true),
+        }
+    }
+
+    fn overlays_prepared(&self, media: &MediaId) -> Result<bool> {
+        for source in self.scopes(media)? {
+            let scope = ScopeQuery {
+                media_id: source.source.media_id,
+                run_id: source.source.run_id,
+                epoch: source.source.epoch,
+            };
+            let expected = serde_json::to_string(
+                &self
+                    .whole_source_coverage(&scope)?
+                    .committed
+                    .context("source revision")?,
+            )?;
+            let ready:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM prepared_overlay_sources WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND complete=1 AND revision=?4)",params![scope.media_id.as_str(),scope.run_id.as_str(),sql_u64(scope.epoch)?,expected],|r|r.get(0))?;
+            if !ready {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn preparation_failed(&mut self, root: &Path, game: &GameSummary) -> Result<()> {

@@ -79,7 +79,21 @@ impl Changes {
             if parts.next().is_some() {
                 continue;
             }
-            let discover = matches!(leaf, None | Some("metadata.json" | "video.mp4"));
+            let discover = match leaf {
+                // Windows also reports the bundle directory itself as modified
+                // when its live files change. Publication is signaled by the
+                // final files, or by a directory entering/leaving the catalog.
+                None => matches!(
+                    event.kind,
+                    EventKind::Any
+                        | EventKind::Other
+                        | EventKind::Create(_)
+                        | EventKind::Remove(_)
+                        | EventKind::Modify(ModifyKind::Name(_))
+                ),
+                Some("metadata.json" | "video.mp4") => true,
+                _ => false,
+            };
             if discover
                 || matches!(
                     leaf,
@@ -162,6 +176,11 @@ mod tests {
             &db,
             &Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)))
                 .add_path(root.join("games/200/video.mp4.part")),
+        );
+        changes.event(
+            &root,
+            &db,
+            &Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.join("games/200")),
         );
         assert_eq!(changes.bundles.len(), 1);
         assert_eq!(changes.bundles.get("100"), Some(&false));

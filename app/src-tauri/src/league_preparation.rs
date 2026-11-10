@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -172,7 +172,7 @@ async fn prepare(
     let previous_root = state.approved.clone();
     let full = changes.rescan || cached.is_none();
     let refresh = targets.clone();
-    let (approved, games, logical_root, full) = tokio::task::spawn_blocking(move || {
+    let discovery = tokio::task::spawn_blocking(move || {
         let approved = ApprovedRoot::new(&path)?;
         let full = full || previous_root.as_ref() != Some(&approved);
         ensure!(!cancelled.load(Ordering::Acquire), "preparation stopped");
@@ -184,23 +184,30 @@ async fn prepare(
             })?
         } else {
             let mut games = cached.unwrap_or_default();
+            let mut affected = false;
             for bundle in refresh {
                 ensure!(!cancelled.load(Ordering::Acquire), "preparation stopped");
+                let previous_count = games.len();
                 games.retain(|game| game.timestamp != bundle);
-                if let Some(game) = library::published_game(approved.path(), &bundle) {
-                    games.push(game);
-                }
+                let published = library::published_game(approved.path(), &bundle);
+                affected |= games.len() != previous_count || published.is_some();
+                games.extend(published);
+            }
+            if !affected {
+                return Ok(None);
             }
             games
         };
-        Ok::<_, anyhow::Error>((approved, games, path, full))
+        Ok::<_, anyhow::Error>(Some((approved, games, path, full)))
     })
     .await??;
+    let Some((approved, games, logical_root, full)) = discovery else {
+        // A directory can exist long before either final file is published.
+        return Ok(Vec::new());
+    };
     // Share the UI's approved identity for cache ownership and source reads.
     // Keep the configured path separately so alias retargeting still invalidates work.
     let library_root = approved.path().to_owned();
-    state.approved = Some(approved.clone());
-    state.games = Some(games.clone());
     let games = Arc::new(games);
     let mut changed = Vec::new();
     // Reconcile even an empty library. A fresh UI and the headless helper use
@@ -233,10 +240,9 @@ async fn prepare(
                         continue;
                     }
                 };
-                let ready = index
-                    .prepared_progress(root.as_path(), game)
-                    .is_ok_and(|p| p.status != "pending");
-                if completed.get(&directory) != Some(&stamp) || !ready {
+                if completed.get(&directory) != Some(&stamp)
+                    || !index.preparation_is_current(game, &stamp).unwrap_or(false)
+                {
                     pending.push((game.clone(), directory, stamp));
                 }
             }
@@ -244,11 +250,23 @@ async fn prepare(
         })
         .await??
     };
-    state.completed.retain(|directory, _| {
-        games
+    // Keep the previous catalog on writer contention so retries still see a
+    // pending removal as a change.
+    if state.approved.as_ref() != Some(&approved) {
+        state.completed.clear();
+    } else {
+        let bundles: HashSet<_> = games
             .iter()
-            .any(|g| library_root.join("games").join(&g.timestamp) == *directory)
-    });
+            .map(|game| std::ffi::OsStr::new(&game.timestamp))
+            .collect();
+        state.completed.retain(|directory, _| {
+            directory
+                .file_name()
+                .is_some_and(|name| bundles.contains(name))
+        });
+    }
+    state.approved = Some(approved.clone());
+    state.games = Some(Arc::unwrap_or_clone(games));
     // Make the entire catalog's inexpensive card facts available before a
     // single recording's journal/overlay can occupy the worker for seconds.
     for (game, _, _) in &current {
@@ -693,6 +711,44 @@ mod tests {
         background.retry.bundles.insert("200".into(), false);
         assert!(background.tick(&stop).await.unwrap().is_empty());
     }
+
+    #[tokio::test]
+    async fn unpublished_discovery_skips_writer_and_recovery_finds_missed_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = ApprovedRoot::new(directory.path()).unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut background = Background::new(root.path().into(), cache.path().into());
+        background.tick(&stop).await.unwrap();
+        background.watch = None;
+
+        let bundle = root.path().join("games/100");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("video.partial.mp4"), b"growing media").unwrap();
+        let writer = Index::open(cache.path(), root.path()).unwrap();
+        background.retry.bundles.insert("100".into(), true);
+        assert!(background.tick(&stop).await.unwrap().is_empty());
+        drop(writer);
+
+        crate::library::tests::write_matched_game(
+            root.path(),
+            "100",
+            "2026-08-05T10:00:00Z",
+            false,
+        );
+        assert!(background.tick(&stop).await.unwrap().is_empty());
+        background.next_rescan = Instant::now();
+        assert_eq!(background.tick(&stop).await.unwrap().len(), 1);
+        let games = library::list_games(root.path()).unwrap();
+        let reader = Index::reader(cache.path(), root.path()).unwrap();
+        assert_eq!(
+            reader
+                .prepared_progress(root.path(), &games[0])
+                .unwrap()
+                .status,
+            "ready"
+        );
+    }
     #[tokio::test]
     async fn prepares_only_changed_bundles_and_keeps_other_search_facts_ready() {
         let directory = tempfile::tempdir().unwrap();
@@ -800,6 +856,19 @@ mod tests {
         background.next_attempt = Instant::now();
         assert_eq!(background.tick(&stop).await.unwrap().len(), 1);
         assert!(background.retry.is_empty());
+
+        background.watch = None;
+        std::fs::remove_dir_all(root.path().join("games/100")).unwrap();
+        let writer = Index::open(cache.path(), root.path()).unwrap();
+        background.retry.bundles.insert("100".into(), true);
+        assert!(background.tick(&stop).await.is_err());
+        drop(writer);
+        background.next_attempt = Instant::now();
+        background.tick(&stop).await.unwrap();
+        Index::reader(cache.path(), root.path())
+            .unwrap()
+            .require_catalog(&league_index::catalog_key(&[]).unwrap())
+            .unwrap();
     }
     #[tokio::test]
     async fn isolates_a_corrupt_recording_and_prunes_removed_bundles() {

@@ -5407,6 +5407,35 @@
         "Matched exact Graves seek frames and 321 hashed video and audio packets across early, middle and late windows. All ten source and metadata hashes were unchanged."
       ],
       "notes": "The replay viewer alone requests virtual SIDX preparation. Unchanged sources reuse verified layouts and active URLs retain them through cache eviction. See the execution checkpoint for the separate recovery evidence and verification limits."
+    },
+    {
+      "id": "QB-LIB-033",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Reduce background library preparation during recording",
+      "description": "Measure and remove avoidable preparation work while the recorder writes an unfinished bundle, without running League or hardware encoding.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-027", "QB-LIB-032"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Compare identical growing-recording and idle workloads at increasing synthetic library sizes using the real release headless helper at recorder priority. Report process CPU, I/O, P95/P99 activity, and private memory, working set and handles over a real recovery interval.",
+        "Target 5–10× lower background interference where supported by measurements. Identify the notification, reconciliation and SQLite work responsible for any material savings and characterize remaining recovery-scan cost.",
+        "Preserve discovery and removal, completed journal indexing and overlay preparation, and authoritative recovery after missed notifications. Unfinished bundles remain excluded and SQLite writer contention retains required work."
+      ],
+      "verification": [
+        {"type": "benchmark", "description": "Run matched Windows release helper workloads with isolated caches and synthetic bundles, including completed-recording readiness and the normal five-minute scan."},
+        {"type": "automated", "description": "Run notification, unpublished-discovery, missed-event recovery, writer contention and index readiness regressions, plus applicable backend and canonical checks.", "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"}
+      ],
+      "evidence": [
+        "2026-11-10 paired release helpers at recorder priority, with 32/256/1024 published entries and 24 seconds of growing partial video and committed telemetry. Helper CPU went from 297/2797/12594 ms to 0/16/0 ms at Windows counter resolution. Read operations went from 192/168/88 to zero and other I/O operations fell 7–14×. Neither build wrote during growth. At 1024, 250 ms CPU P95/P99 fell from 250/250 ms to zero. Native tracing confirmed live child writes generate directory modification events that previously reopened SQLite and repeated catalog work.",
+        "The 1024-entry five-minute recovery scan used 1797→656 ms CPU and 12.17→7.25 MB of process reads. Idle reads and writes were zero in both builds. At the end of the candidate recovery window the process held 6.10 MB private, a 15.83 MB working set and 148 handles. Peak private memory during that window was 9.49 MB versus 8.80 MB before. One 32-entry candidate run had a higher settled working set and six more handles, with no upward trend during growth.",
+        "All pairs kept the unfinished bundle out of the catalog and produced the same 520 overlay samples, 23 equivalent projection tables after normalizing source-file identity, and identical source bytes. Publication through overlay readiness took 0.32–0.34 s after versus 0.54–2.00 s before. Missed publication, removal under writer contention, source readiness, cache reset and root replacement regressions passed.",
+        "205 backend tests passed with 11 opt-in tests ignored under normal Windows process access. The restricted run stalled in child-process fixtures. Formatting, strict all-target Clippy, production desktop build, canonical validation and diff checks passed. Reproducer, binary hashes, raw 250 ms samples and paired results: build/perf/steady-preparation-20261110."
+      ],
+      "notes": "One matched pair per size using journal-free historical stubs and two checked-in synthetic replay fixtures. The I/O counters are Windows process-level transfers, which may be served from cache. Directory-only hints can wait for the unchanged five-minute recovery scan. No League, NVENC, in-game frame-time claim or extended soak."
     }
   ]
 }
