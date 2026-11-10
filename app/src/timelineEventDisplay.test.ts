@@ -55,6 +55,16 @@ const event = (
 });
 
 describe("timeline display events", () => {
+  it("attaches recipient-only First Blood and resolved Multikill without matching display strings", () => {
+    const kill = event("ChampionKill", 10, { actors: { killer: resolved(1), victim: resolved(2) } });
+    const firstBlood = event("FirstBlood", 10, { actors: { recipient: resolved(1) } });
+    const multikill = event("Multikill", 11, { actors: { killer: resolved(1) }, kill_streak: 2 });
+    const display = timelineDisplayEvents([firstBlood, kill, multikill]);
+    expect(display).toHaveLength(1);
+    expect(display[0].badges).toEqual(["First Blood"]);
+    expect(display[0].multiplier).toBe(2);
+    expect(kill).not.toHaveProperty("badges");
+  });
   it("collapses FirstBlood into its matching ChampionKill", () => {
     const firstBlood = event(
       "FirstBlood",
@@ -88,9 +98,10 @@ describe("timeline display events", () => {
     expect(display[0].source).toBe(
       championKill,
     );
+    expect(display[0].badges).toEqual(["First Blood"]);
   });
 
-  it("keeps standalone FirstBlood when no ChampionKill exists", () => {
+  it("does not invent a kill marker for standalone FirstBlood", () => {
     const firstBlood = event(
       "FirstBlood",
       100,
@@ -104,10 +115,7 @@ describe("timeline display events", () => {
     const display =
       timelineDisplayEvents([firstBlood]);
 
-    expect(display).toHaveLength(1);
-    expect(display[0].source).toBe(
-      firstBlood,
-    );
+    expect(display).toHaveLength(0);
   });
 
   it("attaches Multikill multiplicity to the preceding kill instead of adding another marker", () => {
@@ -143,7 +151,7 @@ describe("timeline display events", () => {
     expect(display[0].multiplier).toBe(3);
   });
 
-  it("keeps standalone Multikill telemetry when no base kill is available", () => {
+  it("does not invent a kill marker for standalone Multikill", () => {
     const multikill = event(
       "Multikill",
       100,
@@ -157,11 +165,7 @@ describe("timeline display events", () => {
     const display =
       timelineDisplayEvents([multikill]);
 
-    expect(display).toHaveLength(1);
-    expect(display[0].source).toBe(
-      multikill,
-    );
-    expect(display[0].multiplier).toBe(2);
+    expect(display).toHaveLength(0);
   });
 
   it("suppresses an Ace already represented by its nearby team fight kill", () => {
@@ -193,9 +197,10 @@ describe("timeline display events", () => {
 
     expect(display).toHaveLength(1);
     expect(display[0].source).toBe(kill);
+    expect(display[0].badges).toEqual(["Ace"]);
   });
 
-  it("keeps an Ace when no nearby kill can represent it", () => {
+  it("does not invent a kill marker for standalone Ace", () => {
     const ace = event(
       "Ace",
       100,
@@ -208,8 +213,7 @@ describe("timeline display events", () => {
     const display =
       timelineDisplayEvents([ace]);
 
-    expect(display).toHaveLength(1);
-    expect(display[0].source).toBe(ace);
+    expect(display).toHaveLength(0);
   });
 
   it("collapses FirstBrick into the matching TurretKilled event", () => {
@@ -272,11 +276,9 @@ describe("timeline display events", () => {
       multikill,
     ]);
 
-    expect(display).toHaveLength(2);
+    expect(display).toHaveLength(1);
     expect(display[0].source).toBe(kill);
-    expect(display[1].source).toBe(
-      multikill,
-    );
+    expect(display[0].multiplier).toBeNull();
   });
 
   it("does not merge same base name actors with distinct participant identities", () => {
@@ -293,7 +295,8 @@ describe("timeline display events", () => {
 
     const display = timelineDisplayEvents([kill, multikill]);
 
-    expect(display.map(({ source }) => source)).toEqual([kill, multikill]);
+    expect(display.map(({ source }) => source)).toEqual([kill]);
+    expect(timelineDisplayEvents([kill, multikill])[0].multiplier).toBeNull();
   });
 
   it.each([
@@ -310,7 +313,8 @@ describe("timeline display events", () => {
       actors: { killer: resolved(1) },
     });
 
-    expect(timelineDisplayEvents([kill, multikill]).map(({ source }) => source)).toEqual([kill, multikill]);
+    expect(timelineDisplayEvents([kill, multikill]).map(({ source }) => source)).toEqual([kill]);
+    expect(timelineDisplayEvents([kill, multikill])[0].multiplier).toBeNull();
   });
 
   it("does not merge unresolved actor telemetry", () => {
@@ -322,6 +326,7 @@ describe("timeline display events", () => {
       actors: { killer: [{ participant: null, status: "unresolved" }] },
     });
 
-    expect(timelineDisplayEvents([kill, multikill]).map(({ source }) => source)).toEqual([kill, multikill]);
+    expect(timelineDisplayEvents([kill, multikill]).map(({ source }) => source)).toEqual([kill]);
+    expect(timelineDisplayEvents([kill, multikill])[0].multiplier).toBeNull();
   });
 });

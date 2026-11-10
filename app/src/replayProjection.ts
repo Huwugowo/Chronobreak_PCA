@@ -56,6 +56,7 @@ export function replayParticipants(scope: SourceScope, identities: readonly Repl
   return [...identities].sort((left, right) => left.participant - right.participant).map(player => ({
     identity: { source: scope.source, participant: player.participant },
     is_local: player.participant === scope.local_participant,
+    team: player.team,
     summoner_name: player.riot_id ?? "Unresolved player",
     champion: player.champion_name ?? "Unknown champion",
     relation: player.team && local?.team ? player.team === local.team ? "ally" : "enemy" : "neutral",

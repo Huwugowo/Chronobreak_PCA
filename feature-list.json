@@ -6,6 +6,66 @@
   },
   "features": [
     {
+      "id": "QB-REPLAY-032",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Personal combat markers and grouped kill hover cards",
+      "description": "Reduce timeline clutter with map-side-colored kill dots, recorded-player swords/skulls and shared navigable portrait hover cards.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "in-progress",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-001", "QB-REPLAY-007"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Show one marker per champion kill. Only the recorded player's kills use filled swords and their deaths use filled skulls; all other kills, including their assists, use 8px dots. Recorded First Blood, multikill and ace details appear in the kill tooltip rather than separate combat markers.",
+        "Combat marker color follows the killer's actual map side: blue side blue, red side red, unknown gray. Participant filters do not redefine the recorded player. Objectives retain existing icons.",
+        "Keep individual markers visible. Share a chronological hover card for nearby combat events using roughly 10px screen-space proximity, adapting with zoom and preventing unbounded chains.",
+        "Dots grow to 11px on hover. Hover cards remain usable while moving the pointer into them; hovering a row highlights its marker. Rows show timestamp, killer portrait, killed, victim portrait, smaller assist portraits and recorded special-event badges, with names available on hover and accessible labels. Missing identities/assets degrade truthfully.",
+        "Clicking a marker seeks to its event; overlapping clicks choose the nearest event to the cursor's timeline position, with earliest-event tie breaking. Clicking any hover row seeks to that exact event and closes the card while preserving play/pause.",
+        "Keyboard access, filtering, zoom/pan, canonical timestamps, clip editing and windowed/fullscreen timeline behavior remain usable."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Focused presentation, grouping and timeline interaction regressions; frontend suite, type checking, production build and canonical validation."},
+        {"type": "manual", "description": "Inspect individual colored dots, personal icons, hover enlargement, mixed-event groups, portraits/assists, pointer transfer and row/marker seeking in the local replay preview at multiple zoom levels."}
+      ],
+      "evidence": [
+        "2026-11-10: ChampionKill markers remain individual: recorded-player filled swords/skulls and 8px map-side-colored dots for other kills. Hover enlarges dots to 11px and shares chronological combat cards using the existing bounded 9.75px midpoint grouping rule. Objectives retain their artwork and clustering.",
+        "2026-11-10: Source-scoped participant portraits, smaller assists, accessible names, First Blood/multikill/ace badges, exact row seeks, nearest overlapping marker seeks, pointer transfer, keyboard focus/Escape and same-source refresh/filter behavior are implemented without changing playback state.",
+        "2026-11-10: All 593 frontend tests passed across 43 files (npm test --prefix app; .codex/logs/command-20261110-211231.log). Production frontend build and TypeScript checking passed (npm run build --prefix app; .codex/logs/command-20261110-211233.log).",
+        "2026-11-10: Explicit npm run check --prefix app and git diff --check passed. Canonical validation passed for all 128 roadmap items and 32 plan/checkpoint pairs.",
+        "2026-11-10: Rendered replay inspection remains environment-blocked: no connected preview browser is available, and native Windows browser control previously stopped because it could not reliably determine the URL. No visual pass is claimed."
+      ],
+      "notes": "Behavior agreed through user clarification. Bounded direct frontend work using existing source-scoped actors, participants and asset infrastructure. Implementation and automated verification are complete; retain non-done status. Next action: inspect dots, personal icons, portrait cards, pointer transfer, seeking and zoom grouping over gameplay in windowed/fullscreen replay when browser access is available."
+    },
+    {
+      "id": "QB-REPLAY-031",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Filled kill and death replay icons",
+      "description": "Use filled kill and death icons to improve readability over gameplay.",
+      "priority": "P1",
+      "area": "replay",
+      "status": "in-progress",
+      "parent_id": "EPIC-REPLAY",
+      "dependencies": ["QB-REPLAY-001"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Kill and death icons use solid silhouettes rather than outline-only artwork in the replay presentation.",
+        "Existing icon colors, sizing, accessible labels and event interactions remain intact."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run existing affected viewer tests, frontend type checking, production build and canonical validation."},
+        {"type": "inspection", "description": "Inspect rendered kill and death icons at replay size over a gameplay background."}
+      ],
+      "evidence": [
+        "2026-11-10: Shared SwordIcon and SkullIcon now vendor the official Remix sword-fill and skull-fill paths. Windowed/fullscreen timelines and clustered markers retain currentColor, existing 15/13px sizes, event keys, accessible labels and interactions.",
+        "2026-11-10: All 88 existing ReplayTimeline, timelineEventPresentation and ViewerScreen tests passed. npm run build --prefix app passed, including TypeScript checking. Initial restricted commands were blocked by the local logger's .codex/logs access; normal-access reruns passed.",
+        "2026-11-10: Rendered gameplay-background inspection is environment-blocked. The preview server started, but Windows Computer Use stopped because it could not determine the browser URL confidently enough to enforce policy. No live visual pass is claimed."
+      ],
+      "notes": "User-requested visual-only correction through the existing shared icon path. Implementation and automated verification are complete; retain non-done status until rendered gameplay-background inspection passes."
+    },
+    {
       "id": "QB-CAP-009",
       "kind": "feature",
       "stage": "ready",

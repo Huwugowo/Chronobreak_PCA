@@ -168,6 +168,7 @@ export type ViewerEvent = {
 export type ReplayParticipant = {
   identity?: import("./leagueSource").ParticipantReference | null;
   is_local?: boolean;
+  team?: string | null;
   summoner_name: string;
   champion: string;
   relation: "ally" | "enemy" | "neutral";

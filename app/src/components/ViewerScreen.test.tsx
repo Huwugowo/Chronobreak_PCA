@@ -12,7 +12,6 @@ import { buildScenarioActions, emitReplayBenchmarkEvent, replayBenchmarkObserver
 import { STAT_KEYS, type FinalStats } from "../leagueResult";
 import { sourceKey } from "../leagueSource";
 import { runBenchmarkDesktopResize } from "../benchmarkResize";
-import timelineStyles from "./ReplayTimeline.module.css";
 import * as playbackModule from "../playbackController";
 import * as renderBenchmark from "../benchmarkRender";
 import * as viewerBenchmark from "../benchmarkViewer";
@@ -404,7 +403,7 @@ it("shows champion filters and event colors without a seek or a fabricated roste
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
   try {
-    await vi.waitFor(() => expect(host.querySelector('[data-event-icon="swords"]')?.classList.contains(timelineStyles.eventally)).toBe(true));
+    await vi.waitFor(() => expect(host.querySelector('[data-event-icon="swords"]')?.getAttribute("data-side")).toBe("blue"));
     expect(host.querySelector("video")!.currentTime).toBe(0);
     expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2);
     expect(host.querySelector('[aria-label="Add Ahri, player1, from timeline filter"]')).not.toBeNull();

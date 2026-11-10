@@ -5,6 +5,8 @@ import {
   createMemo,
   createSelector,
   createSignal,
+  createUniqueId,
+  on,
   onCleanup,
   onMount,
 } from "solid-js";
@@ -14,8 +16,11 @@ import {
   REPLAY_TICKS_PER_SECOND,
   type ReplayTick,
 } from "../replayTime";
-import type { ViewerEvent } from "../types";
-import { timelineDisplayEvents } from "../timelineEventDisplay";
+import type { ReplayParticipant, ViewerEvent } from "../types";
+import { timelineDisplayEvents, type TimelineDisplayEvent } from "../timelineEventDisplay";
+import { combatSide, timelineParticipantIndex } from "../timelineCombat";
+import { sameSource } from "../leagueSource";
+import TimelineCombatCard from "./TimelineCombatCard";
 import {
   timelineClusterPresentation,
   timelineEventPresentation,
@@ -52,6 +57,8 @@ type Props = {
   viewport: TimelineViewport;
   onViewportChange: (viewport: TimelineViewport) => void;
   events: readonly TimelineEvent[];
+  participants?: readonly ReplayParticipant[];
+  assetBase?: string | null;
   localPlayerName: string | null;
   clip: ClipWindow | null;
   onSeek: (tick: ReplayTick, options?: Pick<SeekOptions, "scrubCommit">) => void;
@@ -226,6 +233,10 @@ function TimelineEventGlyph(props: TimelineEventGlyphProps) {
     return <SkullIcon size={props.size ?? TIMELINE_EVENT_GLYPH_SIZE_PX} />;
   }
 
+  if (props.icon === "dot") {
+    return <span class={styles.combatDot} aria-hidden="true" />;
+  }
+
   const asset = () =>
     timelineEventAsset(
       props.icon,
@@ -285,6 +296,26 @@ function ReplayTimeline(props: Props) {
   };
   onCleanup(() => { cancelSeek(); endClipDrag?.(); });
   const [hoverRatio, setHoverRatio] = createSignal<number | null>(null);
+  const [hoveredCombat, setHoveredCombat] = createSignal<TimelineDisplayEvent | null>(null);
+  const [highlightedCombat, setHighlightedCombat] = createSignal<ViewerEvent | null>(null);
+  const isCombatHighlighted = createSelector(highlightedCombat);
+  const combatCardId = createUniqueId();
+  const participantIndex = createMemo(() => timelineParticipantIndex(props.participants ?? []));
+  let combatCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  let combatFocusReturn: HTMLButtonElement | undefined;
+  const keepCombatOpen = () => { clearTimeout(combatCloseTimer); };
+  const closeCombat = () => {
+    keepCombatOpen();
+    setHoveredCombat(null);
+    setHighlightedCombat(null);
+  };
+  const scheduleCombatClose = () => {
+    keepCombatOpen();
+    combatCloseTimer = setTimeout(() => {
+      if (!rail.querySelector('[data-combat-card]')?.contains(document.activeElement)) closeCombat();
+    }, 140);
+  };
+  onCleanup(keepCombatOpen);
 
   createEffect(() => {
     const current = props.viewport;
@@ -341,7 +372,7 @@ function ReplayTimeline(props: Props) {
 
   const clusters = createMemo(() =>
     clusterTimelineEvents(
-      displayEvents(),
+      displayEvents().filter(event => event.source.event_type !== "ChampionKill"),
       viewport(),
       railWidth(),
       {
@@ -365,6 +396,63 @@ function ReplayTimeline(props: Props) {
         ).localPriority,
     ),
   );
+
+  const combatGroups = createMemo(() => clusterTimelineEvents(
+    displayEvents().filter(event => event.source.event_type === "ChampionKill"),
+    viewport(), railWidth(),
+    // Keep the existing 9.75px midpoint collision rule for hover membership,
+    // independently of the smaller dots. No marker is collapsed for combat.
+    { visualWidthOf: () => TIMELINE_EVENT_GLYPH_SIZE_PX, allowedOverlapRatio: EVENT_ALLOWED_OVERLAP_RATIO },
+  ).map(group => group.kind === "event" ? [group.event] : group.events));
+  const combatEvents = createMemo(() => combatGroups().flat());
+  const combatMembership = createMemo(() => new Map(combatGroups().flatMap(group =>
+    group.map(item => [item, group] as const))));
+  const hoveredCombatGroup = createMemo(() => {
+    const hovered = hoveredCombat();
+    return hovered ? combatMembership().get(hovered) : undefined;
+  });
+  createEffect(on(combatGroups, groups => {
+    const hovered = hoveredCombat();
+    if (!hovered) return;
+    const replacement = groups.flat().find(item => item === hovered ||
+      (item.source.source_id !== undefined && item.source.source_id === hovered.source.source_id &&
+        item.source.source && hovered.source.source && sameSource(item.source.source, hovered.source.source)));
+    if (replacement) {
+      setHoveredCombat(replacement);
+      setHighlightedCombat(replacement.source);
+    } else closeCombat();
+  }));
+  const openCombat = (item: TimelineDisplayEvent) => {
+    keepCombatOpen();
+    setHoverRatio(null);
+    setHoveredCombat(item);
+    setHighlightedCombat(item.source);
+  };
+  const selectCombat = (item: TimelineDisplayEvent) => {
+    props.onEventSelect(item.source);
+    if (rail.querySelector('[data-combat-card]')?.contains(document.activeElement)) positionControl.focus({ preventScroll: true });
+    closeCombat();
+  };
+  const nearestCombat = (clientX: number) => {
+    const x = ratioAtPointer(clientX) * railWidth();
+    const tick = timelineTickAtRatio(ratioAtPointer(clientX), viewport());
+    let nearest: TimelineDisplayEvent | undefined;
+    let distance = Infinity;
+    for (const item of combatEvents()) {
+      const delta = Math.abs(timelineRatioAtTick(item.replay_tick, viewport()) * railWidth() - x);
+      const tickDistance = Math.abs(item.replay_tick - tick);
+      // A 15px target retains the existing marker accessibility/hit area.
+      if (delta <= 7.5 && tickDistance < distance) { nearest = item; distance = tickDistance; }
+    }
+    return nearest;
+  };
+  const combatCardLeft = () => {
+    const item = hoveredCombat();
+    const width = railWidth();
+    if (!item || width <= 300) return width / 2;
+    const x = timelineRatioAtTick(item.replay_tick, viewport()) * width;
+    return Math.min(width - 150, Math.max(150, x));
+  };
 
   const playheadRatio = createMemo(() =>
     timelineRatioAtTick(props.playhead, viewport()),
@@ -455,6 +543,7 @@ function ReplayTimeline(props: Props) {
     event: PointerEvent & { currentTarget: HTMLDivElement },
   ) => {
     if (event.button !== 0) return;
+    closeCombat();
     event.preventDefault();
     positionControl.focus({ preventScroll: true });
     endClipDrag?.();
@@ -479,6 +568,12 @@ function ReplayTimeline(props: Props) {
 
     const bounds = rail.getBoundingClientRect();
     const localY = event.clientY - bounds.top;
+
+    if (localY < SCRUB_HOVER_MIN_Y_PX) {
+      const nearest = nearestCombat(event.clientX);
+      if (nearest) { openCombat(nearest); return; }
+    }
+    scheduleCombatClose();
 
     setHoverRatio(
       localY >= SCRUB_HOVER_MIN_Y_PX
@@ -509,6 +604,7 @@ function ReplayTimeline(props: Props) {
   const handleWheel = (
     event: WheelEvent & { currentTarget: HTMLDivElement },
   ) => {
+    closeCombat();
     if (railWidth() <= 0) return;
 
     const deltaX = event.deltaX;
@@ -706,6 +802,7 @@ function ReplayTimeline(props: Props) {
     endpoint: "start" | "end",
   ) => {
     if (event.button !== 0) return;
+    closeCombat();
     event.preventDefault();
     event.stopPropagation();
     endClipDrag?.();
@@ -761,7 +858,16 @@ function ReplayTimeline(props: Props) {
         onLostPointerCapture={(event) => { if (seekPointer?.id === event.pointerId) cancelSeek(); }}
         onPointerLeave={() => {
           if (!seeking()) setHoverRatio(null);
+          scheduleCombatClose();
         }}
+        onKeyDown={event => {
+          if (event.key === "Escape" && hoveredCombat()) {
+            event.preventDefault(); event.stopPropagation();
+            combatFocusReturn?.focus({ preventScroll: true });
+            closeCombat();
+          }
+        }}
+        onFocusOut={event => { if (!rail.contains(event.relatedTarget as Node | null)) scheduleCombatClose(); }}
         onWheel={handleWheel}
         data-testid="replay-timeline"
       >
@@ -869,6 +975,41 @@ function ReplayTimeline(props: Props) {
               />
             )}
           </For>
+
+          <For each={combatEvents()}>{item => {
+            const presentation = () => timelineEventPresentation(item.source, props.localPlayerName);
+            const personal = () => presentation().localRole === "killer" || presentation().localRole === "victim";
+            const time = () => formatDuration(replayTickToMilliseconds(item.replay_tick));
+            return <button type="button"
+              classList={{ [styles.marker]: true, [styles.combatMarker]: true,
+                [styles.markerLocal]: personal(), [styles.markerHighlighted]: isCombatHighlighted(item.source),
+                [styles[`side${combatSide(item.source, participantIndex())}`]]: true }}
+              style={`left:${timelineRatioAtTick(item.replay_tick, viewport()) * 100}%;--event-hit-width:15px`}
+              data-event-icon={presentation().icon} data-combat-marker="true"
+              data-side={combatSide(item.source, participantIndex())}
+              data-local-role={presentation().localRole ?? undefined}
+              data-local-emphasis={personal() ? "true" : undefined}
+              data-highlighted={isCombatHighlighted(item.source) ? "true" : undefined}
+              aria-label={`Seek to ${presentation().kind === "death" ? "Your death" : eventTitle(item.source)} at ${time()}`}
+              aria-haspopup="dialog" aria-controls={combatCardId}
+              aria-expanded={Boolean(hoveredCombatGroup()?.includes(item))}
+              onPointerDown={event => event.stopPropagation()}
+              onPointerEnter={event => openCombat(nearestCombat(event.clientX) ?? item)}
+              onPointerLeave={scheduleCombatClose}
+              onFocus={event => { combatFocusReturn = event.currentTarget; openCombat(item); }}
+              onKeyDown={event => {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault(); event.stopPropagation(); openCombat(item);
+                  rail.querySelector<HTMLButtonElement>('[data-combat-card] button')?.focus();
+                }
+              }}
+              onClick={event => {
+                event.stopPropagation();
+                selectCombat(event.detail === 0 ? item : nearestCombat(event.clientX) ?? item);
+              }}>
+              <span class={styles.markerGlyph}><TimelineEventGlyph icon={presentation().icon} relation={presentation().relation} /></span>
+            </button>;
+          }}</For>
 
           <For each={clusters()}>
             {(item) => {
@@ -1029,7 +1170,18 @@ function ReplayTimeline(props: Props) {
           </For>
         </div>
 
-        <Show when={hoveredTick() !== null}>
+        <Show when={hoveredCombatGroup()}>{group =>
+          <div id={combatCardId} data-combat-card="true" class={styles.combatPopover}
+            style={`left:${combatCardLeft()}px`}
+            onPointerEnter={keepCombatOpen} onPointerLeave={scheduleCombatClose}
+            onPointerMove={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
+            onClick={event => event.stopPropagation()} onWheel={event => event.stopPropagation()}>
+            <TimelineCombatCard events={group()} participants={participantIndex()} assetBase={props.assetBase}
+              onHighlight={setHighlightedCombat} onSelect={selectCombat} />
+          </div>
+        }</Show>
+
+        <Show when={hoveredTick() !== null && !hoveredCombat()}>
           <span
             class={styles.hoverTime}
             style={`left:${floatingLabelRatio(hoverRatio() ?? 0) * 100}%`}

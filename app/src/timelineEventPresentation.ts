@@ -13,6 +13,7 @@ export type TimelineEventKind =
   | "match-event";
 
 export type TimelineEventIconKey =
+  | "dot"
   | "swords"
   | "skull"
   | "tower"
@@ -173,7 +174,7 @@ export const timelineEventPresentation = (
         : presentation(
             event,
             "kill",
-            "swords",
+            localRole === "killer" ? "swords" : "dot",
             localRole,
           );
 
@@ -181,7 +182,7 @@ export const timelineEventPresentation = (
       return presentation(
         event,
         "kill",
-        "swords",
+        localRole === "killer" || localRole === "actor" ? "swords" : "dot",
         localRole,
         event.kill_streak,
       );
@@ -190,7 +191,7 @@ export const timelineEventPresentation = (
       return presentation(
         event,
         "kill",
-        "swords",
+        localRole === "killer" || localRole === "actor" ? "swords" : "dot",
         localRole,
       );
 

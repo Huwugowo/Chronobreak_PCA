@@ -149,6 +149,92 @@
   outline-offset: 1px;
 }
 
+.sideblue { --event-color: #4a70e0; }
+.sidered { --event-color: #e23950; }
+.sideunknown { --event-color: #a5a8b0; }
+
+.combatDot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85);
+}
+
+.combatMarker.markerLocal { z-index: 6; }
+.combatMarker:hover .markerGlyph { transform: none; }
+.combatMarker.markerHighlighted { z-index: 7; }
+.combatMarker.markerHighlighted .markerGlyph { transform: scale(1.12); }
+.combatMarker.markerHighlighted[data-event-icon="dot"] .markerGlyph { transform: scale(1.375); }
+
+.combatPopover {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% - 1px);
+  width: 300px;
+  max-width: 100%;
+  padding-bottom: 6px;
+  transform: translateX(-50%);
+  cursor: default;
+  pointer-events: auto;
+}
+
+.combatCard {
+  max-height: min(280px, 40vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(7, 10, 17, 0.98);
+  box-shadow: 0 5px 22px rgba(0, 0, 0, 0.5);
+}
+
+.combatRow {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px;
+  border: 0;
+  border-radius: 4px;
+  color: #f8f5ef;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.combatRow + .combatRow { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.combatRow:hover, .combatRow:focus-visible { background: rgba(255, 255, 255, 0.10); }
+.combatRow:focus-visible { outline: 2px solid #fafa69; outline-offset: -2px; }
+.combatTime { min-width: 5ch; padding-top: 8px; font: 11px var(--font-mono); color: #aeb6c8; }
+.combatDetails { display: grid; min-width: 0; gap: 6px; }
+.combatKill { display: flex; align-items: center; gap: 10px; }
+.combatVerb { font-size: 11px; color: #c7ccd6; }
+.combatPortrait {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  background: #252b36;
+}
+.combatPortrait img { width: 100%; height: 100%; object-fit: cover; }
+.combatPortraitFallback { font-size: 14px; color: #aeb6c8; }
+.combatAssistPortrait { width: 20px; height: 20px; }
+.combatAssistPortrait .combatPortraitFallback { font-size: 11px; }
+.combatAssists { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 9px; color: #aeb6c8; }
+.combatAssists > span:first-child { margin-right: 3px; }
+.combatBadges { display: flex; flex-wrap: wrap; gap: 4px; }
+.combatBadges > span { padding: 2px 5px; border-radius: 3px; color: #ead38a; background: rgba(234, 211, 138, 0.12); font-size: 9px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .combatMarker .markerGlyph { transition: none; }
+}
+
 .markerAsset {
   display: block;
   max-width: 18px;

@@ -220,6 +220,8 @@ function FullscreenOverlay(props: Props) {
             viewport={props.timelineViewport}
             onViewportChange={props.onTimelineViewportChange}
             events={mappedEvents()}
+            participants={props.participants}
+            assetBase={props.ddragonAssetBaseUrl}
             localPlayerName={props.localPlayerName}
             clip={
               props.clipRange

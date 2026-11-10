@@ -14,7 +14,7 @@ import {
   parseMediaId,
   type ReplayTick,
 } from "../replayTime";
-import type { ViewerEvent } from "../types";
+import type { ReplayParticipant, ViewerEvent } from "../types";
 import type { EventActors, SourceEpoch } from "../leagueSource";
 import {
   wholeTimelineViewport,
@@ -76,6 +76,9 @@ const renderTimeline = (
   events: readonly TimelineEvent[],
   options: {
     localPlayerName?: string | null;
+    participants?: readonly ReplayParticipant[];
+    assetBase?: string;
+    onEventSelect?: (event: TimelineEvent) => void;
     onViewportChange?: (
       viewport: TimelineViewport,
     ) => void;
@@ -102,13 +105,15 @@ const renderTimeline = (
         viewport={viewport}
         onViewportChange={onViewportChange}
         events={events}
+        participants={options.participants}
+        assetBase={options.assetBase}
         localPlayerName={
           options.localPlayerName ??
           "Me#EUW"
         }
         clip={null}
         onSeek={() => {}}
-        onEventSelect={() => {}}
+        onEventSelect={options.onEventSelect ?? (() => {})}
         onClipEndpointEditStart={() => {}}
         onClipEndpointPreview={() => {}}
         onClipEndpointEditFinish={() => {}}
@@ -268,7 +273,7 @@ describe("ReplayTimeline event language", () => {
     ).toBe("true");
   });
 
-  it("attaches Multikill count to the underlying kill marker", () => {
+  it("shows Multikill details in the kill hover card", () => {
     const { host } = renderTimeline([
       event("ChampionKill", 20, {
         killer: "Me#EUW",
@@ -295,9 +300,9 @@ describe("ReplayTimeline event language", () => {
       ),
     ).toHaveLength(1);
 
-    expect(swords?.textContent).toContain(
-      "3",
-    );
+    expect(swords?.textContent).toBe("");
+    (swords as HTMLButtonElement).focus();
+    expect(host.querySelector("[data-combat-card]")?.textContent).toContain("3× Multikill");
   });
 
   it("does not emphasize a same-base display name with another participant identity", () => {
@@ -309,7 +314,7 @@ describe("ReplayTimeline event language", () => {
       }),
     ], { localPlayerName: "Me#TEST" });
 
-    const marker = host.querySelector('[data-event-icon="swords"]');
+    const marker = host.querySelector('[data-event-icon="dot"]');
 
     expect(marker?.getAttribute("data-local-role")).toBeNull();
     expect(marker?.getAttribute("data-local-emphasis")).toBeNull();
@@ -319,7 +324,7 @@ describe("ReplayTimeline event language", () => {
     ["media", source({ media_id: parseMediaId("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb") })],
     ["run", source({ run_id: parseMediaId("22222222-2222-2222-2222-222222222222") })],
     ["epoch", source({ epoch: 2 })],
-  ])("does not collapse multikills from a different %s source", (_scope, otherSource) => {
+  ])("does not annotate a kill with multikills from a different %s source", (_scope, otherSource) => {
     const { host } = renderTimeline([
       event("ChampionKill", 20, {
         actors: { killer: resolved(1), victim: resolved(2) },
@@ -331,7 +336,9 @@ describe("ReplayTimeline event language", () => {
       }),
     ]);
 
-    expect(host.querySelectorAll("[data-event-icon]")).toHaveLength(2);
+    expect(host.querySelectorAll("[data-event-icon]")).toHaveLength(1);
+    host.querySelector<HTMLButtonElement>("[data-combat-marker]")!.focus();
+    expect(host.querySelector("[data-combat-card]")?.textContent).not.toContain("Multikill");
   });
 
   it("does not emphasize unresolved actor telemetry", () => {
@@ -342,7 +349,7 @@ describe("ReplayTimeline event language", () => {
       }),
     ]);
 
-    const marker = host.querySelector('[data-event-icon="swords"]');
+    const marker = host.querySelector('[data-event-icon="dot"]');
     expect(marker?.getAttribute("data-local-role")).toBeNull();
     expect(marker?.getAttribute("data-local-emphasis")).toBeNull();
   });
@@ -402,65 +409,20 @@ describe("ReplayTimeline event language", () => {
       "/timeline-events/tower-red.png",
     );
   });
-  it("renders a homogeneous collision as semantic icon plus count", () => {
-    const onViewportChange = vi.fn();
-
-    const {
-      host,
-      duration,
-    } = renderTimeline(
-      [
-        event("ChampionKill", 20, {
-          killer: "Ally Mid",
-          victim: "Enemy Mid",
-          relation: "ally",
-        }),
-        event("ChampionKill", 20, {
-          killer: "Ally Jungle",
-          victim: "Enemy Jungle",
-          relation: "ally",
-        }),
-      ],
-      { onViewportChange },
-    );
-
-    const cluster =
-      host.querySelector<HTMLButtonElement>(
-        '[data-cluster-kind="homogeneous"]',
-      );
-
-    expect(cluster).not.toBeNull();
-
-    expect(
-      cluster?.getAttribute(
-        "data-cluster-icon",
-      ),
-    ).toBe("swords");
-
-    expect(cluster?.textContent).toContain(
-      "2",
-    );
-
-    cluster!.click();
-
-    expect(
-      onViewportChange,
-    ).toHaveBeenCalledTimes(1);
-
-    const next =
-      onViewportChange.mock.calls[0][0];
-
-    expect(next.start).toBeLessThanOrEqual(
-      tick(20),
-    );
-
-    expect(next.end).toBeGreaterThanOrEqual(
-      tick(20),
-    );
-
-    expect(
-      next.end - next.start,
-    ).toBeLessThan(duration);
+  it("keeps colliding kills individual and shares a chronological hover card", () => {
+    const onEventSelect = vi.fn(), onViewportChange = vi.fn();
+    const first = event("ChampionKill", 20), second = event("ChampionKill", 20.8);
+    const { host } = renderTimeline([second, first], { onEventSelect, onViewportChange });
+    expect(host.querySelectorAll('[data-event-icon="dot"]')).toHaveLength(2);
+    expect(host.querySelector('[data-cluster-kind]')).toBeNull();
+    const marker = host.querySelector<HTMLButtonElement>('[data-combat-marker]')!;
+    marker.focus();
+    const rows = host.querySelectorAll<HTMLButtonElement>('[data-combat-card] button');
+    expect(rows).toHaveLength(2);
+    rows[1].click();
+    expect(onEventSelect).toHaveBeenCalledExactlyOnceWith(second);
+    expect(onViewportChange).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-combat-card]')).toBeNull();
   });
 
   it("uses small diagonal precision-wheel movement as smooth zoom", () => {
@@ -556,36 +518,10 @@ describe("ReplayTimeline event language", () => {
       next.end - next.start,
     ).toBeLessThan(duration);
   });
-  it("renders a mixed collision as a neutral +N cluster", () => {
-    const { host } = renderTimeline([
-      event("ChampionKill", 20, {
-        killer: "Ally Mid",
-        victim: "Enemy Mid",
-        relation: "ally",
-      }),
-      event("DragonKill", 20, {
-        killer: "Ally Jungle",
-        dragon_type: "Fire",
-        relation: "ally",
-      }),
-    ]);
-
-    const cluster =
-      host.querySelector(
-        '[data-cluster-kind="mixed"]',
-      );
-
-    expect(cluster).not.toBeNull();
-
-    expect(
-      cluster?.getAttribute(
-        "data-cluster-icon",
-      ),
-    ).toBeNull();
-
-    expect(cluster?.textContent?.trim()).toBe(
-      "+2",
-    );
+  it("retains objective artwork alongside a simultaneous kill", () => {
+    const { host } = renderTimeline([event("ChampionKill", 20), event("DragonKill", 20, { dragon_type: "Fire" })]);
+    expect(host.querySelector('[data-event-icon="dot"]')).not.toBeNull();
+    expect(host.querySelector('[data-event-icon="dragon-fire"] img')).not.toBeNull();
   });
 });
 
@@ -601,6 +537,110 @@ const capture = (element: Element) => {
     hasPointerCapture: (id: number) => held.has(id), releasePointerCapture: release });
   return { held, release };
 };
+
+it("colors combat by actual map side and renders source-scoped killer/victim/assist portraits", () => {
+  const participants: ReplayParticipant[] = [
+    { identity: { source: source(), participant: 1 }, is_local: true, summoner_name: "Me#EUW", champion: "Ahri", relation: "ally", team: "CHAOS" },
+    { identity: { source: source(), participant: 2 }, summoner_name: "Blue#EUW", champion: "Lux", relation: "enemy", team: "ORDER" },
+    { identity: { source: source(), participant: 3 }, summoner_name: "Red#EUW", champion: "Jinx", relation: "ally", team: "CHAOS" },
+  ];
+  const kill = event("ChampionKill", 20, { killer: "Blue#EUW", victim: "Red#EUW", actors: { killer: resolved(2), victim: resolved(3), assister: resolved(1) }, relation: "enemy" });
+  const death = event("ChampionKill", 60, { actors: { killer: resolved(2), victim: resolved(1) }, relation: "enemy" });
+  const ownKill = event("ChampionKill", 80, { actors: { killer: resolved(1), victim: resolved(2) }, relation: "ally" });
+  const { host } = renderTimeline([kill, death, ownKill], { participants, assetBase: "/assets" });
+  const dot = host.querySelector<HTMLButtonElement>('[data-event-icon="dot"]')!;
+  expect(dot.getAttribute("data-side")).toBe("blue");
+  expect(dot.getAttribute("data-local-role")).toBe("assister");
+  expect(host.querySelector('[data-event-icon="skull"]')?.getAttribute("data-side")).toBe("blue");
+  expect(host.querySelector('[data-event-icon="swords"]')?.getAttribute("data-side")).toBe("red");
+  dot.focus();
+  const card = host.querySelector('[data-combat-card]')!;
+  expect([...card.querySelectorAll("img")].map(img => img.getAttribute("src"))).toEqual(["/assets/champion/Lux", "/assets/champion/Jinx", "/assets/champion/Ahri"]);
+  expect(card.querySelector("button")?.getAttribute("aria-label")).toContain("Blue#EUW killed Red#EUW");
+  expect(card.querySelector("button")?.getAttribute("aria-label")).toContain("assists: Me#EUW");
+  card.querySelector("img")!.dispatchEvent(new Event("error"));
+  expect(card.querySelectorAll("img")).toHaveLength(2);
+  expect(card.textContent).toContain("?");
+});
+it("does not borrow portraits or team colors from a different source", () => {
+  const { host } = renderTimeline([event("ChampionKill", 20, { actors: { killer: resolved(2) }, relation: "ally" })], {
+    participants: [{ identity: { source: source({ epoch: 2 }), participant: 2 }, summoner_name: "Other", champion: "Lux", relation: "ally", team: "ORDER" }],
+    assetBase: "/assets",
+  });
+  const marker = host.querySelector<HTMLButtonElement>('[data-combat-marker]')!;
+  expect(marker.getAttribute("data-side")).toBe("unknown");
+  marker.focus();
+  expect(host.querySelector('[data-combat-card] img')).toBeNull();
+});
+it("groups personal icons and dots without chaining a whole fight into one card", () => {
+  const { host } = renderTimeline([
+    event("ChampionKill", 20), event("ChampionKill", 20.8, { actors: { victim: resolved(1) } }),
+    event("ChampionKill", 21.6), event("ChampionKill", 22.4),
+  ]);
+  expect(host.querySelectorAll('[data-combat-marker]')).toHaveLength(4);
+  host.querySelector<HTMLButtonElement>('[data-event-icon="dot"]')!.focus();
+  const rows = host.querySelectorAll<HTMLButtonElement>('[data-combat-card] button');
+  expect(rows).toHaveLength(2);
+  rows[1].focus();
+  expect(host.querySelector('[data-event-icon="skull"]')?.getAttribute("data-highlighted")).toBe("true");
+});
+it("seeks the nearest overlapping dot with earliest-event ties; keyboard selects its exact marker", () => {
+  const onEventSelect = vi.fn();
+  const first = event("ChampionKill", 20), second = event("ChampionKill", 20.8);
+  const { host } = renderTimeline([first, second], { onEventSelect });
+  const markers = host.querySelectorAll<HTMLButtonElement>('[data-combat-marker]');
+  markers[1].dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, clientX: 204 }));
+  expect(onEventSelect).toHaveBeenLastCalledWith(first);
+  markers[0].dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, clientX: 207 }));
+  expect(onEventSelect).toHaveBeenLastCalledWith(second);
+  markers[1].click();
+  expect(onEventSelect).toHaveBeenLastCalledWith(second);
+});
+it("keeps a card open during pointer transfer and closes it on leave or Escape", () => {
+  vi.useFakeTimers();
+  try {
+    const { host } = renderTimeline([event("ChampionKill", 20)]);
+    const marker = host.querySelector<HTMLButtonElement>('[data-combat-marker]')!;
+    const rail = host.querySelector<HTMLElement>('[data-testid="replay-timeline"]')!;
+    pointer(rail, "pointermove", 200, 7, 10);
+    expect(host.querySelector('[data-combat-card]')).not.toBeNull();
+    pointer(rail, "pointerleave", 200, 7, -2);
+    pointer(host.querySelector('[data-combat-card]')!, "pointerenter", 200, 7, -5);
+    vi.advanceTimersByTime(200);
+    expect(host.querySelector('[data-combat-card]')).not.toBeNull();
+    marker.focus();
+    marker.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement).toBe(host.querySelector('[data-combat-card] button'));
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(host.querySelector('[data-combat-card]')).toBeNull();
+    expect(document.activeElement).toBe(marker);
+    pointer(rail, "pointermove", 200, 7, 10);
+    marker.blur();
+    pointer(rail, "pointerleave", 200, 7, 60);
+    vi.advanceTimersByTime(200);
+    expect(host.querySelector('[data-combat-card]')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("rebinds an open hover card on a same-source event refresh and clears it after filtering", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const first = event("ChampionKill", 20, { source_id: 7 });
+  const [events, setEvents] = createSignal([first]);
+  disposers.push(render(() => <ReplayTimeline duration={tick(100)} playhead={tick(0)}
+    viewport={wholeTimelineViewport(tick(100))} onViewportChange={() => {}} events={events()}
+    localPlayerName={null} clip={null} onSeek={() => {}} onEventSelect={() => {}}
+    onClipEndpointEditStart={() => {}} onClipEndpointPreview={() => {}} onClipEndpointEditFinish={() => {}}
+    onClipEndpointKeyDown={() => {}} onClipEndpointKeyUp={() => {}} onClipEndpointBlur={() => {}} />, host));
+  host.querySelector<HTMLButtonElement>('[data-combat-marker]')!.focus();
+  expect(host.querySelector('[data-combat-card]')).not.toBeNull();
+  setEvents([{ ...first, killer: "Refreshed player" }]);
+  expect(host.querySelector('[data-combat-card] button')?.getAttribute("aria-label")).toContain("Refreshed player");
+  setEvents([]);
+  expect(host.querySelector('[data-combat-card]')).toBeNull();
+});
+
 const mount = () => {
   const host = document.createElement("div"); document.body.append(host);
   const [visible, setVisible] = createSignal(true);

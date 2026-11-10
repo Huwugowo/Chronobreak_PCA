@@ -14,6 +14,7 @@ export type TimelineDisplayEvent<
   replay_tick: ReplayTick;
   source: T;
   multiplier: number | null;
+  badges: string[];
 };
 
 const META_ASSOCIATION_WINDOW =
@@ -32,21 +33,6 @@ const isKillEvent = (
 ): boolean =>
   event.event_type === "ChampionKill" ||
   event.event_type === "FirstBlood";
-
-const duplicatesChampionKill = <
-  T extends MappedTimelineEvent,
->(
-  event: T,
-  events: readonly T[],
-): boolean =>
-  event.event_type === "FirstBlood" &&
-  events.some(
-    (candidate) =>
-      candidate.event_type === "ChampionKill" &&
-      candidate.replay_tick === event.replay_tick &&
-      sameActor(candidate,"killer",event,"killer") &&
-      sameActor(candidate,"victim",event,"victim"),
-  );
 
 const duplicatesTurretKill = <
   T extends MappedTimelineEvent,
@@ -132,10 +118,7 @@ export const timelineDisplayEvents = <
         (event) =>
           event.event_type !== "Multikill" &&
           event.event_type !== "Ace" &&
-          !duplicatesChampionKill(
-            event,
-            ordered,
-          ) &&
+          event.event_type !== "FirstBlood" &&
           !duplicatesTurretKill(
             event,
             ordered,
@@ -145,22 +128,30 @@ export const timelineDisplayEvents = <
         replay_tick: source.replay_tick,
         source,
         multiplier: null,
+        badges: [],
       }));
 
   for (const metaEvent of ordered) {
+    if (metaEvent.event_type === "FirstBlood") {
+      const matches = result.filter(candidate =>
+        candidate.source.event_type === "ChampionKill" &&
+        candidate.replay_tick === metaEvent.replay_tick &&
+        (sameActor(candidate.source, "killer", metaEvent, "killer") ||
+          sameActor(candidate.source, "killer", metaEvent, "recipient")) &&
+        (!metaEvent.actors?.victim?.length || sameActor(candidate.source, "victim", metaEvent, "victim")));
+      if (matches.length === 1) matches[0].badges.push("First Blood");
+      continue;
+    }
     if (metaEvent.event_type === "Multikill") {
       const multiplier =
         metaEvent.kill_streak ?? 0;
 
-      const target =
-        metaEvent.killer === null
-          ? undefined
-          : nearestPreviousKill(
-              result,
-              metaEvent,
-              (candidate) =>
-                sameActor(candidate,"killer",metaEvent,"killer"),
-            );
+      const target = nearestPreviousKill(
+        result,
+        metaEvent,
+        (candidate) =>
+          sameActor(candidate,"killer",metaEvent,"killer"),
+      );
 
       if (target) {
         if (multiplier > 1) {
@@ -173,19 +164,7 @@ export const timelineDisplayEvents = <
         continue;
       }
 
-      /*
-       * Keep standalone Multikill telemetry when the
-       * corresponding ChampionKill event is unavailable.
-       */
-      result.push({
-        replay_tick: metaEvent.replay_tick,
-        source: metaEvent,
-        multiplier:
-          multiplier > 1
-            ? multiplier
-            : null,
-      });
-
+      // Meta telemetry without a known base kill does not invent a kill marker.
       continue;
     }
 
@@ -197,18 +176,7 @@ export const timelineDisplayEvents = <
           sameActor(candidate,"killer",metaEvent,"acer"),
       );
 
-      /*
-       * Ace describes the outcome of the fight rather than
-       * another physical kill. Suppress it when its fight is
-       * already represented by a nearby kill.
-       */
-      if (target) continue;
-
-      result.push({
-        replay_tick: metaEvent.replay_tick,
-        source: metaEvent,
-        multiplier: null,
-      });
+      if (target) target.badges.push("Ace");
     }
   }
 

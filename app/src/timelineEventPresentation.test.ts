@@ -79,7 +79,7 @@ describe("timeline event presentation", () => {
     expect(ownDeath.localPriority).toBe(4);
   });
 
-  it("keeps ordinary kills as swords while preserving assists as local relevance", () => {
+  it("uses dots for ordinary kills while preserving assists as local relevance", () => {
     const assistedKill = timelineEventPresentation(
       event("ChampionKill", {
         killer: "Ally Jungle",
@@ -91,7 +91,7 @@ describe("timeline event presentation", () => {
       "Me#TEST",
     );
 
-    expect(assistedKill.icon).toBe("swords");
+    expect(assistedKill.icon).toBe("dot");
     expect(assistedKill.localRole).toBe("assister");
     expect(assistedKill.localPriority).toBe(0);
 
@@ -105,7 +105,7 @@ describe("timeline event presentation", () => {
       "Me#TEST",
     );
 
-    expect(unrelatedKill.icon).toBe("swords");
+    expect(unrelatedKill.icon).toBe("dot");
     expect(unrelatedKill.localRole).toBeNull();
     expect(unrelatedKill.localPriority).toBe(0);
   });
@@ -229,7 +229,7 @@ describe("timeline event presentation", () => {
       ),
     ).toEqual({
       homogeneous: true,
-      icon: "swords",
+      icon: "dot",
       relation: "ally",
     });
 
@@ -247,7 +247,7 @@ describe("timeline event presentation", () => {
       ),
     ).toEqual({
       homogeneous: true,
-      icon: "swords",
+      icon: "dot",
       relation: "neutral",
     });
 
