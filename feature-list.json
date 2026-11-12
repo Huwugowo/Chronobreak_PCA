@@ -5541,6 +5541,90 @@
         "The rebuilt desktop app opened a copied two-match fixture with an empty cache. The first History visit showed both five-player Swiftplay teams and CS 136, plus the one-player Practice Tool roster and CS 0. Both cards showed KDA before any replay was opened. Report: build/verification/match-history-first-launch.json."
       ],
       "notes": "Keep the checked History projection, the existing preparation owner and bounded status polling."
+    },
+    {
+      "id": "QB-LIB-035",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Reuse the clip projection across unchanged library refreshes",
+      "description": "Keep the completed clip projection when a fresh accepted snapshot contains the same managed clip inventory.",
+      "priority": "P1",
+      "area": "clip-library",
+      "status": "in-progress",
+      "acceptance_criteria": [
+        "An unchanged managed clip inventory keeps its completed projection across accepted snapshot tokens without running another reconciliation batch.",
+        "A changed clip descriptor or removed clip invalidates the projection and updates History counts and clip queries after reconciliation."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run the native clip projection test for unchanged, renamed, and removed clips and the app component checks."}
+      ],
+      "evidence": [],
+      "dependencies": ["QB-LIB-002", "QB-LIB-003"],
+      "execution": {"workflow": "adaptive", "plan": null},
+      "notes": "Review of 3f6c1be found every new snapshot token restarts both reconciliation passes, including normal Back from Replay. Count SQLite writer opens and verify invalidation for changed, removed and replaced clips."
+    },
+    {
+      "id": "QB-LIB-036",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Avoid duplicate Match History status and page reads",
+      "description": "Reduce source fingerprinting during readiness checks and reuse the current History page when returning from a clip source replay.",
+      "priority": "P2",
+      "area": "library-replay",
+      "status": "in-progress",
+      "acceptance_criteria": [
+        "One source fingerprint validates card and replay readiness for each recording status request.",
+        "Returning to a settled page in the same snapshot skips its query while preparation changes still refresh the page.",
+        "A fresh desktop launch shows checked rosters and card facts before a replay is opened."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run History request-count and native readiness regressions and compare first-launch cards with the previous release on the copied two-match fixture."}
+      ],
+      "evidence": [],
+      "dependencies": ["QB-LIB-034"],
+      "execution": {"workflow": "adaptive", "plan": null},
+      "notes": "The 6f47ba0 readiness fix extends bounded polling while card facts are pending. One status check can fingerprint the same source twice. Returning from a clip's source replay also requests an unchanged page. Keep freshness validation and verify first-launch card loading."
+    },
+    {
+      "id": "QB-LIB-037",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Watch the canonical library cache filename",
+      "description": "Wake preparation promptly after cache replacement regardless of the approved library path spelling.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "in-progress",
+      "acceptance_criteria": [
+        "Ordinary and extended Windows library paths both wake the idle preparation helper within four seconds of cache replacement."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run the native watcher regression and paired Windows release cache-rename probes in disposable app data."}
+      ],
+      "evidence": [],
+      "dependencies": ["QB-LIB-027", "QB-LIB-033"],
+      "execution": {"workflow": "direct", "plan": null},
+      "notes": "On 2026-11-12, the release helper rebuilt a renamed disposable cache within four seconds with an extended Windows library path. With the ordinary path it did not recreate the cache within four seconds. The watcher hashes the logical path and the preparer hashes the canonical path."
+    },
+    {
+      "id": "QB-REPLAY-033",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Avoid reloading replay details for an unchanged prepared source",
+      "description": "Reuse scopes, event windows and overlay pages when a background preparation event refers to the journal revision the viewer already loaded.",
+      "priority": "P2",
+      "area": "replay-performance",
+      "status": "in-progress",
+      "acceptance_criteria": [
+        "An unchanged ready journal revision preserves replay scopes, the current event window, and healthy overlay pages.",
+        "A changed journal revision refreshes replay data and a late preparation event can still pick up newly published recording facts."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run controller request-count tests for unchanged and changed journals and for a result arriving during initialization, plus the app component checks."}
+      ],
+      "evidence": [],
+      "dependencies": ["QB-REPLAY-029"],
+      "execution": {"workflow": "adaptive", "plan": null},
+      "notes": "The existing preparation event retries details and restarts overlay pagination. Since a927654 the second pass includes scoreboard data. Verify request counts with a held initialization, an unchanged settled revision and a genuinely changed revision."
     }
   ]
 }

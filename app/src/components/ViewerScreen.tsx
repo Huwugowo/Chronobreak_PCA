@@ -262,7 +262,13 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
   onMount(() => {
     const unsubscribePrepared = onPreparedData(media => {
       if (!media.includes(mediaTimeline.mediaId)) return;
-      void replayData.prepared().then(() => {if (!disposed) overlayData.retry();});
+      const previousScope = overlayData.value.scope;
+      void replayData.prepared().then(changed => {
+        if (disposed) return;
+        const { scope, status, scoreboardStatus } = overlayData.value;
+        if (status === "error" || scoreboardStatus === "error"
+          || (changed && previousScope && scope && sameSource(previousScope.source, scope.source))) overlayData.retry();
+      });
     });
     onCleanup(unsubscribePrepared);
     // The media mount starts synchronously. Let details overlap native loading.

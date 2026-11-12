@@ -119,12 +119,12 @@ pub(super) struct Watch {
     pending: Arc<Mutex<Changes>>,
 }
 impl Watch {
-    pub fn new(root: &Path, cache: &Path) -> anyhow::Result<Self> {
+    pub fn new(root: &Path, approved_root: &Path, cache: &Path) -> anyhow::Result<Self> {
         std::fs::create_dir_all(cache)?;
         let pending = Arc::new(Mutex::new(Changes::default()));
         let changes = Arc::clone(&pending);
         let watched_root = root.to_owned();
-        let database = crate::league_index::cache_path(cache, root);
+        let database = crate::league_index::cache_path(cache, approved_root);
         let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
             let Ok(mut pending) = changes.lock() else {
                 return;
@@ -216,7 +216,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let bundle = root.path().join("games/100");
         std::fs::create_dir_all(&bundle).unwrap();
-        let watch = Watch::new(root.path(), cache.path()).unwrap();
+        let watch = Watch::new(root.path(), root.path(), cache.path()).unwrap();
         std::fs::write(
             bundle.join("league_history_result.json"),
             b"new optional facts",
@@ -230,5 +230,27 @@ mod tests {
         }
         assert!(!changes.rescan);
         assert_eq!(changes.bundles.get("100"), Some(&false));
+    }
+
+    #[test]
+    fn native_notification_wakes_on_approved_cache_rename() {
+        let parent = tempfile::tempdir().unwrap();
+        let logical = parent.path().join("library");
+        std::fs::create_dir(&logical).unwrap();
+        let logical = logical.join("..").join("library");
+        let approved = crate::playback_file::ApprovedRoot::new(&logical).unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let database = crate::league_index::cache_path(cache.path(), approved.path());
+        std::fs::write(&database, b"fixture cache").unwrap();
+        let watch = Watch::new(&logical, approved.path(), cache.path()).unwrap();
+        std::fs::rename(&database, database.with_extension("old")).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if watch.take().rescan {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("cache rename did not request a rescan");
     }
 }

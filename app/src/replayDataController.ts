@@ -1,5 +1,5 @@
 import type { ReplayRead } from "./libraryController";
-import type { SourceScope, RecordingFacts, ReplayWindow, ReplayWindowQuery } from "./leagueIndex";
+import type { ImportProgress as LeagueImportProgress, SourceScope, RecordingFacts, ReplayWindow, ReplayWindowQuery } from "./leagueIndex";
 import type { MediaId } from "./replayTime";
 import { sameSource, sourceKey } from "./leagueSource";
 import type { OverlayState } from "./replayOverlayController";
@@ -7,7 +7,7 @@ import type { OverlayState } from "./replayOverlayController";
 /** The bounded replay projection returned by the M3 IPC contract. */
 export type { RecordingFacts, ReplayCursor, ReplayRoster, ReplayWindow } from "./leagueIndex";
 export type ReplayWindowRequest = ReplayWindowQuery;
-export type ImportProgress = { status: "pending" | "ready" | "unavailable" | string };
+export type ImportProgress = Pick<LeagueImportProgress, "status"> & Partial<Pick<LeagueImportProgress, "position" | "tail_bytes">>;
 
 type Dependencies = {
   gameTimestamp: string;
@@ -57,6 +57,8 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
 const cursorKey = (cursor: ReplayWindowQuery["after"]) => cursor ? `${cursor.replay_tick}:${cursor.source_id}` : "first";
 const windowKey = (query: ReplayWindowRequest) =>
   `${sourceKey(query.scope)}:${query.start}:${query.end}:${query.at}:${cursorKey(query.after)}`;
+const preparedRevision = ({ position, tail_bytes }: ImportProgress) => position
+  ? JSON.stringify([position.end_offset, position.last_sequence, position.checksum, tail_bytes]) : null;
 
 /**
  * A selected-recording reader. It deliberately retains pages, rather than a
@@ -72,6 +74,7 @@ export class ReplayDataController {
   private listeners = new Set<(state: ReplayDataState) => void>();
   private closed = false;
   private initPromise: Promise<void> | null = null;
+  private readyRevision: string | null = null;
   private initGeneration = 0;
   private windowGeneration = 0;
   private windowActive = false;
@@ -109,21 +112,27 @@ export class ReplayDataController {
   }
   private async read<T>(work: (token: string) => Promise<T>): Promise<T> { return this.api.readReplay(work); }
 
-  initialize(): Promise<void> {
+  initialize(reuseRevision: string | null = null): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (this.initPromise) return this.initPromise;
     const generation = ++this.initGeneration;
     this.publish({ initializing: true });
-    this.initPromise = this.runInitialization(generation).finally(() => {
+    this.initPromise = this.runInitialization(generation, reuseRevision).finally(() => {
       if (this.currentInit(generation)) { this.initPromise = null; this.publish({ initializing: false }); }
     });
     return this.initPromise;
   }
 
   /** A late result can arrive after facts were read but before initialization settles. */
-  prepared(): Promise<void> {
-    const active = this.initPromise;
-    return active ? active.then(() => this.closed ? undefined : this.retry()) : this.retry();
+  async prepared(): Promise<boolean> {
+    if (this.initPromise) await this.initPromise;
+    if (this.closed) return false;
+    const revision = this.state.indexing === "ready" && !this.state.windowError ? this.readyRevision : null;
+    await this.initialize(revision);
+    if (this.closed || this.state.indexing !== "ready") return false;
+    if (revision !== null && revision === this.readyRevision) return false;
+    if (this.latestWindow) this.requestWindow(this.latestWindow);
+    return true;
   }
 
   /** Explicit retry only; background failures never restart their own IPC work. */
@@ -135,7 +144,7 @@ export class ReplayDataController {
     });
   }
 
-  private async runInitialization(generation: number) {
+  private async runInitialization(generation: number, reuseRevision: string | null) {
     this.publish({ error: null });
     this.setLoading("facts", true);
     try {
@@ -153,12 +162,13 @@ export class ReplayDataController {
 
     this.setLoading("index", true);
     this.publish({ indexing: "pending" });
+    let revision: string | null;
     try {
       // Read preparation status only. The backend advances work without a mounted viewer.
       for (;;) {
         const progress = await this.read(token => this.api.indexRecording(token, this.api.gameTimestamp));
         if (!this.currentInit(generation)) return;
-        if (progress.status === "ready") break;
+        if (progress.status === "ready") { revision = preparedRevision(progress); break; }
         if (progress.status === "unavailable") { this.publish({ indexing: "unavailable" }); return; }
         await this.pause(IMPORT_PAUSE_MS);
         if (!this.currentInit(generation)) return;
@@ -170,13 +180,27 @@ export class ReplayDataController {
       if (this.currentInit(generation)) this.setLoading("index", false);
     }
     if (!this.currentInit(generation)) return;
+    if (reuseRevision !== null && reuseRevision === revision) {
+      this.publish({ indexing: "ready", error: null });
+      return;
+    }
 
     this.setLoading("scopes", true);
     try {
       const scopes = await this.read(token => this.api.sourceScopes(token, this.api.gameTimestamp));
       if (!this.currentInit(generation)) return;
       if (scopes.some(scope => scope.source.media_id !== this.api.mediaId)) throw new Error("Replay source media changed");
-      this.publish({ scopes, indexing: "ready", error: null });
+      const sourceChanged = this.readyRevision !== null && revision !== this.readyRevision;
+      this.readyRevision = revision;
+      if (sourceChanged) {
+        this.windowGeneration++;
+        this.windowPending = null;
+        this.deferredWindow = null;
+        if (this.debounce !== null) this.cancelSchedule(this.debounce);
+        this.debounce = null;
+        this.setLoading("window", false);
+      }
+      this.publish({ scopes, indexing: "ready", error: null, ...(sourceChanged && { windows: [] }) });
       this.armDeferredWindow();
     } catch (error) {
       if (this.currentInit(generation)) this.publish({ indexing: "unavailable", error: errorText(error) });

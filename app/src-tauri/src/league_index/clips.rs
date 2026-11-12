@@ -125,11 +125,11 @@ fn minimum_tier(value: &str) -> u8 {
 }
 
 impl Index {
-    pub(crate) fn clip_ready(&self, token: &str) -> bool {
+    pub(crate) fn clip_ready(&self, inventory_stamp: &str) -> bool {
         self.db
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM clip_projection_state WHERE token=?1 AND phase=2)",
-                [token],
+                [inventory_stamp],
                 |r| r.get(0),
             )
             .unwrap_or(false)
@@ -141,7 +141,7 @@ impl Index {
         snapshot: &LibrarySnapshot,
         check: &dyn Fn() -> Result<()>,
     ) -> Result<bool> {
-        if self.clip_ready(&snapshot.token) {
+        if self.clip_ready(&snapshot.managed_clip_stamp) {
             return Ok(true);
         }
         self.db.execute_batch(SCHEMA)?;
@@ -149,7 +149,7 @@ impl Index {
             .db
             .query_row(
                 "SELECT phase,after_id FROM clip_projection_state WHERE token=?1",
-                [&snapshot.token],
+                [&snapshot.managed_clip_stamp],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?
@@ -197,7 +197,7 @@ impl Index {
         }
         tx.execute(
             "INSERT OR REPLACE INTO clip_projection_state VALUES(1,?1,?2,?3)",
-            params![snapshot.token, next_phase, end],
+            params![snapshot.managed_clip_stamp, next_phase, end],
         )?;
         check()?;
         tx.commit()?;
@@ -218,7 +218,7 @@ impl Index {
             }
             return Ok(());
         }
-        if !self.clip_ready(&snapshot.token) {
+        if !self.clip_ready(&snapshot.managed_clip_stamp) {
             return Ok(());
         }
         let keys = page
@@ -245,8 +245,8 @@ impl Index {
         Ok(())
     }
 
-    pub(crate) fn clip_tags(&self, token: &str, prefix: &str) -> Result<Vec<String>> {
-        if !self.clip_ready(token) {
+    pub(crate) fn clip_tags(&self, inventory_stamp: &str, prefix: &str) -> Result<Vec<String>> {
+        if !self.clip_ready(inventory_stamp) {
             return Ok(Vec::new());
         }
         let prefix = prefix.to_lowercase();
@@ -266,7 +266,10 @@ impl Index {
         origin: &str,
         capability: &str,
     ) -> Result<ClipPage> {
-        ensure!(self.clip_ready(&snapshot.token), "clip catalog is pending");
+        ensure!(
+            self.clip_ready(&snapshot.managed_clip_stamp),
+            "clip catalog is pending"
+        );
         let filter = ClipFilter::new(query)?;
         if let Some(key) = &query.group_key {
             let group = self.clip_group(
@@ -590,7 +593,7 @@ mod tests {
         make_clip("Later in the next part", part("101"), 90, false);
         make_clip("Opening moment", &initial, 0, false);
         make_clip("Third moment", &initial, 90, false);
-        make_clip("Other account", part("102"), 30, true);
+        let other = make_clip("Other account", part("102"), 30, true);
         let scan = |token: &str| {
             library::build_library_snapshot(root.path(), "", token.into(), || Ok(())).unwrap()
         };
@@ -600,6 +603,14 @@ mod tests {
         index.reconcile(&before.games, &before.token).unwrap();
         assert!(!index.reconcile_clips(&before, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&before, &|| Ok(())).unwrap());
+        let unchanged = scan("fresh token");
+        assert_ne!(before.token, unchanged.token);
+        assert!(index.clip_ready(&unchanged.managed_clip_stamp));
+        assert!(
+            index
+                .reconcile_clips(&unchanged, &|| panic!("reopened clip batch"))
+                .unwrap()
+        );
         let mut history = index
             .history(
                 &HistoryQuery {
@@ -649,7 +660,32 @@ mod tests {
             .unwrap();
         assert_eq!(more.groups[0].clips[0].title, "Later in the next part");
         assert!(more.groups[0].next.is_none());
-        assert_eq!(index.clip_tags(&before.token, "ÉV").unwrap(), ["Évasion"]);
+        assert_eq!(
+            index.clip_tags(&before.managed_clip_stamp, "ÉV").unwrap(),
+            ["Évasion"]
+        );
+        let selected_dir = root.path().join("clips").join(selected.as_str());
+        let original_leaf = clip_bundle::media_leaf("The finish").unwrap();
+        let renamed_leaf = clip_bundle::media_leaf("Renamed finish").unwrap();
+        fs::rename(
+            selected_dir.join(&original_leaf),
+            selected_dir.join(&renamed_leaf),
+        )
+        .unwrap();
+        let renamed = scan("renamed");
+        assert!(!index.clip_ready(&renamed.managed_clip_stamp));
+        assert!(!index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
+        assert!(index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
+        fs::rename(
+            selected_dir.join(&renamed_leaf),
+            selected_dir.join(&original_leaf),
+        )
+        .unwrap();
+        fs::remove_dir_all(root.path().join("clips").join(other.as_str())).unwrap();
+        let removed = scan("removed");
+        assert!(!index.clip_ready(&removed.managed_clip_stamp));
+        assert!(!index.reconcile_clips(&removed, &|| Ok(())).unwrap());
+        assert!(index.reconcile_clips(&removed, &|| Ok(())).unwrap());
         fs::remove_dir_all(game_path).unwrap();
         fs::remove_dir_all(root.path().join("games/101")).unwrap();
         fs::remove_dir_all(root.path().join("games/102")).unwrap();

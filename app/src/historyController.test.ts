@@ -467,6 +467,26 @@ it("yields between catalog pages and pauses when navigation leaves Games", async
   expect(api.catalog).toHaveBeenCalledTimes(1); expect(api.history).not.toHaveBeenCalled(); controller.close();
 });
 
+it("reuses the settled page when returning to the same accepted snapshot", async () => {
+  vi.useFakeTimers();
+  const initial = origin("A", 1);
+  const accepted = page();
+  const api = { current: () => true, catalog: async (token: string) => catalog(token), recording: vi.fn(),
+    history: vi.fn(async () => accepted) };
+  const controller = new HistoryController(api);
+  controller.setContext(initial, [game]);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.history).toHaveBeenCalledOnce();
+  controller.setContext({ ...initial, navigation: initial.navigation + 1 }, [game], true);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(controller.value.page).toBe(accepted);
+  expect(api.history).toHaveBeenCalledOnce();
+  controller.prepared();
+  await flush();
+  expect(api.history).toHaveBeenCalledTimes(2);
+  controller.close();
+});
+
 it("drops A/B/A results and keeps one latest history query", async () => {
   vi.useFakeTimers(); const a1 = origin("A", 1), a2 = origin("A", 3);
   const held = deferred<HistoryPage>();

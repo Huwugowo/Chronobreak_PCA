@@ -39,7 +39,7 @@ struct Background {
 impl Background {
     fn new(root: PathBuf, cache: PathBuf) -> Self {
         Self {
-            watch: Watch::new(&root, &cache).ok(),
+            watch: None,
             root,
             cache,
             state: Preparation::default(),
@@ -60,9 +60,9 @@ impl Background {
         }
         // Native notifications can overflow or be unavailable on network storage.
         // A rare authoritative rescan also recovers missed external edits.
-        if now >= self.next_rescan {
+        let rescan_due = now >= self.next_rescan;
+        if rescan_due {
             changes = Changes::all();
-            self.watch = Watch::new(&self.root, &self.cache).ok();
             self.next_rescan = now + Duration::from_secs(300);
         }
         if !changes.rescan {
@@ -80,9 +80,9 @@ impl Background {
         }
         let approved = ApprovedRoot::new(&self.root);
         if let Ok(root) = &approved
-            && self.approved.as_ref() != Some(root)
+            && (rescan_due || self.approved.as_ref() != Some(root))
         {
-            self.watch = Watch::new(&self.root, &self.cache).ok();
+            self.watch = Watch::new(&self.root, root.path(), &self.cache).ok();
             self.approved = Some(root.clone());
             changes = Changes::all();
         }

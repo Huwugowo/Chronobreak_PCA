@@ -102,6 +102,29 @@ describe("ReplayDataController", () => {
     } finally { controller.dispose(); }
   });
 
+  it("keeps the loaded scope and window until preparation reports a changed journal", async () => {
+    vi.useFakeTimers();
+    const ready: ImportProgress = { media_id: media, status: "ready", batches: 0,
+      position: { end_offset: 100, last_sequence: 7, checksum: Array(32).fill(1) }, tail_bytes: 0 };
+    const indexRecording = vi.fn().mockResolvedValueOnce(ready).mockResolvedValueOnce(structuredClone(ready))
+      .mockResolvedValue({ ...ready, position: { ...ready.position!, end_offset: 101 } });
+    const { api, controller } = setup({ indexRecording });
+    try {
+      controller.requestWindow(query());
+      await controller.initialize();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(api.queryReplayWindow).toHaveBeenCalledOnce();
+      expect(await controller.prepared()).toBe(false);
+      await vi.advanceTimersByTimeAsync(120);
+      expect(api.sourceScopes).toHaveBeenCalledOnce();
+      expect(api.queryReplayWindow).toHaveBeenCalledOnce();
+      expect(await controller.prepared()).toBe(true);
+      await vi.advanceTimersByTimeAsync(120);
+      expect(api.sourceScopes).toHaveBeenCalledTimes(2);
+      expect(api.queryReplayWindow).toHaveBeenCalledTimes(2);
+    } finally { controller.dispose(); vi.useRealTimers(); }
+  });
+
   it("calls browser timers with their global receiver while loading and disposing replay details", async () => {
     vi.useFakeTimers();
     const schedule = globalThis.setTimeout, cancel = globalThis.clearTimeout;

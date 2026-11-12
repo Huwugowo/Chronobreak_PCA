@@ -237,7 +237,7 @@ pub(crate) async fn clip_tag_suggestions(
                 if snapshot.managed_clips.is_empty() {
                     return Ok(Vec::new());
                 }
-                Index::reader(&cache, root)?.clip_tags(&snapshot.token, &prefix)
+                Index::reader(&cache, root)?.clip_tags(&snapshot.managed_clip_stamp, &prefix)
             },
         )
         .await

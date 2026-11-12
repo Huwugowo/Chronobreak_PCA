@@ -65,7 +65,8 @@ export class HistoryController {
     if (preservePage && origin && this.context?.origin.token === origin.token &&
         this.context.origin.rootEpoch === origin.rootEpoch) {
       this.context = { ...this.context, origin, games };
-      this.refreshQuery();
+      if (this.queryActive || this.queryPending || !this.state.page || this.state.error ||
+          this.context.queriedRevision !== this.context.revision) this.refreshQuery();
       this.schedule();
       return;
     }

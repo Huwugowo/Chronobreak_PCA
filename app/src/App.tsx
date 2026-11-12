@@ -168,7 +168,7 @@ function App() {
         if (!live) return;
         if (ready) {
           setClipIndexToken(origin.token);
-          if (historyVisible) history.prepared();
+          if (historyVisible && history.value.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
         }
         else timer = window.setTimeout(() => void step(), 25);
       } catch (error) {

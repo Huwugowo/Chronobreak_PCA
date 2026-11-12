@@ -11,6 +11,7 @@ use chronobreak_replay_time::{
     MediaTimelineV2, REPLAY_TICKS_PER_SECOND, REPLAY_TIME_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -97,6 +98,8 @@ pub(crate) struct LibrarySnapshot {
     pub managed_clips: Arc<Inventory>,
     #[serde(skip)]
     pub managed_clip_order: Arc<Vec<ClipId>>,
+    #[serde(skip)]
+    pub managed_clip_stamp: String,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -473,6 +476,15 @@ fn finish_library_snapshot(
     usage.clips_count_from(&managed_clips);
     let mut managed_clip_order = managed_clips.keys().cloned().collect::<Vec<_>>();
     managed_clip_order.sort_unstable();
+    let mut stamp = Sha256::new();
+    for id in &managed_clip_order {
+        let descriptor = &managed_clips[id];
+        let facts = descriptor.stamp();
+        stamp.update(id.as_str().as_bytes());
+        stamp.update((facts.len() as u64).to_le_bytes());
+        stamp.update(facts.as_bytes());
+    }
+    let managed_clip_stamp = format!("inventory:{:x}", stamp.finalize());
     check_current()?;
     clips.sort_by(|left, right| right.clip_timestamp.cmp(&left.clip_timestamp));
     Ok(LibrarySnapshot {
@@ -485,6 +497,7 @@ fn finish_library_snapshot(
         newly_archived: RecordingUsage::default(),
         managed_clips: Arc::new(managed_clips),
         managed_clip_order: Arc::new(managed_clip_order),
+        managed_clip_stamp,
     })
 }
 

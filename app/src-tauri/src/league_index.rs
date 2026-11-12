@@ -486,12 +486,12 @@ impl Index {
             [media.as_str()],
             |row| row.get(0),
         )?;
-        progress.history_ready &= history_stamp.is_some_and(|stamp| {
-            source_stamp(&root.join("games").join(&summary.timestamp))
-                .is_ok_and(|current| current == stamp)
-        });
-        if self
-            .require_source(root, &summary.timestamp, media)
+        let stamp = source_stamp(&root.join("games").join(&summary.timestamp));
+        progress.history_ready &= stamp
+            .as_ref()
+            .is_ok_and(|current| Some(current) == history_stamp.as_ref());
+        if stamp
+            .and_then(|current| self.require_source_stamp(&summary.timestamp, media, &current))
             .is_err()
         {
             progress.status = "pending".into();
