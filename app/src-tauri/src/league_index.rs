@@ -518,7 +518,8 @@ impl Index {
             .db
             .prepare_cached(
                 "SELECT telemetry_status FROM recordings
-                 WHERE media_id=?1 AND bundle=?2 AND source_stamp=?3",
+                 WHERE media_id=?1 AND bundle=?2 AND source_stamp=?3
+                   AND (telemetry_status!='ready' OR (facts_current=1 AND history_stamp=?3))",
             )?
             .query_row(params![media.as_str(), summary.timestamp, stamp], |row| {
                 row.get(0)

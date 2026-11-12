@@ -107,7 +107,11 @@ export function decodeCatalogPage(value: unknown, token: string): CatalogPage {
 export function decodeHistoryPage(value: unknown): HistoryPage {
   const r = exact(value, ["rows", "next", "indexed_recordings", "catalog_recordings", "unknown_recordings"]);
   const rows = array(r.rows, 50).map(value => {
-    const row = exact(value, ["media_id", "game", "stats", "index_status"]); const media = parseMediaId(row.media_id); const game = decodeGameSummary(row.game, "history.game");
+    const keys = ["media_id", "game", "stats", "index_status"];
+    const hasClipCount = Object.prototype.hasOwnProperty.call(object(value), "clip_count");
+    if (hasClipCount) keys.push("clip_count");
+    const row = exact(value, keys, "history.row");
+    const media = parseMediaId(row.media_id); const game = decodeGameSummary(row.game, "history.game");
     if (media !== game.media_id) throw new Error("history media identity");
     const s = exact(row.stats, ["source", "kills", "deaths", "assists", "items", "summoner_spells", "keystone_id", "secondary_style", "creep_score", "duration_seconds", "evidence", "final_evidence", "game_tick"]);
     if (!["final_eog", "recorded_snapshot", "unavailable"].includes(s.source as string)) throw new Error("history stats source");
@@ -118,7 +122,8 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
       summoner_spells: s.summoner_spells === null ? null : array(s.summoner_spells, 2).map(v => v === null ? null : text(v)),
       items: s.items === null ? null : array(s.items, 32).map(nullableInteger), evidence, final_evidence: s.final_evidence as ResultEvidence | null,
       game_tick: s.game_tick === null ? null : gameTick(s.game_tick) };
-    return { media_id: media, game, stats, index_status: status(row.index_status) };
+    return { media_id: media, game, stats, index_status: status(row.index_status),
+      ...(hasClipCount ? { clip_count: integer(row.clip_count) } : {}) };
   });
   let next: HistoryCursor | null = null; if (r.next !== null) { const c = exact(r.next, ["recorded_at", "media_id"]); next = { recorded_at: text(c.recorded_at, 64), media_id: parseMediaId(c.media_id) }; }
   const indexed = integer(r.indexed_recordings), catalog = integer(r.catalog_recordings), unknown = integer(r.unknown_recordings);

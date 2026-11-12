@@ -23,6 +23,8 @@ type Dependencies = {
   observeQuery?: (event: HistoryQueryObservation) => void;
 };
 const key = (origin: LibraryOrigin) => JSON.stringify(origin);
+const needsPreparation = (progress: ImportProgress) =>
+  progress.status === "pending" || (progress.status === "ready" && progress.history_ready === false);
 
 /** Read-only preparation status and short queries; the backend owns all imports. */
 export class HistoryController {
@@ -38,7 +40,7 @@ export class HistoryController {
   private importActive = false;
   private catalogPending = false;
   private catalogAfter: string | null = null;
-  private pending = new Map<string, { mediaId: string; historyReady: boolean }>();
+  private pending = new Map<string, { mediaId: string; status: string; historyReady: boolean }>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   constructor(private readonly api: Dependencies) {}
@@ -180,8 +182,8 @@ export class HistoryController {
           if (item.media_id && item.progress?.history_ready !== undefined)
             historyReadyByMedia[item.media_id] = item.progress.history_ready;
           if (item.error || item.progress?.status === "unavailable") this.publish({ indexIssue: { kind: "limited" } });
-          if (item.progress?.status === "pending" && item.media_id) this.pending.set(item.game_timestamp,
-            { mediaId: item.media_id, historyReady: item.progress.history_ready === true });
+          if (item.progress && item.media_id && needsPreparation(item.progress)) this.pending.set(item.game_timestamp,
+            { mediaId: item.media_id, status: item.progress.status, historyReady: item.progress.history_ready === true });
         }
       } else if (next) {
         this.pending.delete(next[0]);
@@ -189,8 +191,8 @@ export class HistoryController {
         if (progress.media_id !== next[1].mediaId) throw new Error("Index recording identity changed");
         const historyReady = progress.history_ready ?? progress.status !== "pending";
         historyReadyByMedia[progress.media_id] = historyReady;
-        changed = progress.status !== "pending" || historyReady !== next[1].historyReady;
-        if (progress.status === "pending") this.pending.set(next[0], { ...next[1], historyReady });
+        changed = progress.status !== next[1].status || historyReady !== next[1].historyReady;
+        if (needsPreparation(progress)) this.pending.set(next[0], { mediaId: progress.media_id, status: progress.status, historyReady });
         if (progress.status === "unavailable") this.publish({ indexIssue: { kind: "limited" } });
       }
       this.publish({ indexing: this.catalogPending || this.pending.size > 0, historyReady: historyReadyByMedia });

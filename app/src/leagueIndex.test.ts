@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeImportProgress, decodeReplayWindow, decodeRecordingFacts } from "./leagueIndex";
+import { decodeHistoryPage, decodeImportProgress, decodeReplayWindow, decodeRecordingFacts } from "./leagueIndex";
 import { parseMediaId } from "./replayTime";
 import { replayEvent, replayParticipants, recordedGameClock } from "./replayProjection";
 import { eventInvolvesPlayer } from "./viewerUtils";
@@ -22,6 +22,30 @@ const wire = () => ({ source, local_participant: 1, coverage, next: { replay_tic
       { participant: 1, riot_id: "Same#A", champion_name: "Ahri", team: "ORDER", scores: { kills: 0, assists: 2 } },
       { participant: 2, riot_id: "Same#B", champion_name: "Garen", team: "CHAOS" },
     ] } });
+
+it("decodes History rosters with unresolved, zero or positive clip counts", () => {
+  const participants = [{ summoner_name: "Blue#TEST", champion: "Ahri", relation: "ally" }];
+  const game = { media_id: media, timestamp: "100", champion: "Ahri", game_mode: "CLASSIC", duration_ms: 2_000,
+    recorded_at: "2026-10-16T00:00:00Z", kills: 7, deaths: 2, assists: 3, summoner_spells: [],
+    keystone_id: null, items: [], participants, saved: false, incomplete: false, video_size_bytes: 1024,
+    video_available: true, league_result: null, match_group: "a".repeat(64) };
+  const stats = { source: "recorded_snapshot", kills: 7, deaths: 2, assists: 3, items: null, summoner_spells: null,
+    keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null, evidence: evidence("player_list"),
+    final_evidence: null, game_tick: "0" };
+  const row = { media_id: media, game, stats, index_status: "ready" };
+  const page = (fields = {}) => ({ rows: [{ ...row, ...fields }], next: null, indexed_recordings: 1,
+    catalog_recordings: 1, unknown_recordings: 0 });
+
+  expect(decodeHistoryPage(page()).rows[0]).toMatchObject({ game: { participants }, stats: { kills: 7 } });
+  expect(decodeHistoryPage(page()).rows[0]).not.toHaveProperty("clip_count");
+  for (const clip_count of [0, 2]) {
+    expect(decodeHistoryPage(page({ clip_count })).rows[0]).toMatchObject({ clip_count, game: { participants } });
+  }
+  for (const clip_count of [null, -1, 1.5, "2"]) {
+    expect(() => decodeHistoryPage(page({ clip_count }))).toThrow();
+  }
+  expect(() => decodeHistoryPage(page({ clip_count: 0, extra: true }))).toThrow();
+});
 
 describe("bounded League replay boundary", () => {
   it("accepts a full bounded import step and rejects progress beyond its limit", () => {

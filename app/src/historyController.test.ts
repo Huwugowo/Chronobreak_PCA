@@ -40,6 +40,33 @@ it("settles card loading before replay preparation and ignores unchanged backgro
   } finally { controller.close(); }
 });
 
+it("loads card facts on the first History visit when replay telemetry is already ready", async () => {
+  vi.useFakeTimers();
+  const progress = { media_id: game.media_id!, status: "ready", batches: 0, position: null, tail_bytes: 0, history_ready: false };
+  const enrichedPage = { ...page(), rows: [{ media_id: game.media_id!, game, stats: { kills: 7 } as never, index_status: "ready" }] };
+  const api = {
+    current: () => true,
+    catalog: vi.fn(async (token: string) => ({ ...catalog(token), items: [{ game_timestamp: game.timestamp,
+      media_id: game.media_id!, progress, error: null }] })),
+    recording: vi.fn(async () => ({ ...progress })),
+    history: vi.fn(async () => progress.history_ready ? enrichedPage : page()),
+  };
+  const controller = new HistoryController(api);
+  try {
+    controller.setContext(origin("A", 1), [game]);
+    await vi.advanceTimersByTimeAsync(1_004);
+    expect(controller.value).toMatchObject({ initializing: true, historyReady: { [game.media_id!]: false } });
+    expect(api.history).toHaveBeenCalledOnce();
+    progress.history_ready = true;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.value).toMatchObject({ page: enrichedPage, initializing: false, indexing: false,
+      historyReady: { [game.media_id!]: true } });
+    expect(api.catalog).toHaveBeenCalledOnce();
+    expect(api.history).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { controller.close(); }
+});
+
 it.each(["incomplete", "coverage-gaps", "item-error", "catalog-unavailable", "recording-unavailable"] as const)("settles successful initialization with limited source data (%s)", async source => {
   vi.useFakeTimers();
   const ready = { media_id: game.media_id!, status: "ready", batches: 0 } as ImportProgress;

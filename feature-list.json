@@ -5515,6 +5515,32 @@
         "205 backend tests passed with 11 opt-in tests ignored under normal Windows process access. The restricted run stalled in child-process fixtures. Formatting, strict all-target Clippy, production desktop build, canonical validation and diff checks passed. Reproducer, binary hashes, raw 250 ms samples and paired results: build/perf/steady-preparation-20261110."
       ],
       "notes": "One matched pair per size using journal-free historical stubs and two checked-in synthetic replay fixtures. The I/O counters are Windows process-level transfers, which may be served from cache. Directory-only hints can wait for the unchanged five-minute recovery scan. No League, NVENC, in-game frame-time claim or extended soak."
+    },
+    {
+      "id": "QB-LIB-034",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Restore match card details on launch",
+      "description": "Publish and display checked Match History rosters and card facts during initial browsing without opening a replay first.",
+      "priority": "P1",
+      "area": "library-replay",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-027", "QB-LIB-003"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "An open History screen picks up checked card facts even when replay telemetry was already ready at the first catalog check.",
+        "Preparation repairs stale card facts even when replay telemetry and overlays already match the source.",
+        "History admits checked rows with unresolved, zero or positive clip counts, while rejecting malformed counts."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run focused frontend and native regressions, applicable component checks, and canonical validation."}
+      ],
+      "evidence": [
+        "2026-11-12: Three focused regressions reproduced dropped card-readiness polling, skipped repair for ready replay data with stale card facts, and strict rejection of History rows with clip counts. All 597 frontend tests and 211 app Rust tests passed after correction (11 existing opt-in tests ignored). Type checking, production desktop build, Rust formatting and strict Clippy passed.",
+        "The rebuilt desktop app opened a copied two-match fixture with an empty cache. The first History visit showed both five-player Swiftplay teams and CS 136, plus the one-player Practice Tool roster and CS 0. Both cards showed KDA before any replay was opened. Report: build/verification/match-history-first-launch.json."
+      ],
+      "notes": "Keep the checked History projection, the existing preparation owner and bounded status polling."
     }
   ]
 }

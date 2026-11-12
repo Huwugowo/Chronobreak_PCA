@@ -582,6 +582,43 @@ fn card_facts_survive_bounded_imports_before_replay_is_prepared() {
     );
 }
 
+#[test]
+fn prepared_replay_does_not_hide_stale_card_facts() {
+    let f = Fixture::new(1);
+    let mut index = f.index();
+    let root = f.root.path();
+    index
+        .reconcile(std::slice::from_ref(&f.summary), "")
+        .unwrap();
+    assert!(
+        !index
+            .prepare_recording(root, &f.summary, &|| Ok(()))
+            .unwrap()
+    );
+    assert!(
+        index
+            .prepare_recording(root, &f.summary, &|| Ok(()))
+            .unwrap()
+    );
+    let stamp = source_stamp(&f.directory).unwrap();
+    assert!(index.preparation_is_current(&f.summary, &stamp).unwrap());
+
+    for invalidation in ["facts_current=0", "history_stamp=NULL"] {
+        index
+            .db
+            .execute(&format!("UPDATE recordings SET {invalidation}"), [])
+            .unwrap();
+        let progress = index.prepared_progress(root, &f.summary).unwrap();
+        assert_eq!(progress.status, "ready");
+        assert!(!progress.history_ready);
+        assert!(!index.preparation_is_current(&f.summary, &stamp).unwrap());
+        index
+            .history_recording(root, &f.summary, false, &|| Ok(()))
+            .unwrap();
+        assert!(index.preparation_is_current(&f.summary, &stamp).unwrap());
+    }
+}
+
 #[tokio::test]
 async fn history_groups_recording_parts_before_filters_counts_and_pagination() {
     let f = Fixture::new(1);

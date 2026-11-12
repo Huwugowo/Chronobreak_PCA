@@ -299,8 +299,10 @@ uncommitted bytes or unresolved/missing mappings; otherwise coverage stays unkno
 
 An EOF-complete optional journal can retain an uncommitted suffix. The importer
 returns `ready` with positive `tail_bytes`; those bytes remain unknown coverage,
-not committed observations. Both History and Replay stop automatic import calls
-at `ready`. Productive four-commit pages return `pending` and continue after their
+not committed observations. Replay stops polling at `ready`. History also checks
+card readiness, so ready replay data can coexist with pending card facts. Background
+preparation checks the card source stamp before reusing a ready replay projection.
+Productive four-commit pages return `pending` and continue after their
 rendering yield; an exact page boundary needs one final EOF read. A fresh accepted
 History snapshot or fresh Replay opening observes later source changes. A source
 stamp changing during import can produce transient pending and does not establish
