@@ -36,6 +36,7 @@ import { createBenchmarkApplication, type BenchmarkApplication, type BenchmarkAp
 import AppHeader from "./components/AppHeader";
 import ClipExporterScreen from "./components/ClipExporterScreen";
 import ClipModal from "./components/ClipModal";
+import { ManagedClips, ManagedClipPlayer } from "./components/ManagedClips";
 import ConfirmDialog from "./components/ConfirmDialog";
 import LibraryScreen from "./components/LibraryScreen";
 import SettingsScreen from "./components/SettingsScreen";
@@ -51,11 +52,12 @@ import type {
   NavigationState,
   ReturnNavigationState,
 } from "./types";
-import { LibraryController, type LibraryOrigin } from "./libraryController";
+import { LibraryController, libraryError, type LibraryOrigin } from "./libraryController";
 import { HistoryController } from "./historyController";
 import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
+import { editManagedClip, reconcileClips, sourcePosition, usesManagedClips, type ClipCard, type ClipEdit, type ClipQuery } from "./managedClips";
 import styles from "./App.module.css";
 
 type DeleteTarget =
@@ -129,6 +131,56 @@ function App() {
       ? { ...game, saved: overlay.saved } : game) : canonical;
   });
   const clips = createMemo(() => libraryState().snapshot?.clips);
+  const managed = usesManagedClips();
+  const [clipFilters, setClipFilters] = createSignal<ClipQuery>({});
+  const [clipIndexToken, setClipIndexToken] = createSignal<string>();
+  const [clipIndexError, setClipIndexError] = createSignal<string | null>(null);
+  const [clipIndexRetry, setClipIndexRetry] = createSignal(0);
+  const [managedSelection, setManagedSelection] = createSignal<{ clip: ClipCard; origin: LibraryOrigin; button: HTMLElement }>();
+  const [clipReturn, setClipReturn] = createSignal<{ tab: LibraryTab; position: ClipDraft; button: HTMLElement }>();
+  const [restoringClipView, setRestoringClipView] = createSignal(false);
+  const libraryTab = createMemo(() => {
+    const screen = navigation();
+    return screen.screen === "library" ? screen.tab : clipReturn()?.tab;
+  });
+  const acceptedSnapshot = createMemo(() => libraryState().snapshot);
+  const libraryActionable = createMemo(() => libraryState().actionable);
+  const hasHistoryPage = createMemo(() => Boolean(historyState().page));
+  createEffect(() => {
+    if (!managed) return;
+    const screen = navigation();
+    const snapshot = acceptedSnapshot();
+    const actionable = libraryActionable();
+    clipIndexRetry();
+    const origin = controller.origin();
+    const historyVisible = screen.screen === "library" && screen.tab === "games";
+    const needsClips = screen.screen === "clip-export" || (screen.screen === "library" &&
+      (screen.tab === "clips" || hasHistoryPage()));
+    if (!snapshot?.managed_clip_count || !actionable || !origin || !needsClips ||
+        snapshot.token === untrack(clipIndexToken)) return;
+    let live = true;
+    let timer: number | undefined;
+    setClipIndexError(null);
+    const step = async () => {
+      try {
+        if (!live) return;
+        const ready = await controller.writeIndex(origin, "clips", reconcileClips);
+        if (!live) return;
+        if (ready) {
+          setClipIndexToken(origin.token);
+          if (historyVisible) history.prepared();
+        }
+        else timer = window.setTimeout(() => void step(), 25);
+      } catch (error) {
+        if (!live) return;
+        if (error && typeof error === "object" && "code" in error && error.code === "busy") {
+          timer = window.setTimeout(() => void step(), 150);
+        } else setClipIndexError(libraryError(error));
+      }
+    };
+    timer = window.setTimeout(() => void step(), 50);
+    onCleanup(() => { live = false; window.clearTimeout(timer); });
+  });
   const usage = createMemo(() => libraryState().snapshot?.usage);
   const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
   const [ddragon, { refetch: refetchDdragon }] = createResource(loadDdragonStatus);
@@ -157,6 +209,36 @@ function App() {
     showNotice(error instanceof Error ? error.message : String(error));
   };
 
+  const selectManagedClip = (clip: ClipCard, button: HTMLElement) => {
+    const origin = controller.origin();
+    if (origin && controller.mayPublish(origin)) setManagedSelection({ clip, origin, button });
+  };
+  const closeManagedClip = () => {
+    const button = managedSelection()?.button;
+    setManagedSelection(undefined);
+    if (button?.isConnected) button.focus();
+  };
+  const applyClipEdit = async (edit: ClipEdit) => {
+    const selected = managedSelection();
+    if (!selected || !controller.mayPublish(selected.origin)) return false;
+    const id = selected.clip.header.id;
+    if (edit.kind === "reveal") {
+      try { await editManagedClip(selected.origin.token, id, edit); return true; }
+      catch (error) { showError(libraryError(error)); return false; }
+    }
+    const result = await controller.mutate(selected.origin, id, token => editManagedClip(token, id, edit));
+    if (result.admitted) {
+      closeManagedClip();
+      showNotice(edit.kind === "delete" ? "Clip deleted." : edit.kind === "rename" ? "Clip renamed." : "Clip tags saved.");
+      return true;
+    }
+    if (result.error) {
+      showError(result.error);
+      closeManagedClip();
+    }
+    return false;
+  };
+
   const reloadLibrary = () => controller.refresh();
 
   const openViewer = (gameTimestamp: string, clipDraft?: ClipDraft) => {
@@ -174,9 +256,39 @@ function App() {
     setNavigation({ screen: "viewer", gameTimestamp, clipDraft });
   };
 
+  const availableSource = (clip: ClipCard) => games()?.find(game => game.timestamp === clip.header.source_timestamp &&
+    game.media_id === clip.header.range.media_id && game.video_available && !game.incomplete);
+  const openClipSource = () => {
+    const selected = managedSelection();
+    const current = navigation();
+    if (!selected || current.screen !== "library" || !controller.mayPublish(selected.origin)) return;
+    const source = availableSource(selected.clip);
+    if (!source) return;
+    try {
+      const position = sourcePosition(selected.clip);
+      setClipReturn({ tab: current.tab, position, button: selected.button });
+      setManagedSelection(undefined);
+      openViewer(source.timestamp);
+    } catch (error) { showError(error); }
+  };
+  const returnFromViewer = () => {
+    const destination = clipReturn();
+    if (!destination) { openTab("games"); return; }
+    setRestoringClipView(true);
+    controller.navigate(false);
+    setNavigation({ screen: "library", tab: destination.tab });
+    queueMicrotask(() => {
+      setRestoringClipView(false);
+      setClipReturn(undefined);
+      if (destination.button.isConnected) destination.button.focus();
+    });
+  };
+
   const openTab = (tab: LibraryTab) => {
     const returningToLibrary = navigation().screen !== "library";
-    controller.navigate(tab === "clips");
+    closeManagedClip();
+    setClipReturn(undefined);
+    controller.navigate(!managed && tab === "clips");
     setNavigation({ screen: "library", tab });
     if (returningToLibrary) controller.refresh();
   };
@@ -184,6 +296,7 @@ function App() {
   const openSettings = () => {
     const current = navigation();
     if (current.screen === "settings") return;
+    closeManagedClip();
     controller.navigate(false);
     setNavigation({ screen: "settings", returnTo: current });
   };
@@ -358,12 +471,14 @@ function App() {
   createEffect(() => {
     const current = navigation();
     const state = libraryState();
-    history.setContext(current.screen === "library" && current.tab === "games" && state.actionable && !state.busy ? controller.origin() : null, state.snapshot?.games);
+    if (current.screen !== "library" && clipReturn()?.tab === "games") return;
+    history.setContext(current.screen === "library" && current.tab === "games" && state.actionable && !state.busy ? controller.origin() : null,
+      state.snapshot?.games, restoringClipView());
   });
 
   createEffect(() => {
     const current = navigation();
-    if (current.screen === "library" && current.tab === "clips" && libraryState().actionable) {
+    if (!managed && current.screen === "library" && current.tab === "clips" && libraryState().actionable) {
       const ids = (clips() ?? []).slice(0, 8).map(clip => clip.filename);
       const activeId = libraryState().activeClip;
       if (activeId && !ids.includes(activeId)) ids[ids.length === 8 ? 7 : ids.length] = activeId;
@@ -469,38 +584,6 @@ function App() {
               </button>
             </section>
           </Match>
-          <Match when={navigation().screen === "library"}>
-            <Show when={loadError() && libraryState().snapshot}>
-              <p class={styles.errorLabel} role="alert">{String(loadError())}</p>
-            </Show>
-            <LibraryScreen
-              tab={(navigation() as Extract<NavigationState, { screen: "library" }>).tab}
-              games={games() ?? []}
-              history={historyState()}
-              onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}
-              onHistoryNext={() => history.nextPage()}
-              onHistoryFirst={() => history.firstPage()}
-              clips={clips() ?? []}
-              actionable={libraryState().actionable}
-              durationStates={libraryState().durations}
-              onRetryDuration={(filename) => controller.requestDurations([filename], true)}
-              snapshotOrigin={controller.origin()}
-              ddragon={ddragon() ?? emptyDdragon}
-              busyId={libraryState().busy ?? busyId()}
-              onOpenGame={(timestamp, origin) => {
-                  if (origin && controller.mayPublish(origin)) openViewer(timestamp);
-                }}
-              onToggleSaved={(game, origin) => void toggleSaved(game, origin)}
-              onDeleteGame={(game, origin) => {
-                if (origin) { controller.selectDeletion("game", game.timestamp); setDeleteTarget({ kind: "game", game, origin }); }
-              }}
-              onOpenClip={(clip) => { controller.selectClip(clip.filename); }}
-              onDeleteClip={(clip, origin) => {
-                if (origin) { controller.selectDeletion("clip", clip.filename); setDeleteTarget({ kind: "clip", clip, origin }); }
-              }}
-              onOpenClipsFolder={() => void openClipsFolder().catch(showError)}
-            />
-          </Match>
           <Match when={navigation().screen === "viewer"}>
             <Show when={currentViewer()} keyed fallback={
               <section role="status">The library changed. <button type="button" onClick={() => openTab("games")}>Return to games</button></section>
@@ -518,7 +601,8 @@ function App() {
               gameTimestamp={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).gameTimestamp
               }
-              onBack={() => openTab("games")}
+              onBack={returnFromViewer}
+              initialSourcePosition={clipReturn()?.position}
               initialClipDraft={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).clipDraft
               }
@@ -582,6 +666,47 @@ function App() {
             />
           </Match>
         </Switch>
+        <Show when={libraryTab() && !loading() && (!loadError() || acceptedSnapshot())}>
+          <div hidden={navigation().screen !== "library"}>
+            <Show when={loadError() && libraryState().snapshot}>
+              <p class={styles.errorLabel} role="alert">{String(loadError())}</p>
+            </Show>
+            <LibraryScreen
+              tab={libraryTab()!}
+              games={games() ?? []}
+              history={historyState()}
+              onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}
+              onHistoryNext={() => history.nextPage()}
+              onHistoryFirst={() => history.firstPage()}
+              clips={clips() ?? []}
+              onOpenManagedClip={managed ? selectManagedClip : undefined}
+              managedClips={managed ? <ManagedClips
+                token={acceptedSnapshot()?.token ?? ""} ready={(!acceptedSnapshot()?.managed_clip_count || clipIndexToken() === acceptedSnapshot()?.token) && libraryActionable()}
+                indexError={clipIndexError()} onRetry={() => setClipIndexRetry(n => n + 1)}
+                filters={clipFilters()} onFilters={setClipFilters} onOpen={selectManagedClip}
+                onOpenFolder={() => void openClipsFolder().catch(showError)}
+              /> : undefined}
+              actionable={libraryState().actionable}
+              durationStates={libraryState().durations}
+              onRetryDuration={(filename) => controller.requestDurations([filename], true)}
+              snapshotOrigin={controller.origin()}
+              ddragon={ddragon() ?? emptyDdragon}
+              busyId={libraryState().busy ?? busyId()}
+              onOpenGame={(timestamp, origin) => {
+                  if (origin && controller.mayPublish(origin)) openViewer(timestamp);
+                }}
+              onToggleSaved={(game, origin) => void toggleSaved(game, origin)}
+              onDeleteGame={(game, origin) => {
+                if (origin) { controller.selectDeletion("game", game.timestamp); setDeleteTarget({ kind: "game", game, origin }); }
+              }}
+              onOpenClip={(clip) => { controller.selectClip(clip.filename); }}
+              onDeleteClip={(clip, origin) => {
+                if (origin) { controller.selectDeletion("clip", clip.filename); setDeleteTarget({ kind: "clip", clip, origin }); }
+              }}
+              onOpenClipsFolder={() => void openClipsFolder().catch(showError)}
+            />
+          </div>
+        </Show>
       </main>
 
       <Show when={navigation().screen === "library" || navigation().screen === "settings"}>
@@ -590,13 +715,17 @@ function App() {
         </Show>
       </Show>
       <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => controller.selectClip(null)} />}</Show>
+      <Show when={managedSelection()} keyed>{selected => <ManagedClipPlayer
+        clip={selected.clip} token={selected.origin.token} onClose={closeManagedClip} onEdit={applyClipEdit}
+        sourceAvailable={Boolean(availableSource(selected.clip))} onSource={openClipSource}
+      />}</Show>
       <Show when={deleteTarget()}>
         {(target) => (
           <ConfirmDialog
             title={target().kind === "game" ? "Delete this recording?" : "Delete this clip?"}
             message={
               target().kind === "game"
-                ? "The video and its game data will be removed from this computer."
+                ? "The recording and its replay data will be removed from this computer. Exported clips will stay in your library."
                 : "The clip video and its thumbnail will be removed from this computer."
             }
             confirmLabel={target().kind === "game" ? "Delete recording" : "Delete clip"}

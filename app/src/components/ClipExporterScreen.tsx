@@ -34,10 +34,13 @@ import {
   frameBoundaryToReplayTick,
 } from "../replayTime";
 import { clamp } from "../viewerUtils";
+import { clipTitleError, prepareClipDraft, usesManagedClips, type DraftSummary } from "../managedClips";
+import { ClipHighlights, ClipTagInput } from "./ClipMetadataFields";
 import BackButton from "../ui/BackButton";
 import { ArrowRightIcon, CheckIcon, PauseIcon, PlayIcon } from "../ui/icons";
 import controlStyles from "../ui/controls.module.css";
 import styles from "./ClipExporterScreen.module.css";
+import metadataStyles from "./ManagedClips.module.css";
 
 type Props = {
   game?: GameSummary;
@@ -120,6 +123,21 @@ function ClipExporterScreen(props: Props) {
   const [previewError, setPreviewError] = createSignal<string | null>(null);
   const [musicPreviewError, setMusicPreviewError] = createSignal<string | null>(null);
   const [exporting, setExporting] = createSignal(false);
+  const [metadataDraft, setMetadataDraft] = createSignal<DraftSummary | null>(null);
+  const [loadingMetadata, setLoadingMetadata] = createSignal(false);
+  const [title, setTitle] = createSignal("");
+  const outputTitles = createMemo(() => {
+    const base = title().trim() || metadataDraft()?.title;
+    if (!base) return [];
+    const presets = selectedPresets();
+    return presets.map(preset => presets.length === 1 ? base : `${base} – ${presetLabel(preset)}`);
+  });
+  const titleError = createMemo(() => {
+    const base = title().trim();
+    return (base ? clipTitleError(base) : undefined) ?? outputTitles().map(clipTitleError).find(Boolean);
+  });
+  const [tags, setTags] = createSignal<string[]>([]);
+  const [highlights, setHighlights] = createSignal<number[]>([]);
   const [progress, setProgress] = createSignal<ClipExportProgress>({
     stage: "encoding",
     percent: 0,
@@ -145,6 +163,23 @@ function ClipExporterScreen(props: Props) {
     }
   });
   const clipRange = () => clipValidation().range;
+  createEffect(() => {
+    if (!usesManagedClips() || !clipRange() || props.admissionError) return;
+    const token = props.snapshotToken;
+    const draft = props.draft;
+    let live = true;
+    setMetadataDraft(null);
+    setHighlights([]);
+    setLoadingMetadata(true);
+    const timer = window.setTimeout(() => {
+      void props.readReplay(current => prepareClipDraft(current, draft)).then(value => {
+        if (!live || token !== props.snapshotToken) return;
+        setMetadataDraft(value);
+        setHighlights(value.candidates.filter(tag => tag.attribution === "you").map(tag => tag.event_index));
+      }, () => {}).finally(() => { if (live) setLoadingMetadata(false); });
+    }, 100);
+    onCleanup(() => { live = false; window.clearTimeout(timer); });
+  });
   const clipStartMs = createMemo(() => {
     const timeline = probe()?.media_timeline;
     const range = clipRange();
@@ -473,7 +508,7 @@ function ClipExporterScreen(props: Props) {
   };
 
   const runExport = async () => {
-    if (exporting() || props.admissionError || probe.loading || !clipRange()) return;
+    if (exporting() || loadingMetadata() || titleError() || props.admissionError || probe.loading || !clipRange()) return;
     const exportOrigin = props.snapshotOrigin;
     const snapshotToken = props.snapshotToken;
     pausePreview();
@@ -509,6 +544,11 @@ function ClipExporterScreen(props: Props) {
           music,
           game_audio_volume: musicMode() === "none" ? 1 : gameVolume(),
           music_volume: musicVolume(),
+          ...(usesManagedClips() ? { metadata: {
+            draft_token: metadataDraft()?.token ?? null,
+            title: title().trim() || null,
+            custom_tags: tags(), highlights: highlights(),
+          } } : {}),
         },
         setProgress,
         snapshotToken,
@@ -745,6 +785,23 @@ function ClipExporterScreen(props: Props) {
             </section>
 
             <aside class={styles.optionsPanel}>
+              <Show when={usesManagedClips()}>
+                <section class={metadataStyles.details} aria-label="Clip details">
+                  <label class={metadataStyles.title}>Clip title
+                    <input value={title()} placeholder={metadataDraft()?.title ?? "Automatic title"} maxLength={120} disabled={exporting()}
+                      aria-invalid={!!titleError()}
+                      onInput={event => setTitle(event.currentTarget.value)} />
+                  </label>
+                  <Show when={titleError()} fallback={<For each={outputTitles()}>{name => <small>{name}.mp4</small>}</For>}>
+                    {error => <small role="alert">{error()}</small>}
+                  </Show>
+                  <ClipTagInput token={props.snapshotToken} tags={tags()} onChange={setTags} disabled={exporting()} />
+                  <Show when={!loadingMetadata()} fallback={<small role="status">Checking this range for highlights…</small>}>
+                    <ClipHighlights availability={metadataDraft()?.availability ?? "unavailable"}
+                      candidates={metadataDraft()?.candidates ?? []} selected={highlights()} onChange={setHighlights} disabled={exporting()} />
+                  </Show>
+                </section>
+              </Show>
               <section>
                 <div class={styles.sectionHeading}>
                   <span>02 / SOUNDTRACK</span>
@@ -842,6 +899,9 @@ function ClipExporterScreen(props: Props) {
                     <div class={styles.exportSuccess}>
                       <strong><CheckIcon size={15} /> EXPORTED IN {(complete().elapsed_ms / 1_000).toFixed(1)}S</strong>
                       <span>{complete().outputs.length} file{complete().outputs.length === 1 ? "" : "s"} · {formatBytes(complete().total_file_size_bytes)}</span>
+                      <Show when={complete().event_availability === "unavailable"}>
+                        <small>Exported without event data.</small>
+                      </Show>
                       <ul>
                         <For each={complete().outputs}>
                           {(output) => (
@@ -864,7 +924,7 @@ function ClipExporterScreen(props: Props) {
                 <button
                   class={styles.exportButton}
                   type="button"
-                  disabled={exporting() || !!props.admissionError || probe.loading || !clipRange() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
+                  disabled={exporting() || loadingMetadata() || !!titleError() || !!props.admissionError || probe.loading || !clipRange() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
                   onClick={() => void runExport()}
                 >
                   {exporting()

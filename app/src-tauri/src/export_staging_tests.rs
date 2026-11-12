@@ -8,11 +8,33 @@ fn fixture() -> (tempfile::TempDir, ApprovedRoot) {
 }
 
 fn abandon(lease: &Lease) -> PathBuf {
-    let mut batch = lease.begin(vec!["1786000000_1786000010".into()]).unwrap();
+    let mut batch = lease.begin(vec![destination()]).unwrap();
     let path = batch.directory.as_ref().unwrap().path.clone();
     fs::write(batch.staged(0, "mp4"), b"incomplete generated media").unwrap();
+    batch.members.clear();
     drop(batch.directory.take()); // Model abrupt loss of the staging owner.
     path
+}
+
+fn destination() -> Destination {
+    Destination {
+        clip_id: ClipId::new(),
+        video_leaf: "Fixture clip.mp4".into(),
+    }
+}
+
+fn staged_video(batch: &Path) -> PathBuf {
+    fs::read_dir(batch)
+        .unwrap()
+        .find_map(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_type()
+                .unwrap()
+                .is_dir()
+                .then(|| entry.path().join("Fixture clip.mp4"))
+        })
+        .unwrap()
 }
 
 #[test]
@@ -30,7 +52,7 @@ fn live_lease_and_read_only_recovery_leave_staging_untouched() {
     let report = recover(&root, RecoveryMode::Normal, || Ok(())).unwrap();
     assert!(report.active);
     assert!(report.summary().unwrap().contains("active=true"));
-    assert!(path.join("0.mp4").exists());
+    assert!(staged_video(&path).exists());
     drop(lease);
     assert_eq!(
         recover(&root, RecoveryMode::Normal, || Ok(()))
@@ -51,29 +73,38 @@ fn live_lease_and_read_only_recovery_leave_staging_untouched() {
 fn publication_collisions_preserve_every_final_path_and_completed_member() {
     let (_temporary, root) = fixture();
     let lease = Lease::acquire(&root, true).unwrap().unwrap();
-    let batch = lease
-        .begin(vec![
-            "1786000000_1786000010".into(),
-            "1786000000_1786000011".into(),
-        ])
-        .unwrap();
+    let first = destination();
+    let second = destination();
+    let published = lease.clips().join(first.clip_id.as_str());
+    let collision = lease.clips().join(second.clip_id.as_str());
+    let mut batch = lease.begin(vec![first, second]).unwrap();
     fs::write(batch.staged(0, "mp4"), b"validated first").unwrap();
     fs::write(batch.staged(0, "jpg"), b"first thumbnail").unwrap();
     fs::write(batch.staged(1, "mp4"), b"validated second").unwrap();
-    let existing = lease.clips().join("1786000000_1786000011.mp4");
+    fs::write(batch.staged(1, "jpg"), b"second thumbnail").unwrap();
+    for member in 0..2 {
+        fs::write(batch.staged(member, HEADER), b"metadata").unwrap();
+        fs::write(batch.staged(member, EVENTS), b"events").unwrap();
+    }
+    batch.validate_members().unwrap();
+    fs::create_dir(&collision).unwrap();
+    let existing = collision.join("Fixture clip.mp4");
     fs::write(&existing, b"preexisting user media").unwrap();
-    batch.publish(0, "mp4").unwrap();
-    let thumbnail = lease.clips().join("1786000000_1786000010.jpg");
-    fs::write(&thumbnail, b"preexisting user thumbnail").unwrap();
-    assert!(batch.publish(0, "jpg").is_err());
-    assert!(batch.publish(1, "mp4").is_err());
+    batch.publish(0).unwrap();
+    assert!(batch.publish(0).is_err());
+    assert!(batch.publish(1).is_err());
     drop(batch);
     assert_eq!(fs::read(existing).unwrap(), b"preexisting user media");
-    assert_eq!(fs::read(thumbnail).unwrap(), b"preexisting user thumbnail");
     assert_eq!(
-        fs::read(lease.clips().join("1786000000_1786000010.mp4")).unwrap(),
+        fs::read(published.join(THUMBNAIL)).unwrap(),
+        b"first thumbnail"
+    );
+    assert_eq!(
+        fs::read(published.join("Fixture clip.mp4")).unwrap(),
         b"validated first"
     );
+    assert_eq!(fs::read(published.join(HEADER)).unwrap(), b"metadata");
+    assert_eq!(fs::read(published.join(EVENTS)).unwrap(), b"events");
     assert_eq!(fs::read_dir(&lease.staging.path).unwrap().count(), 1); // Persistent lease only.
 }
 
@@ -92,15 +123,15 @@ fn invalid_ownership_foreign_entries_and_locked_files_are_retained() {
         fs::write(path.join(OWNER), &bytes).unwrap();
         assert!(lease.recover(|| Ok(())).unwrap().retained >= 1);
         assert_eq!(fs::read(path.join(OWNER)).unwrap(), bytes);
-        assert!(path.join("0.mp4").exists());
+        assert!(staged_video(&path).exists());
     }
     let foreign = abandon(&lease);
     fs::write(foreign.join("user-file"), b"foreign sentinel").unwrap();
     let locked = abandon(&lease);
-    let file = open_regular(&locked.join("0.mp4"), false, false).unwrap();
+    let file = open_regular(&staged_video(&locked), false, false).unwrap();
     let report = lease.recover(|| Ok(())).unwrap();
     assert!(report.retained >= 2);
-    assert!(foreign.join("0.mp4").exists());
+    assert!(staged_video(&foreign).exists());
     assert_eq!(
         fs::read(foreign.join("user-file")).unwrap(),
         b"foreign sentinel"
@@ -187,7 +218,7 @@ fn replaced_captured_root_does_not_authorize_recovery_in_a_new_directory() {
     let batch = abandon(&lease);
     drop(lease);
     assert!(recover(&captured, RecoveryMode::Normal, || Ok(())).is_err());
-    assert!(batch.join("0.mp4").exists());
+    assert!(staged_video(&batch).exists());
     assert_eq!(
         recover(&current, RecoveryMode::Normal, || Ok(()))
             .unwrap()

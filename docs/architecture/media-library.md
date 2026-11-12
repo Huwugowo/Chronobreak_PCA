@@ -18,25 +18,27 @@ The configured output directory is the library root:
   unmatched-recordings/
     <unix-timestamp>[-<collision-suffix>]/ # complete archived bundle
   clips/
-    <source-timestamp>_<clip-timestamp>.mp4
-    <source-timestamp>_<clip-timestamp>.jpg
+    <clip-uuid>/
+      <title>.mp4
+      thumbnail.jpg
+      clip.json
+      events.json
 ```
 
-Game-directory allocation in `recorder/src/storage.rs` is collision-safe. Recorder metadata and the small telemetry manifest/checkpoint use atomic replacement. Telemetry file operations retain the allocated directory's Windows identity and use delete-shared, handle-relative creation/rename. Clip export stages media/thumbnail pairs in an owned batch directory and publishes only after all requested members pass validation.
+Game-directory allocation in `recorder/src/storage.rs` is collision-safe. Recorder metadata and the small telemetry manifest/checkpoint use atomic replacement. Telemetry file operations retain the allocated directory's Windows identity and use delete-shared, handle-relative creation/rename. Clip export stages complete bundles in an owned batch directory and starts publication after all requested members pass validation.
 
-Game media/JSON and clip MP4 filenames are authoritative; clip JPEGs are optional presentation sidecars. `app/src-tauri/src/library.rs` reconstructs core game/clip summaries and usage by scanning the configured root. A local SQLite cache projects committed League observations for search and replay queries; it never authorizes media. Data Dragon assets, SQLite and frontend state are disposable caches. Authored bookmarks/recipes are stored separately in the library root's `league_authored_records.json` and survive cache rebuilds.
+Game media/JSON and published clip bundles are authoritative. `app/src-tauri/src/library.rs` reconstructs core game/clip summaries and usage by scanning the configured root. A local SQLite cache projects committed League observations and compact clip headers for search and replay queries. Media delivery uses opened-handle checks. Data Dragon assets, SQLite and frontend state are disposable caches. Authored bookmarks and recipes are stored in the library root's `league_authored_records.json` and survive cache rebuilds.
 
 Normal startup accepts an optional absolute `LEAGUE_REPLAY_APP_DATA_DIR` for app-owned files/caches; an invalid override fails instead of falling back. Its absence preserves Tauri's normal app-local-data directory. Library/config and WebView profile selection remain independent.
 
 Index schema v5 keeps producer event revisions/actor references unchanged. After complete journal validation, it atomically publishes separate derived actor links, effective coverage and ready state. A raw unresolved tagless actor can use exactly one validated explicit roster `riot_id_game_name` in the same media/run/epoch, with ASCII case-insensitive equality for both matching and collisions. Missing/conflicting identities and non-player labels stay unresolved; resolved/conflict producer references are retained. SQL semantic queries use the effective-actor view; IPC returns raw `revision` and separate `effective_actors` for presentation. The v5 cache filename triggers the normal disposable rebuild from filesystem evidence; no recording migration occurs.
 
 The `refresh_library` backend builds a `LibrarySnapshot` with an opaque token,
-games, lightweight clips with unknown duration, and storage usage from one scan.
+games, shallow clip inventory and storage usage from one scan.
 One scan builds each recording summary and its storage size. A private inventory retains
 attempts for storage accounting; the public games list admits only valid core
-metadata and a readable canonical recording. Clip source labels reuse those
-eligible summaries. Clips are enumerated once, including MP4s with
-unrecognized names in storage totals while omitting them from displayed cards.
+metadata and a readable canonical recording. Managed clips keep source labels
+in their headers. The scan also accounts for bytes from flat MP4s.
 The core scan never invokes a media probe. The frontend consumes this snapshot
 through one `LibraryController`, which owns the root, token, selections,
 mutations, refresh coalescing, storage recalculation, and optional duration
@@ -97,7 +99,8 @@ A descriptor is not a media-delivery authorization:
 the existing protected route and checked opened handle still control served bytes.
 
 Optional `resolve_clip_durations` accepts one to eight distinct current-snapshot
-clip IDs. Its one global blocking batch/child slot rejects excess requests without
+flat clip IDs. Managed clips use the duration written at export. The flat-clip
+command's one global blocking batch/child slot rejects excess requests without
 queuing. A caller drop, invalidation or shutdown cancels remaining work; the worker
 owns its permit until its child is killed/reaped and its bounded reader joins.
 Each packaged ffprobe has a ten-second deadline and at most 4 KiB of stdout;
@@ -109,11 +112,9 @@ cache reuse. Replacement/deletion produces local unavailable state; explicit
 `retry_unavailable` retries failure. All optional results disappear on refresh or
 invalidation. They never authorize playback/export or identify immutable bytes.
 
-Production requests are limited to visible or active Clips work. The
-benchmark-only compatibility path drains the same command sequentially in
+The benchmark compatibility path drains this command sequentially in
 eight-ID batches after the Games paint milestone so the historical
-`library_useful` event keeps its clips-ready meaning; normal navigation never
-starts an all-library duration walk.
+`library_useful` event keeps its clips-ready meaning.
 
 Save/delete/retention commands require the selected snapshot token and validate
 root and item membership at admission. They share one owned blocking mutation slot
@@ -354,24 +355,29 @@ ordered frame ranges. Cache deletion/rebuild preserves those records.
 
 ## Clips
 
-The clip exporter never modifies source recordings. Each completed export normally has MP4 media and a JPEG thumbnail. The filename links the clip to its source game and creation timestamp; the selected source time range and in-range events are not currently persisted as clip metadata. The Clips tab is rebuilt from MP4 files and uses a JPEG when present. Deleting a clip removes only its recognized clip artifacts.
+Each exported MP4 has a UUID folder under `clips/`. The MP4 stem is the editable
+title. The folder also contains `thumbnail.jpg`, the bounded `clip.json` header
+and the separately bounded `events.json`. The header retains game context,
+the exact source media ID and half-open frame interval, the validated output
+duration, custom tags and selected highlights. The event file contains retained
+mapped observations. It is opened only for explicit clip detail or tag editing.
+When the exact recording part is gone, the clip and its saved context remain.
 
 `export_staging` owns `clips/.chronobreak-export/<32-hex-id>/`: one strict,
-versioned ownership record (8 KiB maximum, at most three destinations) and fixed
-numbered MP4/JPEG files. A persistent `.lease` holds a nonblocking OS lock through
+versioned ownership record (8 KiB maximum, at most three destinations) and one
+staged directory per destination. A persistent `.lease` holds a nonblocking OS lock through
 export/recovery. Process death releases that lock; active ownership makes recovery
 skip all batches. Retained Windows directory handles reject reparse points and
 deny deletion/renaming of the approved root and staging chain during work.
 The approved root includes its directory generation; coordinator admission compares
 that identity, and a refresh retains a root guard through recovery and scanning.
 
-Publication uses same-volume, atomic, no-replace Windows moves: validated MP4 first,
-then optional JPEG. Neither ordinary failure nor restart cleanup removes final
-files. A failed or interrupted multi-preset publication may leave a playable
-completed subset, including an MP4 without its JPEG. Normal refresh reclaims only
+Publication uses a same-volume atomic Windows directory move with replacement
+disabled. A failed or interrupted multi-preset publication may leave a subset
+of complete clips. Normal refresh reclaims
 strictly owned unpublished staging before calculating cards and MP4 usage;
 explicit export also reconciles while holding the lease. Cleanup validates the
-flat directory and removes only enumerated regular files, then the ownership
+ownership record and removes only recognized staged entries, then the ownership
 record and empty directory. Unknown, malformed, foreign, reparse or locked entries
 are retained with bounded diagnostics; legacy unowned `.part` files are untouched.
 Recovery never reads source media or starts media tools. It streams directory
@@ -383,6 +389,19 @@ Benchmark background refresh performs no recovery mutation. Explicit benchmark
 exports keep their isolated-fixture write behavior but never reclaim earlier
 staging. Filesystem-derived clip storage counts final MP4 bytes only; staging and
 JPEGs are outside that metric.
+
+The accepted library scan records managed clip asset paths and file generations
+without reading their JSON. Stable loopback asset routes resolve a UUID and
+asset kind from that accepted inventory and deliver the checked opened handle.
+Title changes rename the MP4 in place. Tag changes atomically replace the header.
+Deletion preflights the bundle's owned files.
+
+The Clips tab pages and filters an additive SQLite projection. One low-priority
+writer step checks a bounded batch against the accepted inventory and only
+parses changed headers. After reconciliation, History attaches counts for its
+visible page in a batched SQL read. Expanding a match reads clips from its
+account-scoped group. The player resolves source playback by the stored part
+identity, and the viewer validates the descriptor and frame range before seeking.
 
 Every preset exports H.264/AAC, including a valid recording whose media timeline
 declares no source audio. The exporter derives audio presence from that validated
@@ -420,6 +439,7 @@ Destructive tests must use `tempfile` or a purpose-created test library. Real us
 Core summaries remain filesystem-derived, and the League SQL projection is
 rebuildable from committed sources. Authored records retain media, participant,
 event revision and ordered frame references outside the cache. This supports cache
-loss and an unchanged library moved to another root. General moved-root relinking,
-reduced-metadata external import and richer exported clip metadata remain roadmap
-work under `QB-LIB-005`, `QB-LIB-010`, `QB-LIB-011`, and `QB-LIB-002`.
+loss and an unchanged library moved to another root. Clip headers and events
+survive cache loss and source deletion. General moved-root relinking and
+reduced-metadata external import remain roadmap work under `QB-LIB-005`,
+`QB-LIB-010`, and `QB-LIB-011`.

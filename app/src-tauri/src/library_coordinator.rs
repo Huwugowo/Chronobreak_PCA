@@ -117,6 +117,7 @@ pub(crate) struct ClipDurations {
 pub(crate) enum Selection<'a> {
     Game(&'a str),
     Clip(&'a str),
+    ManagedClip(&'a crate::clip_bundle::ClipId),
     Library,
 }
 
@@ -298,6 +299,7 @@ impl LibraryCoordinator {
             publication.archived_usage.bytes += newly_archived.bytes;
             snapshot.usage.include_archive(publication.archived_usage);
             let snapshot = Arc::new(snapshot);
+            roots.publish_clips(&root, Arc::clone(&snapshot.managed_clips));
             let previous = publication.current.replace(PublishedSnapshot {
                 path: capture.path.clone(),
                 root: capture.root.clone(),
@@ -424,6 +426,7 @@ impl LibraryCoordinator {
                         .iter()
                         .any(|clip| clip.filename == id)
             }
+            Selection::ManagedClip(id) => current.snapshot.managed_clips.contains_key(id),
             Selection::Library => true,
         };
         if !valid {
@@ -435,6 +438,24 @@ impl LibraryCoordinator {
             root_epoch: publication.root_epoch,
             token: token.into(),
         })
+    }
+
+    pub(crate) fn clip_descriptor(
+        &self,
+        roots: &MediaRoots,
+        token: &str,
+        id: &crate::clip_bundle::ClipId,
+    ) -> Result<crate::clip_bundle::ClipDescriptor, LibraryRefreshError> {
+        self.capture_selection(roots, token, Selection::ManagedClip(id))?;
+        self.publication
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .current
+            .as_ref()
+            .filter(|current| current.snapshot.token == token)
+            .and_then(|current| current.snapshot.managed_clips.get(id))
+            .cloned()
+            .ok_or(LibraryRefreshError::Superseded)
     }
 
     /// One owned blocking read shared by descriptor and full-probe requests.

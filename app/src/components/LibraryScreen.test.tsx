@@ -5,10 +5,15 @@ import { render } from "solid-js/web";
 import LibraryScreen from "./LibraryScreen";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
+import { readClipPage } from "../managedClips";
+
+vi.mock("../managedClips", async original => ({ ...await original<typeof import("../managedClips")>(),
+  readClipPage: vi.fn(),
+}));
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
-it("opens one chooser for all parts of a match in start order", () => {
+it("opens one chooser for all parts and loads the scoped clip strip only when expanded", async () => {
   const host = document.createElement("div"); document.body.append(host);
   const origin = { root: "A", rootEpoch: 1, request: 1, token: "scan", navigation: 1 };
   const group = "a".repeat(64);
@@ -25,15 +30,31 @@ it("opens one chooser for all parts of a match in start order", () => {
   const single = part("103", "04", "b".repeat(64), "Lux");
   const unmatched = part("104", "05", null, "Syndra");
   const open = vi.fn(), toggle = vi.fn(), remove = vi.fn();
+  const history: HistoryState = { loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false,
+    page: { rows: [single, newest].map(game => ({ media_id: game.media_id!, game, index_status: "ready",
+      clip_count: game === newest ? 2 : 0,
+      stats: { source: "unavailable", kills: null, deaths: null, assists: null, items: null, summoner_spells: null,
+        keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null },
+    })), next: null, indexed_recordings: 2, catalog_recordings: 2, unknown_recordings: 0 } };
+  vi.mocked(readClipPage).mockResolvedValueOnce({ groups: [], next: null });
   const dispose = render(() => <LibraryScreen tab="games" games={[middle, single, newest, unmatched, earliest]} clips={[]}
     ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
     actionable snapshotOrigin={origin} busyId={null} onOpenGame={open} onToggleSaved={toggle} onDeleteGame={remove}
+    history={history} onOpenManagedClip={() => {}}
     onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
   try {
     expect(host.querySelectorAll("article")).toHaveLength(2);
     expect(host.textContent).toContain("2 matches");
     expect(host.textContent).toContain("3 recordings");
     expect(host.textContent).not.toContain("Syndra");
+    const clipButtons = [...host.querySelectorAll("button")].filter(button => button.textContent?.trim().startsWith("Clips ·"));
+    expect(clipButtons.map(button => button.textContent?.trim())).toEqual(["Clips · 2"]);
+    expect(readClipPage).not.toHaveBeenCalled();
+    clipButtons[0].click();
+    expect(clipButtons[0].getAttribute("aria-expanded")).toBe("true");
+    await vi.waitFor(() => expect(readClipPage).toHaveBeenCalledExactlyOnceWith(origin.token, expect.objectContaining({ match_group: group })));
+    clipButtons[0].click();
+    expect(clipButtons[0].getAttribute("aria-expanded")).toBe("false");
     host.querySelector<HTMLButtonElement>('[aria-label^="Open Lux"]')!.click();
     expect(open).toHaveBeenCalledExactlyOnceWith(single.timestamp, origin);
 

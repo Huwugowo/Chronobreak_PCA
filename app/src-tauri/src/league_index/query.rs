@@ -208,6 +208,8 @@ pub(crate) struct HistoryRow {
     pub game: GameSummary,
     pub stats: HistoryStats,
     pub index_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_count: Option<u64>,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct HistoryPage {
@@ -582,6 +584,7 @@ impl Index {
                 } else {
                     "pending".into()
                 },
+                clip_count: None,
             };
             output_bytes += serde_json::to_vec(&item)?.len();
             ensure!(

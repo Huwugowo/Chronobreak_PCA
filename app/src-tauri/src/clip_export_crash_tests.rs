@@ -57,6 +57,7 @@ async fn export_crash_child() {
         ExportDestination {
             root: &ApprovedRoot::new(&root).unwrap(),
             recovery_mode: RecoveryMode::Normal,
+            draft: None,
         },
         &root.join("music"),
         tools.ffmpeg(),
@@ -134,12 +135,9 @@ async fn packaged_export_crash_recovery_matrix() {
         "encoding",
         "probe",
         "thumbnail",
-        "publish-0-mp4",
-        "publish-0-jpg",
-        "publish-1-mp4",
-        "publish-1-jpg",
-        "publish-2-mp4",
-        "publish-2-jpg",
+        "publish-0",
+        "publish-1",
+        "publish-2",
     ];
     for (case, label) in labels.iter().enumerate() {
         let temporary = tempfile::tempdir().unwrap();
@@ -193,21 +191,17 @@ async fn packaged_export_crash_recovery_matrix() {
         let snapshot =
             library::build_library_snapshot(root, "http://fixture", "snapshot".into(), || Ok(()))
                 .unwrap();
-        let expected_new = if case < 3 { 0 } else { (case - 3) / 2 + 1 };
-        assert_eq!(snapshot.clips.len(), expected_new + 1, "{label}");
+        let expected_new = case.saturating_sub(2);
+        assert_eq!(snapshot.managed_clips.len(), expected_new, "{label}");
         assert_eq!(snapshot.usage.clip_count, (expected_new + 1) as u64);
         let mut expected_bytes = original_source.len() as u64;
         let request = export_request(&timeline, ClipMusicSource::None);
         let timing = validate_for_metadata(&request, &timeline).unwrap();
-        let mut published: Vec<_> = snapshot
-            .clips
-            .iter()
-            .filter(|clip| clip.filename != "1786000000_1")
-            .collect();
-        published.sort_by(|a, b| a.filename.cmp(&b.filename));
-        for (index, clip) in published.iter().enumerate() {
-            let media = root.join("clips").join(format!("{}.mp4", clip.filename));
-            let profile = export_profile(&request, &timing, request.presets[index], None).unwrap();
+        for clip in snapshot.managed_clips.values() {
+            let media = clip.directory.join(&clip.video_leaf);
+            let header = clip.read_header().unwrap();
+            clip.read_events().unwrap();
+            let profile = export_profile(&request, &timing, header.preset, None).unwrap();
             let validation =
                 validate_exported_media(tools.ffprobe(), &media, &request, &timing, &profile)
                     .await
@@ -286,17 +280,15 @@ async fn packaged_export_collision_and_benchmark_isolation() {
         .unwrap();
     let owner: serde_json::Value =
         serde_json::from_slice(&fs::read(batch.join("owner.json")).unwrap()).unwrap();
-    // First MP4 succeeds; its JPEG and the next MP4 race with existing user files.
-    let first_jpg = root.join("clips").join(format!(
-        "{}.jpg",
-        owner["destinations"][0].as_str().unwrap()
-    ));
-    let second_mp4 = root.join("clips").join(format!(
-        "{}.mp4",
-        owner["destinations"][1].as_str().unwrap()
-    ));
-    fs::write(&first_jpg, b"user thumbnail at publication boundary").unwrap();
-    fs::write(&second_mp4, b"user clip at publication boundary").unwrap();
+    let first = root
+        .join("clips")
+        .join(owner["destinations"][0]["clip_id"].as_str().unwrap());
+    let second = root
+        .join("clips")
+        .join(owner["destinations"][1]["clip_id"].as_str().unwrap());
+    fs::create_dir(&second).unwrap();
+    let sentinel = second.join("sentinel");
+    fs::write(&sentinel, b"user clip at publication boundary").unwrap();
     fs::write(marker.with_extension("release"), b"resume").unwrap();
     let started = Instant::now();
     loop {
@@ -307,12 +299,10 @@ async fn packaged_export_collision_and_benchmark_isolation() {
         assert!(started.elapsed() < Duration::from_secs(15));
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    assert_eq!(fs::read_dir(&first).unwrap().count(), 4);
+    assert_eq!(fs::read_dir(&second).unwrap().count(), 1);
     assert_eq!(
-        fs::read(first_jpg).unwrap(),
-        b"user thumbnail at publication boundary"
-    );
-    assert_eq!(
-        fs::read(second_mp4).unwrap(),
+        fs::read(sentinel).unwrap(),
         b"user clip at publication boundary"
     );
     assert_eq!(Sha256::digest(fs::read(&source).unwrap()), original);
@@ -323,13 +313,16 @@ async fn packaged_export_collision_and_benchmark_isolation() {
     let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let old = staging.join(id);
     fs::create_dir(&old).unwrap();
+    let old_clip = ClipId::new();
+    fs::create_dir(old.join(old_clip.as_str())).unwrap();
     fs::write(
         old.join("owner.json"),
-        serde_json::to_vec(&json!({"version":1,"batch_id":id,"destinations":["1786000000_2"]}))
+        serde_json::to_vec(&json!({"version":2,"batch_id":id,"destinations":[{"clip_id":old_clip,"video_leaf":"Sentinel.mp4"}]}))
             .unwrap(),
     )
     .unwrap();
-    fs::write(old.join("0.mp4"), b"old staged sentinel").unwrap();
+    let staged_sentinel = old.join(old_clip.as_str()).join("Sentinel.mp4");
+    fs::write(&staged_sentinel, b"old staged sentinel").unwrap();
     let approved = ApprovedRoot::new(root).unwrap();
     let mut request = export_request(&timeline, ClipMusicSource::None);
     request.presets = vec![ClipExportPreset::Horizontal];
@@ -337,6 +330,7 @@ async fn packaged_export_collision_and_benchmark_isolation() {
         ExportDestination {
             root: &approved,
             recovery_mode: RecoveryMode::ReadOnly,
+            draft: None,
         },
         &root.join("music"),
         tools.ffmpeg(),
@@ -347,7 +341,7 @@ async fn packaged_export_collision_and_benchmark_isolation() {
     )
     .await
     .unwrap();
-    assert_eq!(fs::read(old.join("0.mp4")).unwrap(), b"old staged sentinel");
+    assert_eq!(fs::read(staged_sentinel).unwrap(), b"old staged sentinel");
     assert_eq!(
         crate::export_staging::recover(&approved, RecoveryMode::Normal, || Ok(()))
             .unwrap()

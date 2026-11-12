@@ -76,6 +76,7 @@ type Props = {
   onBack: () => void;
   onBenchmarkViewerCycleCompleted?: () => void;
   initialClipDraft?: ClipDraft;
+  initialSourcePosition?: ClipDraft;
   onExportClip: (draft: ClipDraft) => void;
 };
 
@@ -142,6 +143,13 @@ function ViewerScreen(props: Props) {
           opened = await loadReplayDescriptor(id, token, true);
           return opened;
         });
+        const position = props.initialSourcePosition;
+        if (position) {
+          if (position.gameTimestamp !== id || position.mediaId !== value.media_timeline.mediaId) {
+            throw new Error("The source recording changed.");
+          }
+          alignClipRangeToFrames(position, value.media_timeline);
+        }
         if (alive) {
           activeDescriptor = value;
           if (opening && replayBenchmarkObserver() === observer) observer!.emitOpening("opening_descriptor_ready", opening);
@@ -175,11 +183,11 @@ function ViewerScreen(props: Props) {
         </Match>
         <Match when={descriptor.error}>
           <section class={styles.viewerState} role="alert">
-            <strong>Recording could not be opened.</strong>
-            <span>Return to games and refresh the library, or try opening this recording again.</span>
+            <strong>{props.initialSourcePosition ? "Source replay unavailable." : "Recording could not be opened."}</strong>
+            <span>{props.initialSourcePosition ? "The exported clip is still available." : "Return to games and refresh the library, or try opening this recording again."}</span>
             <button type="button" onClick={() => void refetch()}>Retry recording</button>
             <button type="button" onClick={props.onBack}>
-              Return to games
+              {props.initialSourcePosition ? "Back to clips" : "Return to games"}
             </button>
           </section>
         </Match>
@@ -784,6 +792,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
         { generation: controller.snapshot().generation });
       const initial = clipRange();
       if (initial) { controller.setLoopRange(initial); void seekTo(clipStartTick(initial)); }
+      else if (props.initialSourcePosition) void seekTo(clipBoundaryTick(props.initialSourcePosition.startFrame), { reason: "navigation" });
     };
     // Targeted production decoder checks subscribe before opening their media.
     // Ordinary user opening remains independent of diagnostic readiness.

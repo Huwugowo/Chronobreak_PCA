@@ -506,6 +506,17 @@
   pointer-events: none;
 }
 
+.matchItem[data-has-clips="true"] .matchActions {
+  height: 107px;
+  bottom: auto;
+}
+
+.clipAction {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0.75rem 0.55rem;
+}
+
 .recordingMeta .partsBadge {
   padding: 2px 6px;
   border: 1px solid var(--line-subtle);

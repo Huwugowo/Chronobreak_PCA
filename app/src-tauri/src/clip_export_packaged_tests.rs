@@ -137,6 +137,7 @@ fn export_request(timeline: &MediaTimelineV2, music: ClipMusicSource) -> ClipExp
         music,
         game_audio_volume: 0.25,
         music_volume: 0.75,
+        metadata: None,
     }
 }
 
@@ -217,6 +218,14 @@ async fn fractional_endpoint_packaged_export() {
             .unwrap()
             .get();
         let timing = ClipTiming {
+            range: ClipRange::new(
+                MediaId::parse("123e4567-e89b-42d3-a456-426614174000").unwrap(),
+                FrameBoundary::new(0).unwrap(),
+                end_frame,
+                end_frame,
+            )
+            .unwrap(),
+            start_tick: ReplayTick::new(0).unwrap(),
             start_seconds: "0".to_owned(),
             duration_seconds: replay_ticks_as_ffmpeg_seconds(duration).unwrap(),
             duration_replay_ticks: duration,
@@ -237,6 +246,7 @@ async fn fractional_endpoint_packaged_export() {
                 music: ClipMusicSource::None,
                 game_audio_volume: 1.0,
                 music_volume: 1.0,
+                metadata: None,
             };
             let profile = export_profile(&request, &timing, preset, Some(1_200)).unwrap();
             let args = ffmpeg_arguments(
@@ -324,6 +334,7 @@ async fn silent_source_packaged_export_matrix() {
                 ExportDestination {
                     root: &ApprovedRoot::new(library.path()).unwrap(),
                     recovery_mode: RecoveryMode::Normal,
+                    draft: None,
                 },
                 &music_directory,
                 tools.ffmpeg(),
@@ -392,7 +403,8 @@ async fn silent_source_packaged_export_matrix() {
         export(
             ExportDestination {
                 root: &ApprovedRoot::new(library.path()).unwrap(),
-                recovery_mode: RecoveryMode::Normal
+                recovery_mode: RecoveryMode::Normal,
+                draft: None,
             },
             &music_directory,
             tools.ffmpeg(),
@@ -433,6 +445,7 @@ async fn silent_source_packaged_export_matrix() {
             ExportDestination {
                 root: &ApprovedRoot::new(&root).unwrap(),
                 recovery_mode: RecoveryMode::Normal,
+                draft: None,
             },
             &music_directory,
             &ffmpeg,

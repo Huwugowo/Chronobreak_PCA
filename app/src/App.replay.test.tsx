@@ -11,10 +11,16 @@ import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
 import { indexCatalog, indexRecording } from "./leagueIndex";
 import type { CatalogPage, ImportProgress } from "./leagueIndex";
+import type { ClipCard } from "./managedClips";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
   exporter: null as ComponentProps<typeof ClipExporterScreen> | null,
+  clip: null as ClipCard | null, sourceMissing: false,
+}));
+vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
+  usesManagedClips: () => harness.clip !== null,
+  reconcileClips: vi.fn(async () => true),
 }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(),
   initializeReplayBenchmark: vi.fn(async () => null) }));
@@ -28,17 +34,28 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
   ensureHevcCapability: vi.fn(() => new Promise(() => {})),
   chooseOutputFolder: async () => "B",
   persistSettings: async (value: { output_path: string }) => { harness.root = value.output_path; return value; },
-  refreshLibrary: async () => ({ token: `${harness.root}-${++harness.revision}`, games: [{
+  refreshLibrary: async () => {
+    const game = {
     timestamp: "1", champion: harness.root, game_mode: "CLASSIC", recorded_at: "2026-09-21T00:00:00Z",
     kills: 0, deaths: 0, assists: 0, duration_ms: 10000, summoner_spells: [], keystone_id: null,
     items: [], participants: [], saved: false, incomplete: false, video_size_bytes: 1, video_available: true,
     league_result: null,
-  }], clips: [{ filename: "1_2.mp4" }],
-    usage: { games_bytes: 1, clips_bytes: 1, game_count: 1, clip_count: 1 } }),
+    };
+    const source = harness.clip?.header;
+    return { token: `${harness.root}-${++harness.revision}`,
+      games: source && !harness.sourceMissing ? [game, {
+        ...game, timestamp: source.source_timestamp, media_id: source.range.media_id,
+      }] : [game],
+      clips: [{ filename: "1_2.mp4" }], managed_clip_count: source ? 1 : 0,
+      usage: { games_bytes: 1, clips_bytes: 1, game_count: 1, clip_count: 1 } };
+  },
   resolveClipDurations: vi.fn(() => new Promise(() => {})),
 }));
 vi.mock("./components/LibraryScreen", () => ({ default: (props: ComponentProps<typeof LibraryScreen>) =>
-  <button data-testid="open" onClick={() => props.onOpenGame("1", props.snapshotOrigin)}>Open recording</button> }));
+  <>
+    <button data-testid="open" onClick={() => props.onOpenGame("1", props.snapshotOrigin)}>Open recording</button>
+    {harness.clip && <button data-testid="play-clip" onClick={event => props.onOpenManagedClip?.(harness.clip!, event.currentTarget)}>Play clip</button>}
+  </> }));
 vi.mock("./components/AppHeader", () => ({ default: (props: { onSettings: () => void; onTab: (tab: "games" | "clips") => void }) => <>
   <button data-testid="settings" onClick={props.onSettings}>Settings</button>
   <button data-testid="clips" onClick={() => props.onTab("clips")}>Clips</button>
@@ -63,6 +80,7 @@ afterEach(() => {
   dispose?.(); dispose = undefined;
   document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); vi.restoreAllMocks();
   harness.root = "A"; harness.revision = 0; harness.viewer = null; harness.exporter = null;
+  harness.clip = null; harness.sourceMissing = false;
 });
 const mount = async () => {
   const host = document.createElement("div"); document.body.append(host);
@@ -70,6 +88,34 @@ const mount = async () => {
   await vi.waitFor(() => expect(host.querySelector('[data-testid="open"]')).not.toBeNull());
   return { host, click: (id: string) => host.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click() };
 };
+
+it.each([false, true])("keeps the clip playable and only opens its exact source part (missing: %s)", async sourceMissing => {
+  const media = "22222222-3333-4444-8555-666666666666";
+  harness.sourceMissing = sourceMissing;
+  harness.clip = {
+    title: "Last fight", video_url: "http://fixture/clip.mp4", thumbnail_url: "http://fixture/thumb.jpg",
+    header: { version: 1, id: "clip", source_timestamp: "1-2", preset: "horizontal", exported_at: 0,
+      range: { media_id: media, start_frame: "420", end_frame_exclusive: "720" },
+      game: { match_group: "fixture", champion: "A", played_at: null, part_recorded_at: null, account: null,
+        queue_id: null, mode: null, outcome: null, final_kda: null },
+      duration: "240000000", events: "unavailable", highlights: [], custom_tags: [] },
+  };
+  const { host, click } = await mount();
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="play-clip"]')!;
+  click("play-clip");
+  expect(host.querySelector("video")?.src).toBe("http://fixture/clip.mp4");
+  const source = [...host.querySelectorAll("button")].find(button => button.textContent?.toLowerCase().includes("source replay"))!;
+  expect(source.disabled).toBe(sourceMissing);
+  if (sourceMissing) { expect(harness.viewer).toBeNull(); return; }
+  source.click();
+  expect(harness.viewer!.game.timestamp).toBe("1-2");
+  expect(harness.viewer!.initialSourcePosition).toMatchObject({ gameTimestamp: "1-2", mediaId: media,
+    startFrame: 420, endFrameExclusive: 720 });
+  expect(harness.viewer!.initialClipDraft).toBeUndefined();
+  harness.viewer!.onBack();
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(host.querySelector('[data-testid="play-clip"]')).toBe(trigger);
+});
 
 it("shares the actual App writer wiring across early replay open and return", async () => {
   let releaseCatalog!: (page: CatalogPage) => void;

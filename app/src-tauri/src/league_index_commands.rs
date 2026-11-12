@@ -402,7 +402,9 @@ pub(crate) async fn query_league_history(
                     .filter_map(|game| game.match_group.as_deref())
                     .collect::<std::collections::HashSet<_>>()
                     .len();
-                index.history(&query, matches)
+                let mut page = index.history(&query, matches)?;
+                index.attach_clip_counts(snapshot, &mut page)?;
+                Ok(page)
             },
         )
         .await

@@ -283,7 +283,9 @@ export const loadClips = async (): Promise<ClipSummary[]> => {
 let mockSnapshotSequence = 0;
 
 export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
-  const wire = exactRecord(value, ["token", "games", "clips", "usage", "archive_error"], "library_snapshot");
+  const keys = ["token", "games", "clips", "usage", "archive_error"];
+  if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "managed_clip_count")) keys.push("managed_clip_count");
+  const wire = exactRecord(value, keys, "library_snapshot");
   if (typeof wire.token !== "string" || wire.token.length === 0) throw new Error("library_snapshot.token is invalid");
   if (!Array.isArray(wire.games) || !Array.isArray(wire.clips)) throw new Error("library_snapshot arrays are invalid");
   const clipKeys = ["filename", "game_timestamp", "clip_timestamp", "duration_ms", "file_size_bytes", "thumbnail_path", "thumbnail_url", "video_url", "source_champion", "source_date"];
@@ -301,7 +303,12 @@ export const decodeLibrarySnapshot = (value: unknown): LibrarySnapshot => {
     if (typeof usage[key] !== "number" || !Number.isSafeInteger(usage[key])) throw new Error(`library_snapshot.usage.${key} is invalid`);
   }
   if (wire.archive_error !== null && typeof wire.archive_error !== "string") throw new Error("library_snapshot.archive_error is invalid");
-  return { token: wire.token, games, clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage, archive_error: wire.archive_error };
+  const count = wire.managed_clip_count;
+  if (count !== undefined && (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)) {
+    throw new Error("library_snapshot.managed_clip_count is invalid");
+  }
+  return { token: wire.token, games, clips: wire.clips as ClipSummary[], usage: usage as unknown as StorageUsage, archive_error: wire.archive_error,
+    ...(count === undefined ? {} : { managed_clip_count: count }) };
 };
 
 export const refreshLibrary = async (): Promise<LibrarySnapshot> => {

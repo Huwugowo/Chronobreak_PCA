@@ -28,7 +28,7 @@ export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_
 export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavailable"; kills: number | null; deaths: number | null; assists: number | null;
   items: Array<number | null> | null; summoner_spells: Array<string | null> | null; keystone_id: number | null; secondary_style: number | null; creep_score: number | null; duration_seconds: number | null;
   evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
-export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string };
+export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; clip_count?: number };
 export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
 export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number; history_ready?: boolean };
 type Position = { end_offset: number; last_sequence: number; checksum: number[] };

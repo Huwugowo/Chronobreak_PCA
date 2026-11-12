@@ -1,6 +1,8 @@
 mod autostart;
 #[cfg(feature = "replay-benchmark")]
 mod benchmark;
+mod clip_bundle;
+mod clip_commands;
 mod clip_duration;
 mod clip_export;
 mod config;
@@ -64,6 +66,7 @@ struct AppState {
     config: Arc<RwLock<Config>>,
     roots: Arc<MediaRoots>,
     library: LibraryCoordinator,
+    clip_draft: clip_commands::DraftSlot,
     playback_origin: String,
     playback_metrics: Arc<PlaybackMetrics>,
     hevc_probe_path: PathBuf,
@@ -394,6 +397,11 @@ async fn export_clip(
         .admit_export(&state.roots, &snapshot_token, &request.game_timestamp)
         .map_err(command_error)?;
     let output_root = completion.capture.root.clone();
+    let draft = request
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.draft_token.as_deref())
+        .and_then(|token| state.clip_draft.resolve(&snapshot_token, token));
     #[cfg(feature = "replay-benchmark")]
     let recovery_mode = if state.benchmark.is_some() {
         export_staging::RecoveryMode::ReadOnly
@@ -429,6 +437,7 @@ async fn export_clip(
             clip_export::ExportDestination {
                 root: &output_root,
                 recovery_mode,
+                draft,
             },
             &music_directory,
             &ffmpeg,
@@ -1337,6 +1346,7 @@ pub fn run() {
                 config: Arc::new(RwLock::new(config)),
                 roots,
                 library: LibraryCoordinator::new(),
+                clip_draft: clip_commands::DraftSlot::default(),
                 league_index_cache: config::preparation_data_directory()?.join("league-index"),
                 preparation: Mutex::new(None),
                 playback_origin,
@@ -1448,6 +1458,12 @@ pub fn run() {
         league_index_commands::query_league_authored,
         league_index_commands::save_league_authored_record,
         resolve_clip_durations,
+        clip_commands::prepare_clip_draft,
+        clip_commands::reconcile_clips,
+        clip_commands::clip_page,
+        clip_commands::clip_tag_suggestions,
+        clip_commands::clip_detail,
+        clip_commands::edit_managed_clip,
         list_games,
         list_clips,
         get_replay_descriptor,
@@ -1503,6 +1519,12 @@ pub fn run() {
         league_index_commands::query_league_authored,
         league_index_commands::save_league_authored_record,
         resolve_clip_durations,
+        clip_commands::prepare_clip_draft,
+        clip_commands::reconcile_clips,
+        clip_commands::clip_page,
+        clip_commands::clip_tag_suggestions,
+        clip_commands::clip_detail,
+        clip_commands::edit_managed_clip,
         list_games,
         list_clips,
         get_replay_descriptor,

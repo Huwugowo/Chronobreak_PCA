@@ -7,16 +7,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use chronobreak_replay_time::{
     ClipRange, FFPROBE_SUMMARY_SHOW_ENTRIES, FinalizationExpectationsV2, FrameBoundary, MediaId,
-    MediaTimelineV2, ProducerEvidenceV2, REPLAY_TICKS_PER_SECOND, Rational, RoundingMode,
-    checked_scale, frame_boundary_to_replay_tick, parse_ffprobe_media_timeline,
+    MediaTimelineV2, ProducerEvidenceV2, REPLAY_TICKS_PER_SECOND, Rational, ReplayTick,
+    RoundingMode, checked_scale, frame_boundary_to_replay_tick, parse_ffprobe_media_timeline,
 };
 use queueback_media_runtime::{BoundedProcessErrorKind, run_bounded_process};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::process::Command;
 
+use crate::clip_bundle::{self, ClipEvents, ClipHeader, ClipId};
 use crate::export_process::{self, Cancellation, Interrupted, Limits};
-use crate::export_staging::{Batch, Lease, RecoveryMode};
+use crate::export_staging::{Batch, Destination, Lease, RecoveryMode};
 use crate::playback_file::ApprovedRoot;
 use crate::{library, music};
 
@@ -41,6 +42,16 @@ pub enum ClipExportPreset {
     Vertical,
 }
 
+impl ClipExportPreset {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Discord => "Discord",
+            Self::Horizontal => "Horizontal",
+            Self::Vertical => "Vertical",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ClipMusicSource {
@@ -62,11 +73,23 @@ pub struct ClipExportRequest {
     pub music: ClipMusicSource,
     pub game_audio_volume: f64,
     pub music_volume: f64,
+    #[serde(default)]
+    pub(crate) metadata: Option<ExportMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExportMetadata {
+    pub draft_token: Option<String>,
+    pub title: Option<String>,
+    pub custom_tags: Vec<String>,
+    pub highlights: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ClipExportOutput {
     pub preset: ClipExportPreset,
+    pub(crate) clip_id: ClipId,
     pub filename: String,
     pub output_path: String,
     pub thumbnail_path: String,
@@ -101,6 +124,7 @@ pub struct ClipExportResult {
     pub source_probe_strategy: String,
     pub finalize_elapsed_ms: u64,
     pub total_file_size_bytes: u64,
+    pub(crate) event_availability: crate::clip_bundle::EventAvailability,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -123,6 +147,8 @@ pub struct ClipExportProgress {
 
 #[derive(Debug, Clone)]
 struct ClipTiming {
+    range: ClipRange,
+    start_tick: ReplayTick,
     start_seconds: String,
     duration_seconds: String,
     duration_replay_ticks: u64,
@@ -152,6 +178,7 @@ struct ExportProfile {
 }
 
 struct ExportPaths {
+    clip_id: ClipId,
     filename: String,
     video: PathBuf,
     thumbnail: PathBuf,
@@ -233,6 +260,7 @@ impl BatchProgress<'_> {
 pub(crate) struct ExportDestination<'a> {
     pub root: &'a ApprovedRoot,
     pub recovery_mode: RecoveryMode,
+    pub draft: Option<std::sync::Arc<crate::clip_commands::PreparedClip>>,
 }
 
 pub async fn export(
@@ -247,6 +275,7 @@ pub async fn export(
     let ExportDestination {
         root,
         recovery_mode,
+        draft,
     } = destination;
     cancellation.check()?;
     validate_request(&request)?;
@@ -259,15 +288,30 @@ pub async fn export(
             .context("failed to reconcile abandoned exports")?
             .log();
     }
-    let output_directory = root.path();
-    let game_directory = output_directory.join("games").join(&request.game_timestamp);
+    let root_guard = crate::directory_guard::guard_root(root)?;
+    let games = root_guard.child("games", false)?;
+    let game = games.child(&request.game_timestamp, false)?;
+    let game_directory = &game.path;
     let source_video = game_directory.join("video.mp4");
     if !source_video.is_file() {
         bail!("recording video is unavailable")
     }
     let source_probe_started = Instant::now();
-    let authority = library::recording_export_authority(&game_directory)
-        .context("recording bundle does not satisfy the schema-v2 export contract")?;
+    let draft = draft.filter(|draft| {
+        draft.bundle == request.game_timestamp
+            && draft.range.media_id == request.media_id
+            && draft.range.start_frame == request.start_frame
+            && draft.range.end_frame_exclusive == request.end_frame_exclusive
+            && draft.stamp.as_ref().is_some_and(|stamp| {
+                crate::league_index::source_stamp(game_directory)
+                    .is_ok_and(|current| &current == stamp)
+            })
+    });
+    let authority = library::recording_export_authority(
+        game_directory,
+        draft.as_ref().map(|draft| draft.game.clone()),
+    )
+    .context("recording bundle does not satisfy the schema-v2 export contract")?;
     let source_probe_elapsed_ms = elapsed_ms(source_probe_started);
     let timing = validate_for_metadata(&request, &authority.media_timeline)?;
 
@@ -285,28 +329,64 @@ pub async fn export(
         encoders: &encoders,
     };
     let total_outputs = request.presets.len();
-    let mut next_clip_timestamp = SystemTime::now()
+    let exported_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("system clock is before the Unix epoch")?
         .as_secs();
     let mut staged = Vec::with_capacity(total_outputs);
-    let mut paths = Vec::with_capacity(total_outputs);
-    for _ in &request.presets {
-        paths.push(unique_paths(
-            clips_directory,
-            &request.game_timestamp,
-            &mut next_clip_timestamp,
-        )?);
+    let metadata = request.metadata.as_ref();
+    let title = metadata
+        .and_then(|metadata| metadata.title.clone())
+        .unwrap_or_else(|| default_title(&authority.game, timing.start_tick));
+    let custom_tags = metadata.map_or_else(
+        || Ok(Vec::new()),
+        |metadata| clip_bundle::normalize_tags(&metadata.custom_tags),
+    )?;
+    let unavailable = ClipEvents::unavailable();
+    let events = draft.as_ref().map_or(&unavailable, |draft| &draft.events);
+    let highlights = if let (Some(_), Some(metadata)) = (&draft, metadata) {
+        anyhow::ensure!(
+            metadata.highlights.len() <= clip_bundle::MAX_HIGHLIGHTS,
+            "too many clip highlights"
+        );
+        events.select(&metadata.highlights)?
+    } else {
+        Vec::new()
+    };
+    let mut destinations = Vec::with_capacity(total_outputs);
+    let mut final_paths = Vec::with_capacity(total_outputs);
+    for &preset in &request.presets {
+        let filename = if total_outputs == 1 {
+            title.clone()
+        } else {
+            format!("{title} – {}", preset.label())
+        };
+        let video_leaf = clip_bundle::media_leaf(&filename)?;
+        let clip_id = ClipId::new();
+        let directory = clips_directory.join(clip_id.as_str());
+        let video = directory.join(&video_leaf);
+        let thumbnail = directory.join(clip_bundle::THUMBNAIL);
+        destinations.push(Destination {
+            clip_id: clip_id.clone(),
+            video_leaf,
+        });
+        final_paths.push((clip_id, filename, video, thumbnail));
     }
-    let batch = lease.begin(paths.iter().map(|path| path.filename.clone()).collect())?;
-    for (index, path) in paths.iter_mut().enumerate() {
-        path.partial_video = batch.staged(index, "mp4");
-        path.partial_thumbnail = batch.staged(index, "jpg");
-    }
+    let mut batch = lease.begin(destinations)?;
     let setup_elapsed_ms = elapsed_ms(started_at);
 
-    for (output_index, (preset, paths)) in request.presets.iter().copied().zip(paths).enumerate() {
+    for (output_index, (preset, (clip_id, filename, video, thumbnail))) in
+        request.presets.iter().copied().zip(final_paths).enumerate()
+    {
         cancellation.check()?;
+        let paths = ExportPaths {
+            clip_id,
+            filename,
+            video,
+            thumbnail,
+            partial_video: batch.staged(output_index, "mp4"),
+            partial_thumbnail: batch.staged(output_index, "jpg"),
+        };
         let mut reporter = BatchProgress {
             channel: &progress,
             preset,
@@ -319,12 +399,37 @@ pub async fn export(
         let file_size_bytes = fs::metadata(&paths.partial_video)
             .context("failed to inspect staged clip")?
             .len();
+        let header = ClipHeader {
+            version: clip_bundle::VERSION,
+            id: paths.clip_id.clone(),
+            range: timing.range.clone(),
+            source_timestamp: request.game_timestamp.clone(),
+            game: authority.game.clone(),
+            exported_at,
+            preset,
+            duration: ReplayTick::new(diagnostics.validation.video_replay_end)?,
+            events: events.availability,
+            highlights: highlights.clone(),
+            custom_tags: custom_tags.clone(),
+        };
+        header.validate(&paths.clip_id)?;
+        clip_bundle::write_new_json(
+            &batch.staged(output_index, clip_bundle::HEADER),
+            &header,
+            clip_bundle::HEADER_LIMIT,
+        )?;
+        clip_bundle::write_new_json(
+            &batch.staged(output_index, clip_bundle::EVENTS),
+            events,
+            clip_bundle::EVENTS_LIMIT,
+        )?;
         staged.push((preset, paths, diagnostics, file_size_bytes));
     }
 
     let finalize_started = Instant::now();
     cancellation.check()?;
-    publish_export_paths(&batch, staged.len())?;
+    batch.validate_members()?;
+    publish_export_paths(&mut batch, staged.len())?;
 
     let mut outputs = Vec::with_capacity(staged.len());
     let mut total_file_size_bytes = 0_u64;
@@ -332,6 +437,7 @@ pub async fn export(
         total_file_size_bytes = total_file_size_bytes.saturating_add(file_size_bytes);
         outputs.push(ClipExportOutput {
             preset,
+            clip_id: paths.clip_id,
             filename: paths.filename.clone(),
             output_path: paths.video.to_string_lossy().into_owned(),
             thumbnail_path: paths.thumbnail.to_string_lossy().into_owned(),
@@ -367,6 +473,7 @@ pub async fn export(
         source_probe_strategy: "recording_metadata".to_owned(),
         finalize_elapsed_ms,
         total_file_size_bytes,
+        event_availability: events.availability,
     })
 }
 
@@ -454,6 +561,13 @@ fn validate_request(request: &ClipExportRequest) -> Result<()> {
     if request.start_frame >= request.end_frame_exclusive {
         bail!("clip frame range must be nonempty and ordered")
     }
+    if let Some(title) = request
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.title.as_deref())
+    {
+        clip_bundle::media_leaf(title)?;
+    }
     if request.presets.is_empty() || request.presets.len() > 3 {
         bail!("select between one and three export formats")
     }
@@ -516,10 +630,12 @@ fn validate_for_metadata(
     }
 
     Ok(ClipTiming {
+        source_frame_count: range.frame_count(),
+        range,
+        start_tick,
         start_seconds: replay_ticks_as_ffmpeg_seconds(start_tick.get())?,
         duration_seconds: replay_ticks_as_ffmpeg_seconds(duration_replay_ticks)?,
         duration_replay_ticks,
-        source_frame_count: range.frame_count(),
         source_frame_rate: frame_rate,
         source_audio_present: media_timeline.audio.present,
         media_runtime_id: media_timeline.producer.media_runtime_id.clone(),
@@ -534,52 +650,31 @@ fn resolve_music(directory: &Path, source: &ClipMusicSource) -> Result<Option<Pa
     }
 }
 
-fn unique_paths(
-    directory: &Path,
-    game_timestamp: &str,
-    next_clip_timestamp: &mut u64,
-) -> Result<ExportPaths> {
-    let mut clip_timestamp = *next_clip_timestamp;
-    loop {
-        let filename = format!("{game_timestamp}_{clip_timestamp}");
-        let video = directory.join(format!("{filename}.mp4"));
-        let thumbnail = directory.join(format!("{filename}.jpg"));
-        let partial_video = directory.join(format!("{filename}.part.mp4"));
-        let partial_thumbnail = directory.join(format!("{filename}.part.jpg"));
-        if !video.exists()
-            && !thumbnail.exists()
-            && !partial_video.exists()
-            && !partial_thumbnail.exists()
-        {
-            *next_clip_timestamp = clip_timestamp.saturating_add(1);
-            return Ok(ExportPaths {
-                partial_video,
-                partial_thumbnail,
-                filename,
-                video,
-                thumbnail,
-            });
-        }
-        clip_timestamp = clip_timestamp
-            .checked_add(1)
-            .context("clip timestamp space exhausted")?;
+pub(crate) fn default_title(game: &clip_bundle::ClipGame, start: ReplayTick) -> String {
+    let champion = game
+        .champion
+        .as_deref()
+        .filter(|value| {
+            value.encode_utf16().count() <= 48 && clip_bundle::media_leaf(value).is_ok()
+        })
+        .unwrap_or("Clip");
+    let seconds = start.get() / REPLAY_TICKS_PER_SECOND;
+    let position = format!("{}m{:02}s", seconds / 60, seconds % 60);
+    match game.played_at.as_deref().and_then(|date| date.get(..10)) {
+        Some(date) => format!("{champion} – {date} – {position}"),
+        None => format!("{champion} – {position}"),
     }
 }
 
-fn publish_export_paths(batch: &Batch<'_>, members: usize) -> Result<()> {
+fn publish_export_paths(batch: &mut Batch<'_>, members: usize) -> Result<()> {
     #[cfg(all(test, windows))]
     crash_gate("before-publish", None);
     for member in 0..members {
         batch
-            .publish(member, "mp4")
+            .publish(member)
             .context("failed to finalize exported clip")?;
         #[cfg(all(test, windows))]
-        crash_gate(&format!("publish-{member}-mp4"), None);
-        batch
-            .publish(member, "jpg")
-            .context("failed to finalize clip thumbnail")?;
-        #[cfg(all(test, windows))]
-        crash_gate(&format!("publish-{member}-jpg"), None);
+        crash_gate(&format!("publish-{member}"), None);
     }
     Ok(())
 }
@@ -1240,6 +1335,7 @@ mod tests {
             music: ClipMusicSource::None,
             game_audio_volume: 1.0,
             music_volume: 1.0,
+            metadata: None,
         }
     }
 
@@ -1480,17 +1576,15 @@ mod tests {
 
     #[test]
     fn discord_profile_spends_less_than_the_file_budget() {
+        let request = request(ClipExportPreset::Discord, 1_800);
+        let mut source = timeline();
+        source.video.frame_count = FrameBoundary::new(2_400).unwrap();
+        source.video.one_past_last_pts = MediaPts::new(614_400);
+        source.video.replay_end = ReplayTick::new(1_920_000_000).unwrap();
+        source.producer.expected_frame_count = source.video.frame_count;
         let profile = export_profile(
-            &request(ClipExportPreset::Discord, 1_800),
-            &ClipTiming {
-                start_seconds: "1.000000000000".to_owned(),
-                duration_seconds: "30.000000000000".to_owned(),
-                duration_replay_ticks: 1_440_000_000,
-                source_frame_count: 1_800,
-                source_frame_rate: Rational::positive(60, 1, "frame rate").unwrap(),
-                source_audio_present: true,
-                media_runtime_id: timeline().producer.media_runtime_id,
-            },
+            &request,
+            &validate_for_metadata(&request, &source).unwrap(),
             ClipExportPreset::Discord,
             None,
         )
@@ -1505,15 +1599,8 @@ mod tests {
     fn publish_profiles_allow_high_motion_bitrate_peaks() {
         let profile = export_profile(
             &request(ClipExportPreset::Horizontal, 900),
-            &ClipTiming {
-                start_seconds: "1.000000000000".to_owned(),
-                duration_seconds: "15.000000000000".to_owned(),
-                duration_replay_ticks: 720_000_000,
-                source_frame_count: 900,
-                source_frame_rate: Rational::positive(60, 1, "frame rate").unwrap(),
-                source_audio_present: true,
-                media_runtime_id: timeline().producer.media_runtime_id,
-            },
+            &validate_for_metadata(&request(ClipExportPreset::Horizontal, 900), &timeline())
+                .unwrap(),
             ClipExportPreset::Horizontal,
             None,
         )

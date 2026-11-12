@@ -1,4 +1,5 @@
 use super::{query::*, *};
+use chronobreak_replay_time::MappedReplayTime;
 use obs::{Endpoint, Evidence, ObservationId, Record};
 use std::io::{Cursor, Write};
 use tempfile::{TempDir, tempdir};
@@ -1372,12 +1373,34 @@ fn replay_windows_follow_each_ingestion_calibration_and_keep_roster_age() {
     assert_eq!(first.roster.as_ref().unwrap().game_tick.get(), 3_000_000);
     assert_eq!(first.roster.unwrap().age_replay_ticks.get(), 48_000_000);
     query.after = first.next;
-    assert_eq!(
-        index.replay_window(&query, &f.timeline()).unwrap().events[0]
-            .revision
-            .event
-            .source_id,
-        Some(2)
+    let second = index.replay_window(&query, &f.timeline()).unwrap();
+    assert_eq!(second.events[0].revision.event.source_id, Some(2));
+    let MappedReplayTime::InsideMedia { replay_tick, .. } = second.events[0].mapped_replay_time
+    else {
+        panic!("fixture event should map");
+    };
+    let ending_at_event = index
+        .clip_events(
+            &f.timeline(),
+            ReplayTick::new(replay_tick.get() - 1).unwrap(),
+            replay_tick,
+            &|| Ok(()),
+        )
+        .unwrap();
+    assert!(ending_at_event.events.is_empty());
+    let beginning_at_event = index
+        .clip_events(
+            &f.timeline(),
+            replay_tick,
+            ReplayTick::new(replay_tick.get() + 1).unwrap(),
+            &|| Ok(()),
+        )
+        .unwrap();
+    assert!(
+        beginning_at_event
+            .events
+            .iter()
+            .any(|event| event.event.source_id == Some(2))
     );
     let mut calibration = f.state.snapshot().calibration.as_ref().unwrap().1.clone();
     calibration.replay_tick_at_game_zero = Some(SignedReplayTick::new(48_000_000).unwrap());

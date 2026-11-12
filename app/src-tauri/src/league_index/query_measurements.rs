@@ -367,6 +367,13 @@ fn representative_local_sql_query_measurements() {
             50
         );
     });
+    let snapshot = seed_clip_count_measurement(&f, &mut index);
+    measure("history/clip-counts/50-row", || {
+        let mut page = index.history(&default_history, CATALOG_ROWS).unwrap();
+        index.attach_clip_counts(&snapshot, &mut page).unwrap();
+        assert_eq!(page.rows.len(), 50);
+        assert!(page.rows.iter().all(|row| row.clip_count == Some(1)));
+    });
     measure("history/semantic-filter/50-row", || {
         assert_eq!(
             index
@@ -396,6 +403,37 @@ fn representative_local_sql_query_measurements() {
                 .is_empty()
         );
     });
+}
+
+fn seed_clip_count_measurement(fixture: &Fixture, index: &mut Index) -> library::LibrarySnapshot {
+    use crate::clip_bundle::{ClipId, EVENTS, HEADER, THUMBNAIL};
+
+    let id = ClipId::new();
+    let directory = fixture.root.path().join("clips").join(id.as_str());
+    fs::create_dir_all(&directory).unwrap();
+    for asset in ["Fixture.mp4", THUMBNAIL, HEADER, EVENTS] {
+        fs::write(directory.join(asset), b"fixture").unwrap();
+    }
+    let snapshot = library::build_library_snapshot(
+        fixture.root.path(),
+        "",
+        "clip-count-measurement".into(),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(snapshot.managed_clip_count, 1);
+    while !index.reconcile_clips(&snapshot, &|| Ok(())).unwrap() {}
+    // Only History counts are timed. The projected rows represent one indexed clip per game.
+    index
+        .db
+        .execute(
+            "INSERT INTO clip_projection
+         SELECT bundle,'fixture',match_group,match_group,0,0,0,'','','','','','[]','[]','{}'
+         FROM recordings WHERE match_group IS NOT NULL",
+            [],
+        )
+        .unwrap();
+    snapshot
 }
 
 #[test]

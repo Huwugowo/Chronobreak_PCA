@@ -57,9 +57,16 @@ export class HistoryController {
     actionId: string | undefined, rowCount?: number) {
     this.api.observeQuery?.({ kind, generation, actionId, rowCount });
   }
-  setContext(origin: LibraryOrigin | null, games: GameSummary[] = []) {
+  setContext(origin: LibraryOrigin | null, games: GameSummary[] = [], preservePage = false) {
     if (this.closed) return;
     if (origin && this.context && key(origin) === key(this.context.origin)) return;
+    if (preservePage && origin && this.context?.origin.token === origin.token &&
+        this.context.origin.rootEpoch === origin.rootEpoch) {
+      this.context = { ...this.context, origin, games };
+      this.refreshQuery();
+      this.schedule();
+      return;
+    }
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
     this.context = origin ? { origin, games, revision: 0, queriedRevision: -1 } : null;
     clearTimeout(this.timer);

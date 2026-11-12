@@ -18,6 +18,8 @@ use std::{
 
 mod actors;
 mod authored;
+mod clip_events;
+pub(crate) mod clips;
 mod coverage;
 mod history_summary;
 mod import;
@@ -178,6 +180,19 @@ impl Index {
     }
 
     pub(crate) fn require_source(&self, root: &Path, bundle: &str, media: &MediaId) -> Result<()> {
+        self.require_source_stamp(
+            bundle,
+            media,
+            &source_stamp(&root.join("games").join(bundle))?,
+        )
+    }
+
+    pub(crate) fn require_source_stamp(
+        &self,
+        bundle: &str,
+        media: &MediaId,
+        current: &str,
+    ) -> Result<()> {
         let (accepted, stamp): (String, Option<String>) = self.db.query_row(
             "SELECT bundle,source_stamp FROM recordings WHERE media_id=?1",
             [media.as_str()],
@@ -187,7 +202,7 @@ impl Index {
             .filter(|_| accepted == bundle)
             .context("recording index is pending source refresh")?;
         ensure!(
-            stamp == source_stamp(&root.join("games").join(bundle))?,
+            stamp == current,
             "recording index is pending source refresh"
         );
         Ok(())

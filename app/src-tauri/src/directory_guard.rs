@@ -16,7 +16,15 @@ pub(crate) struct DirectoryGuard {
 
 impl DirectoryGuard {
     pub(crate) fn open(path: &Path) -> Result<Self> {
-        let file = open_checked(path, false, false, false)?;
+        Self::open_with_access(path, false)
+    }
+
+    pub(crate) fn open_movable(path: &Path) -> Result<Self> {
+        Self::open_with_access(path, true)
+    }
+
+    fn open_with_access(path: &Path, delete: bool) -> Result<Self> {
+        let file = open_checked(path, false, false, delete)?;
         ensure!(
             file.metadata()?.is_dir(),
             "guarded target is not a directory"
@@ -49,6 +57,60 @@ impl DirectoryGuard {
 
     pub(crate) fn removal_target(&self, name: &OsStr) -> Result<RemovalTarget<'_>> {
         RemovalTarget::open(&self.path, name)
+    }
+
+    pub(crate) fn move_into(&self, destination: &Self) -> Result<()> {
+        let name = self
+            .path
+            .file_name()
+            .context("missing guarded directory name")?;
+        rename_no_replace(&self.file, &destination.file, name)
+    }
+
+    pub(crate) fn generation(&self) -> Result<String> {
+        Ok(crate::playback_file::file_facts(&self.file)?.generation_key())
+    }
+
+    pub(crate) fn remove_owned_files(
+        self,
+        assets: &[(&str, &crate::playback_file::FileFacts)],
+    ) -> Result<()> {
+        let mut targets = Vec::new();
+        for entry in fs::read_dir(&self.path)? {
+            let leaf = entry?.file_name();
+            let (_, expected) = assets
+                .iter()
+                .find(|(name, _)| leaf == *name)
+                .context("foreign clip asset retained")?;
+            let target = self.removal_target(&leaf)?;
+            ensure!(
+                !target.is_directory()? && target.facts()? == **expected,
+                "clip asset changed"
+            );
+            targets.push(target);
+        }
+        ensure!(targets.len() == assets.len(), "clip asset missing");
+        for target in targets {
+            target.remove_file()?;
+        }
+        mark_deleted(&self.file)
+    }
+
+    /// Preflight and pin every permitted descendant before removing any of them.
+    pub(crate) fn remove_owned_tree(self, allow: impl Fn(&Path, bool) -> bool) -> Result<()> {
+        let mut targets = Vec::new();
+        let mut count = 1;
+        for entry in fs::read_dir(&self.path)? {
+            let entry = entry?;
+            let target = self.removal_target(&entry.file_name())?;
+            target.preflight(1, &mut count, &mut targets, &allow)?;
+            targets.push(target);
+        }
+        for target in targets {
+            mark_deleted(&target.file)?;
+            drop(target);
+        }
+        mark_deleted(&self.file)
     }
 }
 
@@ -170,6 +232,10 @@ impl<'a> RemovalTarget<'a> {
         &self.path
     }
 
+    pub(crate) fn facts(&self) -> Result<crate::playback_file::FileFacts> {
+        crate::playback_file::file_facts(&self.file)
+    }
+
     pub(crate) fn is_directory(&self) -> Result<bool> {
         Ok(self.file.metadata()?.is_dir())
     }
@@ -185,7 +251,7 @@ impl<'a> RemovalTarget<'a> {
     pub(crate) fn remove_tree(self) -> Result<()> {
         let mut targets = Vec::new();
         let mut count = 1; // Include this root in the total handle budget.
-        self.preflight(0, &mut count, &mut targets)?;
+        self.preflight(0, &mut count, &mut targets, &|_, _| true)?;
         for target in targets {
             mark_deleted(&target.file)?;
             drop(target);
@@ -199,8 +265,28 @@ impl<'a> RemovalTarget<'a> {
         rename_no_replace(&self.file, &destination.file, name)
     }
 
-    fn preflight(&self, depth: usize, count: &mut usize, targets: &mut Vec<Self>) -> Result<()> {
-        if self.file.metadata()?.is_dir() {
+    pub(crate) fn rename_file(self, destination: &DirectoryGuard, name: &OsStr) -> Result<()> {
+        child_path(&destination.path, name)?;
+        ensure!(
+            self.file.metadata()?.is_file(),
+            "rename target is not a regular file"
+        );
+        rename_no_replace(&self.file, &destination.file, name)
+    }
+
+    fn preflight(
+        &self,
+        depth: usize,
+        count: &mut usize,
+        targets: &mut Vec<Self>,
+        allow: &impl Fn(&Path, bool) -> bool,
+    ) -> Result<()> {
+        let directory = self.file.metadata()?.is_dir();
+        ensure!(
+            allow(&self.path, directory),
+            "foreign directory entry retained"
+        );
+        if directory {
             ensure!(
                 depth < 64,
                 "recording directory nesting exceeds the removal limit"
@@ -216,7 +302,7 @@ impl<'a> RemovalTarget<'a> {
                 // All targets borrow the outer pinned collection; no reference
                 // points into a movable target or vector element.
                 let child = Self::open_under(&self.path, &entry.file_name(), self._parent)?;
-                child.preflight(depth + 1, count, targets)?;
+                child.preflight(depth + 1, count, targets, allow)?;
                 targets.push(child);
             }
         }
@@ -269,17 +355,51 @@ fn rename_no_replace(source: &File, destination: &File, name: &OsStr) -> Result<
         )
         .ok()
     }
-    .context("cannot move recording into the unmatched folder")
+    .context("cannot move guarded item without replacing an existing destination")
 }
 
 #[cfg(not(windows))]
 fn rename_no_replace(_source: &File, _destination: &File, _name: &OsStr) -> Result<()> {
-    anyhow::bail!("handle-based directory moves require Windows")
+    anyhow::bail!("handle-based moves require Windows")
 }
 
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_clip_rename_and_playback_keep_the_same_media_generation() {
+        use crate::playback_file::{FileScope, open_file};
+
+        let fixture = tempfile::tempdir().unwrap();
+        let root = ApprovedRoot::new(fixture.path()).unwrap();
+        let directory = guard_root(&root).unwrap();
+        fs::write(directory.path.join("Final fight.mp4"), b"original clip").unwrap();
+        fs::write(directory.path.join("Other.mp4"), b"other clip").unwrap();
+        let media = directory
+            .removal_target(OsStr::new("Final fight.mp4"))
+            .unwrap();
+        let expected = media.facts().unwrap();
+        assert!(
+            media
+                .rename_file(&directory, OsStr::new("Other.mp4"))
+                .is_err()
+        );
+        directory
+            .removal_target(OsStr::new("Final fight.mp4"))
+            .unwrap()
+            .rename_file(&directory, OsStr::new("Final Fight.mp4"))
+            .unwrap();
+        let path = directory.path.join("Final Fight.mp4");
+        assert!(open_file(&path, FileScope::Clip(&root, &expected)).is_ok());
+        assert_eq!(
+            fs::read(directory.path.join("Other.mp4")).unwrap(),
+            b"other clip"
+        );
+        fs::rename(&path, directory.path.join("Backup.mp4")).unwrap();
+        fs::write(&path, b"replaced clip").unwrap();
+        assert!(open_file(&path, FileScope::Clip(&root, &expected)).is_err());
+    }
 
     #[test]
     fn preflight_retains_every_descendant_until_effect_or_rejection() {
@@ -290,7 +410,8 @@ mod tests {
         let parent = guard_root(&approved).unwrap();
         let game = parent.removal_target(OsStr::new("game")).unwrap();
         let mut targets = Vec::new();
-        game.preflight(0, &mut 1, &mut targets).unwrap();
+        game.preflight(0, &mut 1, &mut targets, &|_, _| true)
+            .unwrap();
         assert_eq!(targets.len(), 2);
         for target in &targets {
             assert!(

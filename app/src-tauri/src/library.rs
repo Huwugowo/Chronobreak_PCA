@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use chronobreak_replay_time::{
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+use crate::clip_bundle::{ClipDescriptor, ClipId, Inventory};
 use crate::config;
 use crate::directory_guard::{DirectoryGuard, is_missing, open_regular, reject_reparse};
 use crate::library_mutation::LibraryMutation;
@@ -86,10 +88,15 @@ pub(crate) struct LibrarySnapshot {
     pub token: String,
     pub games: Vec<GameSummary>,
     pub clips: Vec<LibraryClip>,
+    pub managed_clip_count: usize,
     pub usage: StorageUsage,
     pub archive_error: Option<String>,
     #[serde(skip)]
     pub newly_archived: RecordingUsage,
+    #[serde(skip)]
+    pub managed_clips: Arc<Inventory>,
+    #[serde(skip)]
+    pub managed_clip_order: Arc<Vec<ClipId>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +230,7 @@ pub(crate) fn league_facts(root: &Path, bundle: &str, media: &MediaId) -> Result
 pub(crate) struct ExportRecordingAuthority {
     pub media_timeline: MediaTimelineV2,
     pub encoder_used: String,
+    pub game: crate::clip_bundle::ClipGame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -431,23 +439,19 @@ fn finish_library_snapshot(
     let mut clips = Vec::new();
     check_current()?;
     let clips_directory = output_directory.join("clips");
-    if let Some(entries) = read_library_directory(&clips_directory)? {
-        for entry in entries {
-            check_current()?;
-            let entry = entry.context("failed to read a clips directory entry")?;
+    let managed_clips = scan_clip_inventory(
+        output_directory,
+        &check_current,
+        |entry, file_size_bytes| {
             let path = entry.path();
-            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("mp4") {
-                continue;
-            }
-            let file_size_bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
             // All existing MP4 entries count toward storage, even without a displayable ID.
             usage.clips_bytes += file_size_bytes;
             usage.clip_count += 1;
             let Some(filename) = path.file_stem().and_then(|value| value.to_str()) else {
-                continue;
+                return;
             };
             let Some((game_timestamp, clip_timestamp)) = parse_clip_filename(filename) else {
-                continue;
+                return;
             };
             let thumbnail = clips_directory.join(format!("{filename}.jpg"));
             let has_thumbnail = thumbnail.exists();
@@ -464,18 +468,71 @@ fn finish_library_snapshot(
                 source_champion: source.map(|game| game.champion.clone()),
                 source_date: source.map(|game| game.recorded_at.clone()),
             });
-        }
-    }
+        },
+    )?;
+    usage.clips_count_from(&managed_clips);
+    let mut managed_clip_order = managed_clips.keys().cloned().collect::<Vec<_>>();
+    managed_clip_order.sort_unstable();
     check_current()?;
     clips.sort_by(|left, right| right.clip_timestamp.cmp(&left.clip_timestamp));
     Ok(LibrarySnapshot {
         token,
         games,
         clips,
+        managed_clip_count: managed_clips.len(),
         usage,
         archive_error,
         newly_archived: RecordingUsage::default(),
+        managed_clips: Arc::new(managed_clips),
+        managed_clip_order: Arc::new(managed_clip_order),
     })
+}
+
+impl StorageUsage {
+    fn clips_count_from(&mut self, clips: &Inventory) {
+        self.clip_count += clips.len() as u64;
+        self.clips_bytes += clips.values().map(|clip| clip.video.length()).sum::<u64>();
+    }
+}
+
+fn scan_clip_inventory(
+    output: &Path,
+    check_current: &impl Fn() -> Result<()>,
+    mut flat_mp4: impl FnMut(fs::DirEntry, u64),
+) -> Result<Inventory> {
+    let path = output.join("clips");
+    let mut clips = Inventory::new();
+    let Some(entries) = read_library_directory(&path)? else {
+        return Ok(clips);
+    };
+    let mut collection = None;
+    for entry in entries {
+        check_current()?;
+        let entry = entry.context("failed to read a clips directory entry")?;
+        let kind = entry.file_type()?;
+        if kind.is_file() && entry.path().extension().is_some_and(|ext| ext == "mp4") {
+            let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+            flat_mp4(entry, bytes);
+        } else if kind.is_dir() {
+            let leaf = entry.file_name();
+            let Some(id) = leaf.to_str().and_then(|name| ClipId::parse(name).ok()) else {
+                continue;
+            };
+            if collection.is_none() {
+                let root = crate::playback_file::ApprovedRoot::new(output)?;
+                let guard = crate::directory_guard::guard_root(&root)?;
+                let clips = guard.child("clips", false)?;
+                collection = Some((guard, clips));
+            }
+            // An incomplete or foreign bundle is outside the managed library.
+            if let Some((_, collection)) = &collection
+                && let Ok(descriptor) = ClipDescriptor::inspect(collection, id.clone())
+            {
+                clips.insert(id, descriptor);
+            }
+        }
+    }
+    Ok(clips)
 }
 
 fn read_library_directory(path: &Path) -> Result<Option<fs::ReadDir>> {
@@ -780,30 +837,17 @@ pub(crate) fn storage_usage(output_directory: &Path) -> Result<(StorageUsage, Re
     let archived = archive_usage(output_directory)
         .context("could not read the unmatched recordings folder")?;
     let games_bytes = games.iter().map(|game| game.video_size_bytes).sum();
-    let clips_directory = output_directory.join("clips");
-    let mut clips_bytes = 0;
-    let mut clip_count = 0;
-    if clips_directory.exists() {
-        for entry in fs::read_dir(&clips_directory).with_context(|| {
-            format!(
-                "failed to read clips directory {}",
-                clips_directory.display()
-            )
-        })? {
-            let entry = entry.context("failed to read a clips directory entry")?;
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("mp4") {
-                clips_bytes += entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-                clip_count += 1;
-            }
-        }
-    }
     let mut usage = StorageUsage {
         games_bytes,
-        clips_bytes,
+        clips_bytes: 0,
         game_count: games.len() as u64,
-        clip_count,
+        clip_count: 0,
     };
+    let clips = scan_clip_inventory(output_directory, &|| Ok(()), |_, bytes| {
+        usage.clips_bytes += bytes;
+        usage.clip_count += 1;
+    })?;
+    usage.clips_count_from(&clips);
     usage.include_archive(archived);
     Ok((usage, archived))
 }
@@ -1038,12 +1082,55 @@ fn incomplete_summary(timestamp: String, video_size_bytes: u64) -> GameSummary {
     }
 }
 
-pub(crate) fn recording_export_authority(directory: &Path) -> Result<ExportRecordingAuthority> {
+pub(crate) fn recording_export_authority(
+    directory: &Path,
+    game: Option<crate::clip_bundle::ClipGame>,
+) -> Result<ExportRecordingAuthority> {
     let metadata = read_metadata(&directory.join(METADATA_JSON))?;
+    let game = game.unwrap_or_else(|| export_game_context(directory, &metadata));
     Ok(ExportRecordingAuthority {
         media_timeline: metadata.media_timeline,
         encoder_used: metadata.encoder_used,
+        game,
     })
+}
+
+fn export_game_context(
+    directory: &Path,
+    metadata: &MetadataDocument,
+) -> crate::clip_bundle::ClipGame {
+    use crate::clip_bundle::display_label;
+    let candidate = crate::league_match::read(directory, &metadata.media_id);
+    let result = crate::league_result::read(directory, &metadata.media_id, candidate.as_ref());
+    let player = result
+        .as_ref()
+        .and_then(|result| result.local_player.as_ref());
+    let date = OffsetDateTime::parse(&metadata.recorded_at, &Rfc3339)
+        .ok()
+        .map(|_| metadata.recorded_at.clone());
+    crate::clip_bundle::ClipGame {
+        match_group: candidate.as_ref().map(|value| value.group_key.clone()),
+        played_at: date.clone(),
+        part_recorded_at: date,
+        champion: display_label(player.and_then(|value| value.champion_name.as_deref()))
+            .or_else(|| display_label(metadata.local_player_champion.as_deref())),
+        account: display_label(candidate.as_ref().map(|value| value.local_riot_id.as_str()))
+            .or_else(|| display_label(metadata.local_player_summoner_name.as_deref())),
+        queue_id: candidate.as_ref().map(|value| value.queue_id),
+        mode: display_label(candidate.as_ref().map(|value| value.game_mode.as_str()))
+            .or_else(|| display_label(metadata.game_mode.as_deref())),
+        outcome: result
+            .as_ref()
+            .map(|value| value.outcome)
+            .filter(|outcome| *outcome != chronobreak_league_data::Outcome::Unknown),
+        final_kda: player.and_then(|value| {
+            Some([
+                u32::try_from(value.stats.kills?).ok()?,
+                u32::try_from(value.stats.deaths?).ok()?,
+                u32::try_from(value.stats.assists?).ok()?,
+            ])
+        }),
+    }
 }
 
 fn read_metadata(path: &Path) -> Result<MetadataDocument> {

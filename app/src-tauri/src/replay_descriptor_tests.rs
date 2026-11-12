@@ -76,7 +76,7 @@ fn exact_media_and_export_coordinates_ignore_optional_source_files() {
         expected
     );
     assert_eq!(
-        recording_export_authority(&game).unwrap().media_timeline,
+        recording_export_authority(&game, None).unwrap().media_timeline,
         expected
     );
     assert!(read_metadata(&game.join(METADATA_JSON)).unwrap().saved);
@@ -91,6 +91,6 @@ fn exact_media_and_export_coordinates_ignore_optional_source_files() {
     .unwrap();
     assert_eq!(result.deleted_count, 0);
     fs::write(game.join(METADATA_JSON), vec![b' '; 64 * 1024 + 1]).unwrap();
-    assert!(recording_export_authority(&game).is_err());
+    assert!(recording_export_authority(&game, None).is_err());
     assert!(replay_descriptor(root.path(), "origin", "1786000000", "token".into()).is_err());
 }

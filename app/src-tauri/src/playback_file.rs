@@ -41,6 +41,7 @@ impl ApprovedRoot {
 pub(crate) enum FileScope<'a> {
     Root(&'a ApprovedRoot),
     Exact(&'a Path),
+    Clip(&'a ApprovedRoot, &'a FileFacts),
 }
 
 /// Disposable display-cache identity from the same validated handle, never authority.
@@ -60,6 +61,15 @@ impl FileFacts {
     /// Stable only for this opened file generation; appending does not change it.
     pub(crate) fn generation_key(&self) -> String {
         format!("{:08x}-{:016x}", self.volume, self.index)
+    }
+
+    pub(crate) fn stamp(&self) -> String {
+        format!(
+            "{}:{}:{:?}",
+            self.generation_key(),
+            self.length,
+            self.modified
+        )
     }
 }
 
@@ -98,6 +108,10 @@ pub(crate) fn open_file(path: &Path, scope: FileScope<'_>) -> Result<std::fs::Fi
     let allowed = match scope {
         FileScope::Root(root) => root.contains(&resolved),
         FileScope::Exact(expected) => path_eq(expected, &resolved),
+        FileScope::Clip(root, expected) => {
+            crate::directory_guard::reject_reparse(&file.metadata()?)?;
+            root.contains(&resolved) && path_eq(path, &resolved) && file_facts(&file)? == *expected
+        }
     };
     if !allowed {
         bail!("media target is outside its approved location")

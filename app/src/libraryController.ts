@@ -27,7 +27,7 @@ type Dependencies = {
 type DurationIntent = { origin: LibraryOrigin; epoch: number; ids: string[]; retry: boolean };
 export type ReplayReadLane = "details" | "overlay";
 export type ReplayRead = <T>(work: (token: string) => Promise<T>, lane?: ReplayReadLane) => Promise<T>;
-export type IndexWritePurpose = "history" | "replay" | "maintenance";
+export type IndexWritePurpose = "history" | "replay" | "maintenance" | "clips";
 type ReplayIntent = { run: () => Promise<void>; cancel: () => void };
 export type OperationResult<T> =
   | { admitted: true; value: T }
@@ -208,7 +208,7 @@ export class LibraryController {
   }
   private pumpIndex() {
     if (this.closed || this.indexActive) return;
-    const purpose = (["maintenance", "replay", "history"] as const).find(p => this.indexPending.has(p));
+    const purpose = (["maintenance", "replay", "history", "clips"] as const).find(p => this.indexPending.has(p));
     if (!purpose) return;
     const intent = this.indexPending.get(purpose)!;
     this.indexPending.delete(purpose);

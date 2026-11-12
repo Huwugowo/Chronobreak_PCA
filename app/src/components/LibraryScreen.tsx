@@ -1,9 +1,11 @@
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
 import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHistoryPreview";
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
 import type { HistoryQuery, HistoryStats } from "../leagueIndex";
 import type { HistoryState } from "../historyController";
+import type { ClipCard } from "../managedClips";
+import { ClipGroups } from "./ManagedClips";
 import { recordBenchmarkSearchInput, recordBenchmarkSearchSchedule } from "../benchmarkSearch";
 import type { ActorRole } from "../leagueSource";
 import type { DurationDisplay } from "../libraryController";
@@ -18,6 +20,8 @@ type Props = {
   tab: LibraryTab;
   games: GameSummary[];
   clips: ClipSummary[];
+  managedClips?: JSX.Element;
+  onOpenManagedClip?: (clip: ClipCard, button: HTMLElement) => void;
   ddragon: DdragonStatus;
   actionable: boolean;
   busyId: string | null;
@@ -132,7 +136,7 @@ const closeActionMenu = (event: MouseEvent) => {
 function LibraryScreen(props: Props) {
   return (
     <div class={styles.library}>
-      <Show when={props.tab === "games"} fallback={<ClipsLibrary {...props} />}>
+      <Show when={props.tab === "games"} fallback={props.managedClips ?? <ClipsLibrary {...props} />}>
         <GamesLibrary {...props} />
       </Show>
     </div>
@@ -151,6 +155,7 @@ function GamesLibrary(props: Props) {
   const [stolenOnly, setStolenOnly] = createSignal(false);
   const [textPending, setTextPending] = createSignal(false);
   const [expandedMatch, setExpandedMatch] = createSignal<string | null>(null);
+  const [expandedClips, setExpandedClips] = createSignal<string | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchActionId: string | undefined;
   let scheduledSearchActionId: string | undefined;
@@ -255,8 +260,12 @@ function GamesLibrary(props: Props) {
       return matchesSearch && matchesChampion && matchesMode && matchesSaved;
     }
   };
-  const rowFor = (game: GameSummary) => game.media_id && props.history?.historyReady?.[game.media_id] === false
-    ? undefined : props.history?.page?.rows.find(row => row.media_id === game.media_id && row.game.timestamp === game.timestamp);
+  const rowsByMedia = createMemo(() => new Map(props.history?.page?.rows.map(row => [row.media_id, row])));
+  const rowFor = (game: GameSummary) => {
+    if (!game.media_id || props.history?.historyReady?.[game.media_id] === false) return undefined;
+    const row = rowsByMedia().get(game.media_id);
+    return row?.game.timestamp === game.timestamp ? row : undefined;
+  };
   const statsFor = (game: GameSummary) => rowFor(game)?.stats ?? unavailableStats;
 
   return (
@@ -347,6 +356,9 @@ function GamesLibrary(props: Props) {
                 const parts = () => partsFor(game);
                 const multipart = () => parts().length > 1;
                 const expanded = () => multipart() && expandedMatch() === game.match_group;
+                const clipCount = () => game.media_id ? rowsByMedia().get(game.media_id)?.clip_count : undefined;
+                const clipsExpanded = () => expandedClips() === game.match_group;
+                const matchClipQuery = { match_group: game.match_group ?? undefined };
                 const outcome = () => displayedOutcome(rowFor(game)?.game ?? game);
                 const health = replayHealth(game);
                 const stats = () => statsFor(game);
@@ -375,7 +387,8 @@ function GamesLibrary(props: Props) {
                 };
 
                 return (
-                  <><article class={matchStyles.matchItem} data-outcome={outcome() ?? undefined}>
+                  <><article class={matchStyles.matchItem} data-outcome={outcome() ?? undefined}
+                    data-has-clips={Boolean(props.onOpenManagedClip && (clipCount() ?? 0) > 0)}>
                     <button
                       class={matchStyles.matchOpen}
                       type="button"
@@ -591,6 +604,15 @@ function GamesLibrary(props: Props) {
                       </span>
                     </button>
 
+                    <Show when={props.onOpenManagedClip && (clipCount() ?? 0) > 0}>
+                      <div class={matchStyles.clipAction}>
+                        <button class={controlStyles.control} type="button" disabled={!props.actionable}
+                          aria-expanded={clipsExpanded()} aria-controls={`match-clips-${game.match_group}`}
+                          onClick={() => setExpandedClips(clipsExpanded() ? null : game.match_group)}>
+                          Clips · {clipCount()}
+                        </button>
+                      </div>
+                    </Show>
                     <Show when={!multipart()}><div class={matchStyles.matchActions}>
                       <button
                         class={matchStyles.starButton}
@@ -626,6 +648,12 @@ function GamesLibrary(props: Props) {
                       </Show>
                     </div></Show>
                   </article>
+                  <Show when={props.onOpenManagedClip && props.snapshotOrigin && (clipCount() ?? 0) > 0 && clipsExpanded()}>
+                    <section class={matchStyles.recordingParts} id={`match-clips-${game.match_group}`} aria-label="Clips from this match">
+                      <ClipGroups token={props.snapshotOrigin!.token} ready={props.actionable}
+                        query={matchClipQuery} onOpen={props.onOpenManagedClip!} inline />
+                    </section>
+                  </Show>
                   <Show when={expanded()}>
                     <section id={`recording-parts-${game.match_group}`} class={matchStyles.recordingParts} aria-label="Match recordings">
                       <h3>Match recordings</h3>

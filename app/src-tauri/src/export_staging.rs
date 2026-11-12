@@ -9,7 +9,8 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::directory_guard::{DirectoryGuard, guard_root, open_regular, reject_reparse};
+use crate::clip_bundle::{ClipId, EVENTS, HEADER, THUMBNAIL, title_from_leaf};
+use crate::directory_guard::{DirectoryGuard, guard_root, open_regular};
 use crate::playback_file::ApprovedRoot;
 
 const STAGING: &str = ".chronobreak-export";
@@ -90,15 +91,12 @@ impl Lease {
         &self.clips.path
     }
 
-    pub(crate) fn begin(&self, destinations: Vec<String>) -> Result<Batch<'_>> {
+    pub(crate) fn begin(&self, destinations: Vec<Destination>) -> Result<Batch<'_>> {
         let mut id = crate::playback_policy::random_capability()?;
         id.truncate(32);
         ensure!(valid_id(&id), "invalid random export batch identity");
-        let path = self.staging.path.join(&id);
-        fs::create_dir(&path).context("cannot allocate export batch")?;
-        let directory = DirectoryGuard::open(&path)?;
         let manifest = Manifest {
-            version: 1,
+            version: 2,
             batch_id: id,
             destinations,
         };
@@ -108,6 +106,9 @@ impl Lease {
             bytes.len() as u64 <= MANIFEST_LIMIT,
             "export manifest exceeds limit"
         );
+        let path = self.staging.path.join(&manifest.batch_id);
+        fs::create_dir(&path).context("cannot allocate export batch")?;
+        let directory = DirectoryGuard::open_movable(&path)?;
         let mut owner = File::create_new(path.join(OWNER))?;
         owner
             .write_all(&bytes)
@@ -115,11 +116,21 @@ impl Lease {
         owner
             .sync_all()
             .context("cannot persist export ownership")?;
-        Ok(Batch {
+        drop(owner);
+        let mut batch = Batch {
             lease: self,
             directory: Some(directory),
+            members: Vec::with_capacity(manifest.destinations.len()),
             manifest,
-        })
+        };
+        for destination in &batch.manifest.destinations {
+            let member = path.join(destination.clip_id.as_str());
+            fs::create_dir(&member).context("cannot allocate staged clip bundle")?;
+            batch
+                .members
+                .push(Some(DirectoryGuard::open_movable(&member)?));
+        }
+        Ok(batch)
     }
 
     pub(crate) fn recover(&self, check_current: impl Fn() -> Result<()>) -> Result<RecoveryReport> {
@@ -184,7 +195,7 @@ impl Lease {
     }
 
     fn recover_batch(&self, id: &str) -> Result<()> {
-        let directory = self.staging.child(id, false)?;
+        let directory = DirectoryGuard::open_movable(&self.staging.path.join(id))?;
         let owner = open_regular(&directory.path.join(OWNER), false, false)?;
         ensure!(
             owner.metadata()?.len() <= MANIFEST_LIMIT,
@@ -225,13 +236,26 @@ pub(crate) fn recover(
 struct Manifest {
     version: u32,
     batch_id: String,
-    destinations: Vec<String>,
+    destinations: Vec<Destination>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Destination {
+    pub clip_id: ClipId,
+    pub video_leaf: String,
+}
+
+impl Destination {
+    fn leaves(&self) -> [&str; 4] {
+        [&self.video_leaf, THUMBNAIL, HEADER, EVENTS]
+    }
 }
 
 impl Manifest {
     fn validate(&self, id: &str) -> Result<()> {
         ensure!(
-            self.version == 1 && self.batch_id == id && valid_id(id),
+            self.version == 2 && self.batch_id == id && valid_id(id),
             "unsupported export ownership"
         );
         ensure!(
@@ -240,16 +264,9 @@ impl Manifest {
         );
         let mut seen = HashSet::new();
         for destination in &self.destinations {
-            let (game, clip) = destination
-                .rsplit_once('_')
-                .context("invalid export destination")?;
             ensure!(
-                crate::library::valid_game_id(game)
-                    && !clip.is_empty()
-                    && clip.len() <= 20
-                    && clip.bytes().all(|b| b.is_ascii_digit())
-                    && destination.len() <= 80
-                    && seen.insert(destination),
+                title_from_leaf(&destination.video_leaf).is_some()
+                    && seen.insert(&destination.clip_id),
                 "invalid export destination"
             );
         }
@@ -267,38 +284,67 @@ fn valid_id(id: &str) -> bool {
 pub(crate) struct Batch<'a> {
     lease: &'a Lease,
     directory: Option<DirectoryGuard>,
+    members: Vec<Option<DirectoryGuard>>,
     manifest: Manifest,
 }
 
 impl Batch<'_> {
-    pub(crate) fn staged(&self, member: usize, extension: &str) -> PathBuf {
-        self.directory
+    pub(crate) fn staged(&self, member: usize, leaf: &str) -> PathBuf {
+        let leaf = match leaf {
+            "mp4" => &self.manifest.destinations[member].video_leaf,
+            "jpg" => THUMBNAIL,
+            HEADER | EVENTS => leaf,
+            _ => unreachable!("invalid clip staging leaf"),
+        };
+        self.members[member]
             .as_ref()
-            .expect("live export batch")
+            .expect("unpublished clip member")
             .path
-            .join(format!("{member}.{extension}"))
+            .join(leaf)
     }
 
-    pub(crate) fn publish(&self, member: usize, extension: &str) -> Result<()> {
-        ensure!(
-            member < self.manifest.destinations.len() && matches!(extension, "mp4" | "jpg"),
-            "invalid export publication"
-        );
-        let source = self.staged(member, extension);
-        // Validate a regular, unreplaced source before moving it. The directory
-        // remains guarded; no manifest-supplied path is used for cleanup.
-        drop(open_regular(&source, false, false)?);
-        let destination = self.lease.clips.path.join(format!(
-            "{}.{}",
-            self.manifest.destinations[member], extension
-        ));
-        move_no_replace(&source, &destination)
-            .context("cannot publish clip without replacing an existing file")
+    pub(crate) fn validate_members(&self) -> Result<()> {
+        for (guard, destination) in self.members.iter().zip(&self.manifest.destinations) {
+            let directory = guard.as_ref().context("missing staged clip bundle")?;
+            let leaves = destination.leaves();
+            let mut count = 0;
+            for entry in fs::read_dir(&directory.path)? {
+                let entry = entry?;
+                ensure!(
+                    entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|leaf| leaves.contains(&leaf)),
+                    "foreign staged clip asset"
+                );
+                let asset = open_regular(&entry.path(), false, false)?;
+                ensure!(asset.metadata()?.len() > 0, "empty staged clip asset");
+                count += 1;
+            }
+            ensure!(count == leaves.len(), "incomplete staged clip bundle");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn publish(&mut self, member: usize) -> Result<()> {
+        let member = self
+            .members
+            .get_mut(member)
+            .context("invalid staged clip member")?;
+        let source = member
+            .as_ref()
+            .context("clip bundle was already published")?;
+        source
+            .move_into(&self.lease.clips)
+            .context("cannot publish clip without replacing an existing bundle")?;
+        drop(member.take());
+        Ok(())
     }
 }
 
 impl Drop for Batch<'_> {
     fn drop(&mut self) {
+        self.members.clear();
         if let Some(directory) = self.directory.take()
             && let Err(error) = cleanup(directory, &self.manifest)
         {
@@ -311,68 +357,31 @@ impl Drop for Batch<'_> {
 }
 
 fn cleanup(directory: DirectoryGuard, manifest: &Manifest) -> Result<()> {
-    let mut names = HashSet::from([OWNER.to_owned()]);
-    for member in 0..manifest.destinations.len() {
-        for extension in ["mp4", "jpg"] {
-            names.insert(format!("{member}.{extension}"));
-        }
-    }
-    // Validate the entire flat directory before removing even the first member.
-    for entry in fs::read_dir(&directory.path)? {
-        let entry = entry?;
-        ensure!(
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| names.contains(name)),
-            "foreign export staging entry retained"
-        );
-        let metadata = fs::symlink_metadata(entry.path())?;
-        reject_reparse(&metadata)?;
-        ensure!(
-            metadata.is_file(),
-            "nonregular export staging entry retained"
-        );
-    }
-    for name in names.iter().filter(|name| name.as_str() != OWNER) {
-        match fs::remove_file(directory.path.join(name)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).context("cannot remove abandoned export member"),
-        }
-    }
-    fs::remove_file(directory.path.join(OWNER)).context("cannot remove export ownership")?;
     let path = directory.path.clone();
-    drop(directory);
-    fs::remove_dir(path).context("cannot remove empty export batch")
-}
-
-#[cfg(windows)]
-fn move_no_replace(source: &Path, destination: &Path) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
-    use windows::core::PCWSTR;
-    let source: Vec<_> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<_> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    // SAFETY: both strings are NUL-terminated and live through this call. Flags
-    // prohibit replacement and cross-volume copy; errors preserve existing files.
-    unsafe {
-        MoveFileExW(
-            PCWSTR(source.as_ptr()),
-            PCWSTR(destination.as_ptr()),
-            MOVE_FILE_FLAGS(0),
-        )
-    }
-    .context("atomic no-replace move failed")
-}
-
-#[cfg(not(windows))]
-fn move_no_replace(_source: &Path, _destination: &Path) -> Result<()> {
-    anyhow::bail!("atomic export publication requires Windows")
+    directory.remove_owned_tree(|entry, is_dir| {
+        let Ok(relative) = entry.strip_prefix(&path) else {
+            return false;
+        };
+        let mut parts = relative.iter();
+        let Some(first) = parts.next().and_then(|part| part.to_str()) else {
+            return false;
+        };
+        let second = parts.next().and_then(|part| part.to_str());
+        if parts.next().is_some() {
+            return false;
+        }
+        if first == OWNER {
+            return !is_dir && second.is_none();
+        }
+        manifest.destinations.iter().any(|destination| {
+            destination.clip_id.as_str() == first
+                && if is_dir {
+                    second.is_none()
+                } else {
+                    second.is_some_and(|leaf| destination.leaves().contains(&leaf))
+                }
+        })
+    })
 }
 
 #[cfg(all(test, windows))]

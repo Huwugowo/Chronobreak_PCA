@@ -2179,35 +2179,41 @@
       "id": "QB-LIB-002",
       "kind": "feature",
       "name": "Clip Metadata and Event Tagging",
-      "description": "Derive clip metadata from the source match and attach only timestamped events that occur within the clip interval.",
+      "description": "Publish independently playable clips with durable game context, editable titles and tags, in-range event facts, and grouped search.",
       "priority": "P1",
       "area": "clip-library",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
         "QB-DATA-001",
-        "QB-LIB-001",
+        "QB-LIB-030",
         "QB-LIB-008",
-        "QB-CLIP-007"
+        "QB-CLIP-013"
       ],
-      "evidence": [],
+      "evidence": [
+        "595 frontend tests and 210 native tests passed. Fixtures verified durable bundles, event bounds and search, safe rename and protected playback, and retention after source deletion and cache rebuild.",
+        "Packaged export and crash verification await the staged pinned FFmpeg runtime."
+      ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-lib-002-clip-metadata-and-search.md",
+        "progress": "docs/execution/qb-lib-002.md"
       },
       "acceptance_criteria": [
-        "A clip inherits relevant source-match metadata.",
-        "Only events whose timestamps fall within the clip range are attached.",
-        "Clip metadata is queryable by the same relevant library search mechanisms."
+        "Each new export retains stable identity, exact source range, and available champion, date, account, queue, result and final K/D/A through source deletion and cache rebuild.",
+        "Only mapped committed events within the half-open range are retained, with the highest multikill per player. Multikills, First Blood and explicit objective steals are selectable highlights. Only local highlights start selected.",
+        "Titles match MP4 filenames and remain editable without re-encoding. Custom tags and selected highlights remain editable after export.",
+        "Clips search matches titles, custom tags, saved game context and selected highlights, including multikill thresholds. Filtered clips group by game date and appear in game order.",
+        "Owned publication, playback and mutations preserve source and unrelated bytes. Browsing and cold clip reconciliation preserve the existing History, storage and preparation performance boundaries."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Create fixture clips whose ranges include/exclude known events and verify tags.",
-          "command": null
+          "description": "Use temporary libraries for export, event range and actor attribution, rename and tag editing, grouped queries, interrupted publication and source deletion. Run applicable app and packaged export checks and compare prepared paint and large-library performance.",
+          "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
         }
       ],
-      "notes": "Current clip filenames link to a source game and the library derives source champion/date at scan time, but no clip metadata sidecar persists the selected range or in-range event tags for search.",
+      "notes": "Scope is newly exported clips. QB-LIB-003 adds Match History and replay navigation after the durable clip contract.",
       "user_value": 4,
       "differentiation": 5,
       "difficulty": 3,
@@ -2217,24 +2223,29 @@
       "id": "QB-LIB-003",
       "kind": "feature",
       "name": "Source Match and Clip Linking",
-      "description": "Persist the relationship between a Chronobreak-created clip and its source match/time range.",
+      "description": "Expose clips inline from Match History and open a clip's exact source recording at its first frame.",
       "priority": "P1",
       "area": "clip-library",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
-        "QB-LIB-008",
-        "QB-CLIP-007"
+        "QB-LIB-002",
+        "QB-LIB-030"
       ],
-      "evidence": [],
+      "evidence": [
+        "Fixtures verified account-scoped multipart counts, on-demand strip loading, exact-part seek, source unavailability and Back focus. Three 10,000-recording SQL comparisons showed p95 changes of +0.38, +0.45 and -1.47 ms.",
+        "Packaged navigation and prepared desktop first-paint verification await the staged pinned FFmpeg runtime."
+      ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-lib-003-match-clip-navigation.md",
+        "progress": "docs/execution/qb-lib-003.md"
       },
       "acceptance_criteria": [
-        "A match exposes clips created from it.",
-        "A clip can navigate back to its source replay at the expected timestamp.",
-        "Deleting a clip does not delete the source match."
+        "A Match History card shows the checked clip count and expands to clips from all recording parts of that account-scoped game.",
+        "A clip opens the exact source recording at its first included frame, and Back restores the originating view.",
+        "If the source recording is deleted or unavailable, the clip remains playable and retains its game context. Clip deletion leaves the source intact.",
+        "History performance, request ownership and protected media access meet the existing bounds."
       ],
       "verification": [
         {
@@ -2248,7 +2259,7 @@
           "command": null
         }
       ],
-      "notes": "Current clip names/summaries retain source game identity, but match-to-clips and clip-to-source-at-time navigation are not both exposed in the UI.",
+      "notes": "Uses the durable clip identity and projection from QB-LIB-002 and the existing grouped Match History.",
       "user_value": 4,
       "differentiation": 5,
       "difficulty": 2.5,

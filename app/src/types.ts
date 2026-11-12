@@ -42,6 +42,7 @@ export type LibrarySnapshot = {
   token: string;
   games: GameSummary[];
   clips: ClipSummary[];
+  managed_clip_count?: number;
   usage: StorageUsage;
   archive_error?: string | null;
 };
@@ -88,6 +89,7 @@ export type ClipExportRequest = {
   music: ClipMusicSource;
   game_audio_volume: number;
   music_volume: number;
+  metadata?: { draft_token: string | null; title: string | null; custom_tags: string[]; highlights: number[] };
 };
 
 export type ClipExportProgress = {
@@ -123,6 +125,7 @@ export type ClipExportOutput = {
 };
 
 export type ClipExportResult = {
+  event_availability?: import("./managedClips").Availability;
   outputs: ClipExportOutput[];
   elapsed_ms: number;
   setup_elapsed_ms: number;

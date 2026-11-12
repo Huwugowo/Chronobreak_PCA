@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::io::ReaderStream;
 
+use crate::clip_bundle::{ClipId, Inventory, THUMBNAIL};
 use crate::ddragon;
 use crate::library::{valid_clip_asset, valid_game_id};
 use crate::music;
@@ -410,6 +411,8 @@ pub(crate) struct OutputDirectory {
     indexes: VecDeque<Arc<IndexedRecording>>,
     leases: Vec<IndexLease>,
     replay_lease_epoch: u64,
+    clip_assets: Arc<Inventory>,
+    clip_capability: String,
 }
 
 impl OutputDirectory {
@@ -421,6 +424,8 @@ impl OutputDirectory {
             indexes: VecDeque::new(),
             leases: Vec::new(),
             replay_lease_epoch: 0,
+            clip_assets: Arc::default(),
+            clip_capability: playback_policy::random_capability()?,
         })
     }
 }
@@ -443,6 +448,52 @@ pub struct MediaRoots {
 }
 
 impl MediaRoots {
+    pub(crate) fn publish_clips(&self, root: &ApprovedRoot, clips: Arc<Inventory>) {
+        let mut directory = self
+            .output_directory
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if &directory.root == root {
+            directory.clip_assets = clips;
+        }
+    }
+
+    pub(crate) fn clip_capability(&self) -> String {
+        self.output_directory
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clip_capability
+            .clone()
+    }
+
+    fn clip_delivery(
+        &self,
+        id: &ClipId,
+        asset: &str,
+        query: Option<&str>,
+    ) -> Option<(ApprovedRoot, PathBuf, FileFacts, &'static str)> {
+        let directory = self
+            .output_directory
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        let token = query?.strip_prefix("g=")?;
+        if token != directory.clip_capability {
+            return None;
+        }
+        let clip = directory.clip_assets.get(id)?;
+        let (leaf, facts, content_type) = match asset {
+            "video" => (clip.video_leaf.as_str(), &clip.video, "video/mp4"),
+            "thumbnail" => (THUMBNAIL, &clip.thumbnail, "image/jpeg"),
+            _ => return None,
+        };
+        Some((
+            directory.root.clone(),
+            clip.directory.join(leaf),
+            facts.clone(),
+            content_type,
+        ))
+    }
+
     pub fn new(output_directory: PathBuf) -> Result<Self> {
         Ok(Self {
             output_directory: RwLock::new(OutputDirectory::new(output_directory)?),
@@ -802,6 +853,7 @@ fn media_router(state: PlaybackState) -> Router {
     Router::new()
         .route("/games/{timestamp}/video.mp4", any(game_video))
         .route("/clips/{filename}", any(clip_asset))
+        .route("/clips/{id}/{asset}", any(managed_clip_asset))
         .route("/music/{filename}", any(built_in_music))
         .route("/music-preview/{token}", any(imported_music_preview))
         .route("/probe/hevc.mp4", any(hevc_probe))
@@ -941,6 +993,31 @@ async fn clip_asset(
         request,
         &path,
         FileScope::Root(&root),
+        content_type,
+        RouteClass::Clip,
+        None,
+    )
+    .await
+}
+
+async fn managed_clip_asset(
+    State(state): State<PlaybackState>,
+    AxumPath((id, asset)): AxumPath<(String, String)>,
+    request: Request<Body>,
+) -> Response<Body> {
+    let delivery = ClipId::parse(&id).ok().and_then(|id| {
+        state
+            .roots
+            .clip_delivery(&id, &asset, request.uri().query())
+    });
+    let Some((root, path, facts, content_type)) = delivery else {
+        return empty_response(StatusCode::NOT_FOUND, "application/octet-stream");
+    };
+    serve_file(
+        state,
+        request,
+        &path,
+        FileScope::Clip(&root, &facts),
         content_type,
         RouteClass::Clip,
         None,
@@ -1179,6 +1256,14 @@ async fn serve_file(
             let expected = expected.to_path_buf();
             open_file_blocking(connection, move || {
                 playback_file::open_file(&path, FileScope::Exact(&expected))
+            })
+            .await
+        }
+        FileScope::Clip(root, facts) => {
+            let root = root.clone();
+            let facts = facts.clone();
+            open_file_blocking(connection, move || {
+                playback_file::open_file(&path, FileScope::Clip(&root, &facts))
             })
             .await
         }
