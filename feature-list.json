@@ -3759,11 +3759,13 @@
       "evidence": [
         "2026-10-26: npm run tauri --prefix app -- build passed on clean source revision 28be415 using existing development/build caches, producing MSI (40,030,208 bytes) and NSIS (29,459,471 bytes). This is not a clean-machine installed-workflow pass. Artifact SHA-256 values and exact paths are recorded in docs/reviews/windows-installer-readiness-2026-10-26.md.",
         "Read-only MSI table inspection and cabinet expansion found 11 payload files; all eight locked media-runtime files and its manifest exactly match r6. The recorder executable is absent from the MSI and both generated installer sources. Raw inventory/hashes/tables: build/verification/qb-dist-004/payload-20261026/result.json. Staged runtime verification passed.",
-        "Generated WiX/NSIS uninstall and upgrade ownership inspected without installation or registry changes. Default rules enumerate installed files; optional NSIS app-data deletion and media-root overlap still need validation. No real recordings were touched. Fresh clean-machine install, real match-to-clip, upgrade and uninstall remain not run."
+        "Generated WiX/NSIS uninstall and upgrade ownership inspected without installation or registry changes. Default rules enumerate installed files; optional NSIS app-data deletion and media-root overlap still need validation. No real recordings were touched. Fresh clean-machine install, real match-to-clip, upgrade and uninstall remain not run.",
+        "2026-11-16: Built and hash-verified a local Windows x64 portable preview from de38126a1832 with the desktop, sibling recorder, and locked r6 runtime. All 602 frontend tests passed. Extracted recorder diagnostics confirmed packaged H.264 NVENC, and generated-media smoke passed with sanitized PATH. This verifies the portable payload, with installer acceptance pending."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-dist-004-windows-installer-and-release.md",
+        "progress": "docs/execution/qb-dist-004.md"
       },
       "acceptance_criteria": [
         "A clean supported Windows machine installs and runs Chronobreak without Rust, Node.js, ffmpeg, or ffprobe installed.",
@@ -3788,7 +3790,7 @@
           "command": null
         }
       ],
-      "notes": "Integration gate remains blocked: QB-DIST-002 supervision/login is in progress, QB-DIST-003 complete installed settings is not started, and current installers omit recorder.exe. Preserve the approved stable sibling app/recorder/runtime layout and stable Run target, or explicitly migrate the exact owned Run value. Updates must ask for tray Quit (Status v1 has no shutdown command), await actual owner exit/finalization, and never force-kill or replace live binaries/runtime or leave incompatible mixed components. Uninstall preserves config/media and removes only exact owned registration. See docs/architecture/recorder-supervision.md and docs/reviews/windows-installer-readiness-2026-10-26.md. No finalized ExecPlan or implementation checkpoint yet; existing acceptance criteria remain unchanged.",
+      "notes": "The linked plan specifies one per-user installer with the stable sibling layout, a guarded beta upgrade, and preservation of configuration and media. Installer acceptance remains blocked by QB-DIST-002 manual supervision/login acceptance and QB-DIST-003 installed settings. Same-revision candidate packaging can proceed. See the execution checkpoint for portable preview evidence and the first installer milestone.",
       "user_value": 5,
       "differentiation": 2,
       "difficulty": 5,
