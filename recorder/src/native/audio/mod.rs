@@ -1,6 +1,8 @@
 //! Native system playback acquisition and independent bounded PCM delivery.
 mod capture;
 pub(crate) mod flow;
+#[cfg(feature = "replay-time-fixture")]
+pub(crate) mod mux_resource_fixture;
 mod pipe;
 
 use std::collections::VecDeque;

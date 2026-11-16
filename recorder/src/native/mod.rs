@@ -17,6 +17,9 @@ mod session;
 mod source;
 mod winrt;
 
+#[cfg(feature = "replay-time-fixture")]
+pub use audio::mux_resource_fixture::MuxResourceAudioFixture;
+
 #[cfg(feature = "native-failure-injection")]
 pub use capture::silence_next_wgc_source_after;
 

@@ -1,0 +1,3089 @@
+{
+  "feature": "QB-PERF-006",
+  "date": "2026-11-10",
+  "decision": "No demonstrated avoidable growing mux bottleneck; no production correction or before/after improvement claim. Isolated PCM writer tails retained.",
+  "machine": {
+    "os": "Windows 10 build 19045",
+    "logical_cpus": 16,
+    "processor_identifier": "Intel64 Family 6 Model 141 Stepping 1",
+    "python": "3.13.15",
+    "rust": "1.97.1"
+  },
+  "measurement": {
+    "resource_interval_seconds": 0.5,
+    "frame_rate": 60,
+    "seconds_per_run": 120,
+    "writer_epoch": "original common audio/video epoch",
+    "resource_epoch": "ACTIVE line receipt after mux construction; offset bounded by preparation_ms",
+    "steady_window_seconds": [
+      6,
+      120
+    ],
+    "io_scope": "Logical process counters, pipe-accounted residual reconciled to file length; physical storage traffic excluded",
+    "audio_fixture": "Generated 1kHz stereo f32 48kHz, replaces WASAPI acquisition; production audio admission/pool/pump/flow/named pipe/cleanup",
+    "cpu_limit": "GetProcessTimes has coarse 15.625ms ticks; short recorder bursts undercount-prone. Cycles retained without frequency conversion."
+  },
+  "runs": [
+    {
+      "summary": {
+        "run": "common-pcm-12-01",
+        "seconds": 120.0,
+        "runtime": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+        "bytes": 194644328,
+        "drain_ms": 76.5279,
+        "preparation_ms": 347.7576,
+        "audio_summary": {
+          "confirmed_silent_frames": 0,
+          "delivery_allowance_ms": 250,
+          "discarded_frames": 0,
+          "discontinuities": 0,
+          "first_valid_qpc_100ns": 1000000000,
+          "inferred_idle_frames": 0,
+          "last_error": null,
+          "last_residual_frames": 0,
+          "last_valid_qpc_100ns": 2200000000,
+          "late_non_silent_frames": 0,
+          "late_packets": 0,
+          "late_valid_frames": 0,
+          "maximum_delivery_delay_100ns": 0,
+          "maximum_lateness_frames": 0,
+          "maximum_lead_frames": 20896,
+          "maximum_residual_frames": 0,
+          "non_silent_written_frames": 5760000,
+          "observed_frames": 5760480,
+          "outcome": "captured",
+          "output": "captured_aac",
+          "pre_epoch_trimmed_frames": 0,
+          "pre_roll_overwritten_frames": 0,
+          "reopen_count": 0,
+          "requested_source": "system",
+          "schema_version": 1,
+          "startup_missing_frames": 0,
+          "tail_overhang_frames": 0,
+          "unavailable_fill_frames": 0,
+          "valid_written_frames": 5760000,
+          "written_frames": 5760000
+        },
+        "terminal": {
+          "bytes": 194644328,
+          "flush_calls": 1,
+          "flush_duration_100ns": 4798,
+          "frames": 7200,
+          "progress_end": true,
+          "reader_errors": 0,
+          "slow_writes": 2,
+          "writer_calls": 7200,
+          "writer_duration_100ns": 7070865,
+          "writer_max_100ns": 321374
+        },
+        "mux_observation_ms": {
+          "count": 480,
+          "median": 0.0004,
+          "p95": 0.0012,
+          "p99": 0.0021099999999999795,
+          "max": 0.1045
+        },
+        "windows": [
+          {
+            "start_seconds": 0,
+            "end_seconds": 6,
+            "sample_span_seconds": 5.516022800002247,
+            "output_length_start": 0,
+            "output_length_end": 6488928,
+            "writer_ms": {
+              "count": 360,
+              "median": 0.0052,
+              "p95": 0.7925500000000003,
+              "p99": 2.117108000000008,
+              "max": 32.138
+            },
+            "feed_lateness_ms": {
+              "count": 360,
+              "median": 0.5891005,
+              "p95": 81.1928733500002,
+              "p99": 288.2760390600004,
+              "max": 347.758
+            },
+            "writer_over_frame_budget": 2,
+            "recorder": {
+              "cpu_ms_per_second": 0.0,
+              "private_start_mib": 11.4140625,
+              "private_end_mib": 11.4140625,
+              "private_peak_mib": 11.4140625,
+              "handles_min": 127,
+              "handles_max": 128,
+              "read_bytes_per_second": 829.4019379321884,
+              "write_bytes_per_second": 2006807.1509776013,
+              "read_ops_per_second": 5.619991273420293,
+              "write_ops_per_second": 25.380605750930357,
+              "cpu_cycles_per_second": 26516057.910409726
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 164.29409972700455,
+              "private_start_mib": 10.91015625,
+              "private_end_mib": 17.15234375,
+              "private_peak_mib": 18.62109375,
+              "handles_min": 131,
+              "handles_max": 154,
+              "read_bytes_per_second": 2006807.1509776013,
+              "write_bytes_per_second": 1177207.4256105965,
+              "read_ops_per_second": 48.40444096784575,
+              "write_ops_per_second": 19.94190451858814,
+              "cpu_cycles_per_second": 382359474.2935328
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1176378.0236726643,
+            "observed_file_growth_bytes_per_second": 1176378.0236726643,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 829.4019379321884,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 113.38779330003308,
+            "output_length_start": 6488928,
+            "output_length_end": 191512975,
+            "writer_ms": {
+              "count": 6840,
+              "median": 0.006,
+              "p95": 0.7643249999999996,
+              "p99": 1.1444489999999996,
+              "max": 7.8549
+            },
+            "feed_lateness_ms": {
+              "count": 6840,
+              "median": 0.5007505,
+              "p95": 1.08093565,
+              "p99": 1.17156474,
+              "max": 1.9983
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.27560285891894926,
+              "private_start_mib": 11.4140625,
+              "private_end_mib": 11.390625,
+              "private_peak_mib": 11.4140625,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 789.3618651098124,
+              "write_bytes_per_second": 1987713.1959312435,
+              "read_ops_per_second": 3.8187532131809614,
+              "write_ops_per_second": 25.75233113738662,
+              "cpu_cycles_per_second": 26374007.82716465
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 225.0297343073221,
+              "private_start_mib": 18.23828125,
+              "private_end_mib": 17.6796875,
+              "private_peak_mib": 18.2578125,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1987713.1959312435,
+              "write_bytes_per_second": 1632570.364167639,
+              "read_ops_per_second": 48.75304333132645,
+              "write_ops_per_second": 10.106908042275709,
+              "cpu_cycles_per_second": 531145706.05178565
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1631781.0023025293,
+            "observed_file_growth_bytes_per_second": 1631781.0023025293,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 789.3618651098124,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 40.0,
+            "sample_span_seconds": 33.61762150004506,
+            "output_length_start": 6488928,
+            "output_length_end": 61753862,
+            "writer_ms": {
+              "count": 2040,
+              "median": 0.006,
+              "p95": 0.759825,
+              "p99": 1.1473619999999995,
+              "max": 4.0189
+            },
+            "feed_lateness_ms": {
+              "count": 2040,
+              "median": 0.546717,
+              "p95": 1.0924639999999999,
+              "p99": 1.17725687,
+              "max": 1.9983
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.0,
+              "private_start_mib": 11.4140625,
+              "private_end_mib": 11.390625,
+              "private_peak_mib": 11.4140625,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 788.574527795325,
+              "write_bytes_per_second": 1985504.2094489203,
+              "read_ops_per_second": 3.8372732586041844,
+              "write_ops_per_second": 25.73055324567922,
+              "cpu_cycles_per_second": 26435176.92049715
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 206.3649862912134,
+              "private_start_mib": 18.23828125,
+              "private_end_mib": 17.328125,
+              "private_peak_mib": 18.2578125,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1985504.2094489203,
+              "write_bytes_per_second": 1644716.1200838045,
+              "read_ops_per_second": 48.6947001886438,
+              "write_ops_per_second": 10.173236080950629,
+              "cpu_cycles_per_second": 485883309.44168985
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1643927.545556009,
+            "observed_file_growth_bytes_per_second": 1643927.545556009,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 788.574527795325,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 40.0,
+            "end_seconds": 80.0,
+            "sample_span_seconds": 39.63480884995079,
+            "output_length_start": 61753862,
+            "output_length_end": 126633811,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.006,
+              "p95": 0.7978449999999991,
+              "p99": 1.1525149999999997,
+              "max": 7.8549
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.4881835,
+              "p95": 1.0853466999999997,
+              "p99": 1.1619666599999992,
+              "max": 1.250267
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.3942241795375633,
+              "private_start_mib": 11.390625,
+              "private_end_mib": 11.390625,
+              "private_peak_mib": 11.390625,
+              "handles_min": 129,
+              "handles_max": 129,
+              "read_bytes_per_second": 786.6570044033078,
+              "write_bytes_per_second": 1988459.2177135695,
+              "read_ops_per_second": 3.8097824710510113,
+              "write_ops_per_second": 25.760184787702535,
+              "cpu_cycles_per_second": 26146911.61810124
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 232.59226592716232,
+              "private_start_mib": 18.16015625,
+              "private_end_mib": 17.2890625,
+              "private_peak_mib": 18.16015625,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1988459.2177135695,
+              "write_bytes_per_second": 1637730.315434096,
+              "read_ops_per_second": 48.770261698951025,
+              "write_ops_per_second": 10.117369343652024,
+              "cpu_cycles_per_second": 541954628.1481984
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1636943.6584296927,
+            "observed_file_growth_bytes_per_second": 1636943.6584296927,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 786.6570044033078,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 80.0,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 39.13210520002758,
+            "output_length_start": 129760224,
+            "output_length_end": 191512975,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0061,
+              "p95": 0.7480049999999999,
+              "p99": 1.1394139999999997,
+              "max": 3.1973
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.471417,
+              "p95": 1.0663356499999999,
+              "p99": 1.1642573299999994,
+              "max": 1.308134
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.3992885105498742,
+              "private_start_mib": 11.390625,
+              "private_end_mib": 11.390625,
+              "private_peak_mib": 11.390625,
+              "handles_min": 129,
+              "handles_max": 129,
+              "read_bytes_per_second": 791.9073058195233,
+              "write_bytes_per_second": 1987469.0258152834,
+              "read_ops_per_second": 3.8076152366036005,
+              "write_ops_per_second": 25.758900392593485,
+              "cpu_cycles_per_second": 26589566.052768014
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 233.18449016112655,
+              "private_start_mib": 17.24609375,
+              "private_end_mib": 17.6796875,
+              "private_peak_mib": 18.16015625,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1987469.0258152834,
+              "write_bytes_per_second": 1578850.4013312438,
+              "read_ops_per_second": 48.75791860026624,
+              "write_ops_per_second": 9.889577829299284,
+              "cpu_cycles_per_second": 558997580.482447
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1578058.4940254244,
+            "observed_file_growth_bytes_per_second": 1578058.4940254244,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 791.9073058195233,
+            "input_pipes_write_minus_read_bytes": 0
+          }
+        ],
+        "slowest_writes": [
+          {
+            "elapsed_ns": 348165500,
+            "frame": 8,
+            "late_ns": 214832167,
+            "write_ns": 32138000
+          },
+          {
+            "elapsed_ns": 467791400,
+            "frame": 28,
+            "late_ns": 1124734,
+            "write_ns": 27434600
+          },
+          {
+            "elapsed_ns": 56800382600,
+            "frame": 3408,
+            "late_ns": 382600,
+            "write_ns": 7854900
+          },
+          {
+            "elapsed_ns": 380359700,
+            "frame": 18,
+            "late_ns": 80359700,
+            "write_ns": 7676000
+          },
+          {
+            "elapsed_ns": 61150267300,
+            "frame": 3669,
+            "late_ns": 267300,
+            "write_ns": 6475500
+          },
+          {
+            "elapsed_ns": 76000560600,
+            "frame": 4560,
+            "late_ns": 560600,
+            "write_ns": 5263900
+          },
+          {
+            "elapsed_ns": 35300575100,
+            "frame": 2118,
+            "late_ns": 575100,
+            "write_ns": 4018900
+          },
+          {
+            "elapsed_ns": 44000167800,
+            "frame": 2640,
+            "late_ns": 167800,
+            "write_ns": 3724600
+          },
+          {
+            "elapsed_ns": 83850653600,
+            "frame": 5031,
+            "late_ns": 653600,
+            "write_ns": 3197300
+          },
+          {
+            "elapsed_ns": 115850440500,
+            "frame": 6951,
+            "late_ns": 440500,
+            "write_ns": 2552900
+          },
+          {
+            "elapsed_ns": 3300342700,
+            "frame": 198,
+            "late_ns": 342700,
+            "write_ns": 2305200
+          },
+          {
+            "elapsed_ns": 27301138400,
+            "frame": 1638,
+            "late_ns": 1138400,
+            "write_ns": 2298400
+          }
+        ]
+      },
+      "process": {
+        "command": [
+          "[repo]/recorder/target/release/examples/mux_resource_probe.exe",
+          "[repo]/build/media-runtime/windows-x86_64",
+          "[repo]/build/perf/qb-perf-006/source-12/source.h264",
+          "[repo]/build/perf/qb-perf-006/source-12/sizes.json",
+          "[repo]/build/perf/qb-perf-006/common-pcm-12-01",
+          "120",
+          "pcm"
+        ],
+        "messages": [
+          {
+            "elapsed": 0.36818900000071153,
+            "line": "READY 33428"
+          },
+          {
+            "elapsed": 0.36831690004328266,
+            "line": "ACTIVE"
+          },
+          {
+            "elapsed": 120.36376100004418,
+            "line": "DRAIN"
+          },
+          {
+            "elapsed": 120.91107970004668,
+            "line": "PASS frames=7200 bytes=194644328"
+          }
+        ],
+        "returncode": 0,
+        "source_sha256": "151d93f9d178c4857df6c3c03af636b2038369fbb84ec000441164d0022f65dc",
+        "source_sha256_after": "151d93f9d178c4857df6c3c03af636b2038369fbb84ec000441164d0022f65dc",
+        "executable_sha256": "f321b5931b3afd501a1eb4677b88001081c84cde76f25ec978e39b90142f7306",
+        "ffmpeg_sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015",
+        "ffprobe_sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e"
+      },
+      "mux_arguments": [
+        "-thread_queue_size",
+        "32",
+        "-f",
+        "f32le",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-i",
+        "\\\\.\\pipe\\Chronobreak.Audio.C16FA221-1E49-42B2-B9CE-B45BDF39DF33",
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-stats_period",
+        "0.25",
+        "-progress",
+        "pipe:1",
+        "-thread_queue_size",
+        "32",
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-r",
+        "60",
+        "-f",
+        "h264",
+        "-i",
+        "pipe:0",
+        "-map",
+        "1:v:0",
+        "-map",
+        "0:a:0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-c:v",
+        "copy",
+        "-bsf:v",
+        "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+        "-max_interleave_delta",
+        "250000",
+        "-avoid_negative_ts",
+        "disabled",
+        "-flush_packets",
+        "1",
+        "-movflags",
+        "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+        "-y",
+        "build/perf/qb-perf-006/common-pcm-12-01/video.partial.mp4"
+      ],
+      "source_bytes": 6413575,
+      "source_packets": 240,
+      "validated_timeline": {
+        "audio": {
+          "codec": "aac",
+          "first_pts": "0",
+          "present": true,
+          "replay_end": "5761024000",
+          "replay_start": "0",
+          "sample_rate": 48000,
+          "time_base": {
+            "denominator": "48000",
+            "numerator": "1"
+          }
+        },
+        "capture": null,
+        "container": {
+          "duration_seconds": {
+            "denominator": "1000000",
+            "numerator": "120021333"
+          },
+          "start_seconds": {
+            "denominator": "1",
+            "numerator": "0"
+          }
+        },
+        "media_id": "d565d64b-c12a-4457-b4e4-f5c19fde3943",
+        "producer": {
+          "backend": "native-mux-resource-fixture",
+          "expected_frame_count": "7200",
+          "expected_frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+        },
+        "replay_ticks_per_second": "48000000",
+        "schema_version": 2,
+        "video": {
+          "codec": "h264",
+          "exact_cfr": true,
+          "first_pts": "0",
+          "frame_count": "7200",
+          "frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "one_past_last_pts": "1843200",
+          "profile": "High",
+          "replay_end": "5760000000",
+          "time_base": {
+            "denominator": "15360",
+            "numerator": "1"
+          }
+        }
+      },
+      "media": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "codec_type": "video",
+            "width": 1920,
+            "height": 1080,
+            "avg_frame_rate": "60/1",
+            "start_time": "0.000000",
+            "duration": "120.000000",
+            "nb_read_frames": "7200"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "codec_type": "audio",
+            "avg_frame_rate": "0/0",
+            "start_time": "0.000000",
+            "duration": "120.021333",
+            "nb_read_frames": "5625"
+          }
+        ],
+        "format": {
+          "duration": "120.021333",
+          "size": "194644328"
+        }
+      },
+      "artifact_sha256": {
+        "writer.json": "49310d4a9392f59ac65c6699d7e5fb1860dd2ee8bb2fc624d32564fb67903f3a",
+        "resources.json": "253081568ae4c93cf88d4092173cd62c3a319055d39e6ed7a2813ae390c23859",
+        "process.json": "64e1790b5f4fb0d03642e6ea5f387f61c9a93cc59eec9a057b0528c51381623b",
+        "media.json": "b102395b8e6dc2cfa2512aec362300c0401fd9ee1c38e7ea32a8eabf5f9e83df",
+        "decode.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "raw_directory": "build/perf/qb-perf-006/common-pcm-12-01"
+    },
+    {
+      "summary": {
+        "run": "common-pcm-12-02",
+        "seconds": 120.0,
+        "runtime": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+        "bytes": 194644328,
+        "drain_ms": 86.0762,
+        "preparation_ms": 349.6866,
+        "audio_summary": {
+          "confirmed_silent_frames": 0,
+          "delivery_allowance_ms": 250,
+          "discarded_frames": 0,
+          "discontinuities": 0,
+          "first_valid_qpc_100ns": 1000000000,
+          "inferred_idle_frames": 0,
+          "last_error": null,
+          "last_residual_frames": 0,
+          "last_valid_qpc_100ns": 2200000000,
+          "late_non_silent_frames": 0,
+          "late_packets": 0,
+          "late_valid_frames": 0,
+          "maximum_delivery_delay_100ns": 0,
+          "maximum_lateness_frames": 0,
+          "maximum_lead_frames": 23296,
+          "maximum_residual_frames": 0,
+          "non_silent_written_frames": 5760000,
+          "observed_frames": 5760480,
+          "outcome": "captured",
+          "output": "captured_aac",
+          "pre_epoch_trimmed_frames": 0,
+          "pre_roll_overwritten_frames": 0,
+          "reopen_count": 0,
+          "requested_source": "system",
+          "schema_version": 1,
+          "startup_missing_frames": 0,
+          "tail_overhang_frames": 0,
+          "unavailable_fill_frames": 0,
+          "valid_written_frames": 5760000,
+          "written_frames": 5760000
+        },
+        "terminal": {
+          "bytes": 194644328,
+          "flush_calls": 1,
+          "flush_duration_100ns": 3844,
+          "frames": 7200,
+          "progress_end": true,
+          "reader_errors": 0,
+          "slow_writes": 2,
+          "writer_calls": 7200,
+          "writer_duration_100ns": 7465035,
+          "writer_max_100ns": 337671
+        },
+        "mux_observation_ms": {
+          "count": 480,
+          "median": 0.0003,
+          "p95": 0.0011,
+          "p99": 0.013808999999999941,
+          "max": 0.0267
+        },
+        "windows": [
+          {
+            "start_seconds": 0,
+            "end_seconds": 6,
+            "sample_span_seconds": 5.518560399999842,
+            "output_length_start": 0,
+            "output_length_end": 6488164,
+            "writer_ms": {
+              "count": 360,
+              "median": 0.005050000000000001,
+              "p95": 0.7211650000000001,
+              "p99": 1.2678760000000018,
+              "max": 33.7693
+            },
+            "feed_lateness_ms": {
+              "count": 360,
+              "median": 0.5999835,
+              "p95": 84.56943335000018,
+              "p99": 290.0068080600004,
+              "max": 349.6871
+            },
+            "writer_over_frame_budget": 2,
+            "recorder": {
+              "cpu_ms_per_second": 0.0,
+              "private_start_mib": 11.41796875,
+              "private_end_mib": 11.41796875,
+              "private_peak_mib": 11.41796875,
+              "handles_min": 127,
+              "handles_max": 128,
+              "read_bytes_per_second": 829.0205539836314,
+              "write_bytes_per_second": 2053779.2791033552,
+              "read_ops_per_second": 4.711373640125556,
+              "write_ops_per_second": 25.550141663757824,
+              "cpu_cycles_per_second": 22918407.12661288
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 192.53209587051552,
+              "private_start_mib": 10.87890625,
+              "private_end_mib": 18.00390625,
+              "private_peak_mib": 18.00390625,
+              "handles_min": 131,
+              "handles_max": 154,
+              "read_bytes_per_second": 2053779.2791033552,
+              "write_bytes_per_second": 1176527.6683390448,
+              "read_ops_per_second": 49.28821654285197,
+              "write_ops_per_second": 19.93273463130043,
+              "cpu_cycles_per_second": 433164175.5701484
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1175698.647785061,
+            "observed_file_growth_bytes_per_second": 1175698.647785061,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 829.0205539836314,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 113.3978147499729,
+            "output_length_start": 6488164,
+            "output_length_end": 191512975,
+            "writer_ms": {
+              "count": 6840,
+              "median": 0.0064,
+              "p95": 0.8043599999999992,
+              "p99": 1.1815489999999997,
+              "max": 8.9146
+            },
+            "feed_lateness_ms": {
+              "count": 6840,
+              "median": 0.5147170000000001,
+              "p95": 1.0948266999999996,
+              "p99": 1.21850913,
+              "max": 1.596867
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.5511570054308735,
+              "private_start_mib": 11.41796875,
+              "private_end_mib": 11.3828125,
+              "private_peak_mib": 11.41796875,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 783.8599023798317,
+              "write_bytes_per_second": 1987368.2177817617,
+              "read_ops_per_second": 3.7919601973644097,
+              "write_ops_per_second": 25.74123678164352,
+              "cpu_cycles_per_second": 26310330.905214496
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 237.27309083799105,
+              "private_start_mib": 17.48046875,
+              "private_end_mib": 17.45703125,
+              "private_peak_mib": 18.015625,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1987368.2177817617,
+              "write_bytes_per_second": 1632427.3920811533,
+              "read_ops_per_second": 48.739916304263005,
+              "write_ops_per_second": 10.079559315319814,
+              "cpu_cycles_per_second": 550493447.8643904
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1631643.5321787735,
+            "observed_file_growth_bytes_per_second": 1631643.5321787735,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 783.8599023798317,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 40.0,
+            "sample_span_seconds": 33.614898050029296,
+            "output_length_start": 6488164,
+            "output_length_end": 61753862,
+            "writer_ms": {
+              "count": 2040,
+              "median": 0.0064,
+              "p95": 0.8088649999999996,
+              "p99": 1.1513929999999999,
+              "max": 1.8311
+            },
+            "feed_lateness_ms": {
+              "count": 2040,
+              "median": 0.5087505,
+              "p95": 1.0990067,
+              "p99": 1.2304629999999996,
+              "max": 1.525067
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.9296473234424332,
+              "private_start_mib": 11.41796875,
+              "private_end_mib": 11.3828125,
+              "private_peak_mib": 11.41796875,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 782.629177123953,
+              "write_bytes_per_second": 1985665.073285618,
+              "read_ops_per_second": 3.807835436820206,
+              "write_ops_per_second": 25.73263791288655,
+              "cpu_cycles_per_second": 26061323.604080856
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 239.84900944814774,
+              "private_start_mib": 17.48046875,
+              "private_end_mib": 17.31640625,
+              "private_peak_mib": 18.015625,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1985665.073285618,
+              "write_bytes_per_second": 1644866.0923412144,
+              "read_ops_per_second": 48.698645391208416,
+              "write_ops_per_second": 10.144311593403831,
+              "cpu_cycles_per_second": 567963644.9167621
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1644083.4631640906,
+            "observed_file_growth_bytes_per_second": 1644083.4631640906,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 782.629177123953,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 40.0,
+            "end_seconds": 80.0,
+            "sample_span_seconds": 39.63867970003048,
+            "output_length_start": 64879912,
+            "output_length_end": 126633811,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0066,
+              "p95": 0.8144699999999996,
+              "p99": 1.171737999999999,
+              "max": 8.9146
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.49865000000000004,
+              "p95": 1.09218535,
+              "p99": 1.212594999999997,
+              "max": 1.596867
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.7883713644472364,
+              "private_start_mib": 11.3828125,
+              "private_end_mib": 11.3828125,
+              "private_peak_mib": 11.3828125,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 781.3580127891138,
+              "write_bytes_per_second": 1981045.322252235,
+              "read_ops_per_second": 3.7841825493467347,
+              "write_ops_per_second": 25.732441335557795,
+              "cpu_cycles_per_second": 26642319.622951213
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 246.36605138976137,
+              "private_start_mib": 17.921875,
+              "private_end_mib": 17.30859375,
+              "private_peak_mib": 17.921875,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1981045.322252235,
+              "write_bytes_per_second": 1558701.5376789276,
+              "read_ops_per_second": 48.639359700936694,
+              "write_ops_per_second": 9.788418860976886,
+              "cpu_cycles_per_second": 571633315.4250487
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1557920.1796661385,
+            "observed_file_growth_bytes_per_second": 1557920.1796661385,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 781.3580127891138,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 80.0,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 39.14068529999349,
+            "output_length_start": 129760224,
+            "output_length_end": 191512975,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0061,
+              "p95": 0.7830649999999997,
+              "p99": 1.2042529999999987,
+              "max": 8.7541
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.536784,
+              "p95": 1.0894819999999998,
+              "p99": 1.2017806699999998,
+              "max": 1.589167
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.0,
+              "private_start_mib": 11.3828125,
+              "private_end_mib": 11.3828125,
+              "private_peak_mib": 11.3828125,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 786.4450957889876,
+              "write_bytes_per_second": 1986542.8109919406,
+              "read_ops_per_second": 3.7812316995897004,
+              "write_ops_per_second": 25.727704874911,
+              "cpu_cycles_per_second": 26142905.83205936
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 225.1493537340151,
+              "private_start_mib": 17.140625,
+              "private_end_mib": 17.45703125,
+              "private_peak_mib": 17.921875,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 1986542.8109919406,
+              "write_bytes_per_second": 1578499.0100827457,
+              "read_ops_per_second": 48.72168142646999,
+              "write_ops_per_second": 9.8618610543353,
+              "cpu_cycles_per_second": 512811477.67750853
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1577712.5649869565,
+            "observed_file_growth_bytes_per_second": 1577712.5649869565,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 786.4450957889876,
+            "input_pipes_write_minus_read_bytes": 0
+          }
+        ],
+        "slowest_writes": [
+          {
+            "elapsed_ns": 349906000,
+            "frame": 8,
+            "late_ns": 216572667,
+            "write_ns": 33769300
+          },
+          {
+            "elapsed_ns": 466798400,
+            "frame": 28,
+            "late_ns": 131734,
+            "write_ns": 26253300
+          },
+          {
+            "elapsed_ns": 67300697800,
+            "frame": 4038,
+            "late_ns": 697800,
+            "write_ns": 8914600
+          },
+          {
+            "elapsed_ns": 118751167800,
+            "frame": 7125,
+            "late_ns": 1167800,
+            "write_ns": 8754100
+          },
+          {
+            "elapsed_ns": 60300923800,
+            "frame": 3618,
+            "late_ns": 923800,
+            "write_ns": 7421300
+          },
+          {
+            "elapsed_ns": 93150619300,
+            "frame": 5589,
+            "late_ns": 619300,
+            "write_ns": 7315200
+          },
+          {
+            "elapsed_ns": 383736200,
+            "frame": 18,
+            "late_ns": 83736200,
+            "write_ns": 7143600
+          },
+          {
+            "elapsed_ns": 92300995500,
+            "frame": 5538,
+            "late_ns": 995500,
+            "write_ns": 6318600
+          },
+          {
+            "elapsed_ns": 56800322300,
+            "frame": 3408,
+            "late_ns": 322300,
+            "write_ns": 5566900
+          },
+          {
+            "elapsed_ns": 97850460600,
+            "frame": 5871,
+            "late_ns": 460600,
+            "write_ns": 4848100
+          },
+          {
+            "elapsed_ns": 83850196700,
+            "frame": 5031,
+            "late_ns": 196700,
+            "write_ns": 4560700
+          },
+          {
+            "elapsed_ns": 51850595500,
+            "frame": 3111,
+            "late_ns": 595500,
+            "write_ns": 4442500
+          }
+        ]
+      },
+      "process": {
+        "command": [
+          "[repo]/recorder/target/release/examples/mux_resource_probe.exe",
+          "[repo]/build/media-runtime/windows-x86_64",
+          "[repo]/build/perf/qb-perf-006/source-12/source.h264",
+          "[repo]/build/perf/qb-perf-006/source-12/sizes.json",
+          "[repo]/build/perf/qb-perf-006/common-pcm-12-02",
+          "120",
+          "pcm"
+        ],
+        "messages": [
+          {
+            "elapsed": 0.3440933999954723,
+            "line": "READY 27676"
+          },
+          {
+            "elapsed": 0.3441986999823712,
+            "line": "ACTIVE"
+          },
+          {
+            "elapsed": 120.3379116000142,
+            "line": "DRAIN"
+          },
+          {
+            "elapsed": 120.93480039999122,
+            "line": "PASS frames=7200 bytes=194644328"
+          }
+        ],
+        "returncode": 0,
+        "source_sha256": "151d93f9d178c4857df6c3c03af636b2038369fbb84ec000441164d0022f65dc",
+        "source_sha256_after": "151d93f9d178c4857df6c3c03af636b2038369fbb84ec000441164d0022f65dc",
+        "executable_sha256": "f321b5931b3afd501a1eb4677b88001081c84cde76f25ec978e39b90142f7306",
+        "ffmpeg_sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015",
+        "ffprobe_sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e"
+      },
+      "mux_arguments": [
+        "-thread_queue_size",
+        "32",
+        "-f",
+        "f32le",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-i",
+        "\\\\.\\pipe\\Chronobreak.Audio.BE1546F2-CD8B-47E5-A967-C9F78859A647",
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-stats_period",
+        "0.25",
+        "-progress",
+        "pipe:1",
+        "-thread_queue_size",
+        "32",
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-r",
+        "60",
+        "-f",
+        "h264",
+        "-i",
+        "pipe:0",
+        "-map",
+        "1:v:0",
+        "-map",
+        "0:a:0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-c:v",
+        "copy",
+        "-bsf:v",
+        "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+        "-max_interleave_delta",
+        "250000",
+        "-avoid_negative_ts",
+        "disabled",
+        "-flush_packets",
+        "1",
+        "-movflags",
+        "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+        "-y",
+        "build/perf/qb-perf-006/common-pcm-12-02/video.partial.mp4"
+      ],
+      "source_bytes": 6413575,
+      "source_packets": 240,
+      "validated_timeline": {
+        "audio": {
+          "codec": "aac",
+          "first_pts": "0",
+          "present": true,
+          "replay_end": "5761024000",
+          "replay_start": "0",
+          "sample_rate": 48000,
+          "time_base": {
+            "denominator": "48000",
+            "numerator": "1"
+          }
+        },
+        "capture": null,
+        "container": {
+          "duration_seconds": {
+            "denominator": "1000000",
+            "numerator": "120021333"
+          },
+          "start_seconds": {
+            "denominator": "1",
+            "numerator": "0"
+          }
+        },
+        "media_id": "281ac4a7-4044-4ac0-a7d9-46137a690eeb",
+        "producer": {
+          "backend": "native-mux-resource-fixture",
+          "expected_frame_count": "7200",
+          "expected_frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+        },
+        "replay_ticks_per_second": "48000000",
+        "schema_version": 2,
+        "video": {
+          "codec": "h264",
+          "exact_cfr": true,
+          "first_pts": "0",
+          "frame_count": "7200",
+          "frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "one_past_last_pts": "1843200",
+          "profile": "High",
+          "replay_end": "5760000000",
+          "time_base": {
+            "denominator": "15360",
+            "numerator": "1"
+          }
+        }
+      },
+      "media": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "codec_type": "video",
+            "width": 1920,
+            "height": 1080,
+            "avg_frame_rate": "60/1",
+            "start_time": "0.000000",
+            "duration": "120.000000",
+            "nb_read_frames": "7200"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "codec_type": "audio",
+            "avg_frame_rate": "0/0",
+            "start_time": "0.000000",
+            "duration": "120.021333",
+            "nb_read_frames": "5625"
+          }
+        ],
+        "format": {
+          "duration": "120.021333",
+          "size": "194644328"
+        }
+      },
+      "artifact_sha256": {
+        "writer.json": "bcdeedc35218263a2617706219c78e9d9a1a83fc91dfc646dba153c2394b7599",
+        "resources.json": "10cef2b79d9477a2de8805fbcdde79ea3f400e9a4bb13e4973b58af8c1bad507",
+        "process.json": "b01d6e9a0b8e48af100233f6ff78605eb072cecb972110c02817dea0ddfda2b6",
+        "media.json": "b102395b8e6dc2cfa2512aec362300c0401fd9ee1c38e7ea32a8eabf5f9e83df",
+        "decode.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "raw_directory": "build/perf/qb-perf-006/common-pcm-12-02"
+    },
+    {
+      "summary": {
+        "run": "common-video-18-01",
+        "seconds": 120.0,
+        "runtime": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+        "bytes": 292083515,
+        "drain_ms": 11.1257,
+        "preparation_ms": 1.1346,
+        "audio_summary": null,
+        "terminal": {
+          "bytes": 292083515,
+          "flush_calls": 1,
+          "flush_duration_100ns": 5270,
+          "frames": 7200,
+          "progress_end": true,
+          "reader_errors": 0,
+          "slow_writes": 1,
+          "writer_calls": 7200,
+          "writer_duration_100ns": 9329541,
+          "writer_max_100ns": 295493
+        },
+        "mux_observation_ms": {
+          "count": 480,
+          "median": 0.0003,
+          "p95": 0.001,
+          "p99": 0.0070049999999999895,
+          "max": 0.0364
+        },
+        "windows": [
+          {
+            "start_seconds": 0,
+            "end_seconds": 6,
+            "sample_span_seconds": 5.520000100019388,
+            "output_length_start": 0,
+            "output_length_end": 9736877,
+            "writer_ms": {
+              "count": 360,
+              "median": 0.0083,
+              "p95": 0.8793050000000001,
+              "p99": 1.4746890000000028,
+              "max": 29.5508
+            },
+            "feed_lateness_ms": {
+              "count": 360,
+              "median": 0.5385169999999999,
+              "p95": 1.0949156500000001,
+              "p99": 1.2068950000000007,
+              "max": 13.129234
+            },
+            "writer_over_frame_budget": 1,
+            "recorder": {
+              "cpu_ms_per_second": 0.0,
+              "private_start_mib": 12.46484375,
+              "private_end_mib": 12.46484375,
+              "private_peak_mib": 12.46484375,
+              "handles_min": 108,
+              "handles_max": 108,
+              "read_bytes_per_second": 830.6159269786782,
+              "write_bytes_per_second": 2433046.5138855395,
+              "read_ops_per_second": 5.434782510220359,
+              "write_ops_per_second": 8.695652016352573,
+              "cpu_cycles_per_second": 10555256.69280248
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 19.81431123517839,
+              "private_start_mib": 25.609375,
+              "private_end_mib": 16.79296875,
+              "private_peak_mib": 25.609375,
+              "handles_min": 130,
+              "handles_max": 134,
+              "read_bytes_per_second": 2433046.5138855395,
+              "write_bytes_per_second": 1764757.576719208,
+              "read_ops_per_second": 43.47826008176287,
+              "write_ops_per_second": 19.565217036793292,
+              "cpu_cycles_per_second": 38485672.85338525
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1763926.9607922293,
+            "observed_file_growth_bytes_per_second": 1763926.9607922293,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 830.6159269786782,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 113.39014839997981,
+            "output_length_start": 14772649,
+            "output_length_end": 287382049,
+            "writer_ms": {
+              "count": 6840,
+              "median": 0.0085,
+              "p95": 0.8952099999999998,
+              "p99": 1.136303999999998,
+              "max": 1.7119
+            },
+            "feed_lateness_ms": {
+              "count": 6840,
+              "median": 0.4809505,
+              "p95": 1.0868199999999997,
+              "p99": 1.17572387,
+              "max": 1.528634
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.8267914040406767,
+              "private_start_mib": 12.46484375,
+              "private_end_mib": 12.37890625,
+              "private_peak_mib": 12.46484375,
+              "handles_min": 107,
+              "handles_max": 108,
+              "read_bytes_per_second": 789.9804459557083,
+              "write_bytes_per_second": 2432643.3371177167,
+              "read_ops_per_second": 3.8186738981292057,
+              "write_ops_per_second": 8.748555443289082,
+              "cpu_cycles_per_second": 11155700.45413421
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 7.716719771046316,
+              "private_start_mib": 16.703125,
+              "private_end_mib": 16.66796875,
+              "private_peak_mib": 17.0390625,
+              "handles_min": 134,
+              "handles_max": 134,
+              "read_bytes_per_second": 2432643.3371177167,
+              "write_bytes_per_second": 2404961.805306611,
+              "read_ops_per_second": 43.742777216445404,
+              "write_ops_per_second": 13.202205139721526,
+              "cpu_cycles_per_second": 28597999.9828678
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2404171.8248606557,
+            "observed_file_growth_bytes_per_second": 2404171.8248606557,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 789.9804459557083,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 40.0,
+            "sample_span_seconds": 33.62033439998049,
+            "output_length_start": 14772649,
+            "output_length_end": 92661049,
+            "writer_ms": {
+              "count": 2040,
+              "median": 0.0085,
+              "p95": 0.93951,
+              "p99": 1.1822059999999994,
+              "max": 1.6335
+            },
+            "feed_lateness_ms": {
+              "count": 2040,
+              "median": 0.4476335,
+              "p95": 1.1015523,
+              "p99": 1.1870187399999999,
+              "max": 1.528634
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 1.3942455016160458,
+              "private_start_mib": 12.46484375,
+              "private_end_mib": 12.37890625,
+              "private_peak_mib": 12.46484375,
+              "handles_min": 107,
+              "handles_max": 108,
+              "read_bytes_per_second": 782.2646761067094,
+              "write_bytes_per_second": 2429950.101865953,
+              "read_ops_per_second": 3.8072197164128823,
+              "write_ops_per_second": 8.744707786135839,
+              "cpu_cycles_per_second": 11407500.099113308
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 9.294970010773639,
+              "private_start_mib": 16.703125,
+              "private_end_mib": 16.578125,
+              "private_peak_mib": 17.0390625,
+              "handles_min": 134,
+              "handles_max": 134,
+              "read_bytes_per_second": 2429950.101865953,
+              "write_bytes_per_second": 2317487.3596749594,
+              "read_ops_per_second": 43.7235389306792,
+              "write_ops_per_second": 12.849366542893478,
+              "cpu_cycles_per_second": 30493258.746426832
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2316705.094998853,
+            "observed_file_growth_bytes_per_second": 2316705.094998853,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 782.2646761067094,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 40.0,
+            "end_seconds": 80.0,
+            "sample_span_seconds": 39.635646799986716,
+            "output_length_start": 97361327,
+            "output_length_end": 190021549,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0087,
+              "p95": 0.8884349999999998,
+              "p99": 1.1224349999999992,
+              "max": 1.6497
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.4855505,
+              "p95": 1.0844367,
+              "p99": 1.1764716699999997,
+              "max": 1.441
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.7884316902332088,
+              "private_start_mib": 12.37890625,
+              "private_end_mib": 12.37890625,
+              "private_peak_mib": 12.37890625,
+              "handles_min": 107,
+              "handles_max": 108,
+              "read_bytes_per_second": 788.4316902332088,
+              "write_bytes_per_second": 2434612.9504825524,
+              "read_ops_per_second": 3.809701927206865,
+              "write_ops_per_second": 8.75474548834955,
+              "cpu_cycles_per_second": 11062269.784888359
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 8.278532747448692,
+              "private_start_mib": 16.5546875,
+              "private_end_mib": 16.578125,
+              "private_peak_mib": 16.96484375,
+              "handles_min": 134,
+              "handles_max": 134,
+              "read_bytes_per_second": 2434612.9504825524,
+              "write_bytes_per_second": 2338588.6060532527,
+              "read_ops_per_second": 43.77372744174775,
+              "write_ops_per_second": 12.942894626868355,
+              "cpu_cycles_per_second": 28558826.798314776
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2337800.1743630194,
+            "observed_file_growth_bytes_per_second": 2337800.1743630194,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 788.4316902332088,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 80.0,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 39.13040614995407,
+            "output_length_start": 194721827,
+            "output_length_end": 287382049,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0082,
+              "p95": 0.8026949999999995,
+              "p99": 1.1230269999999993,
+              "max": 1.7119
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.502784,
+              "p95": 1.064767,
+              "p99": 1.1647816699999998,
+              "max": 1.3906
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.3993058477369865,
+              "private_start_mib": 12.37890625,
+              "private_end_mib": 12.37890625,
+              "private_peak_mib": 12.37890625,
+              "handles_min": 108,
+              "handles_max": 108,
+              "read_bytes_per_second": 797.3339167612147,
+              "write_bytes_per_second": 2430700.198600204,
+              "read_ops_per_second": 3.8333361382750706,
+              "write_ops_per_second": 8.74000639526716,
+              "cpu_cycles_per_second": 11003914.91848866
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 4.791670172843838,
+              "private_start_mib": 16.703125,
+              "private_end_mib": 16.66796875,
+              "private_peak_mib": 16.96484375,
+              "handles_min": 134,
+              "handles_max": 134,
+              "read_bytes_per_second": 2430700.198600204,
+              "write_bytes_per_second": 2368782.5177380326,
+              "read_ops_per_second": 43.7000319763358,
+              "write_ops_per_second": 13.084454018645573,
+              "cpu_cycles_per_second": 26432394.33897913
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2367985.1838212716,
+            "observed_file_growth_bytes_per_second": 2367985.1838212716,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 797.3339167612147,
+            "input_pipes_write_minus_read_bytes": 0
+          }
+        ],
+        "slowest_writes": [
+          {
+            "elapsed_ns": 100243800,
+            "frame": 6,
+            "late_ns": 243800,
+            "write_ns": 29550800
+          },
+          {
+            "elapsed_ns": 416845200,
+            "frame": 25,
+            "late_ns": 178534,
+            "write_ns": 10594900
+          },
+          {
+            "elapsed_ns": 200375300,
+            "frame": 12,
+            "late_ns": 375300,
+            "write_ns": 9435800
+          },
+          {
+            "elapsed_ns": 80100540500,
+            "frame": 4806,
+            "late_ns": 540500,
+            "write_ns": 1711900
+          },
+          {
+            "elapsed_ns": 104101015700,
+            "frame": 6246,
+            "late_ns": 1015700,
+            "write_ns": 1700300
+          },
+          {
+            "elapsed_ns": 108100471400,
+            "frame": 6486,
+            "late_ns": 471400,
+            "write_ns": 1691200
+          },
+          {
+            "elapsed_ns": 44101059000,
+            "frame": 2646,
+            "late_ns": 1059000,
+            "write_ns": 1649700
+          },
+          {
+            "elapsed_ns": 48101084400,
+            "frame": 2886,
+            "late_ns": 1084400,
+            "write_ns": 1641800
+          },
+          {
+            "elapsed_ns": 16100447300,
+            "frame": 966,
+            "late_ns": 447300,
+            "write_ns": 1633500
+          },
+          {
+            "elapsed_ns": 12101090000,
+            "frame": 726,
+            "late_ns": 1090000,
+            "write_ns": 1593300
+          },
+          {
+            "elapsed_ns": 40100173900,
+            "frame": 2406,
+            "late_ns": 173900,
+            "write_ns": 1581000
+          },
+          {
+            "elapsed_ns": 90034430900,
+            "frame": 5402,
+            "late_ns": 1097567,
+            "write_ns": 1544700
+          }
+        ]
+      },
+      "process": {
+        "command": [
+          "[repo]/recorder/target/release/examples/mux_resource_probe.exe",
+          "[repo]/build/media-runtime/windows-x86_64",
+          "[repo]/build/perf/qb-perf-006/source-18/source.h264",
+          "[repo]/build/perf/qb-perf-006/source-18/sizes.json",
+          "[repo]/build/perf/qb-perf-006/common-video-18-01",
+          "120",
+          "video"
+        ],
+        "messages": [
+          {
+            "elapsed": 0.3738512999843806,
+            "line": "READY 9364"
+          },
+          {
+            "elapsed": 2.3687629000050947,
+            "line": "ACTIVE"
+          },
+          {
+            "elapsed": 122.36810090002837,
+            "line": "DRAIN"
+          },
+          {
+            "elapsed": 122.89426650002133,
+            "line": "PASS frames=7200 bytes=292083515"
+          }
+        ],
+        "returncode": 0,
+        "source_sha256": "71e7c409ab3b730a652b9993c18490e61876ab950357864e0eb6f88d91777778",
+        "source_sha256_after": "71e7c409ab3b730a652b9993c18490e61876ab950357864e0eb6f88d91777778",
+        "executable_sha256": "f321b5931b3afd501a1eb4677b88001081c84cde76f25ec978e39b90142f7306",
+        "ffmpeg_sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015",
+        "ffprobe_sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e"
+      },
+      "mux_arguments": [
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-stats_period",
+        "0.25",
+        "-progress",
+        "pipe:1",
+        "-thread_queue_size",
+        "32",
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-r",
+        "60",
+        "-f",
+        "h264",
+        "-i",
+        "pipe:0",
+        "-map",
+        "0:v:0",
+        "-c:v",
+        "copy",
+        "-bsf:v",
+        "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+        "-max_interleave_delta",
+        "250000",
+        "-avoid_negative_ts",
+        "disabled",
+        "-flush_packets",
+        "1",
+        "-movflags",
+        "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+        "-y",
+        "build/perf/qb-perf-006/common-video-18-01/video.partial.mp4"
+      ],
+      "source_bytes": 9734383,
+      "source_packets": 240,
+      "validated_timeline": {
+        "audio": {
+          "codec": null,
+          "first_pts": null,
+          "present": false,
+          "replay_end": null,
+          "replay_start": null,
+          "sample_rate": null,
+          "time_base": null
+        },
+        "capture": null,
+        "container": {
+          "duration_seconds": {
+            "denominator": "1",
+            "numerator": "120"
+          },
+          "start_seconds": {
+            "denominator": "1",
+            "numerator": "0"
+          }
+        },
+        "media_id": "e6e0a22c-f05b-4350-adba-5f0c04712a85",
+        "producer": {
+          "backend": "native-mux-resource-fixture",
+          "expected_frame_count": "7200",
+          "expected_frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+        },
+        "replay_ticks_per_second": "48000000",
+        "schema_version": 2,
+        "video": {
+          "codec": "h264",
+          "exact_cfr": true,
+          "first_pts": "0",
+          "frame_count": "7200",
+          "frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "one_past_last_pts": "1843200",
+          "profile": "High",
+          "replay_end": "5760000000",
+          "time_base": {
+            "denominator": "15360",
+            "numerator": "1"
+          }
+        }
+      },
+      "media": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "codec_type": "video",
+            "width": 1920,
+            "height": 1080,
+            "avg_frame_rate": "60/1",
+            "start_time": "0.000000",
+            "duration": "120.000000",
+            "nb_read_frames": "7200"
+          }
+        ],
+        "format": {
+          "duration": "120.000000",
+          "size": "292083515"
+        }
+      },
+      "artifact_sha256": {
+        "writer.json": "e0f82eabb7f894a5d9712e08d4b8e6f90ab581ccd56f59c9c44dd744fd86367c",
+        "resources.json": "72639c5353b6c90e4e5cfa559fb6b65cebc84d5d0327428bb01336ee69443fab",
+        "process.json": "58dde3a6bb3ea083b56d6ccea3112d4d70caf4cee911f622aa2ca24dc1add8a0",
+        "media.json": "8f8b25df13ade98c84464cf9b76857dffe3762abba67bb04f4a7fdc438599552",
+        "decode.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "raw_directory": "build/perf/qb-perf-006/common-video-18-01"
+    },
+    {
+      "summary": {
+        "run": "common-pcm-18-01",
+        "seconds": 120.0,
+        "runtime": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+        "bytes": 294268569,
+        "drain_ms": 76.6576,
+        "preparation_ms": 339.5317,
+        "audio_summary": {
+          "confirmed_silent_frames": 0,
+          "delivery_allowance_ms": 250,
+          "discarded_frames": 0,
+          "discontinuities": 0,
+          "first_valid_qpc_100ns": 1000000000,
+          "inferred_idle_frames": 0,
+          "last_error": null,
+          "last_residual_frames": 0,
+          "last_valid_qpc_100ns": 2199900000,
+          "late_non_silent_frames": 0,
+          "late_packets": 0,
+          "late_valid_frames": 0,
+          "maximum_delivery_delay_100ns": 0,
+          "maximum_lateness_frames": 0,
+          "maximum_lead_frames": 18496,
+          "maximum_residual_frames": 0,
+          "non_silent_written_frames": 5760000,
+          "observed_frames": 5760000,
+          "outcome": "captured",
+          "output": "captured_aac",
+          "pre_epoch_trimmed_frames": 0,
+          "pre_roll_overwritten_frames": 0,
+          "reopen_count": 0,
+          "requested_source": "system",
+          "schema_version": 1,
+          "startup_missing_frames": 0,
+          "tail_overhang_frames": 0,
+          "unavailable_fill_frames": 0,
+          "valid_written_frames": 5760000,
+          "written_frames": 5760000
+        },
+        "terminal": {
+          "bytes": 294268569,
+          "flush_calls": 1,
+          "flush_duration_100ns": 5454,
+          "frames": 7200,
+          "progress_end": true,
+          "reader_errors": 0,
+          "slow_writes": 7,
+          "writer_calls": 7200,
+          "writer_duration_100ns": 12237680,
+          "writer_max_100ns": 309041
+        },
+        "mux_observation_ms": {
+          "count": 480,
+          "median": 0.0004,
+          "p95": 0.0011049999999999955,
+          "p99": 0.007983999999999993,
+          "max": 0.021
+        },
+        "windows": [
+          {
+            "start_seconds": 0,
+            "end_seconds": 6,
+            "sample_span_seconds": 5.518898200010881,
+            "output_length_start": 0,
+            "output_length_end": 9808576,
+            "writer_ms": {
+              "count": 360,
+              "median": 0.008,
+              "p95": 0.912105,
+              "p99": 6.747538000000056,
+              "max": 29.4348
+            },
+            "feed_lateness_ms": {
+              "count": 360,
+              "median": 0.5206999999999999,
+              "p95": 83.7466783500002,
+              "p99": 279.87524806000044,
+              "max": 339.5325
+            },
+            "writer_over_frame_budget": 2,
+            "recorder": {
+              "cpu_ms_per_second": 2.8311810498641186,
+              "private_start_mib": 14.6171875,
+              "private_end_mib": 14.62109375,
+              "private_peak_mib": 14.62109375,
+              "handles_min": 127,
+              "handles_max": 128,
+              "read_bytes_per_second": 866.2961023616225,
+              "write_bytes_per_second": 2881707.9829391753,
+              "read_ops_per_second": 6.160649964504322,
+              "write_ops_per_second": 28.628902776225967,
+              "cpu_cycles_per_second": 30729053.49108734
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 218.00094083953712,
+              "private_start_mib": 10.890625,
+              "private_end_mib": 19.609375,
+              "private_peak_mib": 19.609375,
+              "handles_min": 131,
+              "handles_max": 154,
+              "read_bytes_per_second": 2881707.9829391753,
+              "write_bytes_per_second": 1778136.9839328895,
+              "read_ops_per_second": 64.14323786572147,
+              "write_ops_per_second": 22.64944839891295,
+              "cpu_cycles_per_second": 501122687.8572515
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1777270.6878305278,
+            "observed_file_growth_bytes_per_second": 1777270.6878305278,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 866.2961023616225,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 113.42714744998375,
+            "output_length_start": 9808576,
+            "output_length_end": 289528822,
+            "writer_ms": {
+              "count": 6840,
+              "median": 0.0085,
+              "p95": 0.8613949999999986,
+              "p99": 1.2510179999999986,
+              "max": 30.9063
+            },
+            "feed_lateness_ms": {
+              "count": 6840,
+              "median": 0.479667,
+              "p95": 1.0803033499999999,
+              "p99": 1.17867613,
+              "max": 14.4079
+            },
+            "writer_over_frame_budget": 5,
+            "recorder": {
+              "cpu_ms_per_second": 0.8265217111392096,
+              "private_start_mib": 14.62109375,
+              "private_end_mib": 14.59375,
+              "private_peak_mib": 14.62109375,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 784.2919618447369,
+              "write_bytes_per_second": 2815927.1936274525,
+              "read_ops_per_second": 3.7909795817585077,
+              "write_ops_per_second": 28.749731200266265,
+              "cpu_cycles_per_second": 30710516.858726654
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 230.04854293374666,
+              "private_start_mib": 19.609375,
+              "private_end_mib": 19.52734375,
+              "private_peak_mib": 20.12109375,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2815927.1936274525,
+              "write_bytes_per_second": 2466862.7598466515,
+              "read_ops_per_second": 63.732538131470356,
+              "write_ops_per_second": 13.594629104817718,
+              "cpu_cycles_per_second": 548727140.7706455
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2466078.467884807,
+            "observed_file_growth_bytes_per_second": 2466078.467884807,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 784.2919618447369,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 40.0,
+            "sample_span_seconds": 33.618121000065,
+            "output_length_start": 9808576,
+            "output_length_end": 93353549,
+            "writer_ms": {
+              "count": 2040,
+              "median": 0.0086,
+              "p95": 0.8743199999999998,
+              "p99": 1.3654989999999994,
+              "max": 21.2506
+            },
+            "feed_lateness_ms": {
+              "count": 2040,
+              "median": 0.483684,
+              "p95": 1.0884622999999998,
+              "p99": 1.1937,
+              "max": 5.2377
+            },
+            "writer_over_frame_budget": 3,
+            "recorder": {
+              "cpu_ms_per_second": 1.3943372980277322,
+              "private_start_mib": 14.62109375,
+              "private_end_mib": 14.59375,
+              "private_peak_mib": 14.62109375,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 776.3967534041992,
+              "write_bytes_per_second": 2814474.2235836755,
+              "read_ops_per_second": 3.7777245194564695,
+              "write_ops_per_second": 28.764248900113433,
+              "cpu_cycles_per_second": 31090257.4833965
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 229.13609597589067,
+              "private_start_mib": 19.609375,
+              "private_end_mib": 19.52734375,
+              "private_peak_mib": 20.12109375,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2814474.2235836755,
+              "write_bytes_per_second": 2485893.664307961,
+              "read_ops_per_second": 63.74538303303318,
+              "write_ops_per_second": 13.653350822287555,
+              "cpu_cycles_per_second": 556652565.4412338
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2485117.2675545565,
+            "observed_file_growth_bytes_per_second": 2485117.2675545565,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 776.3967534041992,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 40.0,
+            "end_seconds": 80.0,
+            "sample_span_seconds": 39.666797999991104,
+            "output_length_start": 98088373,
+            "output_length_end": 191441578,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0085,
+              "p95": 0.8754449999999991,
+              "p99": 1.2749249999999994,
+              "max": 13.273
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.44285050000000004,
+              "p95": 1.0689772999999998,
+              "p99": 1.1700169999999988,
+              "max": 1.4375
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.3939062588314667,
+              "private_start_mib": 14.59375,
+              "private_end_mib": 14.59375,
+              "private_peak_mib": 14.59375,
+              "handles_min": 129,
+              "handles_max": 129,
+              "read_bytes_per_second": 782.5688375453689,
+              "write_bytes_per_second": 2809845.125387358,
+              "read_ops_per_second": 3.78150008478208,
+              "write_ops_per_second": 28.714190643778593,
+              "cpu_cycles_per_second": 30422251.5263337
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 237.91938033420587,
+              "private_start_mib": 19.9921875,
+              "private_end_mib": 19.50390625,
+              "private_peak_mib": 20.07421875,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2809845.125387358,
+              "write_bytes_per_second": 2354216.9196520713,
+              "read_ops_per_second": 63.604831426034586,
+              "write_ops_per_second": 13.134410294476424,
+              "cpu_cycles_per_second": 555102212.6869161
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2353434.350814526,
+            "observed_file_growth_bytes_per_second": 2353434.350814526,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 782.5688375453689,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 80.0,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 39.13919404998887,
+            "output_length_start": 196176385,
+            "output_length_end": 289528822,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0085,
+              "p95": 0.8176449999999982,
+              "p99": 1.213789999999998,
+              "max": 30.9063
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.5066505,
+              "p95": 1.080905,
+              "p99": 1.1733196699999995,
+              "max": 14.4079
+            },
+            "writer_over_frame_budget": 2,
+            "recorder": {
+              "cpu_ms_per_second": 0.7984323836634772,
+              "private_start_mib": 14.59375,
+              "private_end_mib": 14.59375,
+              "private_peak_mib": 14.59375,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 791.8149760676743,
+              "write_bytes_per_second": 2814260.4535831343,
+              "read_ops_per_second": 3.8069256053074594,
+              "write_ops_per_second": 28.74356581188518,
+              "cpu_cycles_per_second": 30664044.90769889
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 223.56106742577362,
+              "private_start_mib": 19.34765625,
+              "private_end_mib": 19.52734375,
+              "private_peak_mib": 20.07421875,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2814260.4535831343,
+              "write_bytes_per_second": 2385931.2964066146,
+              "read_ops_per_second": 63.695741839137554,
+              "write_ops_per_second": 13.28591486416026,
+              "cpu_cycles_per_second": 537315068.5509831
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2385139.481430547,
+            "observed_file_growth_bytes_per_second": 2385139.481430547,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 791.8149760676743,
+            "input_pipes_write_minus_read_bytes": 0
+          }
+        ],
+        "slowest_writes": [
+          {
+            "elapsed_ns": 91433500300,
+            "frame": 5486,
+            "late_ns": 166967,
+            "write_ns": 30906300
+          },
+          {
+            "elapsed_ns": 339741100,
+            "frame": 6,
+            "late_ns": 239741100,
+            "write_ns": 29434800
+          },
+          {
+            "elapsed_ns": 31783986200,
+            "frame": 1907,
+            "late_ns": 652867,
+            "write_ns": 21250600
+          },
+          {
+            "elapsed_ns": 92883918600,
+            "frame": 5573,
+            "late_ns": 585267,
+            "write_ns": 20923400
+          },
+          {
+            "elapsed_ns": 28883941500,
+            "frame": 1733,
+            "late_ns": 608167,
+            "write_ns": 20259100
+          },
+          {
+            "elapsed_ns": 417065100,
+            "frame": 25,
+            "late_ns": 398434,
+            "write_ns": 19599800
+          },
+          {
+            "elapsed_ns": 14034529900,
+            "frame": 842,
+            "late_ns": 1196567,
+            "write_ns": 16853700
+          },
+          {
+            "elapsed_ns": 27434073100,
+            "frame": 1646,
+            "late_ns": 739767,
+            "write_ns": 13867100
+          },
+          {
+            "elapsed_ns": 369225000,
+            "frame": 12,
+            "late_ns": 169225000,
+            "write_ns": 13661600
+          },
+          {
+            "elapsed_ns": 60883748900,
+            "frame": 3653,
+            "late_ns": 415567,
+            "write_ns": 13273000
+          },
+          {
+            "elapsed_ns": 48100555900,
+            "frame": 2886,
+            "late_ns": 555900,
+            "write_ns": 10795000
+          },
+          {
+            "elapsed_ns": 13700874000,
+            "frame": 822,
+            "late_ns": 874000,
+            "write_ns": 10757600
+          }
+        ]
+      },
+      "process": {
+        "command": [
+          "[repo]/recorder/target/release/examples/mux_resource_probe.exe",
+          "[repo]/build/media-runtime/windows-x86_64",
+          "[repo]/build/perf/qb-perf-006/source-18/source.h264",
+          "[repo]/build/perf/qb-perf-006/source-18/sizes.json",
+          "[repo]/build/perf/qb-perf-006/common-pcm-18-01",
+          "120",
+          "pcm"
+        ],
+        "messages": [
+          {
+            "elapsed": 0.3534930000314489,
+            "line": "READY 18256"
+          },
+          {
+            "elapsed": 0.3535461000283249,
+            "line": "ACTIVE"
+          },
+          {
+            "elapsed": 120.34835069999099,
+            "line": "DRAIN"
+          },
+          {
+            "elapsed": 120.95802419999382,
+            "line": "PASS frames=7200 bytes=294268569"
+          }
+        ],
+        "returncode": 0,
+        "source_sha256": "71e7c409ab3b730a652b9993c18490e61876ab950357864e0eb6f88d91777778",
+        "source_sha256_after": "71e7c409ab3b730a652b9993c18490e61876ab950357864e0eb6f88d91777778",
+        "executable_sha256": "f321b5931b3afd501a1eb4677b88001081c84cde76f25ec978e39b90142f7306",
+        "ffmpeg_sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015",
+        "ffprobe_sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e"
+      },
+      "mux_arguments": [
+        "-thread_queue_size",
+        "32",
+        "-f",
+        "f32le",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-i",
+        "\\\\.\\pipe\\Chronobreak.Audio.3B68F0A1-1ACD-4D7F-859F-674F51F79C83",
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-stats_period",
+        "0.25",
+        "-progress",
+        "pipe:1",
+        "-thread_queue_size",
+        "32",
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-r",
+        "60",
+        "-f",
+        "h264",
+        "-i",
+        "pipe:0",
+        "-map",
+        "1:v:0",
+        "-map",
+        "0:a:0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-c:v",
+        "copy",
+        "-bsf:v",
+        "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+        "-max_interleave_delta",
+        "250000",
+        "-avoid_negative_ts",
+        "disabled",
+        "-flush_packets",
+        "1",
+        "-movflags",
+        "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+        "-y",
+        "build/perf/qb-perf-006/common-pcm-18-01/video.partial.mp4"
+      ],
+      "source_bytes": 9734383,
+      "source_packets": 240,
+      "validated_timeline": {
+        "audio": {
+          "codec": "aac",
+          "first_pts": "0",
+          "present": true,
+          "replay_end": "5761024000",
+          "replay_start": "0",
+          "sample_rate": 48000,
+          "time_base": {
+            "denominator": "48000",
+            "numerator": "1"
+          }
+        },
+        "capture": null,
+        "container": {
+          "duration_seconds": {
+            "denominator": "1000000",
+            "numerator": "120021333"
+          },
+          "start_seconds": {
+            "denominator": "1",
+            "numerator": "0"
+          }
+        },
+        "media_id": "75ca5b6c-4a7d-4bba-bd0d-f3df231ed343",
+        "producer": {
+          "backend": "native-mux-resource-fixture",
+          "expected_frame_count": "7200",
+          "expected_frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+        },
+        "replay_ticks_per_second": "48000000",
+        "schema_version": 2,
+        "video": {
+          "codec": "h264",
+          "exact_cfr": true,
+          "first_pts": "0",
+          "frame_count": "7200",
+          "frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "one_past_last_pts": "1843200",
+          "profile": "High",
+          "replay_end": "5760000000",
+          "time_base": {
+            "denominator": "15360",
+            "numerator": "1"
+          }
+        }
+      },
+      "media": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "codec_type": "video",
+            "width": 1920,
+            "height": 1080,
+            "avg_frame_rate": "60/1",
+            "start_time": "0.000000",
+            "duration": "120.000000",
+            "nb_read_frames": "7200"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "codec_type": "audio",
+            "avg_frame_rate": "0/0",
+            "start_time": "0.000000",
+            "duration": "120.021333",
+            "nb_read_frames": "5625"
+          }
+        ],
+        "format": {
+          "duration": "120.021333",
+          "size": "294268569"
+        }
+      },
+      "artifact_sha256": {
+        "writer.json": "28ed1956513a654480b24343efe513ffdc40391a04fa0ed984e0bcbb9bde2f89",
+        "resources.json": "797fd14b6fa8597904a10e4140fac1f7c994101c4428b8f40bacb21affbb3dbd",
+        "process.json": "2527ad1768dde30c9ce08098ef2b820f291ae08a246b69a6a37e7a3bbe640319",
+        "media.json": "b0719a6fd2546d4bb95cd07d13f56c01d7b6897e99981e65ff27023140d9a550",
+        "decode.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "raw_directory": "build/perf/qb-perf-006/common-pcm-18-01"
+    },
+    {
+      "summary": {
+        "run": "common-pcm-18-02",
+        "seconds": 120.0,
+        "runtime": "queueback-ffmpeg-8.1.2-windows-x86_64-r6",
+        "bytes": 294268569,
+        "drain_ms": 43.0185,
+        "preparation_ms": 341.7376,
+        "audio_summary": {
+          "confirmed_silent_frames": 0,
+          "delivery_allowance_ms": 250,
+          "discarded_frames": 0,
+          "discontinuities": 0,
+          "first_valid_qpc_100ns": 1000000000,
+          "inferred_idle_frames": 0,
+          "last_error": null,
+          "last_residual_frames": 0,
+          "last_valid_qpc_100ns": 2200000000,
+          "late_non_silent_frames": 0,
+          "late_packets": 0,
+          "late_valid_frames": 0,
+          "maximum_delivery_delay_100ns": 0,
+          "maximum_lateness_frames": 0,
+          "maximum_lead_frames": 18496,
+          "maximum_residual_frames": 0,
+          "non_silent_written_frames": 5760000,
+          "observed_frames": 5760480,
+          "outcome": "captured",
+          "output": "captured_aac",
+          "pre_epoch_trimmed_frames": 0,
+          "pre_roll_overwritten_frames": 0,
+          "reopen_count": 0,
+          "requested_source": "system",
+          "schema_version": 1,
+          "startup_missing_frames": 0,
+          "tail_overhang_frames": 0,
+          "unavailable_fill_frames": 0,
+          "valid_written_frames": 5760000,
+          "written_frames": 5760000
+        },
+        "terminal": {
+          "bytes": 294268569,
+          "flush_calls": 1,
+          "flush_duration_100ns": 5075,
+          "frames": 7200,
+          "progress_end": true,
+          "reader_errors": 0,
+          "slow_writes": 1,
+          "writer_calls": 7200,
+          "writer_duration_100ns": 10694898,
+          "writer_max_100ns": 270038
+        },
+        "mux_observation_ms": {
+          "count": 480,
+          "median": 0.0004,
+          "p95": 0.0012049999999999954,
+          "p99": 0.010183999999999992,
+          "max": 0.0244
+        },
+        "windows": [
+          {
+            "start_seconds": 0,
+            "end_seconds": 6,
+            "sample_span_seconds": 5.516353200015146,
+            "output_length_start": 0,
+            "output_length_end": 9808576,
+            "writer_ms": {
+              "count": 360,
+              "median": 0.0084,
+              "p95": 0.8842200000000001,
+              "p99": 4.8493790000000985,
+              "max": 27.0045
+            },
+            "feed_lateness_ms": {
+              "count": 360,
+              "median": 0.56315,
+              "p95": 83.1809283500002,
+              "p99": 282.0411030600004,
+              "max": 341.7386
+            },
+            "writer_over_frame_budget": 1,
+            "recorder": {
+              "cpu_ms_per_second": 0.0,
+              "private_start_mib": 14.58984375,
+              "private_end_mib": 14.59375,
+              "private_peak_mib": 14.59375,
+              "handles_min": 127,
+              "handles_max": 128,
+              "read_bytes_per_second": 829.8960987464382,
+              "write_bytes_per_second": 2883037.474822376,
+              "read_ops_per_second": 4.531979569388588,
+              "write_ops_per_second": 28.642110878535874,
+              "cpu_cycles_per_second": 25027166.135703735
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 178.44669554467563,
+              "private_start_mib": 10.9140625,
+              "private_end_mib": 19.37890625,
+              "private_peak_mib": 19.65234375,
+              "handles_min": 131,
+              "handles_max": 154,
+              "read_bytes_per_second": 2883037.474822376,
+              "write_bytes_per_second": 1778920.537570556,
+              "read_ops_per_second": 64.1728307025424,
+              "write_ops_per_second": 22.478618664167396,
+              "cpu_cycles_per_second": 473821340.5176491
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 1778090.6414718095,
+            "observed_file_growth_bytes_per_second": 1778090.6414718095,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 829.8960987464382,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 113.4682105500251,
+            "output_length_start": 9808576,
+            "output_length_end": 289528822,
+            "writer_ms": {
+              "count": 6840,
+              "median": 0.0087,
+              "p95": 0.8900249999999982,
+              "p99": 1.2196489999999998,
+              "max": 15.0467
+            },
+            "feed_lateness_ms": {
+              "count": 6840,
+              "median": 0.5518505,
+              "p95": 1.0595472999999997,
+              "p99": 1.1498539999999993,
+              "max": 1.3768
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 1.1016301340620054,
+              "private_start_mib": 14.59375,
+              "private_end_mib": 14.56640625,
+              "private_peak_mib": 14.59375,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 787.6743588954063,
+              "write_bytes_per_second": 2815077.3459071647,
+              "read_ops_per_second": 3.80723374331829,
+              "write_ops_per_second": 28.74813997848209,
+              "cpu_cycles_per_second": 27935980.36520105
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 215.78180250939528,
+              "private_start_mib": 19.6328125,
+              "private_end_mib": 18.875,
+              "private_peak_mib": 20.16015625,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2815077.3459071647,
+              "write_bytes_per_second": 2465973.691165592,
+              "read_ops_per_second": 63.718286954146386,
+              "write_ops_per_second": 13.607335415933889,
+              "cpu_cycles_per_second": 525507869.2697935
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2465186.016806697,
+            "observed_file_growth_bytes_per_second": 2465186.016806697,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 787.6743588954063,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 6,
+            "end_seconds": 40.0,
+            "sample_span_seconds": 33.61476754996693,
+            "output_length_start": 9808576,
+            "output_length_end": 93353549,
+            "writer_ms": {
+              "count": 2040,
+              "median": 0.0088,
+              "p95": 0.895635,
+              "p99": 1.2273199999999989,
+              "max": 15.0467
+            },
+            "feed_lateness_ms": {
+              "count": 2040,
+              "median": 0.518034,
+              "p95": 1.06031835,
+              "p99": 1.1403192599999994,
+              "max": 1.293467
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.9296509325417229,
+              "private_start_mib": 14.59375,
+              "private_end_mib": 14.56640625,
+              "private_peak_mib": 14.59375,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 782.6917131255274,
+              "write_bytes_per_second": 2814754.998955603,
+              "read_ops_per_second": 3.8078502196908968,
+              "write_ops_per_second": 28.767118456571072,
+              "cpu_cycles_per_second": 27893972.153941683
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 231.94790766915986,
+              "private_start_mib": 19.6328125,
+              "private_end_mib": 19.44921875,
+              "private_peak_mib": 20.16015625,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2814754.998955603,
+              "write_bytes_per_second": 2486147.8775890633,
+              "read_ops_per_second": 63.75174234998119,
+              "write_ops_per_second": 13.684461727014162,
+              "cpu_cycles_per_second": 563567818.2763051
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2485365.185875938,
+            "observed_file_growth_bytes_per_second": 2485365.185875938,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 782.6917131255274,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 40.0,
+            "end_seconds": 80.0,
+            "sample_span_seconds": 39.64869499998167,
+            "output_length_start": 98088762,
+            "output_length_end": 191441578,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0092,
+              "p95": 0.9481,
+              "p99": 1.233203,
+              "max": 8.1207
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.5670505,
+              "p95": 1.0595473,
+              "p99": 1.1612219999999995,
+              "max": 1.343267
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 0.7881722210532893,
+              "private_start_mib": 14.56640625,
+              "private_end_mib": 14.56640625,
+              "private_peak_mib": 14.56640625,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 793.3678523344726,
+              "write_bytes_per_second": 2811128.058566657,
+              "read_ops_per_second": 3.8336696832031993,
+              "write_ops_per_second": 28.72730111295029,
+              "cpu_cycles_per_second": 29533456.27139913
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 244.33338852651968,
+              "private_start_mib": 20.07421875,
+              "private_end_mib": 19.5546875,
+              "private_peak_mib": 20.07421875,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2811128.058566657,
+              "write_bytes_per_second": 2355292.4503579037,
+              "read_ops_per_second": 63.63387243895836,
+              "write_ops_per_second": 13.19085029154785,
+              "cpu_cycles_per_second": 591597208.2816558
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2354499.0825055693,
+            "observed_file_growth_bytes_per_second": 2354499.0825055693,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 793.3678523344726,
+            "input_pipes_write_minus_read_bytes": 0
+          },
+          {
+            "start_seconds": 80.0,
+            "end_seconds": 120.0,
+            "sample_span_seconds": 39.20143635006389,
+            "output_length_start": 196176385,
+            "output_length_end": 289528822,
+            "writer_ms": {
+              "count": 2400,
+              "median": 0.0077,
+              "p95": 0.8143499999999998,
+              "p99": 1.168763999999994,
+              "max": 7.3691
+            },
+            "feed_lateness_ms": {
+              "count": 2400,
+              "median": 0.564117,
+              "p95": 1.0574,
+              "p99": 1.1449409999999998,
+              "max": 1.3768
+            },
+            "writer_over_frame_budget": 0,
+            "recorder": {
+              "cpu_ms_per_second": 1.5943293363509152,
+              "private_start_mib": 14.56640625,
+              "private_end_mib": 14.56640625,
+              "private_peak_mib": 14.56640625,
+              "handles_min": 128,
+              "handles_max": 129,
+              "read_bytes_per_second": 790.5577674056194,
+              "write_bytes_per_second": 2810281.873761507,
+              "read_ops_per_second": 3.800881137860582,
+              "write_ops_per_second": 28.72343732369809,
+              "cpu_cycles_per_second": 26368621.51604084
+            },
+            "ffmpeg": {
+              "cpu_ms_per_second": 173.38331532816204,
+              "private_start_mib": 19.40625,
+              "private_end_mib": 18.875,
+              "private_peak_mib": 20.07421875,
+              "handles_min": 154,
+              "handles_max": 154,
+              "read_bytes_per_second": 2810281.873761507,
+              "write_bytes_per_second": 2382143.0206306158,
+              "read_ops_per_second": 63.62011783774692,
+              "write_ops_per_second": 13.264820078439614,
+              "cpu_cycles_per_second": 424261338.5254924
+            },
+            "ffmpeg_file_write_residual_estimate_bytes_per_second": 2381352.46286321,
+            "observed_file_growth_bytes_per_second": 2381352.46286321,
+            "file_write_residual_minus_growth_bytes": 0,
+            "progress_and_stderr_pipe_bytes_per_second": 790.5577674056194,
+            "input_pipes_write_minus_read_bytes": 0
+          }
+        ],
+        "slowest_writes": [
+          {
+            "elapsed_ns": 341919500,
+            "frame": 6,
+            "late_ns": 241919500,
+            "write_ns": 27004500
+          },
+          {
+            "elapsed_ns": 27433718100,
+            "frame": 1646,
+            "late_ns": 384767,
+            "write_ns": 15046700
+          },
+          {
+            "elapsed_ns": 417646700,
+            "frame": 25,
+            "late_ns": 980034,
+            "write_ns": 14425100
+          },
+          {
+            "elapsed_ns": 368945400,
+            "frame": 12,
+            "late_ns": 168945400,
+            "write_ns": 13342700
+          },
+          {
+            "elapsed_ns": 64650567200,
+            "frame": 3879,
+            "late_ns": 567200,
+            "write_ns": 8120700
+          },
+          {
+            "elapsed_ns": 76000183100,
+            "frame": 4560,
+            "late_ns": 183100,
+            "write_ns": 8040200
+          },
+          {
+            "elapsed_ns": 86500131700,
+            "frame": 5190,
+            "late_ns": 131700,
+            "write_ns": 7369100
+          },
+          {
+            "elapsed_ns": 3550653400,
+            "frame": 213,
+            "late_ns": 653400,
+            "write_ns": 7163300
+          },
+          {
+            "elapsed_ns": 67200618300,
+            "frame": 4032,
+            "late_ns": 618300,
+            "write_ns": 7035900
+          },
+          {
+            "elapsed_ns": 71900445400,
+            "frame": 4314,
+            "late_ns": 445400,
+            "write_ns": 6787700
+          },
+          {
+            "elapsed_ns": 58850950200,
+            "frame": 3531,
+            "late_ns": 950200,
+            "write_ns": 6718800
+          },
+          {
+            "elapsed_ns": 48000673700,
+            "frame": 2880,
+            "late_ns": 673700,
+            "write_ns": 6659500
+          }
+        ]
+      },
+      "process": {
+        "command": [
+          "[repo]/recorder/target/release/examples/mux_resource_probe.exe",
+          "[repo]/build/media-runtime/windows-x86_64",
+          "[repo]/build/perf/qb-perf-006/source-18/source.h264",
+          "[repo]/build/perf/qb-perf-006/source-18/sizes.json",
+          "[repo]/build/perf/qb-perf-006/common-pcm-18-02",
+          "120",
+          "pcm"
+        ],
+        "messages": [
+          {
+            "elapsed": 0.3405425999662839,
+            "line": "READY 1260"
+          },
+          {
+            "elapsed": 0.34060280001722276,
+            "line": "ACTIVE"
+          },
+          {
+            "elapsed": 120.33489220001502,
+            "line": "DRAIN"
+          },
+          {
+            "elapsed": 120.80780770001002,
+            "line": "PASS frames=7200 bytes=294268569"
+          }
+        ],
+        "returncode": 0,
+        "source_sha256": "71e7c409ab3b730a652b9993c18490e61876ab950357864e0eb6f88d91777778",
+        "source_sha256_after": "71e7c409ab3b730a652b9993c18490e61876ab950357864e0eb6f88d91777778",
+        "executable_sha256": "f321b5931b3afd501a1eb4677b88001081c84cde76f25ec978e39b90142f7306",
+        "ffmpeg_sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015",
+        "ffprobe_sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e"
+      },
+      "mux_arguments": [
+        "-thread_queue_size",
+        "32",
+        "-f",
+        "f32le",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-i",
+        "\\\\.\\pipe\\Chronobreak.Audio.C6217F32-CE35-4C6C-B175-EF36C6920330",
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-stats_period",
+        "0.25",
+        "-progress",
+        "pipe:1",
+        "-thread_queue_size",
+        "32",
+        "-use_wallclock_as_timestamps",
+        "1",
+        "-r",
+        "60",
+        "-f",
+        "h264",
+        "-i",
+        "pipe:0",
+        "-map",
+        "1:v:0",
+        "-map",
+        "0:a:0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-c:v",
+        "copy",
+        "-bsf:v",
+        "setts=pts=N:dts=N:duration=1:time_base=1/60:prescale=1",
+        "-max_interleave_delta",
+        "250000",
+        "-avoid_negative_ts",
+        "disabled",
+        "-flush_packets",
+        "1",
+        "-movflags",
+        "+frag_keyframe+empty_moov+delay_moov+default_base_moof",
+        "-y",
+        "build/perf/qb-perf-006/common-pcm-18-02/video.partial.mp4"
+      ],
+      "source_bytes": 9734383,
+      "source_packets": 240,
+      "validated_timeline": {
+        "audio": {
+          "codec": "aac",
+          "first_pts": "0",
+          "present": true,
+          "replay_end": "5761024000",
+          "replay_start": "0",
+          "sample_rate": 48000,
+          "time_base": {
+            "denominator": "48000",
+            "numerator": "1"
+          }
+        },
+        "capture": null,
+        "container": {
+          "duration_seconds": {
+            "denominator": "1000000",
+            "numerator": "120021333"
+          },
+          "start_seconds": {
+            "denominator": "1",
+            "numerator": "0"
+          }
+        },
+        "media_id": "3170d757-8bd4-41b2-b9a7-daf0371dd8cc",
+        "producer": {
+          "backend": "native-mux-resource-fixture",
+          "expected_frame_count": "7200",
+          "expected_frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "media_runtime_id": "queueback-ffmpeg-8.1.2-windows-x86_64-r6"
+        },
+        "replay_ticks_per_second": "48000000",
+        "schema_version": 2,
+        "video": {
+          "codec": "h264",
+          "exact_cfr": true,
+          "first_pts": "0",
+          "frame_count": "7200",
+          "frame_rate": {
+            "denominator": "1",
+            "numerator": "60"
+          },
+          "one_past_last_pts": "1843200",
+          "profile": "High",
+          "replay_end": "5760000000",
+          "time_base": {
+            "denominator": "15360",
+            "numerator": "1"
+          }
+        }
+      },
+      "media": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "codec_type": "video",
+            "width": 1920,
+            "height": 1080,
+            "avg_frame_rate": "60/1",
+            "start_time": "0.000000",
+            "duration": "120.000000",
+            "nb_read_frames": "7200"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "codec_type": "audio",
+            "avg_frame_rate": "0/0",
+            "start_time": "0.000000",
+            "duration": "120.021333",
+            "nb_read_frames": "5625"
+          }
+        ],
+        "format": {
+          "duration": "120.021333",
+          "size": "294268569"
+        }
+      },
+      "artifact_sha256": {
+        "writer.json": "45a9918ab396ae9d2f2d2059680f65d8abf94f9bb6c1ee1c159b88bb62042e27",
+        "resources.json": "2d8ca2170b6dbe25a064c953fcd9bc33f27a335e9384031e8102fbb88987b4a8",
+        "process.json": "ae1487cb8accb367a83f993e4804e88802b67cb8b02bc7de362db952a8566f60",
+        "media.json": "b0719a6fd2546d4bb95cd07d13f56c01d7b6897e99981e65ff27023140d9a550",
+        "decode.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "raw_directory": "build/perf/qb-perf-006/common-pcm-18-02"
+    }
+  ],
+  "thread_diagnostic": {
+    "video": {
+      "pid": 27976,
+      "seconds": 10.000459000002593,
+      "threads": [
+        {
+          "tid": 2612,
+          "name": "",
+          "cpu_ms_per_second": 4.6872848536240035,
+          "cycles_per_second": 15349180.87259397
+        },
+        {
+          "tid": 19916,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 12539550.434631798
+        },
+        {
+          "tid": 30144,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 1418943.6704851568
+        }
+      ]
+    },
+    "pcm": {
+      "pid": 2328,
+      "seconds": 10.000166499987245,
+      "threads": [
+        {
+          "tid": 32016,
+          "name": "",
+          "cpu_ms_per_second": 239.0585196759523,
+          "cycles_per_second": 547099391.1958344
+        },
+        {
+          "tid": 25424,
+          "name": "",
+          "cpu_ms_per_second": 4.687421954430437,
+          "cycles_per_second": 19356936.10703851
+        },
+        {
+          "tid": 14980,
+          "name": "",
+          "cpu_ms_per_second": 4.687421954430437,
+          "cycles_per_second": 15753432.10537554
+        },
+        {
+          "tid": 31448,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 6085218.281123381
+        },
+        {
+          "tid": 27204,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 4392103.671479472
+        },
+        {
+          "tid": 10912,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 2642791.197529932
+        },
+        {
+          "tid": 12708,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 1571811.4293417064
+        },
+        {
+          "tid": 8088,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 10512,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 27088,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 21780,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 29656,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 27392,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 26884,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 29420,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 28088,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 20180,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 32480,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 21612,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 18008,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 26552,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 23216,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 12136,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 24688,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        },
+        {
+          "tid": 27960,
+          "name": "",
+          "cpu_ms_per_second": 0.0,
+          "cycles_per_second": 0.0
+        }
+      ]
+    }
+  },
+  "aac_offline_diagnostic": {
+    "scope": "Unpaced 120s tone to AAC 192k/null, same packaged runtime, generated similar 10ms f32 tone loop. Attribution aid, not matched production or quality comparison.",
+    "command": "build/media-runtime/windows-x86_64/bin/ffmpeg.exe -hide_banner -benchmark -nostats -stream_loop -1 -f f32le -ar 48000 -ac 2 -i build/perf/qb-perf-006/diagnostic-tone.f32 -t 120 -c:a aac -b:a 192k -f null NUL",
+    "log": "[in#0/f32le @ 0000018fb8ab4400] Estimating duration from bitrate, this may be inaccurate\n[aist#0:0/pcm_f32le @ 0000018fb8ac0a80] Guessed Channel Layout: stereo\nInput #0, f32le, from 'build/perf/qb-perf-006/diagnostic-tone.f32':\n  Duration: 00:00:00.01, bitrate: 3072 kb/s\n  Stream #0:0: Audio: pcm_f32le, 48000 Hz, stereo, flt, 3072 kb/s\nStream mapping:\n  Stream #0:0 -> #0:0 (pcm_f32le (native) -> aac (native))\nPress [q] to stop, [?] for help\nOutput #0, null, to 'NUL':\n  Metadata:\n    encoder         : Lavf62.12.102\n  Stream #0:0: Audio: aac (LC), 48000 Hz, stereo, fltp, 192 kb/s\n    Metadata:\n      encoder         : Lavc62.28.102 aac\n[out#0/null @ 0000018fb8a94480] video:0KiB audio:2085KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown\nsize=N/A time=00:02:00.00 bitrate=N/A speed=  10x elapsed=0:00:11.96    \nbench: utime=13.016s stime=0.578s rtime=11.970s\nbench: maxrss=12800KiB\n[aac @ 0000018fb8ac1f40] Qavg: 65448.578\n",
+    "source_sha256": "b0fc6d6f88fa3016f487ac49e24aaaaa16ab256114446aada1f5997015fa50a5"
+  },
+  "verification": {
+    "release_build": "Passed before matched matrix; measured executable hash retained per run.",
+    "cargo_check": "recorder --all-targets --all-features passed",
+    "cargo_test": {
+      "command": "cargo test --manifest-path recorder/Cargo.toml --all-targets --all-features",
+      "passed": 299,
+      "ignored": 17,
+      "failed": 0,
+      "log": ".codex/logs/command-20261110-153824.log"
+    },
+    "cargo_fmt": "recorder --check passed after final example let-chain cleanup",
+    "cargo_clippy": "recorder --all-targets --all-features -- -D warnings passed after final example let-chain cleanup",
+    "measured_source_difference": "Only final Clippy-mandated nesting-to-let-chain cleanup in the failed-bootstrap branch; no semantic or measured successful-path change.",
+    "python": "Both measurement/analyzer modules compile successfully",
+    "canonical": "Full VERIFICATION.md schema/lifecycle/graph/plan-checkpoint command passed: 127 items, 32 plan/checkpoint pairs",
+    "whitespace": "git diff --check passed"
+  }
+}

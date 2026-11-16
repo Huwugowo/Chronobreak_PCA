@@ -5625,6 +5625,54 @@
       "dependencies": ["QB-REPLAY-029"],
       "execution": {"workflow": "adaptive", "plan": null},
       "notes": "The existing preparation event retries details and restarts overlay pagination. Since a927654 the second pass includes scoreboard data. Verify request counts with a held initialization, an unchanged settled revision and a genuinely changed revision."
+    },
+    {
+      "id": "QB-PERF-006",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Production mux resource interference",
+      "description": "Measure the long-lived production FFmpeg mux and recorder feed/supervision at recording cadence without League or NVENC, then reduce demonstrated CPU, memory or disk-I/O bottlenecks with matched evidence.",
+      "priority": "P1",
+      "area": "capture-performance",
+      "status": "done",
+      "parent_id": "EPIC-CAP-PERF",
+      "dependencies": [
+        "QB-DIST-001",
+        "QB-REPLAY-012"
+      ],
+      "execution": {
+        "workflow": "direct",
+        "plan": null,
+        "progress": null
+      },
+      "acceptance_criteria": [
+        "Feed bounded prerecorded H.264 High 1920x1080 60-FPS access units through untouched NativeMuxPlan and NativeMuxProcess with the packaged runtime at recording cadence, without League or NVENC. Use dedicated generated output and preserve fixture/runtime identities.",
+        "Measure recorder feed and mux supervision plus FFmpeg separately: CPU time, private memory, handles, process I/O with pipe/file attribution, video-writer P95/P99/max latency, and early/middle/late behavior against recording duration and growing output bytes. Identify periodic stalls, resource growth and unnecessary work with concrete attribution.",
+        "Apply only measured bottleneck corrections. Target 5-10x lower interference where justified, compare identical workloads before/after, and preserve CFR timing, stream correctness, finite resource ownership, finalization and recoverable fragments. If no meaningful issue is found, report it and stop.",
+        "Keep the investigation bounded. No League/NVENC prerequisite, speculative buffering/scheduling/deferred work, unrelated refactoring or extended soak. Promote to planned before product implementation if a demonstrated correction materially affects timing, concurrency, lifecycle or recovery."
+      ],
+      "verification": [
+        {
+          "type": "benchmark",
+          "description": "Release production mux replay with fixed generated prerecorded packets and audio mode, per-call latency, process resource samples and duration/output-size windows; repeat identical arms to characterize variance and compare any correction."
+        },
+        {
+          "type": "automated",
+          "description": "Validate every retained output with packaged ffprobe, single-thread full decode and existing independent native fragmented-MP4 CFR validator; exercise targeted interruption/recovery checks for any changed persistence behavior."
+        },
+        {
+          "type": "automated",
+          "description": "Run recorder check/tests/fmt/strict Clippy for recorder changes, plus canonical feature schema/invariant and whitespace validation."
+        }
+      ],
+      "evidence": [
+        "2026-11-10: five matched 120-second release arms replayed prerecorded H.264 High 1080p60 through untouched NativeMuxPlan/NativeMuxProcess and packaged queueback-ffmpeg-8.1.2-windows-x86_64-r6: two PCM/AAC repeats each at nominal 12 and 18 Mbps and one video-only 18-Mbps control. The same executable/runtime identities, source hashes, commands, startup/steady/third windows and compact results are retained in docs/performance/evidence/qb-perf-006-mux-20261110/results.json; method, exclusions and decision are in docs/performance/mux-resource-interference.md.",
+        "FFmpeg steady CPU was 7.72 ms/s without audio versus 215.78-237.27 ms/s with generated PCM through the real admission/pool/pump/flow/named-pipe path. Recorder counters reported 0.28-1.10 ms/s with 11.16-30.71 million cycles/s; coarse Windows CPU ticks undercount short bursts. Thread and offline AAC diagnostics show substantial audio-side work, with no demonstrated redundant operation or optimized-build defect. No production correction or 5-10x improvement is claimed.",
+        "Across growth to 194.6-294.3 MB, FFmpeg steady private peaks stayed within 17.04-20.16 MiB and handles were constant at 134/154; recorder peaks were 11.41-14.62 MiB including fixed source/trace storage, with 107-108 or 128-129 handles and no memory accumulation. Logical file-write residuals exactly equaled file growth in every measured window; input-pipe bytes also reconciled exactly. Physical storage/cache writeback is outside these process counters.",
+        "Steady writer P95 was 0.764-0.895 ms and P99 1.136-1.251 ms. One high-rate PCM arm had five of 6840 writes above 16.67 ms, maximum 30.906 ms; its repeat had none, maximum 15.047 ms. No growing or established periodic stall was found, and isolated tails remain explicitly reported without speculative buffering/scheduling changes. Startup maxima of 27.0-33.8 ms and common-epoch bootstrap catch-up are separate from steady metrics.",
+        "All five admitted outputs passed the existing independent fragmented-MP4 CFR/finalizer checks, packaged ffprobe exact 7200 decoded-frame counts and full single-thread decode with empty error logs. Four PCM arms each accounted for 5760000 valid non-silent sample frames, zero loss/late/fill/error counters and bounded lead. Recorder check, 299 tests (17 explicit/hardware tests ignored), format and strict all-target/all-feature Clippy passed; Python syntax, canonical schema/lifecycle/graph validation and diff checks passed. Production timing, persistence and recovery code is unchanged."
+      ],
+      "notes": "Bounded investigation complete; no measured avoidable bottleneck justifies a production optimization. Opt-in fixture and tooling only. No League/NVENC/WASAPI acquisition or whole-service/gameplay claim; 120-second generated workloads are not an extended leak soak. Recorder feed, audio transport and mux reader/telemetry supervision are measured; wider service watcher/logging is inspected but not instantiated. Earlier invalid/setup fixture runs are excluded explicitly in the report. Unrelated QB-PERF-002 working-tree changes are preserved."
     }
   ]
 }
