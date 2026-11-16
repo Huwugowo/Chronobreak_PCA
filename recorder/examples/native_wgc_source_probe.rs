@@ -8,14 +8,20 @@ mod windows_probe {
 
     // Short, source-only timestamp evidence. This deliberately bypasses NVENC
     // capability probing and conversion so capture timing can be isolated.
-    fn trace_timing(source: NativeWgcSource, duration: Duration) -> Result<()> {
+    fn trace_timing(source: NativeWgcSource, duration: Duration, hwnd: u64) -> Result<()> {
         anyhow::ensure!(
-            (1..=60).contains(&duration.as_secs()),
-            "timing trace requires 1-60 seconds"
+            (1..=600).contains(&duration.as_secs()),
+            "timing trace requires 1-600 seconds"
         );
         let deadline = Instant::now() + duration;
         let mut anchor = None;
-        let mut consumed = 0_u64;
+        let max_samples = duration.as_secs() as usize * 480;
+        let mut samples = Vec::with_capacity(max_samples);
+        println!(
+            "WGC_TIMING_READY adapter_luid={:016x} size={:?} hwnd={hwnd:016x}",
+            source.adapter_luid(),
+            source.pool_dimensions()
+        );
         while Instant::now() < deadline {
             if let Some(frame) = source.recv_timeout(Duration::from_millis(50))? {
                 let qpc = frame.qpc_100ns();
@@ -34,18 +40,28 @@ mod windows_probe {
                     -(first_instant.duration_since(now).as_nanos() as i128 / 100)
                 };
                 let (width, height) = frame.dimensions();
-                consumed += 1;
-                println!(
-                    "WGC_TIMING index={consumed} arrival_100ns={arrival_100ns} source_100ns={} qpc_100ns={qpc} width={width} height={height}",
-                    qpc - first_qpc
-                );
                 frame.close()?;
+                let close_ns = now.elapsed().as_nanos();
+                anyhow::ensure!(
+                    samples.len() < max_samples,
+                    "WGC timing trace exceeded its {max_samples}-sample budget"
+                );
+                samples.push((arrival_100ns, qpc - first_qpc, qpc, width, height, close_ns));
             }
             if source.telemetry().closed {
                 break;
             }
         }
         let telemetry = source.close()?;
+        let consumed = samples.len();
+        for (index, (arrival, relative, qpc, width, height, close_ns)) in
+            samples.into_iter().enumerate()
+        {
+            println!(
+                "WGC_TIMING index={} arrival_100ns={arrival} source_100ns={relative} qpc_100ns={qpc} width={width} height={height} close_ns={close_ns}",
+                index + 1
+            );
+        }
         println!("WGC_TIMING_END consumed={consumed} telemetry={telemetry:?}");
         anyhow::ensure!(
             consumed > 0 && telemetry.callback_errors == 0,
@@ -87,7 +103,11 @@ mod windows_probe {
             .with_context(|| format!("could not resolve exact HWND for fixture PID {pid}"))?;
         let mut source = NativeWgcSource::start(&target)?;
         if timing_only {
-            return trace_timing(source, duration);
+            return trace_timing(
+                source,
+                duration,
+                target.windows_hwnd().context("missing exact WGC HWND")?,
+            );
         }
         let nvenc = NvencDriverProbe::load()?;
         let h264 = nvenc.probe_h264_on_source(&source)?;

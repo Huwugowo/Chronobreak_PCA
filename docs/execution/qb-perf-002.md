@@ -2,7 +2,7 @@
 
 Feature: `QB-PERF-002`
 ExecPlan: `docs/exec-plans/qb-perf-002-low-overhead-native-windows-capture-v3.md`
-Updated: 2026-11-09
+Updated: 2026-11-10
 
 ## Current milestone
 
@@ -10,7 +10,7 @@ Superseding-plan Milestone 5: valid target League capped/uncapped performance pr
 
 ## Active unit
 
-None. The fresh-frame GPU cost investigation is complete. The formal League matrix remains separate.
+The short graphics ETW follow-up is complete. The WGC session triggers 60 Hz DWM GPU work that preempts the renderer on the same engine and lengthens the renderer's presentation waits. The trace identified no Chronobreak-controlled change that would preserve fresh exact-HWND delivery.
 
 2026-11-09 fresh-frame coverage request, baseline `c61956c`: measure actual callback/worker QPC against source QPC and CFR deadlines on the unchanged generated workload. Identify scheduling/catch-up losses and test only a justified cost-neutral improvement. Fresh selected source frames, total GPU/CPU work and unchanged timestamp correctness are the acceptance criteria; discard counts alone are not. Temporary bounded timing instrumentation is diagnostic only. The formal League matrix remains separate.
 
@@ -40,8 +40,11 @@ Do not substitute current-workstation generated-window evidence, the historical 
 - Investigated the remaining worker discards on the unchanged Philips/RTX 3050 Ti generated-window workload. Measured and rejected both future-retention experiments: the broad guard masks eligible out-of-order input; the narrower wait-only guard reduces discards over 30x but increases GPU work. Restored the exact production policy and retained an out-of-order handoff regression plus the measurements below. No cost-neutral discard reduction is claimed.
 - Measured actual callback receipt, source QPC, selection and CFR deadlines on a common QPC clock. Current full-graph and immediate-close source-only runs both deliver about 37–41 WGC frames/s; steady selection in the 60-second trace matches both eligible-arrival replays at 40.28 fresh frames/s. No meaningful cost-neutral scheduling correction was identified. Removed all temporary instrumentation and retained the unchanged production graph plus the bounded evidence below.
 - Measured per-fresh and total GPU engine time for direct NV12 staging and cached-slot preference. Rejected direct staging because of the combined GPU results and a padded-surface pixel mismatch. Kept cached-slot preference, which eliminates a redundant blit when a returned slot already holds the current image. Archived both trials.
+- Reproduced the source-only renderer tail penalty on a D3D11 fixture and isolated it to the WGC compositor/driver path. Archived two unsuccessful controls and retained the reproducible source benchmark.
 
 ## In flight
+
+None for the D3D11 source-only investigation. Temporary priority and callback-close instrumentation was removed and archived with the traces.
 
 None for the fresh-frame GPU cost investigation. Cached-slot preference extends the original NV12 reuse. All temporary instrumentation is archived outside the source tree.
 
@@ -55,6 +58,65 @@ None for the fresh-frame investigation. No qualifying production improvement was
 - Complete the native support matrix, architecture/operator inspection, packaged-runtime/project-wide verification, and canonical evidence update.
 
 ## Verification
+
+### 2026-11-10 D3D11 source-only graphics ETW follow-up
+
+- One elevated direct ETW session recorded DxgKrnl, DXGI, Dwm-Core and presentation events on the same Windows 10/RTX 3050 Ti setup. The unchanged non-activated 96-iteration renderer and WGC source probe ran at ordinary desktop privileges with 12-second off/on/off arms. The normal WPR start failed with `0xc5585011`. Elevated WPR started but failed to save with `0x80010106`. The direct ETL reached its 512 MiB cap during the final off arm and reports 17 lost buffers globally. The two compared eight-second steady windows precede the cap. Every logged renderer call in those windows has a matching DXGI start/stop and a PresentMon row. The DWM event and receipt cadence also reconciles across the WGC window. The final off arm is excluded from the ETW comparison.
+
+| Steady window | Present interval median (ms) | P95 (ms) | P99 (ms) | Max (ms) | Present calls >1.2 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| WGC off | 0.696 | 0.811 | 0.934 | 2.149 | 8 / 11,484 |
+| WGC on | 0.703 | 1.002 | 1.376 | 2.374 | 310 / 10,985 |
+
+- DxgKrnl `SelectContext2` mapped the renderer and the main DWM context to the same NVIDIA adapter and node 0. DWM completed no standard DMA packets on that context in the off window and 960 in the on window. In the on window, 384 of 385 preempted-and-retried renderer submissions bracketed DWM work on that node. None were preempted in the off window. Renderer queue-submit to first hardware-submit P99 increased from 0.687 to 1.449 ms. Queue-submit to final DMA completion P99 increased from 1.943 to 2.576 ms. These intervals include queue residence and completion handling.
+- DWM hardware-queue intervals overlapped 303 of the 310 long `Present` calls and 485 of all 10,985 calls with WGC on. The longest call, 2.369 ms, occurred between bursts. Matching the renderer's monitored-fence wait packets to `UnwaitQueuePacket` by context and packet pointer gave a P99 of 0.664 ms off and 1.438 ms on. In a representative 1.952 ms `Present`, the kernel reported renderer preemption at +0.416 ms, DWM DMA completion interrupts at +0.788 and +0.795 ms, renderer resubmission at +1.196 ms, WGC probe receipt at +1.415 ms and DWM releasing the matching renderer wait at +1.823 ms. PresentMon classified every steady-window renderer present as Hardware Independent Flip. It reported no display time for 480 presents with WGC on, with each corresponding CPU frame-start time falling before a different next WGC receipt. The off window had zero such presents. The trace recorded a brief exit/re-entry during WGC startup outside the comparison windows.
+- Each of 480 steady-window WGC receipts followed two same-node DWM DMA completions, with a median 0.298 ms from the last completion event to probe receipt. The probe consumed 721 arrivals over the full capture arm with advancing timestamps, zero handoff drops and zero callback errors. Its process submitted no steady-window GPU packets. Windows owns the compositor work leading up to frame delivery and the resulting preemption and presentation wait. The trace identifies no viable Chronobreak optimization at this capture cadence and target. This follow-up changed only the execution record and canonical evidence.
+- The ETL, raw QPC logs, provider and decoder summaries, offline PresentMon output, and correlation results are under `build/perf/wgc-etw-20261110/direct-123512`. The elevated WPR failure is under `build/perf/wgc-etw-20261110/trace-123127`.
+
+### 2026-11-10 D3D11 source-only investigation
+
+Baseline revision `713f4f2`.
+
+- The exact-HWND comparisons ran one uncapped 1920×1080 D3D11 flip-discard renderer on the 60 Hz display connected to the RTX 3050 Ti Laptop GPU (driver 581.32, LUID `0000000000012a3e`, Windows 10 build 19045.6466). The renderer submitted a changing full-window shader and logged common-clock QPC immediately before and after each Present. Sparse nonflushing D3D11 queries measured elapsed GPU time around the draw. The production WGC probe acquired every available frame through the two-surface BGRA pool and capacity-one handoff, then promptly closed it. Timing output was buffered until after WGC stopped. The experiment bypassed League, image conversion, NVENC, audio, and muxing.
+- The short foreground comparison used 96 shader iterations with about 10 measured seconds per arm. PresentMon was denied access to the Windows ETW trace session. Reported intervals are between renderer Present calls. Displayed-frame cadence and flip-mode transitions are unverified.
+
+| Short foreground arm | Median (ms) | P95 (ms) | P99 (ms) | Max (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Off, before | 0.695 | 0.824 | 0.993 | 2.575 |
+| WGC | 0.706 | 1.089 | 1.765 | 10.107 |
+| Off, after | 0.702 | 0.821 | 0.908 | 2.469 |
+
+- The full short capture arm consumed 841 frames with zero handoff drops and callback errors. The steady arm delivered about 60 unique source timestamps/s. In its raw timing, 109 of 157 Present calls longer than 1.6 ms began 14–16 ms after the previous WGC receipt, compared with 1,452 of all 13,364 calls in that phase bin. The regular stalls cluster immediately before the next expected receipt.
+- The sustained comparison used 480 shader iterations and one topmost, consistently inactive window. The first attempt used a nonactivatable window style that Windows rejected at WGC item creation. Showing a standard window without activating it allowed exact-HWND capture with fixed activation across every measured arm. The table uses equal 2-second edge exclusions from the requested wall-clock start/end of each arm. The source trace covers every capture measurement interval.
+
+| Sustained arm | Measured (s) | Renderer frames/s | Median (ms) | P95 (ms) | P99 (ms) | Max (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Off, before | 28 | 286.61 | 3.424 | 4.102 | 4.428 | 5.943 |
+| WGC | 146 | 274.37 | 3.504 | 4.530 | 4.826 | 6.782 |
+| WGC, return surface in callback | 28 | 273.07 | 3.514 | 4.543 | 4.867 | 5.623 |
+| Off, after | 28 | 284.29 | 3.448 | 4.183 | 4.484 | 4.908 |
+
+- In the 150-second default arm WGC delivered 9,001 frames, all consumed, with zero handoff drops, callback errors, pool recreations or non-advancing steady timestamps. The trimmed interval delivered 60.00 distinct source timestamps/s with a 16.869-ms P99 source gap and 17.629-ms maximum. Renderer P99 was 4.798 ms in the first 15-second window, 4.790 ms at 60–75 seconds, and 4.844 ms at 120–135 seconds. All ten windows, including the shorter final window, were within 4.790–4.845 ms. The largest frame interval was 6.782 ms. This supports a recurring tail cost without meaningful growth over the tested interval. The worst spikes of differently sized arms are descriptive.
+- The sustained WGC arm increased the P99 duration inside Present from 4.393–4.456 to 4.806 ms, and the sampled renderer GPU draw P99 from 4.303–4.310 to 4.689 ms. On the same adapter, sampled DWM 3D time rose from 0 to 16.25 engine ms/s and returned to 0 after capture. The source probe had 0 measured 3D and copy engine time, used 16.85 CPU ms/s, and held about 55 MiB private memory without growth in the sample. The two 1080p BGRA surfaces account for 15.82 MiB of nominal pixel payload. These observations place the interference in compositor/driver GPU work while producing the WGC frames. The precise Windows queue, scheduling event, and presentation-mode change were not traced.
+- Lowering the capture device's DXGI priority to −3 was confirmed by device readback. A focus change invalidated the full five-arm matrix, so only the three same-activation capture segments are used for the priority diagnostic. Default/−3/default delivered about 60 frames/s in all three arms with P99 4.609/4.588/4.663 ms and maxima 7.230/20.760/10.669 ms. The priority arm shifted median source-QPC lead from about 12.6 to 28.5 ms. These results do not support a meaningful reduction or equivalent timestamp behavior.
+- Returning the COM surface in the WGC callback left only metadata in the handoff. The sustained control consumed 1,920 notifications with zero drops/errors and held 60.00 unique timestamps/s. The consumer's median post-receive service time fell from 0.149 ms to below 0.001 ms because the close moved earlier. DWM 3D remained 16.25 engine ms/s and renderer P99 remained elevated. This rules out the normal application's cross-thread surface lease as the dominant cause on this workload. The control has no image consumer and was removed alongside the priority experiment.
+- No tested change achieved the requested 5–10× reduction with correct fresh-frame delivery. The retained changes are the benchmark renderer, runner and buffered timing probe. Local raw traces, counter samples, the rejected/failed runs, diagnostic patch, binaries, and fixed-window summary are under `build/perf/wgc-d3d11-20261110/`. No League, full-match soak, or encoding performance claim follows.
+- Final strict MSVC build, Python syntax check, recorder formatting, locked all-target/all-feature check, strict Clippy and tests, and the locked release probe build passed. Recorder tests passed 299 with 17 opt-in tests ignored. The final fixed-window off/on/off smoke confirmed matching HWND, adapter and dimensions, consumed all 481 frames with zero handoff drops or callback errors, and measured 60.00 unique source timestamps/s in the capture interval. Canonical validation passed for 125 features and 32 plan/checkpoint pairs, and diff hygiene passed.
+
+Repeat the source-only comparison from the repository root in an x64 Visual Studio developer shell on a visible Windows desktop.
+
+```powershell
+$repo = (Get-Location).Path
+$fixture = New-Item -ItemType Directory -Force build/perf/wgc-renderer
+Push-Location $fixture
+try {
+    cl /nologo /EHsc /W4 /WX /std:c++17 /O2 "$repo/tools/native_backend/d3d11_renderer.cpp" /link user32.lib dxgi.lib d3d11.lib d3dcompiler.lib
+} finally {
+    Pop-Location
+}
+cargo build --release --locked --manifest-path recorder/Cargo.toml --example native_wgc_source_probe
+python tools/native_backend/measure_wgc_renderer.py --renderer build/perf/wgc-renderer/d3d11_renderer.exe --capture recorder/target/release/examples/native_wgc_source_probe.exe --output build/perf/wgc-renderer/source-comparison --resources --iterations 480 --no-activate --arm-seconds 32 150 32
+```
 
 2026-11-09 fresh-frame GPU cost investigation, baseline `fbf8fa6`.
 
@@ -233,6 +295,8 @@ The formal comparison on the specified interactive Ryzen 5 5600X/RTX 4060 target
 The Philips display now exercises the supported NVIDIA graph on this workstation. The local generated-window result has no League frametime, fight-load, or live-poller evidence. System Audio slot retry timing and Video Encode transients remain unattributed. No evidence establishes the requested 5–10× gameplay improvement or a fundamental limit on it.
 
 ## Next action
+
+The D3D11 source-only ETW investigation is closed. Reopen only if new evidence identifies a way to reduce the compositor work while preserving fresh exact-HWND capture.
 
 The fresh-frame GPU cost unit is complete with cached-slot preference. Keep the bounded BGRA staging path. A future replacement needs to save combined engine work at comparable fresh coverage and reproduce edge pixels for surfaces larger than the valid WGC content.
 
