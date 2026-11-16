@@ -6,6 +6,7 @@ import LibraryScreen from "./LibraryScreen";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
 import { readClipPage } from "../managedClips";
+import type { ClipCard } from "../managedClips";
 
 vi.mock("../managedClips", async original => ({ ...await original<typeof import("../managedClips")>(),
   readClipPage: vi.fn(),
@@ -36,25 +37,52 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
       stats: { source: "unavailable", kills: null, deaths: null, assists: null, items: null, summoner_spells: null,
         keystone_id: null, secondary_style: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null },
     })), next: null, indexed_recordings: 2, catalog_recordings: 2, unknown_recordings: 0 } };
-  vi.mocked(readClipPage).mockResolvedValueOnce({ groups: [], next: null });
-  const dispose = render(() => <LibraryScreen tab="games" games={[middle, single, newest, unmatched, earliest]} clips={[]}
+  const fixtureClip: ClipCard = {
+    title: "Last fight", video_url: "http://fixture/clip.mp4", thumbnail_url: "http://fixture/thumb.jpg",
+    game_clock: "1122000000",
+    header: { version: 1, id: "clip", source_timestamp: newest.timestamp, preset: "horizontal", exported_at: 0,
+      range: { media_id: newest.media_id!, start_frame: "0", end_frame_exclusive: "300" },
+      game: { match_group: group, champion: "Ahri", played_at: null, part_recorded_at: null, account: null,
+        queue_id: null, mode: null, outcome: null, final_kda: null },
+      duration: "240000000", events: "unavailable", highlights: [], custom_tags: [] },
+  };
+  const play = vi.fn();
+  const playSingle = vi.fn();
+  const [clipHistory, setClipHistory] = createSignal(history);
+  vi.mocked(readClipPage).mockResolvedValueOnce({ groups: [{ key: group, clips: [fixtureClip], next: null }], next: null });
+    const [libraryState, setLibraryState] = createSignal({ actionable: true });
+    const dispose = render(() => <LibraryScreen tab="games" games={[middle, single, newest, unmatched, earliest]} clips={[]}
     ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
-    actionable snapshotOrigin={origin} busyId={null} onOpenGame={open} onToggleSaved={toggle} onDeleteGame={remove}
-    history={history} onOpenManagedClip={() => {}}
+      actionable={libraryState().actionable} snapshotOrigin={origin} busyId={null} onOpenGame={open} onToggleSaved={toggle} onDeleteGame={remove}
+      history={clipHistory()} onOpenManagedClip={play} onPlaySingleClip={playSingle}
     onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
   try {
     expect(host.querySelectorAll("article")).toHaveLength(2);
     expect(host.textContent).toContain("2 matches");
     expect(host.textContent).toContain("3 recordings");
     expect(host.textContent).not.toContain("Syndra");
-    const clipButtons = [...host.querySelectorAll("button")].filter(button => button.textContent?.trim().startsWith("Clips ·"));
-    expect(clipButtons.map(button => button.textContent?.trim())).toEqual(["Clips · 2"]);
+    const clipButtons = [...host.querySelectorAll("button")].filter(button => button.textContent?.trim() === "2 clips");
+    expect(clipButtons).toHaveLength(1);
+    const region = host.querySelector<HTMLElement>('[aria-label="Clips from this match"]')!;
+    expect(region.parentElement).toBe(clipButtons[0].closest("article"));
+    expect(region.hidden).toBe(true);
+    expect(host.querySelector('button[aria-busy]')).toBeNull();
     expect(readClipPage).not.toHaveBeenCalled();
     clipButtons[0].click();
     expect(clipButtons[0].getAttribute("aria-expanded")).toBe("true");
-    await vi.waitFor(() => expect(readClipPage).toHaveBeenCalledExactlyOnceWith(origin.token, expect.objectContaining({ match_group: group })));
+    await vi.waitFor(() => expect(readClipPage).toHaveBeenCalledExactlyOnceWith(origin.token, expect.objectContaining({
+      match_group: group, include_game_clock: true,
+    })));
+    await vi.waitFor(() => expect(region.textContent).toContain("Game ≈18:42"));
+    const thumbnail = region.querySelector<HTMLButtonElement>('[aria-label="Play Last fight"]')!;
+      setLibraryState({ actionable: true });
+      expect(region.querySelector('[aria-label="Play Last fight"]')).toBe(thumbnail);
+      expect(readClipPage).toHaveBeenCalledOnce();
+    thumbnail.click();
+    expect(play).toHaveBeenCalledExactlyOnceWith(fixtureClip, thumbnail);
     clipButtons[0].click();
     expect(clipButtons[0].getAttribute("aria-expanded")).toBe("false");
+    expect(region.hidden).toBe(true);
     host.querySelector<HTMLButtonElement>('[aria-label^="Open Lux"]')!.click();
     expect(open).toHaveBeenCalledExactlyOnceWith(single.timestamp, origin);
 
@@ -73,6 +101,12 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
     action(2, "Delete")!.click();
     expect(toggle.mock.calls).toEqual([[earliest, origin], [middle, origin]]);
     expect(remove).toHaveBeenCalledExactlyOnceWith(newest, origin);
+    setClipHistory({ ...history, page: { ...history.page!, rows: history.page!.rows.map(row =>
+      row.game === single ? { ...row, clip_count: 1 } : row) } });
+    const direct = [...host.querySelectorAll("button")].find(button => button.textContent?.trim() === "Play clip")!;
+    expect(direct.hasAttribute("aria-expanded")).toBe(false);
+    direct.click();
+    expect(playSingle).toHaveBeenCalledExactlyOnceWith(single.match_group, origin, direct);
   } finally { dispose(); }
 });
 

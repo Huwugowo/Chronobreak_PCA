@@ -18,7 +18,7 @@ export type ClipHeader = {
   game: ClipGame; exported_at: number; preset: ClipExportPreset; duration: string;
   events: Availability; highlights: Highlight[]; custom_tags: string[];
 };
-export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string };
+export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string; game_clock?: string };
 export type GroupCursor = [number, string];
 export type ClipCursor = [number, number, string];
 export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null };
@@ -26,7 +26,7 @@ export type ClipPage = { groups: ClipGroup[]; next: GroupCursor | null };
 export type ClipQuery = {
   search?: string; champion?: string; from?: string; to?: string; queue?: string;
   outcome?: string; highlight?: string; actor?: Attribution; match_group?: string;
-  after?: GroupCursor; group_key?: string; clip_after?: ClipCursor;
+  after?: GroupCursor; group_key?: string; clip_after?: ClipCursor; include_game_clock?: boolean;
 };
 export type ClipDetail = { header: ClipHeader; candidates: Highlight[]; events: {
   availability: Availability; events: Array<{ replay_tick: string; event: { name?: string }; attribution: Attribution; actor: string | null }>;

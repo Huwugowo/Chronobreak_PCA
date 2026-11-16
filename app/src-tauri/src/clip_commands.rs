@@ -205,14 +205,19 @@ pub(crate) async fn clip_page(
             &snapshot_token,
             None,
             false,
-            move |root, snapshot, _| {
+            move |root, snapshot, check| {
                 if snapshot.managed_clips.is_empty() {
                     return Ok(ClipPage {
                         groups: Vec::new(),
                         next: None,
                     });
                 }
-                Index::reader(&cache, root)?.clips(snapshot, &query, &origin, &capability)
+                let index = Index::reader(&cache, root)?;
+                let mut page = index.clips(snapshot, &query, &origin, &capability)?;
+                if query.match_group.is_some() && query.include_game_clock == Some(true) {
+                    index.add_clip_game_clocks(root, snapshot, &mut page, check)?;
+                }
+                Ok(page)
             },
         )
         .await

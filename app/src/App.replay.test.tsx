@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import type { ComponentProps } from "solid-js";
+import { Show, type ComponentProps } from "solid-js";
 import App from "./App";
 import type ViewerScreen from "./components/ViewerScreen";
 import type LibraryScreen from "./components/LibraryScreen";
@@ -11,16 +11,17 @@ import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
 import { indexCatalog, indexRecording } from "./leagueIndex";
 import type { CatalogPage, ImportProgress } from "./leagueIndex";
-import type { ClipCard } from "./managedClips";
+import { readClipPage, type ClipCard, type ClipPage } from "./managedClips";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
   exporter: null as ComponentProps<typeof ClipExporterScreen> | null,
-  clip: null as ClipCard | null, sourceMissing: false,
+  clip: null as ClipCard | null, sourceMissing: false, requireHistoryPage: false,
 }));
 vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
   usesManagedClips: () => harness.clip !== null,
   reconcileClips: vi.fn(async () => true),
+  readClipPage: vi.fn(async (): Promise<ClipPage> => ({ groups: [], next: null })),
 }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(),
   initializeReplayBenchmark: vi.fn(async () => null) }));
@@ -54,9 +55,14 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
 vi.mock("./components/LibraryScreen", () => ({ default: (props: ComponentProps<typeof LibraryScreen>) =>
   <>
     <button data-testid="open" onClick={() => props.onOpenGame("1", props.snapshotOrigin)}>Open recording</button>
-    {harness.clip && <button data-testid="play-clip" onClick={event => props.onOpenManagedClip?.(harness.clip!, event.currentTarget)}>Play clip</button>}
+    <Show when={harness.clip && (!harness.requireHistoryPage || props.history?.page)}>
+      <button data-testid="play-clip" onClick={event => props.onOpenManagedClip?.(harness.clip!, event.currentTarget)}>Play clip</button>
+    </Show>
+    {harness.clip && <button data-testid="play-single" disabled={!props.actionable || !props.snapshotOrigin} onClick={event => props.onPlaySingleClip?.(
+      harness.clip!.header.game.match_group!, props.snapshotOrigin!, event.currentTarget)}>Play clip from History</button>}
   </> }));
-vi.mock("./components/AppHeader", () => ({ default: (props: { onSettings: () => void; onTab: (tab: "games" | "clips") => void }) => <>
+vi.mock("./components/AppHeader", () => ({ default: (props: { onHome: () => void; onSettings: () => void; onTab: (tab: "games" | "clips") => void }) => <>
+  <button data-testid="home" onClick={props.onHome}>Home or Back</button>
   <button data-testid="settings" onClick={props.onSettings}>Settings</button>
   <button data-testid="clips" onClick={() => props.onTab("clips")}>Clips</button>
   <button data-testid="games" onClick={() => props.onTab("games")}>Games</button>
@@ -80,7 +86,7 @@ afterEach(() => {
   dispose?.(); dispose = undefined;
   document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); vi.restoreAllMocks();
   harness.root = "A"; harness.revision = 0; harness.viewer = null; harness.exporter = null;
-  harness.clip = null; harness.sourceMissing = false;
+  harness.clip = null; harness.sourceMissing = false; harness.requireHistoryPage = false;
 });
 const mount = async () => {
   const host = document.createElement("div"); document.body.append(host);
@@ -89,18 +95,22 @@ const mount = async () => {
   return { host, click: (id: string) => host.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click() };
 };
 
-it.each([false, true])("keeps the clip playable and only opens its exact source part (missing: %s)", async sourceMissing => {
-  const media = "22222222-3333-4444-8555-666666666666";
-  harness.sourceMissing = sourceMissing;
-  harness.clip = {
+const media = "22222222-3333-4444-8555-666666666666";
+const makeClip = (): ClipCard => ({
     title: "Last fight", video_url: "http://fixture/clip.mp4", thumbnail_url: "http://fixture/thumb.jpg",
     header: { version: 1, id: "clip", source_timestamp: "1-2", preset: "horizontal", exported_at: 0,
       range: { media_id: media, start_frame: "420", end_frame_exclusive: "720" },
       game: { match_group: "fixture", champion: "A", played_at: null, part_recorded_at: null, account: null,
         queue_id: null, mode: null, outcome: null, final_kda: null },
       duration: "240000000", events: "unavailable", highlights: [], custom_tags: [] },
-  };
+});
+
+it.each([false, true])("keeps the clip playable and only opens its exact source part (missing: %s)", async sourceMissing => {
+  harness.sourceMissing = sourceMissing;
+  harness.clip = makeClip();
+  harness.requireHistoryPage = true;
   const { host, click } = await mount();
+  await vi.waitFor(() => expect(host.querySelector('[data-testid="play-clip"]')).not.toBeNull());
   const trigger = host.querySelector<HTMLButtonElement>('[data-testid="play-clip"]')!;
   click("play-clip");
   expect(host.querySelector("video")?.src).toBe("http://fixture/clip.mp4");
@@ -112,9 +122,33 @@ it.each([false, true])("keeps the clip playable and only opens its exact source 
   expect(harness.viewer!.initialSourcePosition).toMatchObject({ gameTimestamp: "1-2", mediaId: media,
     startFrame: 420, endFrameExclusive: 720 });
   expect(harness.viewer!.initialClipDraft).toBeUndefined();
-  harness.viewer!.onBack();
+  click("home");
   await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
   expect(host.querySelector('[data-testid="play-clip"]')).toBe(trigger);
+});
+
+it("opens the sole clip once, discards a lookup after leaving History and restores focus", async () => {
+  const clip = makeClip();
+  harness.clip = clip;
+  const page = { groups: [{ key: "fixture", clips: [clip], next: null }], next: null };
+  let release!: (value: ClipPage) => void;
+  vi.mocked(readClipPage).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }))
+    .mockResolvedValueOnce(page);
+  const { host, click } = await mount();
+  expect(readClipPage).not.toHaveBeenCalled();
+  click("play-single");
+  click("play-single");
+  expect(readClipPage).toHaveBeenCalledExactlyOnceWith("A-1", { match_group: "fixture" });
+  click("settings");
+  release(page);
+  await Promise.resolve();
+  expect(host.querySelector("video")).toBeNull();
+  click("settings-back");
+  await vi.waitFor(() => expect(host.querySelector<HTMLButtonElement>('[data-testid="play-single"]')?.disabled).toBe(false));
+  click("play-single");
+  await vi.waitFor(() => expect(host.querySelector("video")?.src).toBe(clip.video_url));
+  host.querySelector<HTMLButtonElement>('[aria-labelledby="managed-clip-title"] header button')!.click();
+  expect(document.activeElement).toBe(host.querySelector('[data-testid="play-single"]'));
 });
 
 it("shares the actual App writer wiring across early replay open and return", async () => {

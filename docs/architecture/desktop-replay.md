@@ -291,6 +291,12 @@ Data Dragon manifests/icons enrich champion and item presentation but do not gat
 
 ## Clip flow
 
+Match History reads managed clip counts by validated match group. It resolves a
+single clip on activation and reads bounded pages for an expanded strip. A strip
+can show the last mapped game-clock sample at or before the clip's first frame in
+the exact source recording. Playback and the source seek use the persisted clip
+identity and frame range.
+
 A supported replay event or timeline action enters clip mode with heuristic pre/post-roll. The user can adjust a media-bound, half-open source-frame interval subject to the minimum duration, choose output presets, vertical framing, music, and audio levels, then submit a request through Tauri.
 
 The production vertical editor uses a sharp primary video and a muted background

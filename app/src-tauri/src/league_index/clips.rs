@@ -2,6 +2,8 @@
 use super::*;
 use crate::clip_bundle::{ClipDescriptor, ClipHeader, ClipId, HighlightKind};
 use crate::library::LibrarySnapshot;
+use chronobreak_replay_time::{MediaTimelineV2, RoundingMode, frame_boundary_to_replay_tick};
+use std::collections::HashMap;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const BATCH: usize = 64;
@@ -40,6 +42,7 @@ pub(crate) struct ClipQuery {
     pub highlight: Option<String>,
     pub actor: Option<String>,
     pub match_group: Option<String>,
+    pub include_game_clock: Option<bool>,
     pub after: Option<(i64, String)>,
     pub group_key: Option<String>,
     pub clip_after: Option<(i64, i64, ClipId)>,
@@ -51,6 +54,8 @@ pub(crate) struct ClipCard {
     pub title: String,
     pub video_url: String,
     pub thumbnail_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_clock: Option<GameTick>,
 }
 
 impl ClipCard {
@@ -66,6 +71,7 @@ impl ClipCard {
             title: clip.title().into(),
             video_url: format!("{url}/video?g={capability}"),
             thumbnail_url: format!("{url}/thumbnail?g={capability}"),
+            game_clock: None,
         }
     }
 }
@@ -310,6 +316,92 @@ impl Index {
                 .push(self.clip_group(snapshot, &filter, &key, None, INITIAL, origin, capability)?);
         }
         Ok(ClipPage { groups, next })
+    }
+
+    pub(crate) fn add_clip_game_clocks(
+        &self,
+        root: &Path,
+        snapshot: &LibrarySnapshot,
+        page: &mut ClipPage,
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
+        let mut sources = HashMap::new();
+        for clip in page.groups.iter_mut().flat_map(|group| &mut group.clips) {
+            check()?;
+            let header = &clip.header;
+            let bundle = header.source_timestamp.as_str();
+            let media = &header.range.media_id;
+            let source = sources.entry((bundle, media)).or_insert_with(|| {
+                snapshot
+                    .games
+                    .iter()
+                    .any(|game| {
+                        game.timestamp == bundle
+                            && game.media_id.as_ref() == Some(media)
+                            && game.video_available
+                            && !game.incomplete
+                    })
+                    .then(|| self.clip_clock_source(root, bundle, media).ok())
+                    .flatten()
+            });
+            if let Some((timeline, scope)) = source {
+                clip.game_clock = self.clip_game_clock(header, timeline, scope).ok().flatten();
+            }
+        }
+        Ok(())
+    }
+
+    fn clip_clock_source(
+        &self,
+        root: &Path,
+        bundle: &str,
+        media: &MediaId,
+    ) -> Result<(MediaTimelineV2, SourceScope)> {
+        self.require_source(root, bundle, media)?;
+        let timeline_json: String = self.db.query_row(
+            "SELECT timeline_json FROM recordings WHERE media_id=?1 AND bundle=?2",
+            params![media.as_str(), bundle],
+            |row| row.get(0),
+        )?;
+        let timeline = serde_json::from_str(&timeline_json)?;
+        let scope = self
+            .scopes(media)?
+            .pop()
+            .context("no recorded game clock")?;
+        Ok((timeline, scope))
+    }
+
+    fn clip_game_clock(
+        &self,
+        header: &ClipHeader,
+        timeline: &MediaTimelineV2,
+        scope: &SourceScope,
+    ) -> Result<Option<GameTick>> {
+        header.range.validate_for(timeline)?;
+        let start = frame_boundary_to_replay_tick(
+            header.range.start_frame,
+            timeline.video.frame_rate,
+            RoundingMode::Exact,
+        )?;
+        let sample = self
+            .db
+            .prepare_cached(
+                "SELECT game_tick FROM rosters
+             WHERE media_id=?1 AND run_id=?2 AND epoch=?3 AND replay_tick BETWEEN 0 AND ?4
+               AND game_tick IS NOT NULL
+             ORDER BY replay_tick DESC,observation_id DESC LIMIT 1",
+            )?
+            .query_row(
+                params![
+                    timeline.media_id.as_str(),
+                    scope.source.run_id.as_str(),
+                    sql_u64(scope.source.epoch)?,
+                    sql_u64(start.get())?,
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        Ok(sample.map(GameTick::new).transpose()?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -634,9 +726,50 @@ mod tests {
             match_group: Some(match_group.clone()),
             ..Default::default()
         };
-        let page = index
+        let mut page = index
             .clips(&before, &scoped, "http://fixture", "generation")
             .unwrap();
+        for (bundle, game_clock) in [("100", 1_122_000_000_i64), ("101", 1_370_000_000_i64)] {
+            let media = part(bundle).media_id.as_ref().unwrap();
+            let stamp =
+                super::super::source_stamp(&root.path().join("games").join(bundle)).unwrap();
+            let timeline = library::replay_descriptor(root.path(), "", bundle, String::new())
+                .unwrap()
+                .media_timeline;
+            index.db.execute(
+                "UPDATE recordings SET telemetry_status='ready',timeline_json=?2,source_stamp=?3 WHERE media_id=?1",
+                params![media.as_str(), serde_json::to_string(&timeline).unwrap(), stamp],
+            ).unwrap();
+            let run = MediaId::new_v4();
+            index
+                .db
+                .execute(
+                    "INSERT INTO scopes(media_id,run_id,epoch) VALUES (?1,?2,0)",
+                    params![media.as_str(), run.as_str()],
+                )
+                .unwrap();
+            index.db.execute(
+                "INSERT INTO rosters(media_id,run_id,epoch,observation_id,game_tick,replay_tick)
+                 VALUES (?1,?2,0,1,?3,12000000),(?1,?2,0,2,?3+1000000,96000000)",
+                params![media.as_str(), run.as_str(), game_clock],
+            ).unwrap();
+        }
+        index
+            .add_clip_game_clocks(root.path(), &before, &mut page, &|| Ok(()))
+            .unwrap();
+        assert_eq!(
+            page.groups[0]
+                .clips
+                .iter()
+                .map(|clip| clip.game_clock.map(GameTick::get))
+                .collect::<Vec<_>>(),
+            [
+                None,
+                Some(1_122_000_000),
+                Some(1_122_000_000),
+                Some(1_370_000_000)
+            ]
+        );
         let group = &page.groups[0];
         assert_eq!(
             group
@@ -702,14 +835,18 @@ mod tests {
             match_group: Some(match_group),
             ..Default::default()
         };
-        let page = index
+        let mut page = index
             .clips(&after, &filter, "http://fixture", "generation")
+            .unwrap();
+        index
+            .add_clip_game_clocks(root.path(), &after, &mut page, &|| Ok(()))
             .unwrap();
         assert_eq!(page.groups.len(), 1);
         assert_eq!(page.groups[0].clips.len(), 1);
         let clip = &page.groups[0].clips[0];
         assert_eq!(clip.header.id, selected);
         assert_eq!(clip.title, "The finish");
+        assert!(clip.game_clock.is_none());
         assert_eq!(clip.header.game.final_kda, Some([9, 2, 7]));
         assert!(clip.video_url.contains(selected.as_str()));
     }

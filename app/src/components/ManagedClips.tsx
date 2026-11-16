@@ -4,6 +4,7 @@ import { libraryError } from "../libraryController";
 import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipPage, type Attribution, type ClipCard,
   type ClipCursor, type ClipEdit, type ClipGame, type ClipGroup, type ClipPage, type ClipQuery, type GroupCursor } from "../managedClips";
 import { parseReplayTick } from "../replayTime";
+import { recordedGameClock } from "../replayProjection";
 import { PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
 import { ClipHighlights, ClipTagInput } from "./ClipMetadataFields";
@@ -33,11 +34,16 @@ function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolea
             <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
           </span>
           <span class={libraryStyles.clipContent}>
-            <strong>{clip.title}</strong><small>{clip.header.preset}</small>
-            <span class={styles.tags}>
-              <For each={clip.header.highlights}>{tag => <span>{highlightLabel(tag)}</span>}</For>
-              <For each={clip.header.custom_tags}>{tag => <span>{tag}</span>}</For>
-            </span>
+            <strong>{clip.title}</strong>
+            <Show when={props.inline} fallback={<>
+              <small>{clip.header.preset}</small>
+              <span class={styles.tags}>
+                <For each={clip.header.highlights}>{tag => <span>{highlightLabel(tag)}</span>}</For>
+                <For each={clip.header.custom_tags}>{tag => <span>{tag}</span>}</For>
+              </span>
+            </>}>
+              <small>{clip.game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip.game_clock)}`}</small>
+            </Show>
           </span>
         </button>
       </article>
@@ -49,6 +55,11 @@ function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolea
 export function ClipGroups(props: {
   token: string; ready: boolean; query: ClipQuery; onOpen: OpenClip; inline?: boolean;
 }) {
+  const inputs = createMemo(
+    () => ({ token: props.token, query: props.query, ready: props.ready }),
+    undefined,
+    { equals: (previous, next) => previous.token === next.token && previous.query === next.query && previous.ready === next.ready },
+  );
   const [groups, setGroups] = createSignal<ClipGroup[]>([]);
   const [next, setNext] = createSignal<GroupCursor | null>(null);
   const [busy, setBusy] = createSignal(false);
@@ -60,8 +71,8 @@ export function ClipGroups(props: {
   const schedule = (work: () => void) => { if (active) pending = work; else work(); };
   const load = (mode: "first" | "more" | "group", cursor?: GroupCursor, group?: { key: string; after: ClipCursor }) => {
     const id = generation;
-    const token = props.token;
-    const query = { ...props.query, after: cursor, group_key: group?.key, clip_after: group?.after };
+    const { token, query: filters } = inputs();
+    const query = { ...filters, after: cursor, group_key: group?.key, clip_after: group?.after };
     setBusy(true);
     setError(null);
     schedule(() => {
@@ -90,9 +101,7 @@ export function ClipGroups(props: {
   };
   createEffect(() => {
     retry();
-    props.token;
-    props.query;
-    const ready = props.ready;
+    const { ready } = inputs();
     generation++;
     setGroups([]);
     setNext(null);
@@ -101,7 +110,7 @@ export function ClipGroups(props: {
     if (ready) load("first");
   });
   onCleanup(() => { generation++; pending = null; });
-  return <div class={styles.panel} aria-busy={busy() || !props.ready}>
+  return <div class={props.inline ? styles.inlinePanel : styles.panel} aria-busy={busy() || !props.ready}>
     <Show when={!props.ready || (busy() && groups().length === 0)}><p role="status">Loading clips…</p></Show>
     <Show when={error()}>{message => <p role="alert">{message()} <button class={controls.control} type="button" onClick={() => setRetry(n => n + 1)}>Try again</button></p>}</Show>
     <Show when={props.ready && !busy() && !error() && groups().length === 0}><p>No clips found.</p></Show>

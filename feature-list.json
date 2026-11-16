@@ -2228,23 +2228,23 @@
       "description": "Expose clips inline from Match History and open a clip's exact source recording at its first frame.",
       "priority": "P1",
       "area": "clip-library",
-      "status": "in-progress",
+      "status": "done",
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
         "QB-LIB-002",
         "QB-LIB-030"
       ],
       "evidence": [
-        "Fixtures verified account-scoped multipart counts, on-demand strip loading, exact-part seek, source unavailability and Back focus. Three 10,000-recording SQL comparisons showed p95 changes of +0.38, +0.45 and -1.47 ms.",
-        "Packaged navigation and prepared desktop first-paint verification await the staged pinned FFmpeg runtime."
+        "Packaged Windows fixtures verified single-click playback, the attached strip at 1,200 px, sampled game clocks, exact source seek, focus after Close and Back, and playback with a missing source. Deleting a clip preserved the source video digest.",
+        "All 602 frontend and 212 enabled backend tests passed. Prepared two-match paint medians were 1,060 ms before and 985 ms after. The unchanged 10,000-recording SQL p95 comparisons differed by +0.38, +0.45 and -1.47 ms."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-lib-003-match-clip-navigation.md",
+        "plan": "docs/exec-plans/qb-lib-003-match-clip-navigation-v2.md",
         "progress": "docs/execution/qb-lib-003.md"
       },
       "acceptance_criteria": [
-        "A Match History card shows the checked clip count and expands to clips from all recording parts of that account-scoped game.",
+        "Match History shows a one-click Play clip action for one checked clip, an attached disclosure strip for multiple checked clips across recording parts of the account-scoped game, and no clip control for unresolved or zero counts. The strip shows titles, durations and sampled game times where available.",
         "A clip opens the exact source recording at its first included frame, and Back restores the originating view.",
         "If the source recording is deleted or unavailable, the clip remains playable and retains its game context. Clip deletion leaves the source intact.",
         "History performance, request ownership and protected media access meet the existing bounds."

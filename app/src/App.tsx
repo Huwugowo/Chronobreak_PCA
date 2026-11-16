@@ -3,6 +3,7 @@ import {
   Match,
   Show,
   Switch,
+  batch,
   createEffect,
   createMemo,
   createResource,
@@ -57,7 +58,7 @@ import { HistoryController } from "./historyController";
 import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
-import { editManagedClip, reconcileClips, sourcePosition, usesManagedClips, type ClipCard, type ClipEdit, type ClipQuery } from "./managedClips";
+import { editManagedClip, readClipPage, reconcileClips, sourcePosition, usesManagedClips, type ClipCard, type ClipEdit, type ClipQuery } from "./managedClips";
 import styles from "./App.module.css";
 
 type DeleteTarget =
@@ -137,6 +138,7 @@ function App() {
   const [clipIndexError, setClipIndexError] = createSignal<string | null>(null);
   const [clipIndexRetry, setClipIndexRetry] = createSignal(0);
   const [managedSelection, setManagedSelection] = createSignal<{ clip: ClipCard; origin: LibraryOrigin; button: HTMLElement }>();
+  const [singleClipRequest, setSingleClipRequest] = createSignal<{ group: string; origin: LibraryOrigin }>();
   const [clipReturn, setClipReturn] = createSignal<{ tab: LibraryTab; position: ClipDraft; button: HTMLElement }>();
   const [restoringClipView, setRestoringClipView] = createSignal(false);
   const libraryTab = createMemo(() => {
@@ -211,7 +213,37 @@ function App() {
 
   const selectManagedClip = (clip: ClipCard, button: HTMLElement) => {
     const origin = controller.origin();
-    if (origin && controller.mayPublish(origin)) setManagedSelection({ clip, origin, button });
+    if (origin && controller.mayPublish(origin)) {
+      setSingleClipRequest(undefined);
+      setManagedSelection({ clip, origin, button });
+    }
+  };
+  const playSingleClip = async (group: string, origin: LibraryOrigin, button: HTMLButtonElement) => {
+    const inHistory = () => {
+      const current = navigation();
+      return current.screen === "library" && current.tab === "games" && controller.mayPublish(origin) && button.isConnected;
+    };
+    if (!inHistory()) return;
+    const pending = singleClipRequest();
+    if (pending?.group === group && controller.mayPublish(pending.origin)) return;
+    const request = { group, origin };
+    setSingleClipRequest(request);
+    const current = () => singleClipRequest() === request && inHistory();
+    try {
+      const page = await readClipPage(origin.token, { match_group: group });
+      if (!current()) return;
+      const only = page.groups.length === 1 && page.next === null ? page.groups[0] : undefined;
+      if (only?.next === null && only.clips.length === 1 && only.clips[0].header.game.match_group === group) {
+        selectManagedClip(only.clips[0], button);
+      } else {
+        history.prepared();
+        showNotice("Clips changed. Updating Match History.");
+      }
+    } catch (error) {
+      if (current()) showError(error);
+    } finally {
+      if (singleClipRequest() === request) setSingleClipRequest(undefined);
+    }
   };
   const closeManagedClip = () => {
     const button = managedSelection()?.button;
@@ -266,17 +298,21 @@ function App() {
     if (!source) return;
     try {
       const position = sourcePosition(selected.clip);
-      setClipReturn({ tab: current.tab, position, button: selected.button });
-      setManagedSelection(undefined);
-      openViewer(source.timestamp);
+      batch(() => {
+        setClipReturn({ tab: current.tab, position, button: selected.button });
+        setManagedSelection(undefined);
+        openViewer(source.timestamp);
+      });
     } catch (error) { showError(error); }
   };
   const returnFromViewer = () => {
     const destination = clipReturn();
     if (!destination) { openTab("games"); return; }
-    setRestoringClipView(true);
-    controller.navigate(false);
-    setNavigation({ screen: "library", tab: destination.tab });
+    batch(() => {
+      setRestoringClipView(true);
+      controller.navigate(false);
+      setNavigation({ screen: "library", tab: destination.tab });
+    });
     queueMicrotask(() => {
       setRestoringClipView(false);
       setClipReturn(undefined);
@@ -561,7 +597,8 @@ function App() {
       <AppHeader
         navigation={navigation()}
         ddragon={ddragon() ?? emptyDdragon}
-        onHome={() => openTab("games")}
+        backTab={clipReturn()?.tab}
+        onHome={() => navigation().screen === "viewer" ? returnFromViewer() : openTab("games")}
         onTab={openTab}
         onSettings={openSettings}
       />
@@ -680,6 +717,8 @@ function App() {
               onHistoryFirst={() => history.firstPage()}
               clips={clips() ?? []}
               onOpenManagedClip={managed ? selectManagedClip : undefined}
+              onPlaySingleClip={managed ? (group, origin, button) => void playSingleClip(group, origin, button) : undefined}
+              pendingSingleClipGroup={singleClipRequest()?.group}
               managedClips={managed ? <ManagedClips
                 token={acceptedSnapshot()?.token ?? ""} ready={(!acceptedSnapshot()?.managed_clip_count || clipIndexToken() === acceptedSnapshot()?.token) && libraryActionable()}
                 indexError={clipIndexError()} onRetry={() => setClipIndexRetry(n => n + 1)}

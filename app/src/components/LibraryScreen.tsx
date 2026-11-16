@@ -22,6 +22,8 @@ type Props = {
   clips: ClipSummary[];
   managedClips?: JSX.Element;
   onOpenManagedClip?: (clip: ClipCard, button: HTMLElement) => void;
+  onPlaySingleClip?: (group: string, origin: LibraryOrigin, button: HTMLButtonElement) => void;
+  pendingSingleClipGroup?: string;
   ddragon: DdragonStatus;
   actionable: boolean;
   busyId: string | null;
@@ -358,7 +360,8 @@ function GamesLibrary(props: Props) {
                 const expanded = () => multipart() && expandedMatch() === game.match_group;
                 const clipCount = () => game.media_id ? rowsByMedia().get(game.media_id)?.clip_count : undefined;
                 const clipsExpanded = () => expandedClips() === game.match_group;
-                const matchClipQuery = { match_group: game.match_group ?? undefined };
+                const matchClipQuery = { match_group: game.match_group ?? undefined, include_game_clock: true };
+                const clipRegionId = `match-clips-${game.match_group}`;
                 const outcome = () => displayedOutcome(rowFor(game)?.game ?? game);
                 const health = replayHealth(game);
                 const stats = () => statsFor(game);
@@ -387,8 +390,8 @@ function GamesLibrary(props: Props) {
                 };
 
                 return (
-                  <><article class={matchStyles.matchItem} data-outcome={outcome() ?? undefined}
-                    data-has-clips={Boolean(props.onOpenManagedClip && (clipCount() ?? 0) > 0)}>
+                  <><article class={matchStyles.matchItem} data-outcome={outcome() ?? undefined}>
+                    <div class={matchStyles.matchSummary}>
                     <button
                       class={matchStyles.matchOpen}
                       type="button"
@@ -604,16 +607,23 @@ function GamesLibrary(props: Props) {
                       </span>
                     </button>
 
-                    <Show when={props.onOpenManagedClip && (clipCount() ?? 0) > 0}>
-                      <div class={matchStyles.clipAction}>
-                        <button class={controlStyles.control} type="button" disabled={!props.actionable}
-                          aria-expanded={clipsExpanded()} aria-controls={`match-clips-${game.match_group}`}
-                          onClick={() => setExpandedClips(clipsExpanded() ? null : game.match_group)}>
-                          Clips · {clipCount()}
-                        </button>
-                      </div>
-                    </Show>
-                    <Show when={!multipart()}><div class={matchStyles.matchActions}>
+                     <div class={matchStyles.matchActions}>
+                       <Show when={clipCount() === 1 && props.onPlaySingleClip && game.match_group && props.snapshotOrigin}>
+                         <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button"
+                           disabled={!props.actionable}
+                           aria-busy={props.pendingSingleClipGroup === game.match_group}
+                           onClick={event => props.onPlaySingleClip!(game.match_group!, props.snapshotOrigin!, event.currentTarget)}>
+                           <PlayIcon size={14} /> Play clip
+                         </button>
+                       </Show>
+                       <Show when={props.onOpenManagedClip && game.match_group && (clipCount() ?? 0) > 1}>
+                         <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button" disabled={!props.actionable}
+                           aria-expanded={clipsExpanded()} aria-controls={clipRegionId}
+                           onClick={() => setExpandedClips(clipsExpanded() ? null : game.match_group)}>
+                           {clipCount()} clips <span class={matchStyles.clipChevron} aria-hidden="true" />
+                         </button>
+                       </Show>
+                       <Show when={!multipart()}>
                       <button
                         class={matchStyles.starButton}
                         type="button"
@@ -646,14 +656,18 @@ function GamesLibrary(props: Props) {
                           </div>
                         </details>
                       </Show>
-                    </div></Show>
-                  </article>
-                  <Show when={props.onOpenManagedClip && props.snapshotOrigin && (clipCount() ?? 0) > 0 && clipsExpanded()}>
-                    <section class={matchStyles.recordingParts} id={`match-clips-${game.match_group}`} aria-label="Clips from this match">
-                      <ClipGroups token={props.snapshotOrigin!.token} ready={props.actionable}
-                        query={matchClipQuery} onOpen={props.onOpenManagedClip!} inline />
+                       </Show>
+                     </div>
+                    </div>
+                  <Show when={props.onOpenManagedClip && game.match_group && (clipCount() ?? 0) > 1}>
+                    <section class={matchStyles.matchClipStrip} id={clipRegionId} aria-label="Clips from this match" hidden={!clipsExpanded()}>
+                      <Show when={props.snapshotOrigin && clipsExpanded()}>
+                        <ClipGroups token={props.snapshotOrigin!.token} ready={props.actionable}
+                          query={matchClipQuery} onOpen={props.onOpenManagedClip!} inline />
+                      </Show>
                     </section>
                   </Show>
+                  </article>
                   <Show when={expanded()}>
                     <section id={`recording-parts-${game.match_group}`} class={matchStyles.recordingParts} aria-label="Match recordings">
                       <h3>Match recordings</h3>
