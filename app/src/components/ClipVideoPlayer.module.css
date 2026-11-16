@@ -1,0 +1,47 @@
+.surface {
+  position: relative;
+  min-width: 0;
+  color: #f8f5ef;
+  background: #000;
+}
+
+.surface video {
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  max-height: 72vh;
+  object-fit: contain;
+}
+
+.compact video {
+  max-height: min(55vh, 540px);
+}
+
+.surface:fullscreen {
+  width: 100%;
+  height: 100%;
+}
+
+.surface:fullscreen video {
+  height: 100%;
+  max-height: none;
+}
+
+.position {
+  display: block;
+  width: calc(100% - 32px);
+  min-width: 0;
+  height: 18px;
+  margin: 0 16px;
+  accent-color: var(--brand-yellow);
+  cursor: pointer;
+}
+
+.error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  margin: 0;
+  place-items: center;
+  pointer-events: none;
+}

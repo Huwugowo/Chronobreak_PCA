@@ -5629,6 +5629,33 @@
       "notes": "The existing preparation event retries details and restarts overlay pagination. Since a927654 the second pass includes scoreboard data. Verify request counts with a held initialization, an unchanged settled revision and a genuinely changed revision."
     },
     {
+      "id": "QB-CLIP-015",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Shared playback controls for library clips",
+      "description": "Use the app's replay transport in both clip dialogs, with consistent control sizing in windowed and fullscreen playback.",
+      "priority": "P1",
+      "area": "clip-library",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-008", "QB-REPLAY-021"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Both clip dialogs use the same play/pause, mute/volume, speed and fullscreen controls as replay, with fixed control dimensions across modes.",
+        "Clips retain autoplay, seeking and elapsed/duration display. Fullscreen transitions preserve the video element, and Escape exits fullscreen before closing the clip.",
+        "Fullscreen clips follow replay HUD visibility during play, pause and control interaction."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Exercise clip transport, fullscreen and idle behavior with focused tests, then run frontend tests, type checking, production frontend build and canonical validation."},
+        {"type": "manual", "description": "Use fixture clips to check windowed and fullscreen control sizing, playback and exit behavior."}
+      ],
+      "evidence": [
+        "2026-11-16: Both production clip dialogs use the shared replay transport and inactivity handling. Fullscreen targets the player container and preserves the existing video and clip position.",
+        "Three consecutive isolated Edge runs with generated landscape and portrait MP4s verified 34x34px play buttons with 18px icons in both modes, autoplay, seeking, speed, mute, idle wake and Escape exit before dialog close. Windowed and fullscreen captures reviewed. Report: build/verification/qb-clip-015/browser-report.json.",
+        "Frontend suite passed 601 tests across 44 files, including clip transport and fullscreen hover regressions. TypeScript, Vite production build, canonical validation and git diff --check passed."
+      ]
+    },
+    {
       "id": "QB-PERF-006",
       "kind": "feature",
       "stage": "ready",

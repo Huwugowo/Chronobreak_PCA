@@ -457,13 +457,6 @@ color: var(--text-muted);
   font-size: var(--type-secondary-size);
 }
 
-.clipModal video {
-display: block;
-  width: 100%;
-  max-height: 72vh;
-  background: #000;
-}
-
 .clipPreviewPlaceholder {
 display: grid;
   min-height: min(58vw, 540px);

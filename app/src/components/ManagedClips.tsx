@@ -8,6 +8,7 @@ import { recordedGameClock } from "../replayProjection";
 import { PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
 import { ClipHighlights, ClipTagInput } from "./ClipMetadataFields";
+import ClipVideoPlayer from "./ClipVideoPlayer";
 import ConfirmDialog from "./ConfirmDialog";
 import libraryStyles from "./Library.module.css";
 import styles from "./ManagedClips.module.css";
@@ -207,7 +208,7 @@ export function ManagedClipPlayer(props: {
   onMount(() => {
     closeButton.focus();
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !deleting() && !busy()) {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.repeat && !deleting() && !busy()) {
         if (editing()) setEditing(null); else props.onClose();
       }
     };
@@ -231,7 +232,7 @@ export function ManagedClipPlayer(props: {
             <span>{[props.clip.header.game.champion, caption(), formatDuration(clipDurationMs(props.clip))].filter(Boolean).join(" · ")}</span></div>
           <button ref={closeButton} class={controls.control} type="button" onClick={props.onClose} disabled={busy()}>Close</button>
         </header>
-        <video src={props.clip.video_url} controls autoplay playsinline preload="metadata" />
+        <ClipVideoPlayer src={props.clip.video_url} compact />
         <div class={styles.details}>
           <div class={styles.tags}>
             <For each={props.clip.header.highlights}>{tag => <span>{highlightLabel(tag)}</span>}</For>

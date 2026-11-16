@@ -297,6 +297,12 @@ can show the last mapped game-clock sample at or before the clip's first frame i
 the exact source recording. Playback and the source seek use the persisted clip
 identity and frame range.
 
+Both clip library dialogs share replay's fixed-size transport, speed steps and
+inactivity behavior. The clip player uses the exported video's native clock and
+duration for its scrubber. Fullscreen targets the player container so the same
+video element and controls stay mounted. Escape leaves fullscreen before the
+dialog can close.
+
 A supported replay event or timeline action enters clip mode with heuristic pre/post-roll. The user can adjust a media-bound, half-open source-frame interval subject to the minimum duration, choose output presets, vertical framing, music, and audio levels, then submit a request through Tauri.
 
 The production vertical editor uses a sharp primary video and a muted background

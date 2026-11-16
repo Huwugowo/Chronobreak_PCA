@@ -4,9 +4,12 @@ import { VolumeMuteIcon, VolumeUpIcon } from "../ui/icons";
 import styles from "./PlaybackControls.module.css";
 
 export type PlaybackControlsProps = {
-  state: (Pick<PlaybackSnapshot, "rate" | "audio" | "desiredPlaying" | "readiness"> & {
+  state: ({
+    rate: PlaybackSnapshot["rate"] | Pick<PlaybackSnapshot["rate"], "selected">;
     media: Pick<PlaybackSnapshot["media"], "muted" | "volume">;
-  }) | undefined;
+    readiness: PlaybackSnapshot["readiness"];
+  } & Partial<Pick<PlaybackSnapshot, "audio" | "desiredPlaying">>) | undefined;
+  mediaLabel?: "clip";
   onRate: (rate: PlaybackRate) => void;
   onMuted: (muted: boolean) => void;
   onVolume: (volume: number) => void;
@@ -15,6 +18,11 @@ export type PlaybackControlsProps = {
 
 export default function PlaybackControls(props: PlaybackControlsProps) {
   const rate = () => props.state?.rate;
+  const diagnostics = () => {
+    const value = rate();
+    return value && "outcome" in value ? value : undefined;
+  };
+  const mediaLabel = () => props.mediaLabel ?? "replay";
   const rateIndex = () => PLAYBACK_RATES.indexOf(rate()?.selected ?? 1);
   const adjacentRate = (direction: -1 | 1) => PLAYBACK_RATES[rateIndex() + direction];
   const stepRate = (direction: -1 | 1) => {
@@ -31,9 +39,9 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
     props.state.readiness === "disposed";
 
   const rateDescription = () => {
-    const value = rate();
+    const value = diagnostics();
 
-    if (!value) return "Speed unavailable";
+    if (!value) return !props.state && !props.mediaLabel ? "Speed unavailable" : undefined;
 
     if (value.limitation) {
       const active =
@@ -86,7 +94,7 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         <button
           class={styles.muteButton}
           type="button"
-          aria-label={muted() ? "Unmute replay" : "Mute replay"}
+          aria-label={`${muted() ? "Unmute" : "Mute"} ${mediaLabel()}`}
           aria-pressed={muted()}
           title={muted() ? "Unmute" : "Mute"}
           disabled={unavailable()}
@@ -102,7 +110,7 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
             min="0"
             max="100"
             step="1"
-            aria-label="Replay volume"
+            aria-label={`${props.mediaLabel ? "Clip" : "Replay"} volume`}
             aria-valuetext={`${displayedVolumePercent()}%`}
             title={`${displayedVolumePercent()}%`}
             value={displayedVolumePercent()}
@@ -125,11 +133,11 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         </label>
       </div>
 
-      <div class={styles.speed} role="group" aria-label="Replay speed">
+      <div class={styles.speed} role="group" aria-label={`${props.mediaLabel ? "Clip" : "Replay"} speed`}>
         <button
           class={styles.speedButton}
           type="button"
-          aria-label="Decrease replay speed"
+          aria-label={`Decrease ${mediaLabel()} speed`}
           title={adjacentRate(-1) === undefined ? "Minimum speed" : `Decrease speed to ${adjacentRate(-1)}x`}
           disabled={unavailable() || adjacentRate(-1) === undefined}
           onClick={() => stepRate(-1)}
@@ -139,7 +147,7 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         <button
           class={styles.speedButton}
           type="button"
-          aria-label="Increase replay speed"
+          aria-label={`Increase ${mediaLabel()} speed`}
           title={adjacentRate(1) === undefined ? "Maximum speed" : `Increase speed to ${adjacentRate(1)}x`}
           disabled={unavailable() || adjacentRate(1) === undefined}
           onClick={() => stepRate(1)}
@@ -148,7 +156,7 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         </button>
         <output
           class={styles.speedValue}
-          aria-label="Selected replay speed"
+          aria-label={`Selected ${mediaLabel()} speed`}
           aria-live="polite"
           title={rateDescription()}
         >
@@ -156,16 +164,18 @@ export default function PlaybackControls(props: PlaybackControlsProps) {
         </output>
       </div>
 
-      <span
-        classList={{
-          [styles.status]: true,
-          [styles.limited]: Boolean(rate()?.limitation),
-        }}
-        role="status"
-        title={rate()?.limitation ?? undefined}
-      >
-        {rateDescription()}
-      </span>
+      <Show when={rateDescription()}>
+        <span
+          classList={{
+            [styles.status]: true,
+            [styles.limited]: Boolean(diagnostics()?.limitation),
+          }}
+          role="status"
+          title={diagnostics()?.limitation ?? undefined}
+        >
+          {rateDescription()}
+        </span>
+      </Show>
 
       <Show when={props.state?.audio === "runtime-limited"}>
         <span

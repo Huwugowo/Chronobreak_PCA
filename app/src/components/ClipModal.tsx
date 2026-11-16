@@ -1,8 +1,9 @@
-import { onCleanup, onMount } from "solid-js";
+import { Show, onCleanup, onMount } from "solid-js";
 import { formatDate, formatDuration } from "../format";
 import type { ClipSummary } from "../types";
 import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
+import ClipVideoPlayer from "./ClipVideoPlayer";
 
 type Props = {
   clip: ClipSummary;
@@ -15,7 +16,7 @@ function ClipModal(props: Props) {
   onMount(() => {
     closeButton.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.onClose();
+      if (event.key === "Escape" && !event.defaultPrevented && !event.repeat) props.onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
@@ -43,14 +44,14 @@ function ClipModal(props: Props) {
             Close
           </button>
         </header>
-        {props.clip.video_url ? (
-          <video src={props.clip.video_url} controls autoplay playsinline preload="metadata" />
-        ) : (
+        <Show when={props.clip.video_url} keyed fallback={
           <div class={styles.clipPreviewPlaceholder}>
             <strong>CLIP PREVIEW</strong>
             <span>Open the Tauri app to attach a local clip.</span>
           </div>
-        )}
+        }>
+          {src => <ClipVideoPlayer src={src} />}
+        </Show>
       </section>
     </div>
   );
