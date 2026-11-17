@@ -122,8 +122,10 @@ settles as unavailable for its source version without blocking later recordings.
 
 Catalog identity depends on actual library membership/basic metadata, rather
 than a window-specific admission token. Source fingerprints include both final
-result files, metadata, the observation manifest and journal generation. UI
-admission still checks the accepted filesystem snapshot and selected root.
+result files, metadata other than the saved flag, the observation manifest and
+journal generation. Favorite changes update the catalog without invalidating
+prepared match facts. UI admission still checks the accepted filesystem
+snapshot and selected root.
 Reset holds the same writer lock through quarantine/replacement; subsequent
 preparation rebuilds from the recording sources. Source files remain authoritative.
 

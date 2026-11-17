@@ -236,10 +236,15 @@ impl Index {
         }
         tx.execute("DELETE FROM recordings WHERE NOT EXISTS(SELECT 1 FROM present p WHERE p.bundle=recordings.bundle AND p.media_id=recordings.media_id)", [])?;
         {
+            // Save state belongs to the catalog and query result, not to the checked facts.
             let mut update = tx.prepare_cached("INSERT INTO recordings(bundle,media_id,recorded_at,champion,mode,saved,summary_json,outcome,match_group)
             VALUES (?1,?2,?3,?4,?5,?6,?7,'unknown',?8) ON CONFLICT(media_id) DO UPDATE SET
             recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,summary_json=excluded.summary_json,match_group=excluded.match_group,
-            facts_current=CASE WHEN recordings.summary_json=excluded.summary_json THEN recordings.facts_current ELSE 0 END")?;
+            facts_current=CASE
+              WHEN recordings.summary_json=excluded.summary_json THEN recordings.facts_current
+              WHEN json_valid(recordings.summary_json) THEN
+                recordings.facts_current AND json_set(recordings.summary_json,'$.saved',json('false'))=excluded.summary_json
+              ELSE 0 END")?;
             for game in games {
                 if let Some(media) = &game.media_id
                     && counts.get(media) == Some(&1)
@@ -251,7 +256,7 @@ impl Index {
                         game.champion,
                         game.game_mode,
                         game.saved,
-                        serde_json::to_string(game)?,
+                        facts_summary_json(game)?,
                         game.match_group,
                     ])?;
                 }
@@ -349,7 +354,7 @@ impl Index {
         // must invalidate this version, rather than bless older decoded facts.
         let stamp = source_stamp(&directory)?;
         let timeline_json = serde_json::to_string(&descriptor.media_timeline)?;
-        let summary_json = serde_json::to_string(summary)?;
+        let summary_json = facts_summary_json(summary)?;
         if !rebuild {
             let current: bool = self.db.query_row(
                 "SELECT EXISTS(SELECT 1 FROM recordings WHERE media_id=?1 AND bundle=?2
@@ -415,12 +420,15 @@ impl Index {
             .optional()?
             .flatten();
         self.db.execute(
-            "UPDATE recordings SET facts_current=0 WHERE media_id=?1 AND (summary_json!=?2 OR result_json IS NOT ?3)",
+            "UPDATE recordings SET facts_current=0 WHERE media_id=?1 AND (result_json IS NOT ?3 OR CASE
+               WHEN summary_json=?2 THEN 0
+               WHEN json_valid(summary_json) THEN json_set(summary_json,'$.saved',json('false'))!=?2
+               ELSE 1 END)",
             params![media.as_str(), summary_json, result_json],
         )?;
         self.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json,match_group)
             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
-            ON CONFLICT(media_id) DO UPDATE SET recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,
+            ON CONFLICT(media_id) DO UPDATE SET recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,
               queue_id=excluded.queue_id,map_id=excluded.map_id,outcome=excluded.outcome,game_id=excluded.game_id,summary_json=excluded.summary_json,result_json=excluded.result_json",
             params![media.as_str(),summary.timestamp,summary.recorded_at,summary.champion,summary.game_mode,summary.saved,
                 result.as_ref().and_then(|r| r.queue_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.queue_id))).map(sql_u64).transpose()?,
@@ -662,7 +670,7 @@ pub(crate) fn source_stamp(directory: &Path) -> Result<String> {
     // journal's size/change time avoids rereading unchanged history; explicit
     // rebuild verifies the whole checksum chain.
     for (file, cap) in [
-        ("metadata.json", 64 * 1024),
+        (library::METADATA_JSON, 64 * 1024),
         (manifest::FILE, manifest::MAX_BYTES),
         ("league_match.json", 64 * 1024),
         (
@@ -676,6 +684,18 @@ pub(crate) fn source_stamp(directory: &Path) -> Result<String> {
     ] {
         hash.update(file.as_bytes());
         match bounded(&directory.join(file), cap) {
+            Ok(bytes) if file == library::METADATA_JSON => {
+                match library::metadata_without_saved(&bytes) {
+                    Ok(facts) => {
+                        hash.update([1]);
+                        hash.update(facts);
+                    }
+                    Err(_) => {
+                        hash.update([0]);
+                        hash.update(bytes);
+                    }
+                }
+            }
             Ok(bytes) => hash.update(bytes),
             Err(_) => hash.update(b"unavailable"),
         }
@@ -695,6 +715,18 @@ pub(crate) fn source_stamp(directory: &Path) -> Result<String> {
         }
     }
     Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn facts_summary_json(game: &GameSummary) -> Result<String> {
+    // Keep the serialized GameSummary shape readable by existing caches. The
+    // catalog's saved column is authoritative when projecting a History row.
+    if game.saved {
+        let mut facts = game.clone();
+        facts.saved = false;
+        Ok(serde_json::to_string(&facts)?)
+    } else {
+        Ok(serde_json::to_string(game)?)
+    }
 }
 
 /// Stable across headless preparation and UI refreshes; admission tokens remain separate.

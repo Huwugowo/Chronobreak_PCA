@@ -1224,6 +1224,121 @@ fn ui_refresh_keeps_unchanged_prepared_history_current() {
 }
 
 #[test]
+fn favorite_metadata_rewrite_preserves_source_stamp() {
+    let f = Fixture::new(1);
+    let stamp = source_stamp(&f.directory).unwrap();
+    let approved = crate::playback_file::ApprovedRoot::new(f.root.path()).unwrap();
+    let owner =
+        crate::library_mutation::LibraryMutation::acquire(f.root.path(), &approved).unwrap();
+    for saved in [true, false] {
+        library::save_game(&owner, &f.summary.timestamp, saved).unwrap();
+        assert_eq!(source_stamp(&f.directory).unwrap(), stamp);
+    }
+
+    let path = f.directory.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    metadata["local_player_champion"] = serde_json::json!("Lux");
+    fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    assert_ne!(source_stamp(&f.directory).unwrap(), stamp);
+}
+
+#[tokio::test]
+async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
+    use crate::library_coordinator::{LibraryCoordinator, Selection};
+    use crate::playback_server::MediaRoots;
+    use std::sync::Arc;
+
+    let f = Fixture::new(1);
+    let mut result = library::tests::result_fixture(&f.source.media_id);
+    let player = result.local_player.as_mut().unwrap();
+    player.stats.minions = Some(127);
+    player.stats.jungle_minions = Some(9);
+    result.teams[0].players[0].riot_id = Some("Player#EUW".into());
+    result.teams[0].players[0].champion_name = Some("Syndra".into());
+    result.source_facts.local_player = Some(obs::FinalPlayer {
+        game_id: Some(result.game_id.clone()),
+        items: Some(vec![Some(3_085)]),
+        ..Default::default()
+    });
+    fs::write(
+        f.directory.join(chronobreak_league_data::RESULT_FILE),
+        serde_json::to_vec(&result).unwrap(),
+    )
+    .unwrap();
+    let roots = Arc::new(MediaRoots::new(f.root.path().to_owned()).unwrap());
+    let coordinator = LibraryCoordinator::new();
+    let mut snapshot = coordinator.refresh(&roots, "").await.unwrap();
+    let (_, approved) = roots.output_pair();
+    let root = approved.path();
+    let mut index = Index::open(f.cache.path(), root).unwrap();
+    index.reconcile(&snapshot.games, &snapshot.token).unwrap();
+    let original = &snapshot.games[0];
+    assert!((0..10).any(|_| index.prepare_recording(root, original, &|| Ok(())).unwrap()));
+    let query = HistoryQuery {
+        limit: 10,
+        ..Default::default()
+    };
+    let page = index.history(&query, 1).unwrap();
+    let stats = &page.rows[0].stats;
+    assert_eq!(
+        (stats.kills, stats.deaths, stats.assists),
+        (Some(6), Some(2), Some(9))
+    );
+    assert_eq!(stats.creep_score, Some(136));
+    assert_eq!(stats.items, Some(vec![Some(3_085)]));
+    assert_eq!(
+        page.rows[0].game.participants[0].summoner_name,
+        "Player#EUW"
+    );
+    let mut expected = serde_json::to_value(&page.rows[0]).unwrap();
+
+    for saved in [true, false] {
+        let bundle = f.summary.timestamp.clone();
+        coordinator
+            .mutate(
+                &roots,
+                &snapshot.token,
+                Selection::Game(&f.summary.timestamp),
+                move |owner| library::save_game(owner, &bundle, saved),
+            )
+            .await
+            .unwrap();
+        assert!(
+            index
+                .prepared_progress(root, &snapshot.games[0])
+                .unwrap()
+                .history_ready
+        );
+        assert_eq!(
+            serde_json::to_value(&index.history(&query, 1).unwrap().rows[0]).unwrap(),
+            expected
+        );
+        snapshot = coordinator.refresh(&roots, "").await.unwrap();
+        index.reconcile(&snapshot.games, &snapshot.token).unwrap();
+
+        // The catalog and first query run before any preparation can repair the card.
+        let reader = Index::reader(f.cache.path(), root).unwrap();
+        let progress = reader.prepared_progress(root, &snapshot.games[0]).unwrap();
+        assert!(progress.history_ready);
+        assert_eq!(progress.status, "ready");
+        expected["game"]["saved"] = serde_json::json!(saved);
+        let page = reader.history(&query, 1).unwrap();
+        assert_eq!(serde_json::to_value(&page.rows[0]).unwrap(), expected);
+        let favorites = reader
+            .history(
+                &HistoryQuery {
+                    saved_only: Some(true),
+                    ..query.clone()
+                },
+                1,
+            )
+            .unwrap();
+        assert_eq!(favorites.rows.len(), usize::from(saved));
+    }
+}
+
+#[test]
 fn history_rejects_oversized_rows_before_deserialization() {
     let f = Fixture::new(1);
     let mut index = f.index();

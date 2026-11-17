@@ -7,7 +7,7 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 // The newest member stands for its match in the date index. Card facts can
 // come from another member without changing the cursor or page membership.
 pub(super) const HISTORY_SQL: &str = "
-    SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id
+    SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved
     FROM recordings g INDEXED BY recordings_date CROSS JOIN recordings r ON r.media_id=(
         SELECT part.media_id FROM recordings part WHERE part.match_group=g.match_group
         ORDER BY CASE
@@ -567,6 +567,7 @@ impl Index {
                 HistoryStats::unavailable()
             };
             let mut game: GameSummary = serde_json::from_str(&row.get::<_, String>(1)?)?;
+            game.saved = row.get(7)?;
             if current {
                 game.league_result = result.as_ref().map(ResultFile::summary);
             }

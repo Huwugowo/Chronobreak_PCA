@@ -20,7 +20,7 @@ use crate::config;
 use crate::directory_guard::{DirectoryGuard, is_missing, open_regular, reject_reparse};
 use crate::library_mutation::LibraryMutation;
 
-const METADATA_JSON: &str = "metadata.json";
+pub(crate) const METADATA_JSON: &str = "metadata.json";
 const VIDEO_MP4: &str = "video.mp4";
 pub(crate) const UNMATCHED_RECORDINGS: &str = "unmatched-recordings";
 
@@ -880,6 +880,13 @@ pub(crate) fn save_game(owner: &LibraryMutation, timestamp: &str, saved: bool) -
     let mut bytes = serde_json::to_vec_pretty(&metadata).context("failed to serialize metadata")?;
     bytes.push(b'\n');
     config::write_atomic(&metadata_path, &bytes)
+}
+
+/// Use the save writer's document shape so a rewrite changes only the ignored favorite bit.
+pub(crate) fn metadata_without_saved(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut metadata: MetadataDocument = serde_json::from_slice(bytes)?;
+    metadata.saved = false;
+    Ok(serde_json::to_vec(&metadata)?)
 }
 
 pub(crate) fn delete_game(owner: &LibraryMutation, timestamp: &str) -> Result<()> {
