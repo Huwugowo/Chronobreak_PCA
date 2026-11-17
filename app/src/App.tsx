@@ -1,4 +1,4 @@
-import { onPreparedData } from "./preparedData";
+import { onLibraryCatalogChanged, onPreparedData } from "./preparedData";
 import {
   Match,
   Show,
@@ -94,7 +94,7 @@ function App() {
     durations: (token, ids, retry) => import("./api").then(api => api.resolveClipDurations(token, ids, retry)),
   });
   const [libraryState, setLibraryState] = createSignal(controller.value);
-  const history = new HistoryController({ current: origin => controller.mayPublish(origin),
+  const history = new HistoryController({ current: origin => controller.mayStart(origin),
     catalog: (_token, after, origin) => controller.writeIndex(origin, "history", token => indexCatalog(token, after)),
     recording: (_token, game, origin) => controller.writeIndex(origin, "history", token => indexRecording(token, game)), history: queryHistory,
     observeQuery: event => observeBenchmarkHistory(event, generation => history.isQueryCurrent(generation) &&
@@ -141,25 +141,22 @@ function App() {
   const [managedSelection, setManagedSelection] = createSignal<{ clip: ClipCard; origin: LibraryOrigin; button: HTMLElement }>();
   const [singleClipRequest, setSingleClipRequest] = createSignal<{ group: string; origin: LibraryOrigin }>();
   const [clipReturn, setClipReturn] = createSignal<{ tab: LibraryTab; position: ClipDraft; button: HTMLElement }>();
-  const [restoringClipView, setRestoringClipView] = createSignal(false);
-  const libraryTab = createMemo(() => {
+  const libraryTab = createMemo<LibraryTab>(previous => {
     const screen = navigation();
-    return screen.screen === "library" ? screen.tab : clipReturn()?.tab;
-  });
+    return screen.screen === "library" ? screen.tab : previous;
+  }, initialTab());
   const acceptedSnapshot = createMemo(() => libraryState().snapshot);
+  const [changedCatalogToken, setChangedCatalogToken] = createSignal<string>();
   const libraryActionable = createMemo(() => libraryState().actionable);
   const hasHistoryPage = createMemo(() => Boolean(historyState().page));
+  const needsClipIndex = createMemo(() => libraryTab() === "clips" || hasHistoryPage() || navigation().screen === "clip-export");
   createEffect(() => {
     if (!managed) return;
-    const screen = navigation();
     const snapshot = acceptedSnapshot();
     const actionable = libraryActionable();
     clipIndexRetry();
     const origin = controller.origin();
-    const historyVisible = screen.screen === "library" && screen.tab === "games";
-    const needsClips = screen.screen === "clip-export" || (screen.screen === "library" &&
-      (screen.tab === "clips" || hasHistoryPage()));
-    if (!snapshot?.managed_clip_count || !actionable || !origin || !needsClips ||
+    if (!snapshot?.managed_clip_count || !actionable || !origin || !needsClipIndex() ||
         snapshot.token === untrack(clipIndexToken)) return;
     let live = true;
     let timer: number | undefined;
@@ -171,7 +168,7 @@ function App() {
         if (!live) return;
         if (ready) {
           setClipIndexToken(origin.token);
-          if (historyVisible && history.value.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
+          if (history.value.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
         }
         else timer = window.setTimeout(() => void step(), 25);
       } catch (error) {
@@ -306,26 +303,17 @@ function App() {
   const viewerBackLabel = () => viewerReturnTab() === "clips" ? "Back to Clips" : "Back to Match History";
   const returnFromViewer = () => {
     const destination = clipReturn();
-    if (!destination) { openTab("games"); return; }
-    batch(() => {
-      setRestoringClipView(true);
-      controller.navigate(false);
-      setNavigation({ screen: "library", tab: viewerReturnTab() });
-    });
-    queueMicrotask(() => {
-      setRestoringClipView(false);
-      setClipReturn(undefined);
+    openTab(destination?.tab ?? "games");
+    if (destination) queueMicrotask(() => {
       if (destination.button.isConnected) destination.button.focus();
     });
   };
 
   const openTab = (tab: LibraryTab) => {
-    const returningToLibrary = navigation().screen !== "library";
     closeManagedClip();
     setClipReturn(undefined);
     controller.navigate(!managed && tab === "clips");
     setNavigation({ screen: "library", tab });
-    if (returningToLibrary) controller.refresh();
   };
 
   const openSettings = () => {
@@ -344,9 +332,8 @@ function App() {
     }
     const destination = current.returnTo;
     if (destination.screen === "library") {
-      controller.navigate(destination.tab === "clips");
+      controller.navigate(!managed && destination.tab === "clips");
       setNavigation(destination);
-      controller.refresh();
     } else if (destination.screen === "viewer") {
       const selected = viewerSelection();
       if (selected && controller.mayStart(selected.origin)) openViewer(destination.gameTimestamp, destination.clipDraft);
@@ -504,12 +491,25 @@ function App() {
   });
 
   createEffect(() => {
-    const current = navigation();
     const state = libraryState();
-    if (current.screen !== "library" && clipReturn()?.tab === "games") return;
-    const visible = current.screen === "library" && current.tab === "games";
-    history.setContext(visible ? controller.origin() : null, state.snapshot?.games,
-      restoringClipView(), !state.actionable || state.busy !== null);
+    history.setContext(libraryTab() === "games" ? controller.origin() : null,
+      state.snapshot?.games, !state.actionable || state.busy !== null);
+  });
+
+  createEffect(() => {
+    const token = changedCatalogToken();
+    if (!token) return;
+    const state = libraryState();
+    if (state.snapshot?.token !== token) setChangedCatalogToken(undefined);
+    else if (navigation().screen === "library" && !state.refreshing && !state.busy) {
+      // Give an in-app mutation's own refresh first claim on this snapshot.
+      queueMicrotask(() => {
+        if (changedCatalogToken() !== token || navigation().screen !== "library" ||
+            controller.value.refreshing || controller.value.busy || controller.value.snapshot?.token !== token) return;
+        setChangedCatalogToken(undefined);
+        void controller.refresh();
+      });
+    }
   });
 
   createEffect(() => {
@@ -553,7 +553,12 @@ function App() {
   createEffect(() => benchmarkApplication()?.update());
 
   onMount(() => {
-    const unsubscribePrepared = onPreparedData(() => history.prepared());
+    const unsubscribePrepared = onPreparedData(media => {
+      if (!changedCatalogToken()) history.prepared(media);
+    });
+    const unsubscribeCatalog = onLibraryCatalogChanged(token => {
+      if (controller.value.snapshot?.token === token) setChangedCatalogToken(token);
+    });
     const unsubscribe = controller.subscribe(setLibraryState);
     setLibraryState(controller.value);
     void ensureHevcCapability()
@@ -579,6 +584,7 @@ function App() {
 
     onCleanup(() => {
       unsubscribePrepared();
+      unsubscribeCatalog();
       unsubscribe();
       controller.dispose();
       window.clearInterval(pollAssets);
@@ -707,13 +713,16 @@ function App() {
             />
           </Match>
         </Switch>
-        <Show when={libraryTab() && !loading() && (!loadError() || acceptedSnapshot())}>
+        <Show when={!loading() && (!loadError() || acceptedSnapshot())}>
           <div hidden={navigation().screen !== "library"}>
             <Show when={loadError() && libraryState().snapshot}>
-              <p class={styles.errorLabel} role="alert">{String(loadError())}</p>
+              <div role="alert">
+                <p class={styles.errorLabel}>{String(loadError())}</p>
+                <button class={controls.control} type="button" onClick={() => void reloadLibrary()}>Try again</button>
+              </div>
             </Show>
             <LibraryScreen
-              tab={libraryTab()!}
+              tab={libraryTab()}
               games={games() ?? []}
               history={historyState()}
               onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}

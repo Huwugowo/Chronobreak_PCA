@@ -172,6 +172,18 @@ impl LibraryCoordinator {
         }
     }
 
+    /// An owned snapshot for comparing watcher discovery outside the publication lock.
+    pub(crate) fn selected_snapshot(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<(ApprovedRoot, Arc<LibrarySnapshot>)> {
+        let publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+        let current = publication.current.as_ref()?;
+        (current.path == path
+            && publication.selected_token.as_ref() == Some(&current.snapshot.token))
+        .then(|| (current.root.clone(), Arc::clone(&current.snapshot)))
+    }
+
     #[cfg(test)]
     pub(crate) async fn refresh(
         &self,

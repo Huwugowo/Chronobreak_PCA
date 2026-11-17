@@ -691,6 +691,8 @@ mod tests {
         };
         let before = scan("before");
         assert_eq!(before.usage.clip_count, 6);
+        let approved = crate::playback_file::ApprovedRoot::new(root.path()).unwrap();
+        assert!(!library::clip_inventory_changed(&approved, &before).unwrap());
         let mut index = Index::open(cache.path(), root.path()).unwrap();
         index.reconcile(&before.games, &before.token).unwrap();
         assert!(!index.reconcile_clips(&before, &|| Ok(())).unwrap());
@@ -805,7 +807,9 @@ mod tests {
             selected_dir.join(&renamed_leaf),
         )
         .unwrap();
+        assert!(library::clip_inventory_changed(&approved, &before).unwrap());
         let renamed = scan("renamed");
+        assert!(!library::clip_inventory_changed(&approved, &renamed).unwrap());
         assert!(!index.clip_ready(&renamed.managed_clip_stamp));
         assert!(!index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
@@ -815,6 +819,7 @@ mod tests {
         )
         .unwrap();
         fs::remove_dir_all(root.path().join("clips").join(other.as_str())).unwrap();
+        assert!(library::clip_inventory_changed(&approved, &renamed).unwrap());
         let removed = scan("removed");
         assert!(!index.clip_ready(&removed.managed_clip_stamp));
         assert!(!index.reconcile_clips(&removed, &|| Ok(())).unwrap());

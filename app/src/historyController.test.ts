@@ -477,7 +477,7 @@ it("reuses the settled page when returning to the same accepted snapshot", async
   controller.setContext(initial, [game]);
   await vi.advanceTimersByTimeAsync(500);
   expect(api.history).toHaveBeenCalledOnce();
-  controller.setContext({ ...initial, navigation: initial.navigation + 1 }, [game], true);
+  controller.setContext({ ...initial, navigation: initial.navigation + 1 }, [game]);
   await vi.advanceTimersByTimeAsync(500);
   expect(controller.value.page).toBe(accepted);
   expect(api.history).toHaveBeenCalledOnce();

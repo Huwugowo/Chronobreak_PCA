@@ -5584,7 +5584,9 @@
       "verification": [
         {"type": "automated", "description": "Run History request-count and native readiness regressions and compare first-launch cards with the previous release on the copied two-match fixture."}
       ],
-      "evidence": [],
+      "evidence": [
+        "The App integration exercises a favorite refresh and two replay round trips with populated History facts. The same cards and images remain mounted, and replay navigation adds no scan, status, clip reconciliation or History query. Separate tests cover indexed changes and external catalog changes while the viewer is open."
+      ],
       "dependencies": ["QB-LIB-034"],
       "execution": {"workflow": "adaptive", "plan": null},
       "notes": "The 6f47ba0 readiness fix extends bounded polling while card facts are pending. One status check can fingerprint the same source twice. Returning from a clip's source replay also requests an unchanged page. Keep freshness validation and verify first-launch card loading."

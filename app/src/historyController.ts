@@ -22,7 +22,6 @@ type Dependencies = {
   history: (token: string, query: HistoryQuery) => Promise<HistoryPage>;
   observeQuery?: (event: HistoryQueryObservation) => void;
 };
-const key = (origin: LibraryOrigin) => JSON.stringify(origin);
 const needsPreparation = (progress: ImportProgress) =>
   progress.status === "pending" || (progress.status === "ready" && progress.history_ready === false);
 
@@ -62,30 +61,22 @@ export class HistoryController {
     actionId: string | undefined, rowCount?: number) {
     this.api.observeQuery?.({ kind, generation, actionId, rowCount });
   }
-  setContext(origin: LibraryOrigin | null, games: GameSummary[] = [], preservePage = false, suspended = false) {
+  setContext(origin: LibraryOrigin | null, games: GameSummary[] = [], suspended = false) {
     if (this.closed) return;
     const previous = this.context?.origin;
-    const sameView = origin && previous && origin.root === previous.root &&
-      origin.rootEpoch === previous.rootEpoch && origin.navigation === previous.navigation;
-    if (suspended && sameView) {
+    const sameRoot = origin && previous && origin.root === previous.root && origin.rootEpoch === previous.rootEpoch;
+    if (suspended && sameRoot) {
       // Keep displaying the accepted page while mutations and scans gate new work.
       this.suspended = true;
       clearTimeout(this.timer);
       return;
     }
-    const retainedPage = this.suspended && sameView ? this.state.page : null;
+    const retainedPage = sameRoot ? this.state.page : null;
     const wasSuspended = this.suspended;
     this.suspended = false;
     if (suspended) origin = null;
-    if (!wasSuspended && origin && previous && key(origin) === key(previous)) return;
-    if (!wasSuspended && preservePage && origin && this.context?.origin.token === origin.token &&
-        this.context.origin.rootEpoch === origin.rootEpoch) {
-      this.context = { ...this.context, origin, games };
-      if (this.queryActive || this.queryPending || !this.state.page || this.state.error ||
-          this.context.queriedRevision !== this.context.revision) this.refreshQuery();
-      this.schedule();
-      return;
-    }
+    if (!wasSuspended && sameRoot && origin && origin.request === previous.request && origin.token === previous.token) return;
+    if (!origin && !this.context) return;
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
     this.context = origin ? { origin, games, revision: 0, queriedRevision: -1 } : null;
     clearTimeout(this.timer);
@@ -97,8 +88,12 @@ export class HistoryController {
       laterPage: !!retainedPage && this.state.laterPage, historyReady: retainedPage ? this.state.historyReady : {} });
     this.schedule();
   }
-  prepared() {
+  prepared(media?: readonly string[]) {
     if (!this.context || !this.current(this.context)) return;
+    if (media) {
+      const changed = new Set(media);
+      if (!this.context.games.some(game => game.media_id && changed.has(game.media_id))) return;
+    }
     this.context.revision++;
     this.refreshQuery();
   }

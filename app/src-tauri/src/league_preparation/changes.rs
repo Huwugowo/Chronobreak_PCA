@@ -9,6 +9,8 @@ use std::{
 #[derive(Clone, Default)]
 pub(super) struct Changes {
     pub rescan: bool,
+    // Clip hints can invalidate the library snapshot without waking League preparation.
+    pub clips: bool,
     // true also discovers a newly published bundle; telemetry alone does not.
     pub bundles: BTreeMap<String, bool>,
 }
@@ -23,25 +25,44 @@ impl Changes {
         !self.rescan && self.bundles.is_empty()
     }
     pub fn merge(&mut self, other: Self) {
+        let clips = self.clips || other.clips;
         if self.rescan || other.rescan {
             *self = Self::all();
+            self.clips = clips;
             return;
         }
+        self.clips = clips;
         for (bundle, discover) in other.bundles {
             *self.bundles.entry(bundle).or_default() |= discover;
         }
         if self.bundles.len() > 256 {
-            *self = Self::all();
+            self.rescan = true;
+            self.bundles.clear();
         }
     }
     fn event(&mut self, root: &Path, database: &Path, event: &Event) {
         if event.need_rescan() {
             *self = Self::all();
+            self.clips = true;
         }
-        if self.rescan || matches!(event.kind, EventKind::Access(_)) {
+        if matches!(event.kind, EventKind::Access(_)) {
             return;
         }
         for path in &event.paths {
+            if let Ok(relative) = path.strip_prefix(root.join("clips")) {
+                let mut parts = relative.iter();
+                self.clips |= parts.next().is_none_or(|part| {
+                    part.to_str().is_some_and(|leaf| {
+                        leaf.ends_with(".mp4")
+                            || leaf.ends_with(".jpg")
+                            || crate::clip_bundle::ClipId::parse(leaf).is_ok()
+                    })
+                });
+                continue;
+            }
+            if self.rescan {
+                continue;
+            }
             if path == database {
                 // Ordinary SQLite/WAL writes are not source changes. Replacement is.
                 if matches!(
@@ -131,7 +152,10 @@ impl Watch {
             };
             match event {
                 Ok(event) => pending.event(&watched_root, &database, &event),
-                Err(_) => *pending = Changes::all(),
+                Err(_) => {
+                    *pending = Changes::all();
+                    pending.clips = true;
+                }
             }
         })?;
         watcher.watch(root, RecursiveMode::Recursive)?;
@@ -209,6 +233,13 @@ mod tests {
             &Event::new(EventKind::Remove(RemoveKind::File)).add_path(db.clone()),
         );
         assert!(changes.rescan);
+        changes.event(
+            &root,
+            &db,
+            &Event::new(EventKind::Create(CreateKind::File))
+                .add_path(root.join("clips/100_102.mp4")),
+        );
+        assert!(changes.clips);
     }
     #[test]
     fn native_notification_targets_a_new_history_sidecar() {

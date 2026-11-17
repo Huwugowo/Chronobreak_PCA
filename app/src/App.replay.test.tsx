@@ -231,7 +231,7 @@ it("shares the actual App writer wiring across early replay open and return", as
   expect(indexCatalog).toHaveBeenCalledOnce();
   releaseReplay({ media_id: parseMediaId("11111111-2222-4333-8444-555555555555"), status: "ready", batches: 0, position: null, tail_bytes: 0 });
   await stale;
-  await vi.waitFor(() => expect(indexCatalog).toHaveBeenCalledTimes(2));
+  expect(indexCatalog).toHaveBeenCalledOnce();
 });
 
 it("opens independently of held assets/durations and reacquires origins on Settings/exporter return", async () => {

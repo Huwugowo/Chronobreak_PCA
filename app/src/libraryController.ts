@@ -159,7 +159,8 @@ export class LibraryController {
   }
   navigate(clipsVisible: boolean) {
     this.navigation++;
-    this.supersedeIndexWrites(false);
+    this.indexPending.get("replay")?.cancel();
+    this.indexPending.delete("replay");
     this.supersedeReplay();
     this.clipsVisible = clipsVisible;
     this.supersedeDurations();
@@ -185,7 +186,7 @@ export class LibraryController {
   /** Native writes cannot be cancelled by leaving a screen. Keep their owner
    * until settlement, with at most one latest queued intent per purpose. */
   writeIndex<T>(origin: LibraryOrigin, purpose: IndexWritePurpose, work: (token: string) => Promise<T>): Promise<T> {
-    const current = () => purpose === "maintenance" ? this.mayStart(origin) : this.mayPublish(origin);
+    const current = () => purpose === "replay" ? this.mayPublish(origin) : this.mayStart(origin);
     const staleError = () => new Error("Library index request became stale. Refresh the library.");
     if (!current()) return Promise.reject(staleError());
     this.indexPending.get(purpose)?.cancel();
@@ -215,10 +216,9 @@ export class LibraryController {
     this.indexActive = true;
     void intent.run().finally(() => { this.indexActive = false; this.pumpIndex(); });
   }
-  private supersedeIndexWrites(maintenance = true) {
-    for (const [purpose, intent] of this.indexPending) {
-      if (maintenance || purpose !== "maintenance") { intent.cancel(); this.indexPending.delete(purpose); }
-    }
+  private supersedeIndexWrites() {
+    for (const intent of this.indexPending.values()) intent.cancel();
+    this.indexPending.clear();
   }
 
   /** One active read across lifetimes, latest pending intent per independent purpose. */

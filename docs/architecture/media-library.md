@@ -288,6 +288,12 @@ materialized during import. Count queries roll up those per-recording flags by
 match without reading historical observations. History describes the last
 checked projection in its accepted snapshot; selected replay reads also recheck
 the current source stamp before returning data.
+Match History keeps its mounted cards, filters and accepted query across replay
+navigation. Replay requests belong to the active viewer, and History requests
+belong to the accepted library snapshot. Preparation events refresh affected
+History results. The library watcher compares discovered recordings and changed
+clip inventory with the accepted snapshot, and requests reconciliation on the
+next library view when contents differ.
 KDA and inventory use nullable final EOG facts or an explicitly labelled recorded
 snapshot. History also projects final keystone/secondary rune-tree IDs and total CS
 (lane plus neutral minions). CS requires both components; CS/min uses positive

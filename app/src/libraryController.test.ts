@@ -76,7 +76,9 @@ describe("LibraryController", () => {
         const old = controller.origin()!;
         const active = controller.writeIndex(old, "history", () => held.promise);
         const pending = controller.writeIndex(old, "replay", async () => { calls.push("stale"); return "stale"; });
-        const settled = [expect(active).rejects.toThrow("stale"), expect(pending).rejects.toThrow("stale")];
+        const activeSettled = invalidation !== "navigation" ? expect(active).rejects.toThrow("stale") :
+          failure ? expect(active).rejects.toThrow("late failure") : expect(active).resolves.toBe("late success");
+        const settled = [activeSettled, expect(pending).rejects.toThrow("stale")];
         if (invalidation === "refresh") void controller.refresh();
         else if (invalidation === "root ABA") { controller.setRoot("B"); controller.setRoot("A"); }
         else if (invalidation === "navigation") controller.navigate(false);
@@ -101,7 +103,7 @@ describe("LibraryController", () => {
     const origin = controller.origin()!;
     await expect(controller.writeIndex(origin, "replay", () => { throw new Error("synchronous failure"); })).rejects.toThrow("synchronous failure");
     const active = controller.writeIndex(origin, "history", () => held.promise);
-    const activeSettled = expect(active).rejects.toThrow("stale");
+    const activeSettled = expect(active).resolves.toBe("late");
     let resets = 0;
     const mutation = controller.mutate(origin, "league-index", () => controller.writeIndex(origin, "maintenance", async () => { resets++; return "reset"; }));
     expect(controller.value.busy).toBe("league-index");

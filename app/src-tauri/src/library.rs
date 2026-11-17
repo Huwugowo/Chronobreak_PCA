@@ -123,6 +123,49 @@ impl StorageUsage {
     }
 }
 
+/// Compare the clip collection after a watcher hint without rescanning games.
+pub(crate) fn clip_inventory_changed(
+    root: &crate::playback_file::ApprovedRoot,
+    snapshot: &LibrarySnapshot,
+) -> Result<bool> {
+    let _guard = crate::directory_guard::guard_root(root)?;
+    let accepted: HashMap<_, _> = snapshot
+        .clips
+        .iter()
+        .map(|clip| (clip.filename.as_str(), clip))
+        .collect();
+    let mut usage = StorageUsage {
+        games_bytes: 0,
+        game_count: 0,
+        clips_bytes: 0,
+        clip_count: 0,
+    };
+    let mut matched = 0;
+    let mut changed = false;
+    let managed = scan_clip_inventory(root.path(), &|| Ok(()), |entry, bytes| {
+        usage.clips_bytes += bytes;
+        usage.clip_count += 1;
+        let path = entry.path();
+        let Some(filename) = path.file_stem().and_then(|name| name.to_str()) else {
+            return;
+        };
+        if parse_clip_filename(filename).is_none() {
+            return;
+        }
+        matched += 1;
+        changed |= !accepted.get(filename).is_some_and(|clip| {
+            clip.file_size_bytes == bytes
+                && clip.thumbnail_path.is_some() == path.with_extension("jpg").exists()
+        });
+    })?;
+    usage.clips_count_from(&managed);
+    Ok(changed
+        || matched != accepted.len()
+        || &managed != snapshot.managed_clips.as_ref()
+        || usage.clip_count != snapshot.usage.clip_count
+        || usage.clips_bytes != snapshot.usage.clips_bytes)
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct AutoDeleteResult {
     pub deleted_count: u64,
@@ -1240,7 +1283,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     })
 }
 
-fn compare_games(left: &GameSummary, right: &GameSummary) -> Ordering {
+pub(crate) fn compare_games(left: &GameSummary, right: &GameSummary) -> Ordering {
     match (left.incomplete, right.incomplete) {
         (false, true) => Ordering::Less,
         (true, false) => Ordering::Greater,

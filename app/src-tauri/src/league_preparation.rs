@@ -24,6 +24,7 @@ struct Preparation {
     approved: Option<ApprovedRoot>,
     games: Option<Vec<library::GameSummary>>,
     completed: HashMap<PathBuf, String>,
+    catalog_changed: bool,
 }
 
 struct Background {
@@ -35,6 +36,7 @@ struct Background {
     retry: Changes,
     next_attempt: Instant,
     next_rescan: Instant,
+    clips_changed: bool,
 }
 impl Background {
     fn new(root: PathBuf, cache: PathBuf) -> Self {
@@ -47,6 +49,7 @@ impl Background {
             retry: Changes::all(),
             next_attempt: Instant::now(),
             next_rescan: Instant::now() + Duration::from_secs(300),
+            clips_changed: false,
         }
     }
     async fn tick(&mut self, stop: &Arc<AtomicBool>) -> Result<Vec<String>> {
@@ -58,6 +61,7 @@ impl Background {
         if let Some(watch) = &self.watch {
             changes.merge(watch.take());
         }
+        self.clips_changed |= changes.clips;
         // Native notifications can overflow or be unavailable on network storage.
         // A rare authoritative rescan also recovers missed external edits.
         let rescan_due = now >= self.next_rescan;
@@ -125,8 +129,38 @@ pub(crate) fn start(app: tauri::AppHandle) -> Owner {
                 background = Some(Background::new(root, cache));
             }
             if let Some(background) = &mut background {
-                match background.tick(&cancel).await {
-                    Ok(media) if !media.is_empty() => {
+                let result = background.tick(&cancel).await;
+                let state = app.state::<crate::AppState>();
+                if background.root != state.roots.output_directory() {
+                    continue;
+                }
+                if (background.state.catalog_changed || background.clips_changed)
+                    && let Some((root, snapshot)) =
+                        state.library.selected_snapshot(&background.root)
+                {
+                    let games_changed = std::mem::take(&mut background.state.catalog_changed)
+                        && (background.state.approved.as_ref() != Some(&root)
+                            || background.state.games.as_ref() != Some(&snapshot.games));
+                    let clips_changed =
+                        if std::mem::take(&mut background.clips_changed) && !games_changed {
+                            let accepted = Arc::clone(&snapshot);
+                            tokio::task::spawn_blocking(move || {
+                                library::clip_inventory_changed(&root, &accepted)
+                            })
+                            .await
+                            .is_ok_and(|result| result.unwrap_or(true))
+                        } else {
+                            false
+                        };
+                    if games_changed || clips_changed {
+                        let _ = app.emit("library-catalog-changed", &snapshot.token);
+                    }
+                }
+                match result {
+                    Ok(media)
+                        if !media.is_empty()
+                            && background.root == state.roots.output_directory() =>
+                    {
                         let _ = app.emit("league-data-prepared", media);
                     }
                     Ok(_) => {}
@@ -196,6 +230,7 @@ async fn prepare(
             if !affected {
                 return Ok(None);
             }
+            games.sort_by(library::compare_games);
             games
         };
         Ok::<_, anyhow::Error>(Some((approved, games, path, full)))
@@ -265,6 +300,8 @@ async fn prepare(
                 .is_some_and(|name| bundles.contains(name))
         });
     }
+    state.catalog_changed |=
+        state.approved.as_ref() != Some(&approved) || state.games.as_ref() != Some(&*games);
     state.approved = Some(approved.clone());
     state.games = Some(Arc::unwrap_or_clone(games));
     // Make the entire catalog's inexpensive card facts available before a
@@ -777,6 +814,7 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(std::mem::take(&mut state.catalog_changed));
         let original = state.completed[&other].clone();
         let media = state
             .games
@@ -805,6 +843,7 @@ mod tests {
         );
         assert_eq!(state.completed[&other], original);
         assert_eq!(state.games.as_ref().unwrap().len(), 2);
+        assert!(!state.catalog_changed);
         // A new publication must not invalidate unchanged recordings' search readiness.
         crate::library::tests::write_matched_game(
             root.path(),
@@ -817,6 +856,7 @@ mod tests {
         prepare(root.path(), cache.path(), &stop, &mut state, &changes)
             .await
             .unwrap();
+        assert!(std::mem::take(&mut state.catalog_changed));
         let reader = Index::reader(cache.path(), root.path()).unwrap();
         let query = crate::league_index::HistoryQuery {
             limit: 10,
@@ -833,6 +873,7 @@ mod tests {
             .unwrap();
         assert!(!state.completed.contains_key(&other));
         assert_eq!(state.games.as_ref().unwrap().len(), 2);
+        assert!(state.catalog_changed);
     }
     #[tokio::test]
     async fn writer_contention_retains_work_and_retries_with_backoff() {
