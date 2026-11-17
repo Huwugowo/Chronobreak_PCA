@@ -11,21 +11,20 @@ pub(super) const SOURCE_UNCHECKED: u8 = 32;
 impl Index {
     /// Materialize one recording's coverage classes after a source-stamp check.
     /// The 64 possible masks have incrementally maintained catalog counts.
-    pub(super) fn refresh_history_summary(&self, media: &MediaId) -> Result<()> {
-        let pending: bool = self.db.query_row(
+    pub(super) fn refresh_history_summary(db: &Connection, media: &MediaId) -> Result<()> {
+        let pending: bool = db.query_row(
             "SELECT telemetry_status='pending' FROM recordings WHERE media_id=?1",
             [media.as_str()],
             |r| r.get(0),
         )?;
         if pending {
-            self.db.execute(
-                "UPDATE recordings SET history_flags=31,facts_current=1 WHERE media_id=?1
-                 AND (history_flags!=31 OR facts_current!=1)",
+            db.execute(
+                "UPDATE recordings SET history_flags=31 WHERE media_id=?1 AND history_flags!=31",
                 [media.as_str()],
             )?;
             return Ok(());
         }
-        let flags: u8 = self.db.query_row(
+        let flags: u8 = db.query_row(
             "SELECT
                 CASE WHEN r.telemetry_status!='ready' OR r.tail_bytes>0 OR EXISTS(SELECT 1 FROM gaps g WHERE g.media_id=r.media_id) THEN 1 ELSE 0 END
                 | CASE WHEN r.queue_id IS NULL THEN 2 ELSE 0 END
@@ -47,8 +46,8 @@ impl Index {
              FROM recordings r WHERE r.media_id=?1",
             [media.as_str()], |r| r.get(0),
         )?;
-        self.db.execute(
-            "UPDATE recordings SET history_flags=?2,facts_current=1 WHERE media_id=?1",
+        db.execute(
+            "UPDATE recordings SET history_flags=?2 WHERE media_id=?1",
             params![media.as_str(), flags],
         )?;
         Ok(())

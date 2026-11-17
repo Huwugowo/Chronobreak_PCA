@@ -55,12 +55,11 @@ it("loads card facts on the first History visit when replay telemetry is already
   try {
     controller.setContext(origin("A", 1), [game]);
     await vi.advanceTimersByTimeAsync(1_004);
-    expect(controller.value).toMatchObject({ initializing: true, historyReady: { [game.media_id!]: false } });
+    expect(controller.value).toMatchObject({ page: page(), initializing: true, indexing: true });
     expect(api.history).toHaveBeenCalledOnce();
     progress.history_ready = true;
     await vi.advanceTimersByTimeAsync(500);
-    expect(controller.value).toMatchObject({ page: enrichedPage, initializing: false, indexing: false,
-      historyReady: { [game.media_id!]: true } });
+    expect(controller.value).toMatchObject({ page: enrichedPage, initializing: false, indexing: false });
     expect(api.catalog).toHaveBeenCalledOnce();
     expect(api.history).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);

@@ -53,10 +53,10 @@ impl Index {
         let mut state = match restored {
             Ok(state) => state,
             Err(_) => {
-                self.clear_telemetry(media)?;
-                // Invalidating journal evidence does not invalidate the card
-                // facts just checked by history_recording.
-                self.refresh_history_summary(media)?;
+                let tx = self.db.transaction()?;
+                Self::clear_telemetry(&tx, media)?;
+                Self::refresh_history_summary(&tx, media)?;
+                tx.commit()?;
                 checkpoint::State::new(header.clone(), header.initial_position()?)
             }
         };
@@ -140,33 +140,33 @@ impl Index {
             params![media.as_str(),serde_json::to_string(&header)?,identity,serde_json::to_string(&page.recovery.position)?,
                 std::str::from_utf8(&cp.encode()?)?,if ready {"ready"} else {"pending"},sql_u64(page.recovery.tail_bytes)?,
                 ready.then_some(stamp)])?;
+        Self::refresh_history_summary(&tx, media)?;
         check()?;
         tx.commit()?;
         self.progress(media, batches)
     }
 
     pub(super) fn final_facts(
-        &mut self,
+        db: &Connection,
         media: &MediaId,
         result: Option<&ResultFile>,
     ) -> Result<()> {
-        let tx = self.db.transaction()?;
-        tx.prepare_cached("DELETE FROM final_players WHERE media_id=?1")?
+        db.prepare_cached("DELETE FROM final_players WHERE media_id=?1")?
             .execute([media.as_str()])?;
-        tx.prepare_cached("DELETE FROM final_stats WHERE media_id=?1")?
+        db.prepare_cached("DELETE FROM final_stats WHERE media_id=?1")?
             .execute([media.as_str()])?;
         if let Some(result) = result {
             if let Some(local) = &result.source_facts.local_player {
-                final_player(&tx, media, "local", local, true)?;
+                final_player(db, media, "local", local, true)?;
             }
             for (team_index, team) in result.source_facts.teams.iter().flatten().enumerate() {
                 let key = format!("team/{team_index}");
                 if let Some(stats) = &team.stats {
-                    final_stats(&tx, media, &key, stats)?;
+                    final_stats(db, media, &key, stats)?;
                 }
                 for (index, player) in team.players.iter().flatten().enumerate() {
                     final_player(
-                        &tx,
+                        db,
                         media,
                         &format!("{key}/player/{index}"),
                         player,
@@ -175,7 +175,6 @@ impl Index {
                 }
             }
         }
-        tx.commit()?;
         Ok(())
     }
 }

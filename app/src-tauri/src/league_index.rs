@@ -310,13 +310,13 @@ impl Index {
             check,
         );
         if result.is_err() {
-            self.clear_telemetry(media)?;
-            // A superseded job must leave resumable work, not cache an optional
-            // source failure for the next accepted snapshot.
             check()?;
-            self.db.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1", params![media.as_str(),source.stamp])?;
+            let tx = self.db.transaction()?;
+            Self::clear_telemetry(&tx, media)?;
+            tx.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1", params![media.as_str(),source.stamp])?;
+            Self::refresh_history_summary(&tx, media)?;
+            tx.commit()?;
         }
-        self.refresh_history_summary(media)?;
         result
     }
 
@@ -382,9 +382,11 @@ impl Index {
             "recording match identity changed since scan"
         );
         let result = crate::league_result::read(&directory, &media, candidate.as_ref());
+        // Readers see the checked projection as a unit. Only reconciliation
+        // can invalidate a row before its replacement is ready to publish.
+        let tx = self.db.transaction()?;
         // Same media ID in two bundles is ambiguous and must never silently move.
-        let previous: Option<String> = self
-            .db
+        let previous: Option<String> = tx
             .query_row(
                 "SELECT bundle FROM recordings WHERE media_id=?1",
                 [media.as_str()],
@@ -395,8 +397,7 @@ impl Index {
             previous.as_ref().is_none_or(|p| p == &summary.timestamp),
             "duplicate media identity in library"
         );
-        let old_media: Option<String> = self
-            .db
+        let old_media: Option<String> = tx
             .query_row(
                 "SELECT media_id FROM recordings WHERE bundle=?1",
                 [&summary.timestamp],
@@ -404,14 +405,13 @@ impl Index {
             )
             .optional()?;
         if old_media.as_deref().is_some_and(|id| id != media.as_str()) {
-            self.db.execute(
+            tx.execute(
                 "DELETE FROM recordings WHERE bundle=?1",
                 [&summary.timestamp],
             )?;
         }
         let result_json = result.as_ref().map(serde_json::to_string).transpose()?;
-        let previous_result: Option<String> = self
-            .db
+        let previous_result: Option<String> = tx
             .query_row(
                 "SELECT result_json FROM recordings WHERE media_id=?1",
                 [media.as_str()],
@@ -419,14 +419,7 @@ impl Index {
             )
             .optional()?
             .flatten();
-        self.db.execute(
-            "UPDATE recordings SET facts_current=0 WHERE media_id=?1 AND (result_json IS NOT ?3 OR CASE
-               WHEN summary_json=?2 THEN 0
-               WHEN json_valid(summary_json) THEN json_set(summary_json,'$.saved',json('false'))!=?2
-               ELSE 1 END)",
-            params![media.as_str(), summary_json, result_json],
-        )?;
-        self.db.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json,match_group)
+        tx.execute("INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,queue_id,map_id,outcome,game_id,summary_json,result_json,match_group)
             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
             ON CONFLICT(media_id) DO UPDATE SET recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,
               queue_id=excluded.queue_id,map_id=excluded.map_id,outcome=excluded.outcome,game_id=excluded.game_id,summary_json=excluded.summary_json,result_json=excluded.result_json",
@@ -434,36 +427,29 @@ impl Index {
                 result.as_ref().and_then(|r| r.queue_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.queue_id))).map(sql_u64).transpose()?,
                 result.as_ref().and_then(|r| r.map_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.map_id))).map(sql_u64).transpose()?,
                 result.as_ref().map(|r| name(&r.outcome)).transpose()?.unwrap_or_else(|| "unknown".into()),
-                candidate.as_ref().map(|c| c.game_id.as_str()),summary_json,previous_result,summary.match_group])?;
+                candidate.as_ref().map(|c| c.game_id.as_str()),summary_json,result_json,summary.match_group])?;
         if previous_result != result_json {
-            self.final_facts(&media, result.as_ref())?;
-            self.db.execute(
-                "UPDATE recordings SET result_json=?2 WHERE media_id=?1",
-                params![media.as_str(), result_json],
-            )?;
+            Self::final_facts(&tx, &media, result.as_ref())?;
         }
-        let old_timeline: Option<String> = self.db.query_row(
+        let old_timeline: Option<String> = tx.query_row(
             "SELECT timeline_json FROM recordings WHERE media_id=?1",
             [media.as_str()],
             |r| r.get(0),
         )?;
         if rebuild || old_timeline.as_ref() != Some(&timeline_json) {
-            self.clear_telemetry(&media)?;
+            Self::clear_telemetry(&tx, &media)?;
         }
-        self.db.execute(
-            "UPDATE recordings SET timeline_json=?2 WHERE media_id=?1",
-            params![media.as_str(), timeline_json],
-        )?;
         check()?;
         ensure!(
             source_stamp(&directory)? == stamp,
             "history source changed during preparation"
         );
-        self.db.execute(
-            "UPDATE recordings SET history_stamp=?2 WHERE media_id=?1",
-            params![media.as_str(), stamp],
+        tx.execute(
+            "UPDATE recordings SET timeline_json=?2,history_stamp=?3,facts_current=1 WHERE media_id=?1",
+            params![media.as_str(), timeline_json, stamp],
         )?;
-        self.refresh_history_summary(&media)?;
+        Self::refresh_history_summary(&tx, &media)?;
+        tx.commit()?;
         Ok(RecordingSource {
             directory,
             timeline: descriptor.media_timeline,
@@ -527,7 +513,7 @@ impl Index {
             .prepare_cached(
                 "SELECT telemetry_status FROM recordings
                  WHERE media_id=?1 AND bundle=?2 AND source_stamp=?3
-                   AND (telemetry_status!='ready' OR (facts_current=1 AND history_stamp=?3))",
+                   AND facts_current=1 AND history_stamp=?3",
             )?
             .query_row(params![media.as_str(), summary.timestamp, stamp], |row| {
                 row.get(0)
@@ -568,8 +554,9 @@ impl Index {
         Ok(())
     }
 
-    fn clear_telemetry(&mut self, media: &MediaId) -> Result<()> {
-        let tx = self.db.transaction()?;
+    // Journal-derived rows are invalidated together. The checked match result
+    // and catalog summary have their own validity and survive this reset.
+    fn clear_telemetry(db: &Connection, media: &MediaId) -> Result<()> {
         for table in [
             "prepared_overlay_samples",
             "prepared_overlay_sources",
@@ -589,13 +576,12 @@ impl Index {
             "derived_actor_links",
             "gaps",
         ] {
-            tx.execute(
+            db.execute(
                 &format!("DELETE FROM {table} WHERE media_id=?1"),
                 [media.as_str()],
             )?;
         }
-        tx.execute("UPDATE recordings SET source_stamp=NULL,journal_header=NULL,source_identity=NULL,position_json=NULL,checkpoint_json=NULL,telemetry_status='pending',tail_bytes=0,facts_current=0 WHERE media_id=?1", [media.as_str()])?;
-        tx.commit()?;
+        db.execute("UPDATE recordings SET source_stamp=NULL,journal_header=NULL,source_identity=NULL,position_json=NULL,checkpoint_json=NULL,telemetry_status='pending',tail_bytes=0 WHERE media_id=?1", [media.as_str()])?;
         Ok(())
     }
 }

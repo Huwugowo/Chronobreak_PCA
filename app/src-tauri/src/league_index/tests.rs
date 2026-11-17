@@ -1142,7 +1142,7 @@ fn catalog_is_queryable_before_import_and_missing_events_are_unknown() {
         .db
         .execute("DELETE FROM evidence WHERE endpoint='events'", [])
         .unwrap();
-    index.refresh_history_summary(&f.source.media_id).unwrap();
+    Index::refresh_history_summary(&index.db, &f.source.media_id).unwrap();
     let page = index
         .history(
             &HistoryQuery {
@@ -1292,7 +1292,26 @@ async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
         "Player#EUW"
     );
     let mut expected = serde_json::to_value(&page.rows[0]).unwrap();
+    let expected_stats = expected["stats"].clone();
+    let expected_participants = expected["game"]["participants"].clone();
+    let assert_facts = || -> Result<()> {
+        let reader = Index::reader(f.cache.path(), root)?;
+        let page = reader.history(&query, 1).unwrap();
+        assert_eq!(serde_json::to_value(&page.rows[0].stats)?, expected_stats);
+        assert_eq!(
+            serde_json::to_value(&page.rows[0].game.participants)?,
+            expected_participants
+        );
+        Ok(())
+    };
+    let open_replay = || {
+        let replay =
+            library::replay_descriptor(root, "", &f.summary.timestamp, String::new()).unwrap();
+        assert_eq!(replay.media_timeline.media_id, f.source.media_id);
+        assert_facts().unwrap();
+    };
 
+    open_replay();
     for saved in [true, false] {
         let bundle = f.summary.timestamp.clone();
         coordinator
@@ -1336,6 +1355,39 @@ async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
             .unwrap();
         assert_eq!(favorites.rows.len(), usize::from(saved));
     }
+    open_replay();
+
+    // A separate reader can query at every cancellation boundary, including
+    // immediately after a replay projection was reset by a source failure.
+    fs::remove_file(f.directory.join(manifest::FILE)).unwrap();
+    assert!(
+        !Index::reader(f.cache.path(), root)
+            .unwrap()
+            .prepared_progress(root, &snapshot.games[0])
+            .unwrap()
+            .history_ready
+    );
+    assert!(
+        index
+            .recording(root, &snapshot.games[0], false, &assert_facts)
+            .is_err()
+    );
+    assert_facts().unwrap();
+
+    // Losing the result itself invalidates these facts. With the journal also
+    // unavailable, neither projection can supply stats or a roster.
+    fs::remove_file(f.directory.join(chronobreak_league_data::RESULT_FILE)).unwrap();
+    let error = index
+        .recording(root, &snapshot.games[0], false, &|| Ok(()))
+        .unwrap_err();
+    let page = Index::reader(f.cache.path(), root)
+        .unwrap()
+        .history(&query, 1)
+        .unwrap();
+    assert!(page.rows[0].stats.kills.is_none(), "{error:#}");
+    assert!(page.rows[0].stats.creep_score.is_none());
+    assert!(page.rows[0].stats.items.is_none());
+    assert!(page.rows[0].game.participants.is_empty());
 }
 
 #[test]

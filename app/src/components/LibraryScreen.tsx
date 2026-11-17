@@ -267,7 +267,7 @@ function GamesLibrary(props: Props) {
   const visibleGames = createMemo(() => new Map(filteredGames().map(game => [game.match_group!, game])));
   const rowsByMedia = createMemo(() => new Map(props.history?.page?.rows.map(row => [row.media_id, row])));
   const rowFor = (game: GameSummary) => {
-    if (!game.media_id || props.history?.historyReady?.[game.media_id] === false) return undefined;
+    if (!game.media_id) return undefined;
     const row = rowsByMedia().get(game.media_id);
     return row?.game.timestamp === game.timestamp ? row : undefined;
   };
