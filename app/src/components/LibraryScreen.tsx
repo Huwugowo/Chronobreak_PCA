@@ -16,6 +16,8 @@ import { ExternalLinkIcon, PlayIcon } from "../ui/icons";
 import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
 
+import ClipThumbnail from "./ClipThumbnail";
+
 type Props = {
   tab: LibraryTab;
   games: GameSummary[];
@@ -42,7 +44,6 @@ type Props = {
   onHistoryFirst?: () => void;
 };
 
-const clipAccentColors = ["#2457ff", "#8b5cff", "#00a889", "#d24b68", "#d68c2f"];
 const itemSlots = Array.from({ length: 7 }, (_, slot) => slot);
 
 const ddragonAsset = (
@@ -721,7 +722,7 @@ function MatchHistoryEmptyState() {
 function ClipsLibrary(props: Props) {
   return (
     <>
-      <section class={`${styles.libraryIntro} ${styles.clipsIntro}`}>
+      <section class={styles.clipsIntro}>
         <div class={styles.introActions}>
           <span>{props.clips.length} LOCAL FILES</span>
           <button
@@ -746,7 +747,7 @@ function ClipsLibrary(props: Props) {
       >
         <section class={styles.clipGrid} aria-label="Exported clips">
           <For each={props.clips}>
-            {(clip: ClipSummary, index: () => number) => (
+            {(clip: ClipSummary) => (
               <article class={styles.clipCard}>
                 <button
                   class={styles.clipOpen}
@@ -755,21 +756,8 @@ function ClipsLibrary(props: Props) {
                   disabled={!props.actionable}
                   aria-label={`Play ${clip.source_champion ?? "unknown"} clip`}
                 >
-                  <span
-                    class={styles.clipArtwork}
-                    style={{ "--clip-accent": clipAccentColors[index() % clipAccentColors.length] }}
-                  >
-                    <Show
-                      when={clip.thumbnail_url}
-                      fallback={
-                        <span class={styles.clipPlaceholder} aria-hidden="true">
-                          <i />
-                          <strong>{clip.source_champion?.slice(0, 2) ?? "LR"}</strong>
-                        </span>
-                      }
-                    >
-                      <img src={clip.thumbnail_url!} alt="" loading="lazy" />
-                    </Show>
+                  <span class={styles.clipArtwork}>
+                    <ClipThumbnail src={clip.thumbnail_url} />
                     <em>{(() => {
                       const state = props.durationStates?.[clip.filename];
                       return state?.state === "available" ? formatDuration(state.duration_ms)

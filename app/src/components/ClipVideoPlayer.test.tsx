@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { createSignal, Show } from "solid-js";
 import { render } from "solid-js/web";
 import ClipModal from "./ClipModal";
 import hudStyles from "./FullscreenOverlay.module.css";
@@ -129,4 +130,33 @@ it("keeps the video across fullscreen, hides the idle HUD and consumes Escape be
       else Reflect.deleteProperty(document, key);
     }
   }
+});
+
+it("traps Tab and restores focus when the local clip dialog closes", async () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const [open, setOpen] = createSignal(false);
+  dispose = render(() => <>
+    <button type="button" onClick={() => setOpen(true)}>Open clip</button>
+    <Show when={open()}>
+      <ClipModal clip={{
+        filename: "fixture.mp4", video_url: "", duration_ms: 45_000,
+        game_timestamp: "1", clip_timestamp: "2", file_size_bytes: 1,
+        source_champion: "Ahri", source_date: null, thumbnail_path: null, thumbnail_url: null,
+      }} onClose={() => setOpen(false)} />
+    </Show>
+  </>, host);
+  const trigger = host.querySelector("button")!;
+  trigger.focus();
+  trigger.click();
+  const close = host.querySelector<HTMLButtonElement>('[aria-label="Close clip player"]')!;
+  expect(document.activeElement).toBe(close);
+  for (const shiftKey of [false, true]) {
+    const tab = new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
+    expect(close.dispatchEvent(tab)).toBe(false);
+    expect(document.activeElement).toBe(close);
+  }
+  close.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
 });

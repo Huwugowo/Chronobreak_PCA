@@ -354,6 +354,19 @@ describe("ReplayTimeline event language", () => {
     expect(marker?.getAttribute("data-local-emphasis")).toBeNull();
   });
 
+  it("keeps the timeline marker selectable when its artwork fails", () => {
+    const onEventSelect = vi.fn();
+    const { host } = renderTimeline([event("DragonKill", 20, { dragon_type: "Fire" })], { onEventSelect });
+    const marker = host.querySelector<HTMLButtonElement>('[data-event-icon="dragon-fire"]')!;
+    const fallback = marker.querySelector("." + styles.markerFallback);
+    expect(fallback).not.toBeNull();
+    marker.querySelector("img")!.dispatchEvent(new Event("error"));
+    expect(marker.querySelector("img")).toBeNull();
+    expect(marker.querySelector("." + styles.markerFallback)).toBe(fallback);
+    marker.click();
+    expect(onEventSelect).toHaveBeenCalledOnce();
+  });
+
   it("renders elemental dragon artwork from the vendored Riot asset set", () => {
     const { host } = renderTimeline([
       event("DragonKill", 20, {

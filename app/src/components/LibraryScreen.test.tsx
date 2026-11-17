@@ -78,6 +78,10 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
       setLibraryState({ actionable: true });
       expect(region.querySelector('[aria-label="Play Last fight"]')).toBe(thumbnail);
       expect(readClipPage).toHaveBeenCalledOnce();
+    expect(thumbnail.textContent).toContain("No thumbnail");
+    thumbnail.querySelector("img")!.dispatchEvent(new Event("error"));
+    expect(thumbnail.querySelector("img")).toBeNull();
+    expect(thumbnail.textContent).toContain("No thumbnail");
     thumbnail.click();
     expect(play).toHaveBeenCalledExactlyOnceWith(fixtureClip, thumbnail);
     clipButtons[0].click();
@@ -366,4 +370,33 @@ it("identifies retained cards during debounce, loading and failure, then clears 
   expect(host.textContent).not.toContain("Updating matches.");
   expect(host.textContent).not.toContain("Showing previous results.");
   dispose();
+});
+
+it("shows predictable thumbnails for clips with missing, failed or loaded artwork", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <LibraryScreen tab="clips" games={[]}
+    clips={[null, "/broken.jpg", "/loaded.jpg"].map((thumbnail_url, index) => ({
+      filename: index + ".mp4", clip_timestamp: String(index), game_timestamp: "1",
+      duration_ms: 15_000, file_size_bytes: 1, video_url: "/clip.mp4",
+      source_champion: "Champion " + index, source_date: null, thumbnail_path: null, thumbnail_url,
+    }))}
+    ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
+    actionable snapshotOrigin={null} busyId={null} onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
+    onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  const artwork = (index: number) => host.querySelector('[aria-label="Play Champion ' + index + ' clip"]')!;
+  try {
+    expect(artwork(0).querySelector("img")).toBeNull();
+    expect(artwork(0).textContent).toContain("No thumbnail");
+    const broken = artwork(1).querySelector("img")!;
+    expect(broken.style.visibility).toBe("hidden");
+    broken.dispatchEvent(new Event("error"));
+    expect(artwork(1).querySelector("img")).toBeNull();
+    expect(artwork(1).textContent).toContain("No thumbnail");
+    const loaded = artwork(2).querySelector("img")!;
+    expect(artwork(2).textContent).toContain("No thumbnail");
+    loaded.dispatchEvent(new Event("load"));
+    expect(loaded.style.visibility).toBe("");
+    expect(artwork(2).textContent).not.toContain("No thumbnail");
+  } finally { dispose(); }
 });

@@ -6,7 +6,7 @@
 
 .group {
   padding-block: 1rem;
-  border-top: 1px solid rgb(128 143 177 / 24%);
+  border-top: 1px solid var(--line-subtle);
 }
 
 .group h2 { margin: 0; font-size: 1rem; }
@@ -31,16 +31,16 @@
 .panel input, .panel select, .tagInput input, .title input {
   min-width: 0;
   padding: 0.5rem;
-  border: 1px solid rgb(128 143 177 / 40%);
+  border: 1px solid var(--line-strong);
   border-radius: 0.35rem;
-  background: rgb(16 22 36 / 80%);
+  background: var(--surface-raised);
   color: inherit;
   font: inherit;
 }
 
 .tags { align-items: center; font-size: 0.78rem; }
 .tags span {
-  border: 1px solid rgb(128 143 177 / 35%);
+  border: 1px solid var(--line-subtle);
   border-radius: 0.4rem;
   padding: 0.15rem 0.4rem;
 }

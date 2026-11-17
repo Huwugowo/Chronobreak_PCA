@@ -16,7 +16,7 @@ import { readClipPage, type ClipCard, type ClipPage } from "./managedClips";
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
   exporter: null as ComponentProps<typeof ClipExporterScreen> | null,
-  clip: null as ClipCard | null, sourceMissing: false, requireHistoryPage: false,
+  clip: null as ClipCard | null, sourceMissing: false, requireHistoryPage: false, failReplay: false,
 }));
 vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
   usesManagedClips: () => harness.clip !== null,
@@ -32,6 +32,7 @@ vi.mock("./leagueIndex", async original => ({ ...await original<typeof import(".
 vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(),
   loadSettings: async () => ({ output_path: harness.root, auto_delete_days: 0 }),
   loadDdragonStatus: () => new Promise(() => {}),
+  loadReplayDescriptor: vi.fn(async () => { throw new Error("Fixture recording unavailable"); }),
   ensureHevcCapability: vi.fn(() => new Promise(() => {})),
   chooseOutputFolder: async () => "B",
   persistSettings: async (value: { output_path: string }) => { harness.root = value.output_path; return value; },
@@ -61,21 +62,18 @@ vi.mock("./components/LibraryScreen", () => ({ default: (props: ComponentProps<t
     {harness.clip && <button data-testid="play-single" disabled={!props.actionable || !props.snapshotOrigin} onClick={event => props.onPlaySingleClip?.(
       harness.clip!.header.game.match_group!, props.snapshotOrigin!, event.currentTarget)}>Play clip from History</button>}
   </> }));
-vi.mock("./components/AppHeader", () => ({ default: (props: { onHome: () => void; onSettings: () => void; onTab: (tab: "games" | "clips") => void }) => <>
-  <button data-testid="home" onClick={props.onHome}>Home or Back</button>
-  <button data-testid="settings" onClick={props.onSettings}>Settings</button>
-  <button data-testid="clips" onClick={() => props.onTab("clips")}>Clips</button>
-  <button data-testid="games" onClick={() => props.onTab("games")}>Games</button>
-</> }));
 vi.mock("./components/SettingsScreen", () => ({ default: (props: { onBack: () => void; onChooseFolder: () => void }) => <>
   <button data-testid="settings-back" onClick={props.onBack}>Back</button>
   <button data-testid="root" onClick={props.onChooseFolder}>Change root</button>
 </> }));
 vi.mock("./components/StorageIndicator", () => ({ default: () => null }));
-vi.mock("./components/ViewerScreen", () => ({ default: (props: ComponentProps<typeof ViewerScreen>) => {
-  harness.viewer = props;
-  return <div data-testid="viewer">{props.game.champion}</div>;
-} }));
+vi.mock("./components/ViewerScreen", async original => {
+  const { default: RealViewerScreen } = await original<typeof import("./components/ViewerScreen")>();
+  return { default: (props: ComponentProps<typeof ViewerScreen>) => {
+    harness.viewer = props;
+    return harness.failReplay ? <RealViewerScreen {...props} /> : <div data-testid="viewer">{props.game.champion}</div>;
+  } };
+});
 vi.mock("./components/ClipExporterScreen", () => ({ default: (props: ComponentProps<typeof ClipExporterScreen>) => {
   harness.exporter = props;
   return <div data-testid="exporter" />;
@@ -86,13 +84,20 @@ afterEach(() => {
   dispose?.(); dispose = undefined;
   document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); vi.restoreAllMocks();
   harness.root = "A"; harness.revision = 0; harness.viewer = null; harness.exporter = null;
-  harness.clip = null; harness.sourceMissing = false; harness.requireHistoryPage = false;
+  harness.clip = null; harness.sourceMissing = false; harness.requireHistoryPage = false; harness.failReplay = false;
 });
 const mount = async () => {
   const host = document.createElement("div"); document.body.append(host);
   dispose = render(() => <App />, host);
   await vi.waitFor(() => expect(host.querySelector('[data-testid="open"]')).not.toBeNull());
-  return { host, click: (id: string) => host.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.click() };
+  const headerControls: Record<string, string> = {
+    home: 'header button[aria-label^="Back to"]',
+    settings: 'header button[aria-label="Open settings"]',
+    clips: 'nav[aria-label="Library"] button:nth-of-type(2)',
+    games: 'nav[aria-label="Library"] button:nth-of-type(1)',
+  };
+  return { host, click: (id: string) =>
+    host.querySelector<HTMLButtonElement>(headerControls[id] ?? `[data-testid="${id}"]`)!.click() };
 };
 
 const media = "22222222-3333-4444-8555-666666666666";
@@ -127,6 +132,61 @@ it.each([false, true])("keeps the clip playable and only opens its exact source 
   expect(host.querySelector('[data-testid="play-clip"]')).toBe(trigger);
 });
 
+it.each([
+  { tab: "games", destination: "Match History" },
+  { tab: "clips", destination: "Clips" },
+])("uses the same return destination in the header and source failure from $destination", async ({ tab, destination }) => {
+  harness.clip = makeClip();
+  harness.failReplay = true;
+  const { host, click } = await mount();
+  click(tab);
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="play-clip"]')!;
+  trigger.click();
+  [...host.querySelectorAll("button")].find(button => button.textContent === "Open source replay")!.click();
+  const label = "Back to " + destination;
+  await vi.waitFor(() => expect(host.querySelector('[role="alert"] h1')?.textContent).toBe("Source replay unavailable."));
+  expect(host.querySelector("header button[aria-label='" + label + "']")).not.toBeNull();
+  const back = [...host.querySelectorAll<HTMLButtonElement>('[role="alert"] button')]
+    .find(button => button.textContent === label)!;
+  back.click();
+  expect(host.querySelector('nav [aria-current="page"]')?.textContent).toBe(destination);
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+
+it("keeps focus in the managed player and its nested confirmation", async () => {
+  harness.clip = makeClip();
+  const { host, click } = await mount();
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="play-clip"]')!;
+  click("play-clip");
+  const player = host.querySelector('[aria-labelledby="managed-clip-title"]')!;
+  const close = player.querySelector("header button")!;
+  const deletion = [...player.querySelectorAll("button")].find(button => button.textContent === "Delete clip")!;
+  const press = (key: string, shiftKey = false) => document.activeElement!.dispatchEvent(
+    new KeyboardEvent("keydown", { key, shiftKey, bubbles: true, cancelable: true }));
+  expect(document.activeElement).toBe(close);
+  press("Tab", true);
+  expect(document.activeElement).toBe(player.querySelector("summary"));
+  press("Tab");
+  expect(document.activeElement).toBe(close);
+
+  deletion.click();
+  const confirmation = host.querySelector('[role="alertdialog"]')!;
+  const [cancel, confirm] = confirmation.querySelectorAll("button");
+  expect(document.activeElement).toBe(cancel);
+  press("Tab", true);
+  expect(document.activeElement).toBe(confirm);
+  press("Tab");
+  expect(document.activeElement).toBe(cancel);
+  trigger.focus();
+  expect(document.activeElement).toBe(cancel);
+  press("Escape");
+  expect(host.querySelector('[role="alertdialog"]')).toBeNull();
+  await vi.waitFor(() => expect(document.activeElement).toBe(deletion));
+  press("Escape");
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+
 it("opens the sole clip once, discards a lookup after leaving History and restores focus", async () => {
   const clip = makeClip();
   harness.clip = clip;
@@ -148,7 +208,7 @@ it("opens the sole clip once, discards a lookup after leaving History and restor
   click("play-single");
   await vi.waitFor(() => expect(host.querySelector("video")?.src).toBe(clip.video_url));
   host.querySelector<HTMLButtonElement>('[aria-labelledby="managed-clip-title"] header button')!.click();
-  expect(document.activeElement).toBe(host.querySelector('[data-testid="play-single"]'));
+  await vi.waitFor(() => expect(document.activeElement).toBe(host.querySelector('[data-testid="play-single"]')));
 });
 
 it("shares the actual App writer wiring across early replay open and return", async () => {

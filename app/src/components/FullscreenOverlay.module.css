@@ -3,7 +3,7 @@
   z-index: 10;
   inset: 0;
   overflow: hidden;
-  color: #f8f5ef;
+  color: var(--text-primary);
   font-family: var(--font-display);
   pointer-events: none;
 }
@@ -45,7 +45,7 @@
   gap: 7px;
   padding: 0 11px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #f8f5ef;
+  color: var(--text-primary);
   background: rgba(0, 0, 0, 0.58);
   font-family: var(--font-mono);
   font-size: 7px;
@@ -54,25 +54,25 @@
 }
 
 .fullscreenPlay {
-  border-color: #002fa7;
-  background: #002fa7;
+  border-color: var(--selected-line);
+  background: var(--surface-hover);
 }
 
 .clipControl span {
-  color: #91a9f5;
+  color: var(--brand-yellow);
 }
 
 .cancelClipControl {
-  color: rgba(248, 245, 239, 0.64);
+  color: var(--text-secondary);
 }
 
 .exportClipControl {
-  border-color: rgba(111, 145, 237, 0.82);
-  background: rgba(0, 47, 167, 0.86);
+  border-color: var(--selected-line);
+  background: var(--surface-hover);
 }
 
 .exportClipControl:hover {
-  background: #002fa7;
+  background: var(--brand-plum);
 }
 
 .fullscreenPlay:disabled {
@@ -81,7 +81,7 @@
 }
 
 .fullscreenTime {
-  color: rgba(248, 245, 239, 0.58);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 8px;
 }
@@ -106,14 +106,14 @@
   right: 20px;
   padding: 9px 12px;
   border-radius: 5px;
-  background: rgba(2, 3, 6, 0.72);
+  background: color-mix(in srgb, var(--surface-app) 85%, transparent);
   font-size: 11px;
   transition: opacity 220ms ease;
 }
 
-.recordedState > span { color: #aeb5c3; font-size: 10px; }
+.recordedState > span { color: var(--text-secondary); font-size: 10px; }
 .recordedState dl { display: flex; gap: 18px; margin: 5px 0 0; }
-.recordedState dt { color: #aeb5c3; font-size: 10px; }
+.recordedState dt { color: var(--text-secondary); font-size: 10px; }
 .recordedState dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
 
 .bottomHud {
@@ -128,8 +128,8 @@
   background:
     linear-gradient(
       to top,
-      rgba(2, 3, 6, 0.92) 0,
-      rgba(2, 3, 6, 0.68) 48%,
+      rgba(0, 0, 0, 0.92) 0,
+      rgba(0, 0, 0, 0.68) 48%,
       transparent 100%
     );
   opacity: 1;
@@ -230,7 +230,7 @@
 .clipControl,
 .cancelClipControl {
   border: 1px solid transparent;
-  color: rgba(248, 245, 239, 0.76);
+  color: var(--text-secondary);
   background: transparent;
 }
 
@@ -267,7 +267,7 @@
   padding: 0;
   border: 0;
   border-radius: 4px;
-  color: rgba(248, 245, 239, 0.76);
+  color: var(--text-secondary);
   background: transparent;
   cursor: pointer;
 }
@@ -276,26 +276,13 @@
   color: #fff;
   background: rgba(255, 255, 255, 0.08);
 }
-
-.srOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  border: 0;
-  white-space: nowrap;
-}
 /* Canonical replay time hierarchy */
 .fullscreenTime {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
   margin-right: auto;
-  color: rgba(248, 245, 239, 0.5);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
@@ -311,12 +298,12 @@
 }
 
 .fullscreenTimeDivider {
-  color: rgba(248, 245, 239, 0.32);
+  color: var(--text-muted);
   font-size: 10px;
 }
 
 .fullscreenTimeDuration {
-  color: rgba(248, 245, 239, 0.62);
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 650;
 }

@@ -19,6 +19,8 @@
   --accent-blue: #4da3ff;
   --accent-red: #ff5268;
   --accent-neutral: #9ca0aa;
+  --accent-success: #71d9a4;
+  --accent-warning: #ffd099;
   /* Structure and interaction */
   --line-subtle: rgba(245, 243, 247, 0.12);
   --line-strong: rgba(245, 243, 247, 0.24);
@@ -71,27 +73,6 @@
   --type-meta-line: 14px;
 
   --motion-fast: 100ms ease-out;
-
-  /*
-   * Legacy tokens are intentionally frozen to their pre-redesign values.
-   * Screens that have not been migrated yet keep their existing appearance;
-   * new Chronobreak UI code uses the semantic foundation tokens above.
-   */
-  --color-ink: #07090d;
-  --color-panel: #0d1119;
-  --color-panel-raised: #131925;
-  --color-line: rgba(255, 255, 255, 0.12);
-  --color-text: #f3f5f8;
-  --color-muted: #8490a3;
-  --color-muted-bright: #aab3c2;
-  --color-blue: #002fa7;
-  --color-blue-soft: #6f91ed;
-  --color-red: #e4314b;
-  --color-green: #4effb3;
-  --color-line-bright: rgba(255, 255, 255, 0.18);
-  --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.38);
-  --radius-small: 4px;
-  --radius-panel: 12px;
 
   font-family: var(--font-ui);
   color: var(--text-primary);

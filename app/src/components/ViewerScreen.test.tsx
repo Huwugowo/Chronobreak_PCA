@@ -114,7 +114,7 @@ it("toggles TAB without driving media, follows observed frames through seeks, an
   Object.defineProperty(HTMLVideoElement.prototype, names[1], { configurable: true, value: () => {} });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   const key = (key: string, options: KeyboardEventInit = {}) => window.dispatchEvent(new KeyboardEvent("keydown", { key, cancelable: true, ...options }));
   try {
     await vi.waitFor(() => expect(queryOverlayPage).toHaveBeenCalledOnce());
@@ -192,7 +192,7 @@ it.each(["quick", "slow", "unavailable", "disposed"] as const)("delays only the 
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   let disposed = false;
   try {
     await vi.advanceTimersByTimeAsync(200);
@@ -231,7 +231,7 @@ it.each([false, true])("settles unavailable details without raw text, retry cont
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector("video")).not.toBeNull());
     const primary = host.querySelector("video");
@@ -262,7 +262,7 @@ it("keeps loading after partial failure until another optional lane settles and 
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(queryReplayWindow).toHaveBeenCalled());
     const primary = host.querySelector("video");
@@ -294,7 +294,7 @@ it("shows opening spell icons without a video or timeline interaction and omits 
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
     ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="champion-filter-option"]')).toHaveLength(2));
     await vi.waitFor(() => expect(host.querySelector('[data-testid="replay-details-state"]')).toBeNull());
@@ -322,7 +322,7 @@ it.each(["lcu_eog", "lcu_match_history"] as const)("shows confirmed partial %s f
     local_player:{team_id:100,champion_id:103,champion_name:"Ahri",riot_id:"Synthetic#TEST",is_local:true,spell1_id:null,spell2_id:null,position:null,detected_position:null,items:[],perks:[],primary_style:null,secondary_style:null,augments:[null,null,null,null],subteam_id:null,subteam_placement:null,stats:{...Object.fromEntries(STAT_KEYS.map(k=>[k,null])) as FinalStats,kills:6,deaths:2,assists:9}},teams:[]};
   setFixture(probe);vi.mocked(loadReplayDescriptor).mockResolvedValue({snapshot_token:"snapshot",game_timestamp:"1",video_url:probe.video_url,media_timeline:probe.media_timeline});vi.mocked(loadServerMetrics).mockReturnValue(new Promise(()=>{}));
   vi.spyOn(HTMLMediaElement.prototype,"pause").mockImplementation(()=>{});vi.spyOn(HTMLMediaElement.prototype,"load").mockImplementation(()=>{});
-  const host=document.createElement("div");document.body.append(host);const dispose=render(()=><ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work=>work("snapshot")} onBack={()=>{}} onExportClip={()=>{}}/>,host);
+  const host=document.createElement("div");document.body.append(host);const dispose=render(()=><ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work=>work("snapshot")} backLabel="Back to Match History" onBack={()=>{}} onExportClip={()=>{}}/>,host);
   try{await vi.waitFor(()=>expect(host.querySelector('[data-testid="league-result"]')?.textContent).toContain(`${source === "lcu_match_history" ? "Match history" : "Final result"} · WIN · Partial final facts`));expect(host.querySelector('[data-testid="replay-coverage"]')).toBeNull();expect(host.textContent).toContain("RECORDED K / D / A— / — / —");expect(host.textContent).toContain("Match confirmed");expect(host.textContent).toContain("FINAL K / D / A6 / 2 / 9");expect(host.querySelectorAll("video")).toHaveLength(1);}finally{dispose();}
 });
 
@@ -340,7 +340,7 @@ it("marks only the persistent primary video across layout and recovery, then rel
   const probeVideo = document.createElement("video"); document.body.append(probeVideo);
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelectorAll("video")).toHaveLength(1));
     const primary = host.querySelector("video")!;
@@ -401,7 +401,7 @@ it("shows champion filters and event colors without a seek or a fabricated roste
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div"); document.body.append(host);
-  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector('[data-event-icon="swords"]')?.getAttribute("data-side")).toBe("blue"));
     expect(host.querySelector("video")!.currentTime).toBe(0);
@@ -429,7 +429,7 @@ it("switches recorded epochs without retaining stale participants or a stale win
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div"); document.body.append(host);
-  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     const select = await vi.waitFor(() => {
       const node = host.querySelector<HTMLSelectElement>('[aria-label="Recorded source"]');
@@ -476,7 +476,7 @@ it.each([false, true])("keeps descriptor playback and clip state while details a
   const draft = { gameTimestamp: "1", mediaId: probe.media_timeline.mediaId,
     startFrame: 0 as FrameBoundary, endFrameExclusive: 600 as FrameBoundary };
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} initialClipDraft={draft} onBack={() => {}} onExportClip={exported} />, host);
+    readReplay={work => work("snapshot")} initialClipDraft={draft} backLabel="Back to Match History" onBack={() => {}} onExportClip={exported} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector("video")).not.toBeNull());
     const primary = host.querySelector("video")!;
@@ -599,7 +599,7 @@ it("shares current loop and requested preview updates between UI and runner seek
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} readReplay={work => work("snapshot")}
     initialClipDraft={{ gameTimestamp: "1", mediaId: probe.media_timeline.mediaId, startFrame: 0 as FrameBoundary, endFrameExclusive: 600 as FrameBoundary }}
-    onBack={() => {}} onExportClip={() => {}} />, host);
+    backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
     const primary = host.querySelector("video")!;
@@ -629,13 +629,80 @@ it("keeps descriptor errors local and retries without requesting details first",
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.textContent).toContain("Recording could not be opened."));
+    expect(host.querySelector('[role="alert"] h1')?.textContent).toBe("Recording could not be opened.");
     expect(host.querySelector("video")).toBeNull();
     expect(queryReplayWindow).not.toHaveBeenCalled();
     [...host.querySelectorAll("button")].find(button => button.textContent === "Retry recording")!.click();
     await vi.waitFor(() => expect(host.querySelector("video")).not.toBeNull());
+  } finally { dispose(); }
+});
+
+it("keeps the replay mounted during failed preview recovery and lets the user retry", async () => {
+  vi.mocked(loadReplayDescriptor).mockClear();
+  const probe = replayProbe();
+  setFixture(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValueOnce({ snapshot_token: "snapshot", game_timestamp: "1",
+    video_url: probe.video_url, media_timeline: probe.media_timeline });
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} backLabel="Back to Match History"
+    onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain("qb_playback_session="));
+    const video = host.querySelector("video")!;
+    const panel = host.querySelector('[data-testid="replay-panel"]');
+    let failed = true;
+    Object.defineProperties(video, {
+      currentSrc: { get: () => video.src },
+      readyState: { get: () => failed ? 0 : 4 },
+      error: { get: () => failed ? { code: 3, message: "Decode failed" } : null },
+    });
+    const fail = () => {
+      video.dispatchEvent(new Event("loadstart"));
+      video.dispatchEvent(new Event("error"));
+    };
+    fail();
+    expect(host.querySelector('[role="status"] strong')?.textContent).toBe("RECOVERING PREVIEW");
+    fail();
+    fail();
+    const alert = host.querySelector('[role="alert"]')!;
+    expect(alert.querySelector("strong")?.textContent).toBe("PREVIEW UNAVAILABLE");
+    expect(alert.textContent).toContain("Decode failed");
+    expect(host.querySelector('[data-testid="replay-panel"]')).toBe(panel);
+
+    failed = false;
+    alert.querySelector("button")!.click();
+    expect(host.querySelector('[role="status"] strong')?.textContent).toBe("RECOVERING PREVIEW");
+    video.dispatchEvent(new Event("loadstart"));
+    video.dispatchEvent(new Event("loadedmetadata"));
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).not.toContain("RECOVERING PREVIEW");
+    expect(host.querySelector("video")).toBe(video);
+    expect(loadReplayDescriptor).toHaveBeenCalledOnce();
+  } finally { dispose(); }
+});
+
+it("shows the interactive timeline when the descriptor has no video URL", async () => {
+  const probe = replayProbe();
+  setFixture(probe);
+  vi.mocked(loadReplayDescriptor).mockResolvedValueOnce({ snapshot_token: "snapshot", game_timestamp: "1",
+    video_url: "", media_timeline: probe.media_timeline });
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
+    readReplay={work => work("snapshot")} backLabel="Back to Match History"
+    onBack={() => {}} onExportClip={() => {}} />, host);
+  try {
+    await vi.waitFor(() => expect(host.textContent).toContain("INTERACTIVE PREVIEW"));
+    expect(host.textContent).not.toContain("RETRY PREVIEW");
   } finally { dispose(); }
 });
 
@@ -646,7 +713,7 @@ it("does not mount a late descriptor or request details after the viewer is disp
   setFixture(probe);
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   dispose();
   resolveDescriptor({ snapshot_token: "snapshot", game_timestamp: "1", video_url: probe.video_url,
     media_timeline: probe.media_timeline });
@@ -683,7 +750,7 @@ it.each(["media-first", "details-first"] as const)("starts the benchmark once af
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
     ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
     const primary = host.querySelector("video")!;
@@ -781,7 +848,7 @@ it.each(["warm_open", "whole_app", "lifecycle"])("notifies %s synchronously afte
   let dispose = () => {};
   const completed = vi.fn(() => { trace.push("callback"); dispose(); trace.push("unmounted"); });
   dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}}
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}}
     onBenchmarkViewerCycleCompleted={completed} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
@@ -839,7 +906,7 @@ it.each(["presented-first", "seeked-first", "timeout", "disposed", "superseded",
     Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
     const host = document.createElement("div"); document.body.append(host);
     const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-      readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+      readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
     let disposed = false;
     const seen = (kind: string) => [...vi.mocked(emitReplayBenchmarkEvent).mock.calls, ...observer.emit.mock.calls]
       .some(call => call[0] === kind);
@@ -906,7 +973,7 @@ it("passes the mounted primary video to native resize after playback takes owner
   Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
   try {
     await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
     const primary = host.querySelector("video")!;
@@ -971,7 +1038,7 @@ it.each(["media-first", "details-first", "details-fail", "details-timeout", "dis
     Object.defineProperty(prototype, names[1], { configurable: true, value: () => {} });
     const host = document.createElement("div"); document.body.append(host);
     const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game}
-      readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}} />, host);
+      readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}} />, host);
     try {
       await vi.waitFor(() => expect(host.querySelector("video")?.src).toContain(probe.video_url));
       await vi.waitFor(() => expect(resolveDetails).toBeTypeOf("function"));
@@ -1151,7 +1218,7 @@ it.each([
   vi.spyOn(renderBenchmark, "waitForBenchmarkRenderedReplay").mockImplementation(async () => { record("render-ready"); });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <ViewerScreen gameTimestamp="1" game={probe.game} ddragonAssetBaseUrl="http://assets.test/ddragon/16.20.1"
-    readReplay={work => work("snapshot")} onBack={() => {}} onExportClip={() => {}}
+    readReplay={work => work("snapshot")} backLabel="Back to Match History" onBack={() => {}} onExportClip={() => {}}
     onBenchmarkViewerCycleCompleted={() => record("cycle-callback")} />, host);
   try {
     for (let step = 0; step < 3000 && !done; step++) {

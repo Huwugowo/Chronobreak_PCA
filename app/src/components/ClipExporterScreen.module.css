@@ -21,7 +21,7 @@ display: grid;
 .exportHeader p,
 .sectionHeading span {
   margin: 0 0 7px;
-  color: var(--color-blue-soft);
+  color: var(--brand-yellow);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 780;
@@ -52,7 +52,7 @@ display: flex;
 
 .exportHeader dt,
 .exportPanel dt {
-  color: var(--color-muted);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 730;
@@ -232,7 +232,7 @@ position: relative;
   background:
     linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    #05070a;
+    var(--surface-panel);
   background-size: 24px 24px;
 }
 
@@ -243,7 +243,7 @@ position: relative;
   aspect-ratio: 9 / 16;
   place-items: center;
   overflow: hidden;
-  background: #05070a;
+  background: var(--surface-app);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
 }
 
@@ -322,8 +322,8 @@ position: relative;
   place-items: center;
   gap: 7px;
   padding: 24px;
-  color: var(--color-muted);
-  background: rgba(2, 3, 5, 0.9);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-app) 90%, transparent);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.13em;
@@ -331,7 +331,7 @@ position: relative;
 }
 
 .previewMessage strong {
-  color: var(--color-muted-bright);
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
@@ -345,7 +345,7 @@ display: grid;
 
 .previewTransport > span,
 .previewStatusLine {
-  color: var(--color-muted-bright);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -356,7 +356,7 @@ display: grid;
   display: flex;
   width: 100%;
   justify-content: space-between;
-  color: var(--color-muted);
+  color: var(--text-muted);
 }
 
 .reframeControls,
@@ -384,12 +384,12 @@ display: grid;
 }
 
 .reframeControls label small {
-  color: var(--color-muted);
+  color: var(--text-muted);
 }
 
 .reframeControls p {
   margin: 0;
-  color: var(--color-muted);
+  color: var(--text-muted);
   font-size: 10px;
 }
 
@@ -469,17 +469,17 @@ margin: var(--space-2) 0 0;
 
 .mixControls {
   padding-top: 15px;
-  border-top: 1px solid var(--color-line);
+  border-top: 1px solid var(--line-subtle);
 }
 
 .mixControls label > span {
   display: flex;
   justify-content: space-between;
-  color: var(--color-muted);
+  color: var(--text-muted);
 }
 
 .mixControls label > span strong {
-  color: var(--color-text);
+  color: var(--text-primary);
 }
 
 .exportPanel dl {
@@ -526,16 +526,6 @@ display: block;
   transition: width 120ms linear;
 }
 
-.exportError,
-.exportSuccess {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 13px;
-  padding: 12px;
-  border: 1px solid rgba(228, 49, 75, 0.42);
-  background: rgba(228, 49, 75, 0.08);
-}
-
 .exportError strong {
 color: var(--accent-red);
   font-family: var(--font-ui);
@@ -547,22 +537,17 @@ color: var(--accent-red);
 .exportError span,
 .exportSuccess > span {
   overflow: hidden;
-  color: var(--color-muted-bright);
+  color: var(--text-secondary);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.exportSuccess {
-  border-color: rgba(78, 255, 179, 0.34);
-  background: rgba(78, 255, 179, 0.07);
 }
 
 .exportSuccess > strong {
 display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--accent-green);
+  color: var(--accent-success);
   font-family: var(--font-ui);
   font-size: var(--type-secondary-size);
   font-weight: 600;
@@ -580,13 +565,13 @@ display: inline-flex;
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
   gap: 8px;
-  color: var(--color-muted-bright);
+  color: var(--text-secondary);
   font-size: 10px;
 }
 
 .exportSuccess li strong {
-  color: var(--color-text);
-  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
   font-size: 10px;
   text-transform: uppercase;
 }
@@ -638,13 +623,8 @@ border-color: var(--line-subtle);
   cursor: default;
 }
 
-.loadingState,
 .errorState {
-color: var(--accent-red);
-}
-
-.errorState {
-  color: #ff7f91;
+  color: var(--accent-red);
 }
 
 .exporter > audio {
@@ -723,19 +703,8 @@ color: var(--accent-red);
 }
 
 .exportSuccess {
-  border: 1px solid color-mix(in srgb, var(--accent-green) 38%, var(--line-subtle));
-  background: color-mix(in srgb, var(--accent-green) 6%, var(--surface-panel));
-}
-
-.exportError span,
-.exportSuccess > span,
-.exportSuccess li {
-  color: var(--text-secondary);
-}
-
-.exportSuccess li strong {
-  color: var(--text-primary);
-  font-family: var(--font-ui);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 38%, var(--line-subtle));
+  background: color-mix(in srgb, var(--accent-success) 6%, var(--surface-panel));
 }
 
 .loadingState,

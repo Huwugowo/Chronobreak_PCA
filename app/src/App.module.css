@@ -29,231 +29,8 @@
   padding: 12px;
 }
 
-.header {
-  position: relative;
-  z-index: 20;
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto minmax(240px, 1fr);
-  align-items: center;
-  width: min(100%, 1540px);
-  min-height: 64px;
-  margin: 0 auto 38px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--color-line);
-}
-
-.header::after {
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  width: 74px;
-  height: 2px;
-  background: var(--color-blue);
-  content: "";
-}
-
-.brandLockup {
-  display: inline-flex;
-  width: max-content;
-  align-items: center;
-  gap: 13px;
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.brandMark {
-  position: relative;
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  background: var(--color-blue);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 900;
-  letter-spacing: -0.09em;
-  box-shadow: 6px 6px 0 rgba(36, 87, 255, 0.13);
-}
-
-.brandMark::after {
-  position: absolute;
-  right: -12px;
-  bottom: -15px;
-  width: 38px;
-  height: 38px;
-  border: 1px solid rgba(255, 255, 255, 0.36);
-  border-radius: 50%;
-  content: "";
-}
-
-.brandLockup > span:last-child {
-  display: grid;
-  gap: 3px;
-}
-
-.brandLockup small,
-.assetStatus,
-.runtimeMark {
-  color: var(--color-muted);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.14em;
-}
-
-.brandLockup strong {
-  font-size: 14px;
-  font-weight: 670;
-  letter-spacing: -0.015em;
-}
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--color-line);
-  border-radius: 10px;
-  background: rgba(8, 11, 17, 0.88);
-}
-
-.tabs button {
-  min-width: 96px;
-  min-height: 36px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: 7px;
-  color: var(--color-muted-bright);
-  background: transparent;
-  font-size: 12px;
-  font-weight: 680;
-  cursor: pointer;
-  transition: color 130ms ease, background 130ms ease, transform 130ms ease;
-}
-
-.tabs button:hover {
-  color: var(--color-text);
-}
-
-.tabs button:active {
-  transform: translateY(1px);
-}
-
-.tabs .activeTab {
-  color: #fff;
-  background: var(--color-blue);
-  box-shadow: 0 8px 24px rgba(36, 87, 255, 0.22);
-}
-
-.headerActions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.assetStatus,
-.runtimeMark {
-  display: inline-flex;
-  min-height: 30px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: rgba(13, 17, 25, 0.72);
-}
-
-.assetStatus i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #e1a94c;
-  box-shadow: 0 0 9px rgba(225, 169, 76, 0.52);
-}
-
-.assetStatus[data-state="ready"] i {
-  background: var(--color-green);
-  box-shadow: 0 0 9px rgba(78, 255, 179, 0.48);
-}
-
-.assetStatus[data-state="offline"] i {
-  background: var(--color-red);
-  box-shadow: 0 0 9px rgba(228, 49, 75, 0.48);
-}
-
-.runtimeMark {
-  color: var(--color-blue-soft);
-}
-
-.storageIndicator {
-  position: fixed;
-  z-index: 18;
-  right: clamp(22px, 3.4vw, 58px);
-  bottom: 20px;
-  left: clamp(22px, 3.4vw, 58px);
-  display: flex;
-  width: min(calc(100% - clamp(44px, 6.8vw, 116px)), 1540px);
-  min-height: 50px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin: 0 auto;
-  padding: 0 17px 0 20px;
-  border: 1px solid var(--color-line-bright);
-  border-radius: 10px;
-  background: #0e131d;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.52);
-}
-
-.storageIndicator > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--color-muted);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-}
-
-.storageIndicator i {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--color-blue-soft);
-}
-
-.storageIndicator strong {
-  color: var(--color-text);
-  font-weight: 760;
-}
-
-.storageIndicator button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 9px;
-  border: 0;
-  color: var(--color-blue-soft);
-  background: transparent;
-  font-size: 11px;
-  font-weight: 680;
-  cursor: pointer;
-}
-
-.storageIndicator button:hover {
-  color: #fff;
-}
-
 .statePanel {
-display: grid;
+  display: grid;
   max-width: 720px;
   min-height: 260px;
   margin: var(--space-6) auto 0;
@@ -267,7 +44,7 @@ display: grid;
 }
 
 .statePanel h1 {
-margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-2);
   color: var(--text-primary);
   font-family: var(--font-display);
   font-size: var(--type-display-size);
@@ -276,32 +53,27 @@ margin: 0 0 var(--space-2);
 }
 
 .statePanel p:not(.errorLabel) {
-max-width: 520px;
+  max-width: 520px;
   margin: var(--space-2) 0 0;
   color: var(--text-secondary);
   font-size: var(--type-secondary-size);
   line-height: 1.55;
 }
 
-.statePanel button {
-min-height: var(--control-height);
+.statePanel > button,
+.stateActions {
   margin-top: var(--space-4);
-  padding: 0 10px;
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
-  background: var(--surface-panel);
-  font-size: var(--type-secondary-size);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    color 120ms ease,
-    border-color 120ms ease,
-    background-color 120ms ease;
+}
+
+.stateActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .errorLabel {
-margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-2);
   color: var(--accent-red);
   font-family: var(--font-ui);
   font-size: var(--type-meta-size);
@@ -310,7 +82,7 @@ margin: 0 0 var(--space-2);
 }
 
 .loader {
-width: 28px;
+  width: 28px;
   height: 28px;
   margin-bottom: var(--space-3);
   border: 2px solid var(--line-subtle);
@@ -320,7 +92,7 @@ width: 28px;
 }
 
 .dialogBackdrop {
-position: fixed;
+  position: fixed;
   z-index: 60;
   inset: 0;
   display: grid;
@@ -330,7 +102,7 @@ position: fixed;
 }
 
 .confirmDialog {
-width: min(100%, 430px);
+  width: min(100%, 430px);
   padding: var(--space-5);
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-surface);
@@ -339,7 +111,7 @@ width: min(100%, 430px);
 }
 
 .confirmDialog > p {
-margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-2);
   color: var(--accent-red);
   font-family: var(--font-ui);
   font-size: var(--type-meta-size);
@@ -348,7 +120,7 @@ margin: 0 0 var(--space-2);
 }
 
 .confirmDialog h2 {
-margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-2);
   color: var(--text-primary);
   font-size: 18px;
   font-weight: 600;
@@ -356,27 +128,27 @@ margin: 0 0 var(--space-2);
 }
 
 .confirmDialog > span {
-display: block;
+  display: block;
   color: var(--text-secondary);
   font-size: var(--type-secondary-size);
   line-height: 1.55;
 }
 
 .confirmDialog > div {
-display: flex;
+  display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-5);
 }
 
 .confirmDialog .dangerControl {
-border-color: color-mix(in srgb, var(--accent-red) 55%, var(--line-subtle));
+  border-color: color-mix(in srgb, var(--accent-red) 55%, var(--line-subtle));
   color: var(--accent-red);
   background: color-mix(in srgb, var(--accent-red) 7%, var(--surface-panel));
 }
 
 .notice {
-position: fixed;
+  position: fixed;
   z-index: 80;
   top: 22px;
   left: 50%;
@@ -402,75 +174,14 @@ position: fixed;
   from { opacity: 0; transform: translate(-50%, -8px); }
 }
 
-@media (max-width: 1080px) {
-  .header {
-    grid-template-columns: 1fr auto;
-  }
-
-  .tabs {
-    grid-row: 2;
-    grid-column: 1 / -1;
-    justify-self: center;
-    margin-top: 16px;
-  }
-
-  .assetStatus,
-  .runtimeMark {
-    display: none;
-  }
-}
-
 @media (max-width: 680px) {
   .appShell {
     padding: 16px 14px 92px;
   }
-
-  .header {
-    margin-bottom: 26px;
-  }
-
-  .brandLockup > span:last-child strong {
-    display: none;
-  }
-
-  .tabs {
-    width: 100%;
-  }
-
-  .tabs button {
-    flex: 1;
-  }
-
-  .storageIndicator {
-    right: 14px;
-    bottom: 12px;
-    left: 14px;
-    width: calc(100% - 28px);
-  }
-
-  .storageIndicator > div span,
-  .storageIndicator > div i {
-    display: none;
-  }
-}
-
-.statePanel button:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  color: var(--text-primary);
-  background: var(--surface-raised);
 }
 
 .confirmDialog .dangerControl:hover:not(:disabled) {
   border-color: var(--accent-red);
   color: var(--accent-red);
   background: color-mix(in srgb, var(--accent-red) 12%, var(--surface-panel));
-}
-
-.statePanel button:active:not(:disabled) {
-  background: var(--surface-pressed);
-}
-
-.statePanel button:focus-visible {
-  border-color: var(--line-strong);
-  outline: none;
 }

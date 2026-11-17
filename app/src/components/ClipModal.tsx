@@ -1,4 +1,5 @@
-import { Show, onCleanup, onMount } from "solid-js";
+import { Show } from "solid-js";
+import { createModalFocus } from "../ui/createModalFocus";
 import { formatDate, formatDuration } from "../format";
 import type { ClipSummary } from "../types";
 import controlStyles from "../ui/controls.module.css";
@@ -11,20 +12,15 @@ type Props = {
 };
 
 function ClipModal(props: Props) {
+  let dialog!: HTMLElement;
   let closeButton!: HTMLButtonElement;
-
-  onMount(() => {
-    closeButton.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !event.repeat) props.onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  });
+  createModalFocus({ dialog: () => dialog, initial: () => closeButton, onEscape: () => props.onClose() });
 
   return (
     <div class={styles.clipModalBackdrop} role="presentation" onMouseDown={props.onClose}>
       <section
+        ref={dialog}
+        tabIndex={-1}
         class={styles.clipModal}
         role="dialog"
         aria-modal="true"

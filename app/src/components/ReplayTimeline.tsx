@@ -1,3 +1,4 @@
+import FallbackImage from "../ui/FallbackImage";
 import {
   For,
   Show,
@@ -248,26 +249,12 @@ function TimelineEventGlyph(props: TimelineEventGlyphProps) {
     timelineEventAssetScale(props.icon);
 
   return (
-    <Show
-      when={asset()}
-      fallback={
-        <span
-          class={styles.markerFallback}
-          aria-hidden="true"
-        />
-      }
-    >
-      {(src) => (
-        <img
-          class={styles.markerAsset}
-          src={src()}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          style={`width:${assetSize()}px;height:${assetSize()}px`}
-        />
-      )}
-    </Show>
+    <FallbackImage
+      src={asset()}
+      class={styles.markerAsset}
+      style={{ width: `${assetSize()}px`, height: `${assetSize()}px` }}
+      fallback={<span class={styles.markerFallback} aria-hidden="true" />}
+    />
   );
 }
 

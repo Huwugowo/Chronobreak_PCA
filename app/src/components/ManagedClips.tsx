@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { formatDate, formatDuration } from "../format";
 import { libraryError } from "../libraryController";
 import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipPage, type Attribution, type ClipCard,
@@ -7,7 +7,9 @@ import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
 import { PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
+import { createModalFocus } from "../ui/createModalFocus";
 import { ClipHighlights, ClipTagInput } from "./ClipMetadataFields";
+import ClipThumbnail from "./ClipThumbnail";
 import ClipVideoPlayer from "./ClipVideoPlayer";
 import ConfirmDialog from "./ConfirmDialog";
 import libraryStyles from "./Library.module.css";
@@ -30,7 +32,7 @@ function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolea
           data-managed-clip={clip.header.id}
           onClick={event => props.onOpen(clip, event.currentTarget)} aria-label={`Play ${clip.title}`}>
           <span class={libraryStyles.clipArtwork}>
-            <img src={clip.thumbnail_url} alt="" loading="lazy" />
+            <ClipThumbnail src={clip.thumbnail_url} />
             <em>{formatDuration(clipDurationMs(clip))}</em>
             <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
           </span>
@@ -184,8 +186,10 @@ export function ManagedClips(props: {
 
 export function ManagedClipPlayer(props: {
   clip: ClipCard; token: string; onClose: () => void; onEdit: (edit: ClipEdit) => Promise<boolean>;
-  sourceAvailable?: boolean; onSource?: () => void;
+  sourceAvailable?: boolean; onSource?: () => void; opener?: HTMLElement;
 }) {
+  let dialog!: HTMLElement;
+  let deleteButton!: HTMLButtonElement;
   let closeButton!: HTMLButtonElement;
   const [editing, setEditing] = createSignal<"title" | "tags" | null>(null);
   const [deleting, setDeleting] = createSignal(false);
@@ -205,15 +209,15 @@ export function ManagedClipPlayer(props: {
       if (alive) setDetail(value);
     }, () => { if (alive) setDetailError(true); }).finally(() => { if (alive) setReading(false); });
   };
-  onMount(() => {
-    closeButton.focus();
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !event.repeat && !deleting() && !busy()) {
-        if (editing()) setEditing(null); else props.onClose();
-      }
-    };
-    window.addEventListener("keydown", keydown);
-    onCleanup(() => { alive = false; window.removeEventListener("keydown", keydown); });
+  onCleanup(() => { alive = false; });
+  createModalFocus({
+    dialog: () => dialog,
+    initial: () => closeButton,
+    opener: () => props.opener,
+    onEscape: () => {
+      if (busy()) return;
+      if (editing()) setEditing(null); else props.onClose();
+    },
   });
   const submit = async (edit: ClipEdit) => {
     if (busy()) return;
@@ -225,7 +229,7 @@ export function ManagedClipPlayer(props: {
   const caption = createMemo(() => gameCaption(props.clip.header.game));
   return <>
     <div class={libraryStyles.clipModalBackdrop} role="presentation" onMouseDown={() => !busy() && props.onClose()}>
-      <section class={`${libraryStyles.clipModal} ${styles.player}`} role="dialog" aria-modal="true"
+      <section ref={dialog} tabIndex={-1} class={`${libraryStyles.clipModal} ${styles.player}`} role="dialog" aria-modal="true"
         aria-labelledby="managed-clip-title" onMouseDown={event => event.stopPropagation()}>
         <header>
           <div><h2 id="managed-clip-title">{props.clip.title}</h2>
@@ -244,7 +248,7 @@ export function ManagedClipPlayer(props: {
             <button class={controls.control} type="button" disabled={busy()} onClick={() => setEditing("title")}>Rename</button>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => { setEditing("tags"); loadEvents(); }}>Edit tags</button>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => void submit({ kind: "reveal" })}>Show in folder</button>
-            <button class={controls.control} type="button" disabled={busy()} onClick={() => setDeleting(true)}>Delete clip</button>
+            <button ref={deleteButton} class={controls.control} type="button" disabled={busy()} onClick={() => setDeleting(true)}>Delete clip</button>
           </div>
           <Show when={editing() === "title"}>
             <form class={styles.actions} onSubmit={event => {
@@ -287,7 +291,7 @@ export function ManagedClipPlayer(props: {
       </section>
     </div>
     <Show when={deleting()}><ConfirmDialog title="Delete this clip?" message={`“${props.clip.title}” and its clip details will be removed from this computer.`}
-      confirmLabel="Delete clip" busy={busy()} onCancel={() => { if (!busy()) setDeleting(false); }}
+      confirmLabel="Delete clip" busy={busy()} opener={deleteButton} onCancel={() => { if (!busy()) setDeleting(false); }}
       onConfirm={() => void submit({ kind: "delete" })} /></Show>
   </>;
 }

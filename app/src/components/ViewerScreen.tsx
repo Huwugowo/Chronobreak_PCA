@@ -60,6 +60,8 @@ import { createBenchmarkViewer, benchmarkViewerOpening, type BenchmarkViewer } f
 import FullscreenOverlay from "./FullscreenOverlay";
 import ReplayScoreboard from "./ReplayScoreboard";
 import styles from "./ViewerScreen.module.css";
+import stateStyles from "../App.module.css";
+import controls from "../ui/controls.module.css";
 import { libraryError, type ReplayRead } from "../libraryController";
 import { indexRecording, loadRecordingFacts, queryOverlayPage, queryReplayWindow, sourceScopes } from "../leagueIndex";
 import { ReplayOverlayController } from "../replayOverlayController";
@@ -74,6 +76,7 @@ type Props = {
   readReplay: ReplayRead;
   indexRecording?: typeof indexRecording;
   onBack: () => void;
+  backLabel: string;
   onBenchmarkViewerCycleCompleted?: () => void;
   initialClipDraft?: ClipDraft;
   initialSourcePosition?: ClipDraft;
@@ -177,18 +180,19 @@ function ViewerScreen(props: Props) {
     <div class={styles.viewerScreen}>
       <Switch>
         <Match when={descriptor.loading}>
-          <section class={styles.viewerState} aria-live="polite">
-            Loading recording...
+          <section class={stateStyles.statePanel} role="status">
+            <span class={stateStyles.loader} aria-hidden="true" />
+            <p>Loading recording…</p>
           </section>
         </Match>
         <Match when={descriptor.error}>
-          <section class={styles.viewerState} role="alert">
-            <strong>{props.initialSourcePosition ? "Source replay unavailable." : "Recording could not be opened."}</strong>
-            <span>{props.initialSourcePosition ? "The exported clip is still available." : "Return to games and refresh the library, or try opening this recording again."}</span>
-            <button type="button" onClick={() => void refetch()}>Retry recording</button>
-            <button type="button" onClick={props.onBack}>
-              {props.initialSourcePosition ? "Back to clips" : "Return to games"}
-            </button>
+          <section class={stateStyles.statePanel} role="alert">
+            <h1>{props.initialSourcePosition ? "Source replay unavailable." : "Recording could not be opened."}</h1>
+            <p>{props.initialSourcePosition ? "The exported clip is still available." : "Try opening this recording again, or refresh the library from Match History."}</p>
+            <div class={stateStyles.stateActions}>
+              <button class={controls.control} type="button" onClick={() => void refetch()}>Retry recording</button>
+              <button class={controls.control} type="button" onClick={props.onBack}>{props.backLabel}</button>
+            </div>
           </section>
         </Match>
         <Match when={descriptor()}>
@@ -424,7 +428,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
     if (value.readiness === "disposed") decoderDiagnostics?.dispose();
     else decoderDiagnostics?.bind(value, mediaTimeline);
     mediaGeneration = value.generation;
-    setMediaState(value.readiness === "closed" || value.readiness === "disposed" ? "degraded" : value.readiness);
+    setMediaState(value.readiness === "closed" || value.readiness === "disposed" ? "loading" : value.readiness);
     setIsPlaying(value.desiredPlaying && !value.media.paused);
     setMediaError(value.error);
     setClockSource(value.authority === "rvfc" ? "VIDEO FRAME" : "ANIMATION FRAME");
@@ -904,8 +908,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
           </label>
         </Show>
       </header>
-      <header class={styles.gameHeader}>
-        <div class={styles.gameIdentity}>
+      <header hidden>
+        <div>
           <p>LOCAL RECORDING / {props.game.game_mode}</p>
           <h1>{props.game.champion}</h1>
           <span>{details()?.local_player_name ?? "LOCAL PLAYER"}</span>
@@ -981,8 +985,8 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
                   [styles.previewPlaceholder]: true,
                   [styles.previewPlaceholderInteractive]: mediaState() === "degraded",
                 }}
+                role={mediaState() === "degraded" ? "alert" : "status"}
               >
-                <span class={styles.previewGlyph} aria-hidden="true">LR</span>
                 <strong>
                   {mediaState() === "recovering"
                     ? "RECOVERING PREVIEW"
@@ -998,7 +1002,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
                     : "Timeline data is active; local video attaches in the desktop app."}
                 </span>
                 <Show when={mediaState() === "degraded"}>
-                  <button type="button" onClick={retryPreview}>RETRY PREVIEW</button>
+                  <button class={controls.control} type="button" onClick={retryPreview}>RETRY PREVIEW</button>
                 </Show>
               </div>
             </Show>

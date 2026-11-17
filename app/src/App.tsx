@@ -60,6 +60,7 @@ import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 import { editManagedClip, readClipPage, reconcileClips, sourcePosition, usesManagedClips, type ClipCard, type ClipEdit, type ClipQuery } from "./managedClips";
 import styles from "./App.module.css";
+import controls from "./ui/controls.module.css";
 
 type DeleteTarget =
   | { kind: "game"; game: GameSummary; origin: LibraryOrigin }
@@ -245,11 +246,7 @@ function App() {
       if (singleClipRequest() === request) setSingleClipRequest(undefined);
     }
   };
-  const closeManagedClip = () => {
-    const button = managedSelection()?.button;
-    setManagedSelection(undefined);
-    if (button?.isConnected) button.focus();
-  };
+  const closeManagedClip = () => setManagedSelection(undefined);
   const applyClipEdit = async (edit: ClipEdit) => {
     const selected = managedSelection();
     if (!selected || !controller.mayPublish(selected.origin)) return false;
@@ -305,13 +302,15 @@ function App() {
       });
     } catch (error) { showError(error); }
   };
+  const viewerReturnTab = () => clipReturn()?.tab ?? "games";
+  const viewerBackLabel = () => viewerReturnTab() === "clips" ? "Back to Clips" : "Back to Match History";
   const returnFromViewer = () => {
     const destination = clipReturn();
     if (!destination) { openTab("games"); return; }
     batch(() => {
       setRestoringClipView(true);
       controller.navigate(false);
-      setNavigation({ screen: "library", tab: destination.tab });
+      setNavigation({ screen: "library", tab: viewerReturnTab() });
     });
     queueMicrotask(() => {
       setRestoringClipView(false);
@@ -598,7 +597,7 @@ function App() {
       <AppHeader
         navigation={navigation()}
         ddragon={ddragon() ?? emptyDdragon}
-        backTab={clipReturn()?.tab}
+        replayBackLabel={viewerBackLabel()}
         onHome={() => navigation().screen === "viewer" ? returnFromViewer() : openTab("games")}
         onTab={openTab}
         onSettings={openSettings}
@@ -615,16 +614,19 @@ function App() {
           <Match when={loadError() && !libraryState().snapshot}>
             <section class={styles.statePanel} role="alert">
               <p class={styles.errorLabel}>LIBRARY UNAVAILABLE</p>
-              <h1>League Replay could not read the archive.</h1>
+              <h1>Chronobreak could not read the archive.</h1>
               <p>{String(loadError())}</p>
-              <button type="button" onClick={() => void reloadLibrary()}>
+              <button class={controls.control} type="button" onClick={() => void reloadLibrary()}>
                 Try again
               </button>
             </section>
           </Match>
           <Match when={navigation().screen === "viewer"}>
             <Show when={currentViewer()} keyed fallback={
-              <section role="status">The library changed. <button type="button" onClick={() => openTab("games")}>Return to games</button></section>
+              <section class={styles.statePanel} role="status">
+                <h1>The library changed.</h1>
+                <button class={controls.control} type="button" onClick={returnFromViewer}>{viewerBackLabel()}</button>
+              </section>
             }>{selected => {
               const application = untrack(benchmarkApplication);
               const context: BenchmarkApplicationContext = untrack(host.captureContext);
@@ -640,6 +642,7 @@ function App() {
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).gameTimestamp
               }
               onBack={returnFromViewer}
+              backLabel={viewerBackLabel()}
               initialSourcePosition={clipReturn()?.position}
               initialClipDraft={
                 (returnState(navigation()) as Extract<ReturnNavigationState, { screen: "viewer" }>).clipDraft
@@ -756,7 +759,7 @@ function App() {
       </Show>
       <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => controller.selectClip(null)} />}</Show>
       <Show when={managedSelection()} keyed>{selected => <ManagedClipPlayer
-        clip={selected.clip} token={selected.origin.token} onClose={closeManagedClip} onEdit={applyClipEdit}
+        clip={selected.clip} token={selected.origin.token} opener={selected.button} onClose={closeManagedClip} onEdit={applyClipEdit}
         sourceAvailable={Boolean(availableSource(selected.clip))} onSource={openClipSource}
       />}</Show>
       <Show when={deleteTarget()}>

@@ -1,4 +1,4 @@
-import { onCleanup, onMount } from "solid-js";
+import { createModalFocus } from "../ui/createModalFocus";
 import controlStyles from "../ui/controls.module.css";
 import styles from "../App.module.css";
 
@@ -9,22 +9,25 @@ type Props = {
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  opener?: HTMLElement;
 };
 
 function ConfirmDialog(props: Props) {
+  let dialog!: HTMLElement;
   let cancelButton!: HTMLButtonElement;
-  onMount(() => {
-    cancelButton.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !props.busy) props.onCancel();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  const cancel = () => { if (!props.busy) props.onCancel(); };
+  createModalFocus({
+    dialog: () => dialog,
+    initial: () => cancelButton,
+    opener: () => props.opener,
+    onEscape: cancel,
   });
 
   return (
-    <div class={styles.dialogBackdrop} role="presentation" onMouseDown={props.onCancel}>
+    <div class={styles.dialogBackdrop} role="presentation" onMouseDown={cancel}>
       <section
+        ref={dialog}
+        tabIndex={-1}
         class={styles.confirmDialog}
         role="alertdialog"
         aria-modal="true"

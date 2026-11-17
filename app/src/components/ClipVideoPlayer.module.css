@@ -1,7 +1,7 @@
 .surface {
   position: relative;
   min-width: 0;
-  color: #f8f5ef;
+  color: var(--text-primary);
   background: #000;
 }
 

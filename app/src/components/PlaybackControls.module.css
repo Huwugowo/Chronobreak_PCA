@@ -1,6 +1,6 @@
 .controls {
   display: contents;
-  color: var(--color-muted-bright);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 9px;
 }
@@ -159,7 +159,7 @@
 }
 
 .controls :focus-visible {
-  outline: 1px solid var(--color-blue-soft);
+  outline: 1px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -185,11 +185,11 @@
 }
 
 .limited {
-  color: #ffd099;
+  color: var(--accent-warning);
 }
 
 .dark {
-  color: #f8f5ef;
+  color: var(--text-primary);
 }
 @media (prefers-reduced-motion: reduce) {
   .volume {

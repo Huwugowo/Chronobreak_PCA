@@ -6,7 +6,7 @@ import styles from "./Chrome.module.css";
 type Props = {
   navigation: NavigationState;
   ddragon: DdragonStatus;
-  backTab?: LibraryTab;
+  replayBackLabel: string;
   onHome: () => void;
   onTab: (tab: LibraryTab) => void;
   onSettings: () => void;
@@ -16,7 +16,7 @@ function AppHeader(props: Props) {
   const activeTab = () => (props.navigation.screen === "library" ? props.navigation.tab : null);
   const replayMode = () => props.navigation.screen === "viewer";
   const homeLabel = () => replayMode()
-    ? `Back to ${props.backTab === "clips" ? "Clips" : "Match History"}`
+    ? props.replayBackLabel
     : "Open Match History";
 
   return (
