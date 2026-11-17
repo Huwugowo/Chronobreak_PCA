@@ -137,7 +137,7 @@
   --match-highlight: 4%;
 }
 
-.matchItem:has(.matchOpen:active:not(:disabled)) {
+.matchItem:has(.matchOpen:active:not(:disabled, [aria-disabled="true"])) {
   --match-highlight: 7%;
 }
 
@@ -626,10 +626,6 @@
   color: var(--brand-yellow);
 }
 
-.starButton:disabled {
-  cursor: wait;
-}
-
 .moreMenu {
   position: relative;
 }
@@ -640,10 +636,6 @@
 
 .moreMenu > summary::-webkit-details-marker {
   display: none;
-}
-
-.moreMenu[data-busy="true"] {
-  opacity: var(--disabled-opacity);
 }
 
 .moreMenu[open] > summary {

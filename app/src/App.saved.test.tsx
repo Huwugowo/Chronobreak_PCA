@@ -55,12 +55,12 @@ it.each([false, true])("keeps an immediate Star through its save refresh and the
   const save = deferred<void>(); const scan = deferred<LibrarySnapshot>();
   vi.mocked(setGameSaved).mockReturnValueOnce(save.promise); vi.mocked(refreshLibrary).mockReturnValueOnce(scan.promise);
   const h = await mount(); h.star().click();
-  expect(h.star().getAttribute("data-saved")).toBe("true"); expect(h.star().disabled).toBe(true);
+  expect(h.star().getAttribute("data-saved")).toBe("true"); expect(h.star().getAttribute("aria-disabled")).toBe("true");
   h.star().click(); expect(setGameSaved).toHaveBeenCalledTimes(1);
   expect(setGameSaved).toHaveBeenCalledWith("1", true, "a");
   save.resolve(); await vi.waitFor(() => expect(refreshLibrary).toHaveBeenCalledTimes(2));
-  expect(h.star().getAttribute("data-saved")).toBe("true"); expect(h.star().disabled).toBe(true);
-  scan.resolve(snapshot("b", canonical)); await vi.waitFor(() => expect(h.star().disabled).toBe(false));
+  expect(h.star().getAttribute("data-saved")).toBe("true"); expect(h.star().getAttribute("aria-disabled")).toBe("true");
+  scan.resolve(snapshot("b", canonical)); await vi.waitFor(() => expect(h.star().getAttribute("aria-disabled")).toBe("false"));
   expect(h.star().getAttribute("data-saved")).toBe(String(canonical));
 });
 it("keeps the indexed match card and star mounted through saving and refreshing", async () => {
@@ -74,9 +74,14 @@ it("keeps the indexed match card and star mounted through saving and refreshing"
   const spells = [...article!.querySelectorAll('[title="Summoner spell unavailable"]')];
   expect(spells).toHaveLength(2);
   const star = h.star();
+  const open = article!.querySelector<HTMLButtonElement>('[aria-label^="Open Ahri recording"]')!;
+  star.focus();
   const expectSameCard = () => {
     expect(h.host.querySelector("article")).toBe(article);
     expect(h.star()).toBe(star);
+    expect(document.activeElement).toBe(star);
+    expect(star.disabled).toBe(false);
+    expect(open.disabled).toBe(false);
     expect(spells.every(spell => spell.isConnected)).toBe(true);
     expect(star.getAttribute("data-saved")).toBe("true");
   };
@@ -84,6 +89,7 @@ it("keeps the indexed match card and star mounted through saving and refreshing"
   expectSameCard();
   save.resolve();
   await vi.waitFor(() => expect(refreshLibrary).toHaveBeenCalledTimes(2));
+  expect(open.getAttribute("aria-disabled")).toBe("true");
   expectSameCard();
   scan.resolve(snapshot("b", true));
   await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.anything()));
@@ -95,7 +101,7 @@ it("rolls back a failed save while retaining cards through the compulsory refres
   const h = await mount(); h.star().click(); save.reject(new Error("fixture save failure"));
   await vi.waitFor(() => expect(h.host.textContent).toContain("fixture save failure"));
   expect(h.star().getAttribute("data-saved")).toBe("false"); expect(refreshLibrary).toHaveBeenCalledTimes(2);
-  scan.resolve(snapshot("b")); await vi.waitFor(() => expect(h.star().disabled).toBe(false));
+  scan.resolve(snapshot("b")); await vi.waitFor(() => expect(h.star().getAttribute("aria-disabled")).toBe("false"));
 });
 it("suppresses stale save notices and stars after navigation while still reconciling the filesystem", async () => {
   const save = deferred<void>(); const scan = deferred<LibrarySnapshot>();
@@ -104,7 +110,7 @@ it("suppresses stale save notices and stars after navigation while still reconci
   save.resolve(); await vi.waitFor(() => expect(refreshLibrary).toHaveBeenCalledTimes(2));
   expect(h.host.textContent).not.toContain("Recording saved.");
   scan.resolve(snapshot("b", false)); await Promise.resolve(); h.click("back");
-  await vi.waitFor(() => expect(h.star()?.disabled).toBe(false));
+  await vi.waitFor(() => expect(h.star()?.getAttribute("aria-disabled")).toBe("false"));
   expect(h.star().getAttribute("data-saved")).toBe("false"); expect(h.host.textContent).not.toContain("Recording saved.");
 });
 it("rebuilds searchable data through the admitted settings mutation and refreshes its snapshot", async () => {
@@ -139,7 +145,7 @@ it("silently reconciles a rebuild that finishes after navigation", async () => {
   reset.resolve({ catalog_recordings: 1 });
   await vi.waitFor(() => expect(refreshLibrary).toHaveBeenCalledTimes(2));
   scan.resolve(snapshot("b"));
-  await vi.waitFor(() => expect(h.star()?.disabled).toBe(false));
+  await vi.waitFor(() => expect(h.star()?.getAttribute("aria-disabled")).toBe("false"));
   expect(h.host.textContent).not.toContain("Searchable League data reset.");
   expect(h.host.textContent).not.toContain("Rebuild request became stale.");
 });

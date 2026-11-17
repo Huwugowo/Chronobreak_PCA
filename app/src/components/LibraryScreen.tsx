@@ -207,6 +207,7 @@ function GamesLibrary(props: Props) {
     return "";
   };
   const paginationDisabled = () => !props.actionable || props.busyId !== null || updating() || !!props.history?.error;
+  const mutationsBlocked = () => !props.actionable || props.busyId !== null;
 
   const groups = createMemo(() => {
     const byMatch = new Map<string, GameSummary[]>();
@@ -401,10 +402,13 @@ function GamesLibrary(props: Props) {
                     <button
                       class={matchStyles.matchOpen}
                       type="button"
-                      onClick={() => multipart()
-                        ? setExpandedMatch(expanded() ? null : group)
-                        : props.onOpenGame(game().timestamp, props.snapshotOrigin)}
-                      disabled={!game().video_available || !props.actionable}
+                      onClick={() => {
+                        if (!props.actionable) return;
+                        if (multipart()) setExpandedMatch(expanded() ? null : group);
+                        else props.onOpenGame(game().timestamp, props.snapshotOrigin);
+                      }}
+                      disabled={!game().video_available}
+                      aria-disabled={!props.actionable}
                       aria-expanded={multipart() ? expanded() : undefined}
                       aria-controls={multipart() ? `recording-parts-${group}` : undefined}
                       aria-label={
@@ -616,16 +620,20 @@ function GamesLibrary(props: Props) {
                      <div class={matchStyles.matchActions}>
                        <Show when={clipCount() === 1 && props.onPlaySingleClip && props.snapshotOrigin}>
                          <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button"
-                           disabled={!props.actionable}
+                           aria-disabled={!props.actionable}
                            aria-busy={props.pendingSingleClipGroup === group}
-                           onClick={event => props.onPlaySingleClip!(group, props.snapshotOrigin!, event.currentTarget)}>
+                           onClick={event => {
+                             if (props.actionable) props.onPlaySingleClip!(group, props.snapshotOrigin!, event.currentTarget);
+                           }}>
                            <PlayIcon size={14} /> Play clip
                          </button>
                        </Show>
                        <Show when={props.onOpenManagedClip && group && (clipCount() ?? 0) > 1}>
-                         <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button" disabled={!props.actionable}
+                         <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button" aria-disabled={!props.actionable}
                            aria-expanded={clipsExpanded()} aria-controls={clipRegionId}
-                           onClick={() => setExpandedClips(clipsExpanded() ? null : group)}>
+                           onClick={() => {
+                             if (props.actionable) setExpandedClips(clipsExpanded() ? null : group);
+                           }}>
                            {clipCount()} clips <span class={matchStyles.clipChevron} aria-hidden="true" />
                          </button>
                        </Show>
@@ -633,8 +641,10 @@ function GamesLibrary(props: Props) {
                       <button
                         class={matchStyles.starButton}
                         type="button"
-                        onClick={() => props.onToggleSaved(game(), props.snapshotOrigin)}
-                        disabled={props.busyId !== null || !props.actionable}
+                        onClick={() => {
+                          if (!mutationsBlocked()) props.onToggleSaved(game(), props.snapshotOrigin);
+                        }}
+                        aria-disabled={mutationsBlocked()}
                         aria-label={game().saved ? `Unsave ${game().champion} recording` : `Save ${game().champion} recording`}
                         title={game().saved ? "Saved" : "Save"}
                         data-saved={game().saved}
@@ -643,7 +653,7 @@ function GamesLibrary(props: Props) {
                       </button>
 
                       <Show when={!game().saved}>
-                        <details class={matchStyles.moreMenu} data-busy={props.busyId === game().timestamp}>
+                        <details class={matchStyles.moreMenu}>
                           <summary aria-label={`More actions for ${game().champion} recording`} title="More actions"
                             aria-disabled={props.busyId === game().timestamp}
                             onClick={event => { if (props.busyId === game().timestamp) event.preventDefault(); }}>

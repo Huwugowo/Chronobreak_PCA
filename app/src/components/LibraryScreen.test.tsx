@@ -292,7 +292,13 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   expect(saved).toHaveBeenCalledWith(game, origin);
   expect(deleted).toHaveBeenCalledWith(game, origin);
   setActionable(false);
-  for (const button of [open, save, remove]) { expect(button.disabled).toBe(true); button.click(); }
+  for (const button of [open, save]) {
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    button.click();
+  }
+  expect(remove.disabled).toBe(true);
+  remove.click();
   expect(opened).toHaveBeenCalledTimes(1);
   expect(saved).toHaveBeenCalledTimes(1);
   expect(deleted).toHaveBeenCalledTimes(1);
