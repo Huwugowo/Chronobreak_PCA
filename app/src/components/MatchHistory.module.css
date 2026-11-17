@@ -15,7 +15,11 @@
 
 .dataFilters { color: var(--text-secondary); margin-bottom: var(--space-2); }
 .dataFilters summary { cursor: pointer; margin-bottom: var(--space-2); }
-.coverage { color: var(--text-muted); font-size: var(--type-meta-size); }
+.coverage {
+  min-block-size: 1lh;
+  color: var(--text-muted);
+  font-size: var(--type-meta-size);
+}
 
 .searchField {
   width: 240px;
@@ -499,10 +503,12 @@
 }
 
 .matchActions {
+  --match-action-size: 28px;
+  --match-action-gap: 2px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
+  gap: var(--match-action-gap);
   padding-inline: 4px;
 }
 
@@ -575,14 +581,15 @@
 }
 .starButton,
 .moreMenu {
+  flex: 0 0 var(--match-action-size);
   pointer-events: auto;
 }
 
 .starButton,
 .moreMenu > summary {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: var(--match-action-size);
+  height: var(--match-action-size);
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
@@ -591,6 +598,10 @@
   background: transparent;
   cursor: pointer;
   transition: color var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.starButton:last-child {
+  margin-inline-end: calc(var(--match-action-size) + var(--match-action-gap));
 }
 
 .starButton:hover,
@@ -605,7 +616,6 @@
 }
 
 .starButton:disabled {
-  opacity: var(--disabled-opacity);
   cursor: wait;
 }
 

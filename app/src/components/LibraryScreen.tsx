@@ -205,7 +205,7 @@ function GamesLibrary(props: Props) {
     if (semanticQuery() && history?.page?.unknown_recordings) return "Some recordings have limited match data. Results may be incomplete.";
     return "";
   };
-  const paginationDisabled = () => updating() || !!props.history?.error;
+  const paginationDisabled = () => !props.actionable || props.busyId !== null || updating() || !!props.history?.error;
 
   const groups = createMemo(() => {
     const byMatch = new Map<string, GameSummary[]>();
@@ -262,6 +262,7 @@ function GamesLibrary(props: Props) {
       return matchesSearch && matchesChampion && matchesMode && matchesSaved;
     }
   };
+  const visibleGames = createMemo(() => new Map(filteredGames().map(game => [game.match_group!, game])));
   const rowsByMedia = createMemo(() => new Map(props.history?.page?.rows.map(row => [row.media_id, row])));
   const rowFor = (game: GameSummary) => {
     if (!game.media_id || props.history?.historyReady?.[game.media_id] === false) return undefined;
@@ -353,19 +354,23 @@ function GamesLibrary(props: Props) {
       >
         <div class={matchStyles.matchScroller}>
           <section class={matchStyles.matchList} aria-label="Recorded matches" aria-busy={updating()}>
-            <For each={filteredGames()}>
-              {(game: GameSummary) => {
-                const parts = () => partsFor(game);
+            <For each={[...visibleGames().keys()]}>
+              {group => {
+                const game = createMemo<GameSummary>(previous => visibleGames().get(group) ?? previous, visibleGames().get(group)!);
+                const parts = createMemo(() => groups().get(group) ?? []);
                 const multipart = () => parts().length > 1;
-                const expanded = () => multipart() && expandedMatch() === game.match_group;
-                const clipCount = () => game.media_id ? rowsByMedia().get(game.media_id)?.clip_count : undefined;
-                const clipsExpanded = () => expandedClips() === game.match_group;
-                const matchClipQuery = { match_group: game.match_group ?? undefined, include_game_clock: true };
-                const clipRegionId = `match-clips-${game.match_group}`;
-                const outcome = () => displayedOutcome(rowFor(game)?.game ?? game);
-                const health = replayHealth(game);
-                const stats = () => statsFor(game);
-                const participants = createMemo(() => rowFor(game)?.game.participants ?? game.participants, undefined, {
+                const expanded = () => multipart() && expandedMatch() === group;
+                const clipCount = () => {
+                  const mediaId = game().media_id;
+                  return mediaId ? rowsByMedia().get(mediaId)?.clip_count : undefined;
+                };
+                const clipsExpanded = () => expandedClips() === group;
+                const matchClipQuery = { match_group: group, include_game_clock: true };
+                const clipRegionId = `match-clips-${group}`;
+                const outcome = () => displayedOutcome(rowFor(game())?.game ?? game());
+                const health = () => replayHealth(game());
+                const stats = () => statsFor(game());
+                const participants = createMemo(() => rowFor(game())?.game.participants ?? game().participants, undefined, {
                   equals: (before, after) => before.length === after.length && before.every((player, index) => {
                     const next = after[index];
                     return player.summoner_name === next.summoner_name && player.champion === next.champion && player.relation === next.relation;
@@ -379,14 +384,14 @@ function GamesLibrary(props: Props) {
                 const championAsset = () => ddragonAsset(
                   props.ddragon,
                   "champion",
-                  game.champion === "Unknown" ? null : game.champion,
+                  game().champion === "Unknown" ? null : game().champion,
                 );
-                const recordedAt = () => parts()[parts().length - 1]?.recorded_at ?? game.recorded_at;
+                const recordedAt = () => parts()[parts().length - 1]?.recorded_at ?? game().recorded_at;
                 const date = () => recordedAt() ? formatDate(recordedAt(), true) : "—";
                 const time = () => recordedAt() ? formattedTime(recordedAt()) : "—";
                 const duration = () => {
                   const seconds = stats().duration_seconds;
-                  return seconds === null ? game.duration_ms : seconds * 1_000;
+                  return seconds === null ? game().duration_ms : seconds * 1_000;
                 };
 
                 return (
@@ -396,22 +401,22 @@ function GamesLibrary(props: Props) {
                       class={matchStyles.matchOpen}
                       type="button"
                       onClick={() => multipart()
-                        ? setExpandedMatch(expanded() ? null : game.match_group)
-                        : props.onOpenGame(game.timestamp, props.snapshotOrigin)}
-                      disabled={!game.video_available || !props.actionable}
+                        ? setExpandedMatch(expanded() ? null : group)
+                        : props.onOpenGame(game().timestamp, props.snapshotOrigin)}
+                      disabled={!game().video_available || !props.actionable}
                       aria-expanded={multipart() ? expanded() : undefined}
-                      aria-controls={multipart() ? `recording-parts-${game.match_group}` : undefined}
+                      aria-controls={multipart() ? `recording-parts-${group}` : undefined}
                       aria-label={
-                        game.video_available
+                        game().video_available
                           ? multipart()
-                            ? `Choose a recording for ${game.champion} match from ${formatDate(recordedAt())} (${parts().length} recordings)`
-                            : `Open ${game.champion} recording from ${formatDate(recordedAt())}`
-                          : `${game.champion} recording unavailable`
+                            ? `Choose a recording for ${game().champion} match from ${formatDate(recordedAt())} (${parts().length} recordings)`
+                            : `Open ${game().champion} recording from ${formatDate(recordedAt())}`
+                          : `${game().champion} recording unavailable`
                       }
                     >
                       <span class={matchStyles.matchContext}>
                         <strong class={matchStyles.queueLabel}>
-                          {game.game_mode === "Unknown" ? "—" : game.game_mode}
+                          {game().game_mode === "Unknown" ? "—" : game().game_mode}
                         </strong>
 
                         <span
@@ -426,8 +431,8 @@ function GamesLibrary(props: Props) {
                         <Show
                           when={outcome()}
                           fallback={
-                            <Show when={health}>
-                              <strong class={matchStyles.health}>{health}</strong>
+                            <Show when={health()}>
+                              <strong class={matchStyles.health}>{health()}</strong>
                             </Show>
                           }
                         >
@@ -440,8 +445,8 @@ function GamesLibrary(props: Props) {
                           {duration() ? formatMatchDuration(duration()) : "—"}
                         </span>
 
-                        <Show when={outcome() && health}>
-                          <em class={matchStyles.health}>{health}</em>
+                        <Show when={outcome() && health()}>
+                          <em class={matchStyles.health}>{health()}</em>
                         </Show>
                       </span>
                       <span class={matchStyles.playerSummary}>
@@ -461,7 +466,7 @@ function GamesLibrary(props: Props) {
 
                           <span class={matchStyles.loadout}>
                             <span class={matchStyles.spells}>
-                              <For each={(stats().summoner_spells ?? (rowFor(game) ? [null, null] : game.summoner_spells)).slice(0, 2)}>
+                              <For each={(stats().summoner_spells ?? (rowFor(game()) ? [null, null] : game().summoner_spells)).slice(0, 2)}>
                                 {(spell) => (
                                   <span class={matchStyles.assetIcon} title={spell?.replace(/^Summoner/, "") ?? "Summoner spell unavailable"}>
                                     <Show when={ddragonAsset(props.ddragon, "spell", spell)}>
@@ -480,9 +485,9 @@ function GamesLibrary(props: Props) {
 
                             <span class={matchStyles.runes}>
                               <span class={`${matchStyles.assetIcon} ${matchStyles.runeIcon}`} title="Keystone rune">
-                                <Show when={ddragonAsset(props.ddragon, "rune", stats().keystone_id ?? game.keystone_id)}>
+                                <Show when={ddragonAsset(props.ddragon, "rune", stats().keystone_id ?? game().keystone_id)}>
                                   <img
-                                    src={ddragonAsset(props.ddragon, "rune", stats().keystone_id ?? game.keystone_id)!}
+                                    src={ddragonAsset(props.ddragon, "rune", stats().keystone_id ?? game().keystone_id)!}
                                     alt=""
                                     loading="lazy"
                                     decoding="async"
@@ -608,18 +613,18 @@ function GamesLibrary(props: Props) {
                     </button>
 
                      <div class={matchStyles.matchActions}>
-                       <Show when={clipCount() === 1 && props.onPlaySingleClip && game.match_group && props.snapshotOrigin}>
+                       <Show when={clipCount() === 1 && props.onPlaySingleClip && props.snapshotOrigin}>
                          <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button"
                            disabled={!props.actionable}
-                           aria-busy={props.pendingSingleClipGroup === game.match_group}
-                           onClick={event => props.onPlaySingleClip!(game.match_group!, props.snapshotOrigin!, event.currentTarget)}>
+                           aria-busy={props.pendingSingleClipGroup === group}
+                           onClick={event => props.onPlaySingleClip!(group, props.snapshotOrigin!, event.currentTarget)}>
                            <PlayIcon size={14} /> Play clip
                          </button>
                        </Show>
-                       <Show when={props.onOpenManagedClip && game.match_group && (clipCount() ?? 0) > 1}>
+                       <Show when={props.onOpenManagedClip && group && (clipCount() ?? 0) > 1}>
                          <button class={`${controlStyles.control} ${matchStyles.clipAction}`} type="button" disabled={!props.actionable}
                            aria-expanded={clipsExpanded()} aria-controls={clipRegionId}
-                           onClick={() => setExpandedClips(clipsExpanded() ? null : game.match_group)}>
+                           onClick={() => setExpandedClips(clipsExpanded() ? null : group)}>
                            {clipCount()} clips <span class={matchStyles.clipChevron} aria-hidden="true" />
                          </button>
                        </Show>
@@ -627,18 +632,18 @@ function GamesLibrary(props: Props) {
                       <button
                         class={matchStyles.starButton}
                         type="button"
-                        onClick={() => props.onToggleSaved(game, props.snapshotOrigin)}
+                        onClick={() => props.onToggleSaved(game(), props.snapshotOrigin)}
                         disabled={props.busyId !== null || !props.actionable}
-                        aria-label={game.saved ? `Unsave ${game.champion} recording` : `Save ${game.champion} recording`}
-                        title={game.saved ? "Saved" : "Save"}
-                        data-saved={game.saved}
+                        aria-label={game().saved ? `Unsave ${game().champion} recording` : `Save ${game().champion} recording`}
+                        title={game().saved ? "Saved" : "Save"}
+                        data-saved={game().saved}
                       >
-                        <StarIcon size={17} filled={game.saved} />
+                        <StarIcon size={17} filled={game().saved} />
                       </button>
 
-                      <Show when={!game.saved}>
-                        <details class={matchStyles.moreMenu} data-busy={props.busyId === game.timestamp}>
-                          <summary aria-label={`More actions for ${game.champion} recording`} title="More actions">
+                      <Show when={!game().saved}>
+                        <details class={matchStyles.moreMenu} data-busy={props.busyId === game().timestamp}>
+                          <summary aria-label={`More actions for ${game().champion} recording`} title="More actions">
                             <MoreIcon size={17} />
                           </summary>
                           <div class={matchStyles.actionMenu}>
@@ -647,7 +652,7 @@ function GamesLibrary(props: Props) {
                               data-danger
                               onClick={(event: MouseEvent) => {
                                 closeActionMenu(event);
-                                props.onDeleteGame(game, props.snapshotOrigin);
+                                props.onDeleteGame(game(), props.snapshotOrigin);
                               }}
                               disabled={props.busyId !== null || !props.actionable}
                             >
@@ -659,7 +664,7 @@ function GamesLibrary(props: Props) {
                        </Show>
                      </div>
                     </div>
-                  <Show when={props.onOpenManagedClip && game.match_group && (clipCount() ?? 0) > 1}>
+                  <Show when={props.onOpenManagedClip && group && (clipCount() ?? 0) > 1}>
                     <section class={matchStyles.matchClipStrip} id={clipRegionId} aria-label="Clips from this match" hidden={!clipsExpanded()}>
                       <Show when={props.snapshotOrigin && clipsExpanded()}>
                         <ClipGroups token={props.snapshotOrigin!.token} ready={props.actionable}
@@ -669,7 +674,7 @@ function GamesLibrary(props: Props) {
                   </Show>
                   </article>
                   <Show when={expanded()}>
-                    <section id={`recording-parts-${game.match_group}`} class={matchStyles.recordingParts} aria-label="Match recordings">
+                    <section id={`recording-parts-${group}`} class={matchStyles.recordingParts} aria-label="Match recordings">
                       <h3>Match recordings</h3>
                       <ol>
                         <For each={parts()}>{(part, index) => (

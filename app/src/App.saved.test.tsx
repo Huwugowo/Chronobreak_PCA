@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import App from "./App";
 import { loadStorageUsage, refreshLibrary, setGameSaved } from "./api";
-import { resetLeagueIndex } from "./leagueIndex";
+import { queryHistory, resetLeagueIndex } from "./leagueIndex";
 import type { GameSummary, LibrarySnapshot } from "./types";
 
 const harness = vi.hoisted(() => ({ root: "A", destination: "B" }));
@@ -17,9 +17,9 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
 }));
 vi.mock("./leagueIndex", async original => ({ ...await original<typeof import("./leagueIndex")>(),
   indexCatalog: async (token: string) => ({ snapshot_token: token, items: [], next: null, catalog_recordings: 1 }),
-  queryHistory: async () => ({ rows: [{ media_id: game.media_id, game, index_status: "ready",
+  queryHistory: vi.fn(async () => ({ rows: [{ media_id: game.media_id, game, index_status: "ready",
     stats: { source: "unavailable", kills: null, deaths: null, assists: null, items: null, keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null } }],
-    next: null, indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 1 }),
+    next: null, indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 1 })),
   resetLeagueIndex: vi.fn(),
 }));
 vi.mock("./components/AppHeader", () => ({ default: (props: { onSettings: () => void; onTab: (tab: "games") => void }) => <>
@@ -62,6 +62,32 @@ it.each([false, true])("keeps an immediate Star through its save refresh and the
   expect(h.star().getAttribute("data-saved")).toBe("true"); expect(h.star().disabled).toBe(true);
   scan.resolve(snapshot("b", canonical)); await vi.waitFor(() => expect(h.star().disabled).toBe(false));
   expect(h.star().getAttribute("data-saved")).toBe(String(canonical));
+});
+it("keeps the indexed match card and star mounted through saving and refreshing", async () => {
+  const save = deferred<void>();
+  const scan = deferred<LibrarySnapshot>();
+  vi.mocked(setGameSaved).mockReturnValueOnce(save.promise);
+  vi.mocked(refreshLibrary).mockReturnValueOnce(scan.promise);
+  const h = await mount();
+  await vi.waitFor(() => expect(queryHistory).toHaveBeenCalled());
+  const article = h.host.querySelector("article");
+  const spells = [...article!.querySelectorAll('[title="Summoner spell unavailable"]')];
+  expect(spells).toHaveLength(2);
+  const star = h.star();
+  const expectSameCard = () => {
+    expect(h.host.querySelector("article")).toBe(article);
+    expect(h.star()).toBe(star);
+    expect(spells.every(spell => spell.isConnected)).toBe(true);
+    expect(star.getAttribute("data-saved")).toBe("true");
+  };
+  star.click();
+  expectSameCard();
+  save.resolve();
+  await vi.waitFor(() => expect(refreshLibrary).toHaveBeenCalledTimes(2));
+  expectSameCard();
+  scan.resolve(snapshot("b", true));
+  await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.anything()));
+  expectSameCard();
 });
 it("rolls back a failed save while retaining cards through the compulsory refresh", async () => {
   const save = deferred<void>(); const scan = deferred<LibrarySnapshot>();

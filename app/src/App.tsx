@@ -508,8 +508,9 @@ function App() {
     const current = navigation();
     const state = libraryState();
     if (current.screen !== "library" && clipReturn()?.tab === "games") return;
-    history.setContext(current.screen === "library" && current.tab === "games" && state.actionable && !state.busy ? controller.origin() : null,
-      state.snapshot?.games, restoringClipView());
+    const visible = current.screen === "library" && current.tab === "games";
+    history.setContext(visible ? controller.origin() : null, state.snapshot?.games,
+      restoringClipView(), !state.actionable || state.busy !== null);
   });
 
   createEffect(() => {

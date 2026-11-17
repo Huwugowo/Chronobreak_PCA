@@ -29,6 +29,7 @@ const needsPreparation = (progress: ImportProgress) =>
 /** Read-only preparation status and short queries; the backend owns all imports. */
 export class HistoryController {
   private context: Context | null = null;
+  private suspended = false;
   private state: HistoryState = { page: null, loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false };
   private listeners = new Set<(state: HistoryState) => void>();
   private query: HistoryQuery = { limit: 50 };
@@ -51,7 +52,9 @@ export class HistoryController {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener(this.state);
   }
-  private current(context: Context) { return !this.closed && this.context === context && this.api.current(context.origin); }
+  private current(context: Context) {
+    return !this.closed && !this.suspended && this.context === context && this.api.current(context.origin);
+  }
   isQueryCurrent(generation: number) {
     return !!this.context && this.current(this.context) && generation === this.queryGeneration;
   }
@@ -59,10 +62,23 @@ export class HistoryController {
     actionId: string | undefined, rowCount?: number) {
     this.api.observeQuery?.({ kind, generation, actionId, rowCount });
   }
-  setContext(origin: LibraryOrigin | null, games: GameSummary[] = [], preservePage = false) {
+  setContext(origin: LibraryOrigin | null, games: GameSummary[] = [], preservePage = false, suspended = false) {
     if (this.closed) return;
-    if (origin && this.context && key(origin) === key(this.context.origin)) return;
-    if (preservePage && origin && this.context?.origin.token === origin.token &&
+    const previous = this.context?.origin;
+    const sameView = origin && previous && origin.root === previous.root &&
+      origin.rootEpoch === previous.rootEpoch && origin.navigation === previous.navigation;
+    if (suspended && sameView) {
+      // Keep displaying the accepted page while mutations and scans gate new work.
+      this.suspended = true;
+      clearTimeout(this.timer);
+      return;
+    }
+    const retainedPage = this.suspended && sameView ? this.state.page : null;
+    const wasSuspended = this.suspended;
+    this.suspended = false;
+    if (suspended) origin = null;
+    if (!wasSuspended && origin && previous && key(origin) === key(previous)) return;
+    if (!wasSuspended && preservePage && origin && this.context?.origin.token === origin.token &&
         this.context.origin.rootEpoch === origin.rootEpoch) {
       this.context = { ...this.context, origin, games };
       if (this.queryActive || this.queryPending || !this.state.page || this.state.error ||
@@ -74,8 +90,11 @@ export class HistoryController {
     this.context = origin ? { origin, games, revision: 0, queriedRevision: -1 } : null;
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
-    this.query = { ...this.query, after: null }; this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
-    this.publish({ page: null, loading: origin !== null, indexing: origin !== null, initializing: origin !== null, error: null, indexIssue: null, laterPage: false, historyReady: {} });
+    if (!retainedPage) this.query = { ...this.query, after: null };
+    this.queryGeneration++; this.queryPending = false; this.queryActionId = undefined; this.queryDirty = false;
+    this.publish({ page: retainedPage, loading: origin !== null, indexing: origin !== null,
+      initializing: origin !== null && !retainedPage, error: null, indexIssue: null,
+      laterPage: !!retainedPage && this.state.laterPage, historyReady: retainedPage ? this.state.historyReady : {} });
     this.schedule();
   }
   prepared() {
@@ -88,12 +107,12 @@ export class HistoryController {
     this.requestQuery(actionId);
   }
   nextPage() {
-    if (!this.state.page?.next || this.state.loading || this.state.error) return;
+    if (this.suspended || !this.state.page?.next || this.state.loading || this.state.error) return;
     this.query = { ...this.query, after: this.state.page.next };
     this.requestQuery();
   }
   firstPage() {
-    if (this.state.loading || this.state.error) return;
+    if (this.suspended || this.state.loading || this.state.error) return;
     this.query = { ...this.query, after: null }; this.requestQuery();
   }
   private requestQuery(actionId?: string, background = false) {
@@ -156,7 +175,7 @@ export class HistoryController {
       this.publish({ initializing: false });
   }
   private schedule() {
-    if (this.closed || this.importActive || !this.context || (!this.catalogPending && !this.pending.size)) return;
+    if (this.closed || this.suspended || this.importActive || !this.context || (!this.catalogPending && !this.pending.size)) return;
     clearTimeout(this.timer);
     // Catalog pages are cheap local reads. Recheck pending background work
     // at a human-scale cadence without delaying the first display.
