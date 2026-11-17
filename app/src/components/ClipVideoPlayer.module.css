@@ -27,14 +27,54 @@
   max-height: none;
 }
 
+.timeline {
+  min-width: 0;
+  margin-inline: var(--space-4);
+}
+
 .position {
+  --playhead-size: 10px;
   display: block;
-  width: calc(100% - 32px);
+  appearance: none;
+  width: 100%;
   min-width: 0;
   height: 18px;
-  margin: 0 16px;
-  accent-color: var(--brand-yellow);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: linear-gradient(to right,
+    var(--timeline-played) var(--clip-progress),
+    var(--timeline-track) var(--clip-progress)) center / 100% 3px no-repeat;
   cursor: pointer;
+}
+
+.position:disabled { cursor: default; }
+
+.position:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.position::-webkit-slider-runnable-track { height: 3px; }
+
+.position::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--playhead-size);
+  height: var(--playhead-size);
+  margin-top: calc((3px - var(--playhead-size)) / 2);
+  border: 1px solid rgb(0 0 0 / 72%);
+  border-radius: 50%;
+  background: var(--timeline-playhead);
+}
+
+.position::-moz-range-thumb {
+  box-sizing: border-box;
+  width: var(--playhead-size);
+  height: var(--playhead-size);
+  border: 1px solid rgb(0 0 0 / 72%);
+  border-radius: 50%;
+  background: var(--timeline-playhead);
 }
 
 .error {

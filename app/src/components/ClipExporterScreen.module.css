@@ -393,8 +393,8 @@ display: grid;
   font-size: 10px;
 }
 
-input[type="range"] {
-width: 100%;
+.exporter input[type="range"] {
+  width: 100%;
   accent-color: var(--brand-yellow);
 }
 

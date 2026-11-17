@@ -1,11 +1,11 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { formatDate, formatDuration } from "../format";
 import { libraryError } from "../libraryController";
 import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipPage, type Attribution, type ClipCard,
   type ClipCursor, type ClipEdit, type ClipGame, type ClipGroup, type ClipPage, type ClipQuery, type GroupCursor } from "../managedClips";
 import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
-import { PlayIcon } from "../ui/icons";
+import { ArrowLeftIcon, ArrowRightIcon, PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
 import { createModalFocus } from "../ui/createModalFocus";
 import { ClipHighlights, ClipTagInput } from "./ClipMetadataFields";
@@ -24,34 +24,87 @@ const gameCaption = (game: ClipGame) => [
 
 type OpenClip = (clip: ClipCard, button: HTMLElement) => void;
 
-function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolean }) {
-  return <div class={props.inline ? styles.strip : libraryStyles.clipGrid}>
-    <For each={props.clips}>{clip =>
-      <article class={libraryStyles.clipCard}>
-        <button class={libraryStyles.clipOpen} type="button"
-          data-managed-clip={clip.header.id}
-          onClick={event => props.onOpen(clip, event.currentTarget)} aria-label={`Play ${clip.title}`}>
-          <span class={libraryStyles.clipArtwork}>
-            <ClipThumbnail src={clip.thumbnail_url} />
-            <em>{formatDuration(clipDurationMs(clip))}</em>
-            <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
-          </span>
-          <span class={libraryStyles.clipContent}>
-            <strong>{clip.title}</strong>
-            <Show when={props.inline} fallback={<>
-              <small>{clip.header.preset}</small>
-              <span class={styles.tags}>
-                <For each={clip.header.highlights}>{tag => <span>{highlightLabel(tag)}</span>}</For>
-                <For each={clip.header.custom_tags}>{tag => <span>{tag}</span>}</For>
-              </span>
-            </>}>
-              <small>{clip.game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip.game_clock)}`}</small>
-            </Show>
-          </span>
-        </button>
-      </article>
-    }</For>
+function ClipTags(props: { header: ClipCard["header"]; class?: string }) {
+  return <Show when={props.header.highlights.length || props.header.custom_tags.length}>
+    <span class={props.class ? `${styles.clipTags} ${props.class}` : styles.clipTags}>
+      <For each={props.header.highlights}>{tag => <span class={styles.highlightBadge}>{highlightLabel(tag)}</span>}</For>
+      <For each={props.header.custom_tags}>{tag => <span class={styles.customBadge}>{tag}</span>}</For>
+    </span>
+  </Show>;
+}
+
+function ClipStrip(props: { children: JSX.Element }) {
+  let viewport!: HTMLDivElement;
+  let track!: HTMLDivElement;
+  const [canScrollLeft, setCanScrollLeft] = createSignal(false);
+  const [canScrollRight, setCanScrollRight] = createSignal(false);
+
+  const updateArrows = () => {
+    setCanScrollLeft(viewport.scrollLeft > 1);
+    setCanScrollRight(viewport.clientWidth > 0 && viewport.scrollWidth - viewport.clientWidth - viewport.scrollLeft > 1);
+  };
+
+  onMount(() => {
+    updateArrows();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateArrows);
+    observer.observe(viewport);
+    observer.observe(track);
+    onCleanup(() => observer.disconnect());
+  });
+
+  const scroll = (direction: -1 | 1) => {
+    if (!(direction < 0 ? canScrollLeft() : canScrollRight())) return;
+    const [first, second] = track.children as HTMLCollectionOf<HTMLElement>;
+    const stride = second ? second.offsetLeft - first.offsetLeft : viewport.clientWidth;
+    if (stride <= 0) return;
+    const tilesPerPage = Math.max(1, Math.floor(viewport.clientWidth / stride));
+    const currentTile = Math.round(viewport.scrollLeft / stride);
+    viewport.scrollTo({
+      left: (currentTile + direction * tilesPerPage) * stride,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  };
+
+  return <div class={styles.carousel}>
+    <button type="button" class={`${styles.stripArrow} ${styles.stripPrevious}`} aria-label="Scroll clips left"
+      aria-disabled={!canScrollLeft()} tabIndex={canScrollLeft() ? 0 : -1} onClick={() => scroll(-1)}>
+      <ArrowLeftIcon size={18} />
+    </button>
+    <button type="button" class={`${styles.stripArrow} ${styles.stripNext}`} aria-label="Scroll clips right"
+      aria-disabled={!canScrollRight()} tabIndex={canScrollRight() ? 0 : -1} onClick={() => scroll(1)}>
+      <ArrowRightIcon size={18} />
+    </button>
+    <div ref={viewport} class={styles.stripViewport} onScroll={updateArrows}>
+      <div ref={track} class={styles.strip}>{props.children}</div>
+    </div>
   </div>;
+}
+
+function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolean }) {
+  const cards = <For each={props.clips}>{clip =>
+    <article class={libraryStyles.clipCard}>
+      <button class={libraryStyles.clipOpen} type="button"
+        data-managed-clip={clip.header.id}
+        onClick={event => props.onOpen(clip, event.currentTarget)} aria-label={`Play ${clip.title}`}>
+        <span class={libraryStyles.clipArtwork}>
+          <ClipThumbnail src={clip.thumbnail_url} />
+          <em>{formatDuration(clipDurationMs(clip))}</em>
+          <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
+        </span>
+        <span class={`${libraryStyles.clipContent} ${styles.cardContent}`}>
+          <strong>{clip.title}</strong>
+          <Show when={props.inline} fallback={<small>{clip.header.preset}</small>}>
+            <small>{clip.game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip.game_clock)}`}</small>
+          </Show>
+        </span>
+        <ClipTags header={clip.header} class={styles.cardTags} />
+      </button>
+    </article>
+  }</For>;
+  return <Show when={props.inline} fallback={<div class={libraryStyles.clipGrid}>{cards}</div>}>
+    <ClipStrip>{cards}</ClipStrip>
+  </Show>;
 }
 
 /** One owner for a page read and its explicit continuations. Superseded results stay local. */
@@ -117,18 +170,19 @@ export function ClipGroups(props: {
     <Show when={!props.ready || (busy() && groups().length === 0)}><p role="status">Loading clips…</p></Show>
     <Show when={error()}>{message => <p role="alert">{message()} <button class={controls.control} type="button" onClick={() => setRetry(n => n + 1)}>Try again</button></p>}</Show>
     <Show when={props.ready && !busy() && !error() && groups().length === 0}><p>No clips found.</p></Show>
-    <For each={groups()}>{group => {
-      const game = () => group.clips[0]?.header.game;
+    {/* Pagination updates groups in place so each strip can keep its scroll position. */}
+    <Index each={groups()}>{group => {
+      const game = () => group().clips[0]?.header.game;
       return <section class={styles.group}>
         <Show when={!props.inline && game()}>{value => <header>
           <h2>{value().champion ?? "Game details unavailable"}</h2>
           <p>{gameCaption(value())}</p>
         </header>}</Show>
-        <ClipCards clips={group.clips} onOpen={props.onOpen} inline={props.inline} />
-        <Show when={group.next}>{cursor => <button class={controls.control} type="button" disabled={busy()}
-          onClick={() => load("group", undefined, { key: group.key, after: cursor() })}>More clips from this game</button>}</Show>
+        <ClipCards clips={group().clips} onOpen={props.onOpen} inline={props.inline} />
+        <Show when={group().next}>{cursor => <button class={controls.control} type="button" disabled={busy()}
+          onClick={() => load("group", undefined, { key: group().key, after: cursor() })}>More clips from this game</button>}</Show>
       </section>;
-    }}</For>
+    }}</Index>
     <Show when={next()}>{cursor => <button class={controls.control} type="button" disabled={busy()}
       onClick={() => load("more", cursor())}>More games</button>}</Show>
   </div>;
@@ -238,10 +292,7 @@ export function ManagedClipPlayer(props: {
         </header>
         <ClipVideoPlayer src={props.clip.video_url} compact />
         <div class={styles.details}>
-          <div class={styles.tags}>
-            <For each={props.clip.header.highlights}>{tag => <span>{highlightLabel(tag)}</span>}</For>
-            <For each={props.clip.header.custom_tags}>{tag => <span>{tag}</span>}</For>
-          </div>
+          <ClipTags header={props.clip.header} />
           <div class={styles.actions}>
             <Show when={props.onSource}><button class={controls.control} type="button" disabled={!props.sourceAvailable || busy()}
               onClick={props.onSource}>{props.sourceAvailable ? "Open source replay" : "Source replay unavailable"}</button></Show>

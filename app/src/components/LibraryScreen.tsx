@@ -644,7 +644,9 @@ function GamesLibrary(props: Props) {
 
                       <Show when={!game().saved}>
                         <details class={matchStyles.moreMenu} data-busy={props.busyId === game().timestamp}>
-                          <summary aria-label={`More actions for ${game().champion} recording`} title="More actions">
+                          <summary aria-label={`More actions for ${game().champion} recording`} title="More actions"
+                            aria-disabled={props.busyId === game().timestamp}
+                            onClick={event => { if (props.busyId === game().timestamp) event.preventDefault(); }}>
                             <MoreIcon size={17} />
                           </summary>
                           <div class={matchStyles.actionMenu}>

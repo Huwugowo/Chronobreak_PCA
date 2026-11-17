@@ -128,8 +128,19 @@
   overflow: visible;
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-surface);
-  background: var(--surface-panel);
+  background: color-mix(in srgb, var(--text-primary) var(--match-highlight, 0%), var(--match-surface, var(--surface-panel)));
+  transition: background-color var(--motion-fast);
 }
+
+.matchItem:hover:has(.matchOpen:not(:disabled)),
+.matchItem:has(.matchOpen:focus-visible) {
+  --match-highlight: 4%;
+}
+
+.matchItem:has(.matchOpen:active:not(:disabled)) {
+  --match-highlight: 7%;
+}
+
 .matchItem::before {
   content: "";
   position: absolute;
@@ -145,47 +156,38 @@
 
 
 .matchSummary {
+  --match-actions-width: 160px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 107px;
   border-radius: inherit;
 }
 
 .matchOpen {
   display: grid;
+  grid-area: 1 / 1;
   grid-template-columns: 100px 310px 76px minmax(220px, 1fr) 74px;
   width: 100%;
   min-width: 0;
   min-height: 107px;
   align-items: center;
   gap: var(--space-3);
-  padding: 4px 4px 4px var(--space-3);
+  padding: 4px calc(var(--match-actions-width) + 4px) 4px var(--space-3);
   border: 0;
   border-radius: inherit;
   color: inherit;
   background: transparent;
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--motion-fast);
 }
 
-.matchOpen:hover:not(:disabled),
 .matchOpen:focus-visible {
   outline: none;
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-}
-
-.matchOpen:active:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .matchOpen:disabled {
   color: inherit;
   cursor: default;
-}
-
-.matchOpen:disabled:hover {
-  background: transparent;
 }
 
 .matchContext {
@@ -505,11 +507,20 @@
 .matchActions {
   --match-action-size: 28px;
   --match-action-gap: 2px;
+  position: relative;
   display: flex;
+  grid-area: 1 / 1;
+  width: var(--match-actions-width);
+  justify-self: end;
   align-items: center;
   justify-content: flex-end;
   gap: var(--match-action-gap);
   padding-inline: 4px;
+  pointer-events: none;
+}
+
+.matchActions > * {
+  pointer-events: auto;
 }
 
 .clipAction {
@@ -632,7 +643,6 @@
 }
 
 .moreMenu[data-busy="true"] {
-  pointer-events: none;
   opacity: var(--disabled-opacity);
 }
 
@@ -707,11 +717,11 @@
 }
 
 .matchItem[data-outcome="victory"] {
-  background: color-mix(in srgb, var(--accent-blue) 7%, var(--surface-panel));
+  --match-surface: color-mix(in srgb, var(--accent-blue) 7%, var(--surface-panel));
 }
 
 .matchItem[data-outcome="defeat"] {
-  background: color-mix(in srgb, var(--accent-red) 7%, var(--surface-panel));
+  --match-surface: color-mix(in srgb, var(--accent-red) 7%, var(--surface-panel));
 }
 @media (max-width: 720px) {
   .summaryBar {

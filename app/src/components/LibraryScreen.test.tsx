@@ -3,10 +3,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import LibraryScreen from "./LibraryScreen";
+import managedClipStyles from "./ManagedClips.module.css";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
 import { readClipPage } from "../managedClips";
-import type { ClipCard } from "../managedClips";
+import type { ClipCard, ClipCursor } from "../managedClips";
 
 vi.mock("../managedClips", async original => ({ ...await original<typeof import("../managedClips")>(),
   readClipPage: vi.fn(),
@@ -49,7 +50,11 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
   const play = vi.fn();
   const playSingle = vi.fn();
   const [clipHistory, setClipHistory] = createSignal(history);
-  vi.mocked(readClipPage).mockResolvedValueOnce({ groups: [{ key: group, clips: [fixtureClip], next: null }], next: null });
+  const nextClip = { ...fixtureClip, title: "Earlier fight", header: { ...fixtureClip.header, id: "earlier" } };
+  const clipCursor: ClipCursor = [0, 0, fixtureClip.header.id];
+  vi.mocked(readClipPage)
+    .mockResolvedValueOnce({ groups: [{ key: group, clips: [fixtureClip], next: clipCursor }], next: null })
+    .mockResolvedValueOnce({ groups: [{ key: group, clips: [nextClip], next: null }], next: null });
     const [libraryState, setLibraryState] = createSignal({ actionable: true });
     const dispose = render(() => <LibraryScreen tab="games" games={[middle, single, newest, unmatched, earliest]} clips={[]}
     ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
@@ -84,6 +89,17 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
     expect(thumbnail.textContent).toContain("No thumbnail");
     thumbnail.click();
     expect(play).toHaveBeenCalledExactlyOnceWith(fixtureClip, thumbnail);
+    const clipViewport = () => region.querySelector<HTMLDivElement>(`.${managedClipStyles.stripViewport}`)!;
+    const viewport = clipViewport();
+    viewport.scrollLeft = 40;
+    const moreClips = [...region.querySelectorAll("button")].find(button => button.textContent === "More clips from this game")!;
+    await vi.waitFor(() => expect(moreClips.disabled).toBe(false));
+    moreClips.click();
+    await vi.waitFor(() => expect(region.querySelector('[aria-label="Play Earlier fight"]')).not.toBeNull());
+    expect(readClipPage).toHaveBeenLastCalledWith(origin.token, expect.objectContaining({ group_key: group, clip_after: clipCursor }));
+    expect(clipViewport()).toBe(viewport);
+    expect(viewport.scrollLeft).toBe(40);
+    expect(region.querySelector('[aria-label="Play Last fight"]')).toBe(thumbnail);
     clipButtons[0].click();
     expect(clipButtons[0].getAttribute("aria-expanded")).toBe("false");
     expect(region.hidden).toBe(true);

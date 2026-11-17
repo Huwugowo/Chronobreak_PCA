@@ -82,15 +82,16 @@
 .clipArtwork {
   position: relative;
   display: block;
-  height: 190px;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   background: var(--surface-app);
 }
 
 .clipArtwork > img {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .clipArtwork > em {

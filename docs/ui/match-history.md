@@ -1,7 +1,7 @@
 # Chronobreak Match History UI Spec
 
 **Status:** Canonical screen contract
-**Revision:** 5
+**Revision:** 6
 **Depends on:** `docs/ui/chronobreak-ui-foundations.md`
 
 ## 1. Purpose
@@ -281,6 +281,15 @@ Destructive operations such as Delete live behind the More action / confirmation
 - Actual Delete action is red.
 - Confirmation remains explicit.
 - Do not tint the item red merely because delete exists.
+
+### 12.1 Exported clips
+
+A match with one verified clip opens the clip directly from the action rail.
+A match with multiple clips expands a horizontal strip inside the match item.
+The strip shows the full thumbnail, clip title, duration, and approximate game
+time when available. Highlight and custom tags appear below the clip details.
+Scroll arrows are keyboard-accessible when there are more cards in that
+direction. Loading more clips appends cards and keeps the current scroll position.
 
 ## 13. Match item states
 

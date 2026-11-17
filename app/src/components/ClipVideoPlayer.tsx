@@ -109,25 +109,28 @@ export default function ClipVideoPlayer(props: { src: string; compact?: boolean 
         data-hud-region
         {...hud.regionEvents}
       >
-        <input
-          class={styles.position}
-          type="range"
-          min="0"
-          max={duration()}
-          step="any"
-          value={Math.min(time(), duration())}
-          disabled={failed() || duration() <= 0}
-          aria-label="Clip position"
-          aria-valuetext={formatDuration(time() * 1_000)}
-          onInput={event => seek(event.currentTarget.valueAsNumber)}
-          onKeyDown={event => {
-            const direction = event.key === "ArrowLeft" || event.key === "ArrowDown" ? -1
-              : event.key === "ArrowRight" || event.key === "ArrowUp" ? 1 : 0;
-            if (direction === 0) return;
-            event.preventDefault();
-            seek(time() + direction * (event.ctrlKey ? 5 : 1));
-          }}
-        />
+        <div class={styles.timeline}>
+          <input
+            class={styles.position}
+            style={{ "--clip-progress": duration() > 0 ? `${Math.min(time(), duration()) / duration() * 100}%` : "0%" }}
+            type="range"
+            min="0"
+            max={duration()}
+            step="any"
+            value={Math.min(time(), duration())}
+            disabled={failed() || duration() <= 0}
+            aria-label="Clip position"
+            aria-valuetext={formatDuration(time() * 1_000)}
+            onInput={event => seek(event.currentTarget.valueAsNumber)}
+            onKeyDown={event => {
+              const direction = event.key === "ArrowLeft" || event.key === "ArrowDown" ? -1
+                : event.key === "ArrowRight" || event.key === "ArrowUp" ? 1 : 0;
+              if (direction === 0) return;
+              event.preventDefault();
+              seek(time() + direction * (event.ctrlKey ? 5 : 1));
+            }}
+          />
+        </div>
         <MediaTransport
           mediaLabel="clip"
           mediaAvailable={!failed()}
