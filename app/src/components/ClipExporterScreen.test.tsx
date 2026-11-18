@@ -10,6 +10,7 @@ import {
   prepareImportedMusicPreview,
   releaseImportedMusicPreview,
 } from "../api";
+import * as managedClips from "../managedClips";
 import { parseMediaId, type FrameBoundary, type ReplayTick } from "../replayTime";
 
 vi.mock("../api", () => ({
@@ -33,6 +34,58 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.rep
         frameRate: { numerator: 60n, denominator: 1n }, frameCount: 14_400 as FrameBoundary,
         onePastLastPts: 14_400n, replayEnd: 11_520_000_000 as ReplayTick }, audio: { present: true } },
   };
+
+it("keeps replay navigation and plain section labels and previews filenames with spaced hyphens", async () => {
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({
+    snapshot_token: "test-snapshot", game_timestamp: "1",
+    media_timeline: descriptor.media_timeline, video_url: descriptor.video_url,
+  });
+  vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
+  vi.spyOn(managedClips, "usesManagedClips").mockReturnValue(true);
+  vi.spyOn(managedClips, "prepareClipDraft").mockResolvedValue({
+    token: "test-draft", title: "Ahri - 2026-09-14 - 0m01s", availability: "available", candidates: [],
+  });
+  const draft = {
+    gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId,
+    startFrame: 60 as FrameBoundary, endFrameExclusive: 360 as FrameBoundary,
+  };
+  const onBack = vi.fn();
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <ClipExporterScreen
+    admissionError={null} draft={draft} outputPath="output" snapshotToken="test-snapshot"
+    snapshotOrigin={{ root: "output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }}
+    onBack={onBack} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}}
+    readReplay={work => work("test-snapshot")}
+  />, host);
+  try {
+    const back = host.querySelector("button")!;
+    expect(back.textContent).toBe("BACK TO REPLAY");
+    back.click();
+    expect(onBack).toHaveBeenCalledExactlyOnceWith(draft);
+
+    await vi.waitFor(() => expect(host.textContent).toContain("Ahri - 2026-09-14 - 0m01s.mp4"));
+    expect(host.querySelector("header")).toBeNull();
+    expect(host.textContent).not.toMatch(/CLIP WORKBENCH|Publish the moment|0[123] \/ /);
+    expect([...host.querySelectorAll("dt")].map(label => label.textContent)).toEqual([
+      "FORMATS", "QUALITY", "EST. SIZE", "OUTPUT",
+    ]);
+    const sectionLabels = [...host.querySelectorAll("span")].map(label => label.textContent);
+    expect(sectionLabels).toEqual(expect.arrayContaining(["FORMAT", "SOUNDTRACK", "EXPORT"]));
+
+    const formats = host.querySelector('[aria-label="Export formats"]')!;
+    const discord = [...formats.querySelectorAll("label")].find(label => label.textContent?.includes("Discord"))!;
+    discord.querySelector("input")!.click();
+    expect(host.textContent).toContain("Ahri - 2026-09-14 - 0m01s - Discord.mp4");
+    expect(host.textContent).toContain("Ahri - 2026-09-14 - 0m01s - Horizontal.mp4");
+
+    const title = host.querySelector<HTMLInputElement>('input[placeholder="Ahri - 2026-09-14 - 0m01s"]')!;
+    title.value = "My clip – Ahri";
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(host.textContent).toContain("My clip – Ahri - Discord.mp4");
+  } finally { dispose(); }
+});
+
 it("retries the same imported file after preparation fails and releases the successful preview", async () => {
   const path = "C:\\Music\\same.wav";
   const preview = { url: "http://127.0.0.1:123/music-preview/retry", token: "retry" };

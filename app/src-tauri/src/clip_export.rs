@@ -359,7 +359,7 @@ pub async fn export(
         let filename = if total_outputs == 1 {
             title.clone()
         } else {
-            format!("{title} – {}", preset.label())
+            format!("{title} - {}", preset.label())
         };
         let video_leaf = clip_bundle::media_leaf(&filename)?;
         let clip_id = ClipId::new();
@@ -661,8 +661,8 @@ pub(crate) fn default_title(game: &clip_bundle::ClipGame, start: ReplayTick) -> 
     let seconds = start.get() / REPLAY_TICKS_PER_SECOND;
     let position = format!("{}m{:02}s", seconds / 60, seconds % 60);
     match game.played_at.as_deref().and_then(|date| date.get(..10)) {
-        Some(date) => format!("{champion} – {date} – {position}"),
-        None => format!("{champion} – {position}"),
+        Some(date) => format!("{champion} - {date} - {position}"),
+        None => format!("{champion} - {position}"),
     }
 }
 

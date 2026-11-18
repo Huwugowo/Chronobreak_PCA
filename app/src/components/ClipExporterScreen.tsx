@@ -130,7 +130,7 @@ function ClipExporterScreen(props: Props) {
     const base = title().trim() || metadataDraft()?.title;
     if (!base) return [];
     const presets = selectedPresets();
-    return presets.map(preset => presets.length === 1 ? base : `${base} – ${presetLabel(preset)}`);
+    return presets.map(preset => presets.length === 1 ? base : `${base} - ${presetLabel(preset)}`);
   });
   const titleError = createMemo(() => {
     const base = title().trim();
@@ -572,23 +572,12 @@ function ClipExporterScreen(props: Props) {
 
   return (
     <section class={styles.exporter} data-testid="clip-exporter">
-      <header class={styles.exportHeader}>
-        <BackButton
-          class={styles.backButton}
-          disabled={exporting()}
-          label="BACK TO REPLAY"
-          onClick={() => props.onBack(props.draft)}
-        />
-        <div>
-          <p>CLIP WORKBENCH</p>
-          <h1>Publish the moment.</h1>
-        </div>
-        <dl>
-          <div><dt>START</dt><dd>{formatDuration(clipStartMs())}</dd></div>
-          <div><dt>END</dt><dd>{formatDuration(clipEndMs())}</dd></div>
-          <div><dt>DURATION</dt><dd>{formatDuration(durationMs())}</dd></div>
-        </dl>
-      </header>
+      <BackButton
+        class={styles.backButton}
+        disabled={exporting()}
+        label="BACK TO REPLAY"
+        onClick={() => props.onBack(props.draft)}
+      />
 
       <Switch>
         <Match when={probe.loading}>
@@ -604,7 +593,7 @@ function ClipExporterScreen(props: Props) {
           <div class={styles.exportGrid}>
             <section class={styles.previewPanel}>
               <div class={styles.sectionHeading}>
-                <span>01 / FORMAT</span>
+                <span>FORMAT</span>
                 <strong>{props.game?.champion ?? "Recording"} · {selectedPresets().length} SELECTED</strong>
               </div>
               <div class={styles.presetGrid} role="group" aria-label="Export formats">
@@ -804,7 +793,7 @@ function ClipExporterScreen(props: Props) {
               </Show>
               <section>
                 <div class={styles.sectionHeading}>
-                  <span>02 / SOUNDTRACK</span>
+                  <span>SOUNDTRACK</span>
                   <strong>Audio mix</strong>
                 </div>
                 <div class={styles.musicChoices}>
@@ -859,7 +848,7 @@ function ClipExporterScreen(props: Props) {
 
               <section class={styles.exportPanel}>
                 <div class={styles.sectionHeading}>
-                  <span>03 / EXPORT</span>
+                  <span>EXPORT</span>
                   <strong>H.264 · AAC · MP4</strong>
                 </div>
                 <dl>

@@ -348,6 +348,13 @@ async fn silent_source_packaged_export_matrix() {
             assert_eq!(result.outputs.len(), 3);
             for output in result.outputs {
                 let media = Path::new(&output.output_path);
+                let expected_title =
+                    format!("Clip - 2026-10-26 - 0m01s - {}", output.preset.label());
+                assert_eq!(output.filename, expected_title);
+                assert_eq!(
+                    media.file_stem().and_then(|stem| stem.to_str()),
+                    Some(expected_title.as_str())
+                );
                 let profile = export_profile(&request, &timing, output.preset, None).unwrap();
                 let validation =
                     validate_exported_media(tools.ffprobe(), media, &request, &timing, &profile)
