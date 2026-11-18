@@ -116,13 +116,19 @@ exporter's source changes or its preview is disposed.
 
 ## Library and viewer flow
 
-The Games search field coalesces text for 180 ms; clearing it and changing discrete
-filters submit immediately with the latest text. `HistoryController` retains the
-last checked page while a replacement loads, with an explicit updating state.
-Pagination is disabled during text/query work and after query failure so a retained
-page's cursor cannot be combined with a failed query's filters. Page and pagination
+The Match History queue row, champion selections, Favorites star and Tags menu
+submit committed criteria. Player, recording date and result apply together
+from the Filters form. Champion suggestions use the accepted playable snapshot
+in memory. The picker opens on focus with up to six unselected portraits and
+names, and narrows the list as the user types. Typing never schedules a History
+query in normal use. The synthetic replay benchmark retains its original 180 ms
+free-text workload.
+`HistoryController` retains the last checked page while a replacement loads,
+with an explicit updating state. Pagination is disabled during query work and
+after query failure so a retained page's cursor cannot be combined with a failed
+query's filters. Page and pagination
 position publish together only after query-generation and snapshot admission.
-A new library origin clears retained history; pending text timers are cancelled on
+A new library origin clears retained history; benchmark text timers are cancelled on
 origin changes or disposal. Origin comparison uses its values, not object identity.
 History queries submitted before initial catalog admission remain queued, with
 only the latest input retained. The controller releases that input after the

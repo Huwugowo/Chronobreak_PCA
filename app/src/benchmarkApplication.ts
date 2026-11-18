@@ -278,7 +278,7 @@ export function createBenchmarkApplication(observer: ReplayBenchmarkObserver, ho
         const fixture = observer.fixtureForScenario();
         const selected = games()?.find(game => game.timestamp === fixture?.game_timestamp);
         const term = selected?.champion;
-        const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
+        const input = document.querySelector<HTMLInputElement>('input[aria-label="Search played champions"]');
         if (!input || !term || term.length > 32) throw new Error("search workload fixture/input unavailable");
         const requested = scenario.iterations ?? 8;
         if (typeof requested !== "number" || !Number.isSafeInteger(requested) || requested < 1 || requested > 100) {

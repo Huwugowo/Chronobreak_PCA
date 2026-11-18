@@ -6,6 +6,8 @@ pub(super) const MAX_WINDOW_ROWS: usize = 512;
 pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 // The newest member stands for its match in the date index. Card facts can
 // come from another member without changing the cursor or page membership.
+// Keep the personal-moment joins anchored to the match group so SQLite cannot
+// start from all events of the given kind for each candidate match.
 pub(super) const HISTORY_SQL: &str = "
     SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved
     FROM recordings g INDEXED BY recordings_date CROSS JOIN recordings r ON r.media_id=(
@@ -40,7 +42,39 @@ pub(super) const HISTORY_SQL: &str = "
     AND (?13 IS NULL OR r.mode=?13)
     AND (COALESCE(?14,0)=0 OR EXISTS(SELECT 1 FROM recordings part WHERE part.match_group=g.match_group AND part.saved=1))
     AND (?15 IS NULL OR instr(lower(r.champion),lower(?15))>0 OR instr(lower(r.mode),lower(?15))>0)
+    AND (?16 IS NULL OR (r.facts_current=1 AND r.queue_id IN (SELECT value FROM json_each(?16))))
+    AND (?17 IS NULL OR (r.facts_current=1 AND r.queue_id NOT IN (SELECT value FROM json_each(?17))))
+    AND (?18 IS NULL OR EXISTS(SELECT 1 FROM recordings part
+        WHERE part.match_group=g.match_group AND part.champion IN (SELECT value FROM json_each(?18))))
+    AND (?19 IS NULL OR (r.facts_current=1 AND (
+        EXISTS(SELECT 1 FROM final_players f WHERE f.media_id=r.media_id AND f.riot_id=?19 COLLATE NOCASE)
+        OR (r.telemetry_status='ready' AND EXISTS(
+            SELECT 1 FROM participants p WHERE p.media_id=r.media_id AND p.riot_id=?19 COLLATE NOCASE)))))
+    AND (?20 IS NULL OR unixepoch(g.recorded_at)>=?20)
+    AND (?21 IS NULL OR unixepoch(g.recorded_at)<?21)
+    AND (?22 IS NULL OR NOT EXISTS(
+        SELECT 1 FROM json_each(?22) moment WHERE NOT EXISTS(
+            SELECT 1 FROM recordings part
+            CROSS JOIN events e INDEXED BY events_kind ON e.media_id=part.media_id AND e.kind=json_extract(moment.value,'$.kind')
+            CROSS JOIN scopes s ON s.media_id=e.media_id AND s.run_id=e.run_id AND s.epoch=e.epoch
+            CROSS JOIN effective_event_actors a ON a.media_id=e.media_id AND a.run_id=e.run_id AND a.epoch=e.epoch
+                AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal
+                AND a.status='resolved' AND a.role='killer' AND a.participant_id=s.local_participant
+            WHERE part.match_group=g.match_group AND part.facts_current=1 AND part.telemetry_status='ready'
+                AND e.ingestion NOT IN ('invalid','conflict')
+                AND (json_extract(moment.value,'$.streak') IS NULL OR e.kill_streak=json_extract(moment.value,'$.streak'))
+                AND (json_extract(moment.value,'$.stolen') IS NULL OR e.stolen=1)
+        )
+    ))
+    AND NOT ?23
+    /* clip tag predicates */
     ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12";
+const HISTORY_CLIP_TAG_PREDICATE: &str = "
+    AND NOT EXISTS(SELECT 1 FROM json_each(?24) tag WHERE NOT EXISTS(
+        SELECT 1 FROM clip_projection c INDEXED BY clip_projection_match
+        CROSS JOIN clip_tag_projection t ON t.clip_id=c.id
+        WHERE c.match_group=g.match_group AND c.header IS NOT NULL AND t.tag_key=tag.value
+    ))";
 pub(super) const GAME_TICK_ROSTER_LOOKUP_SQL: &str = "SELECT r.observation_id,r.game_tick,e.data FROM rosters r JOIN evidence e
     ON e.media_id=r.media_id AND e.run_id=r.run_id AND e.epoch=r.epoch AND e.observation_id=r.observation_id
     WHERE r.media_id=?1 AND r.run_id=?2 AND r.epoch=?3 AND r.game_tick<=?4 ORDER BY r.game_tick DESC,r.observation_id DESC LIMIT 1";
@@ -159,6 +193,109 @@ pub(crate) struct HistoryQuery {
     pub stolen: Option<bool>,
     pub minimum_kill_streak: Option<u64>,
     pub role: Option<ActorRole>,
+    pub queue: Option<HistoryQueue>,
+    #[serde(default)]
+    pub played_champions: Vec<String>,
+    pub player_riot_id: Option<String>,
+    pub recorded_from: Option<i64>,
+    pub recorded_before: Option<i64>,
+    #[serde(default)]
+    pub personal_moments: Vec<PersonalMoment>,
+    #[serde(default)]
+    pub clip_tags: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HistoryQueue {
+    RankedSoloDuo,
+    RankedFlex,
+    #[serde(rename = "ranked_5s")]
+    Ranked5s,
+    AramMayhem,
+    Aram,
+    AramMayhemClassic,
+    Arena,
+    Other,
+    NormalDraft,
+    Swiftplay,
+    Urf,
+}
+
+impl HistoryQueue {
+    const FEATURED: [Self; 7] = [
+        Self::RankedSoloDuo,
+        Self::RankedFlex,
+        Self::Ranked5s,
+        Self::AramMayhem,
+        Self::Aram,
+        Self::AramMayhemClassic,
+        Self::Arena,
+    ];
+
+    fn ids(self) -> &'static [u32] {
+        // Riot queues.json and the client observations linked in the ExecPlan.
+        match self {
+            Self::RankedSoloDuo => &[4, 420],
+            Self::RankedFlex => &[440],
+            Self::Ranked5s => &[42, 710],
+            Self::AramMayhem => &[2400],
+            Self::Aram => &[65, 100, 450],
+            Self::AramMayhemClassic => &[2450, 3280],
+            Self::Arena => &[1700, 1710, 1740, 1750],
+            Self::NormalDraft => &[14, 400],
+            Self::Swiftplay => &[480],
+            Self::Urf => &[76, 1900],
+            Self::Other => &[],
+        }
+    }
+
+    fn bindings(self) -> Result<(Option<String>, Option<String>)> {
+        if matches!(self, Self::Other) {
+            let featured: Vec<_> = Self::FEATURED.into_iter().flat_map(Self::ids).collect();
+            Ok((None, Some(serde_json::to_string(&featured)?)))
+        } else {
+            Ok((Some(serde_json::to_string(self.ids())?), None))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PersonalMoment {
+    QuadraKill,
+    Pentakill,
+    BaronSteal,
+    DragonSteal,
+}
+
+#[derive(Serialize)]
+struct MomentPredicate {
+    kind: &'static str,
+    streak: Option<u8>,
+    stolen: Option<bool>,
+}
+
+impl From<PersonalMoment> for MomentPredicate {
+    fn from(moment: PersonalMoment) -> Self {
+        let (kind, streak, stolen) = match moment {
+            PersonalMoment::QuadraKill => ("Multikill", Some(4), None),
+            PersonalMoment::Pentakill => ("Multikill", Some(5), None),
+            PersonalMoment::BaronSteal => ("BaronKill", None, Some(true)),
+            PersonalMoment::DragonSteal => ("DragonKill", None, Some(true)),
+        };
+        Self {
+            kind,
+            streak,
+            stolen,
+        }
+    }
+}
+
+enum ClipTagState {
+    Empty,
+    Pending,
+    Ready,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -219,6 +356,8 @@ pub(crate) struct HistoryPage {
     pub catalog_recordings: u64,
     /// Excluded/unfinished sources are unknown, never negative query evidence.
     pub unknown_recordings: u64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub clip_tags_pending: bool,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceScope {
@@ -501,7 +640,41 @@ impl Index {
     }
 
     pub(crate) fn history(&self, query: &HistoryQuery, catalog_size: usize) -> Result<HistoryPage> {
+        self.history_query(query, catalog_size, ClipTagState::Empty)
+    }
+
+    pub(crate) fn history_for_snapshot(
+        &self,
+        query: &HistoryQuery,
+        catalog_size: usize,
+        snapshot: &library::LibrarySnapshot,
+    ) -> Result<HistoryPage> {
+        if query.clip_tags.is_empty() || snapshot.managed_clips.is_empty() {
+            return self.history(query, catalog_size);
+        }
+        let clip_tags = if self.clip_ready(&snapshot.managed_clip_stamp) {
+            ClipTagState::Ready
+        } else {
+            ClipTagState::Pending
+        };
+        self.history_query(query, catalog_size, clip_tags)
+    }
+
+    fn history_query(
+        &self,
+        query: &HistoryQuery,
+        catalog_size: usize,
+        clip_tags: ClipTagState,
+    ) -> Result<HistoryPage> {
         ensure!(query.limit > 0 && query.limit <= 50, "history page limit");
+        ensure!(
+            query.played_champions.len() <= 200,
+            "history champion capacity"
+        );
+        ensure!(
+            query.personal_moments.len() <= 4,
+            "history personal moment capacity"
+        );
         for text in [
             query.champion.as_deref(),
             query.mode.as_deref(),
@@ -509,37 +682,111 @@ impl Index {
             query.participant_riot_id.as_deref(),
             query.event_kind.as_deref(),
             query.after.as_ref().map(|c| c.recorded_at.as_str()),
-        ] {
+        ]
+        .into_iter()
+        .chain(
+            query
+                .played_champions
+                .iter()
+                .map(|name| Some(name.as_str())),
+        ) {
             validate_text(text)?;
         }
-        if let Some(riot) = &query.participant_riot_id {
+        for riot in [&query.participant_riot_id, &query.player_riot_id]
+            .into_iter()
+            .flatten()
+        {
             ensure!(
                 obs::decode::full_riot_id(riot),
                 "history identity must be exact"
             );
         }
+        for bound in [query.recorded_from, query.recorded_before]
+            .into_iter()
+            .flatten()
+        {
+            time::OffsetDateTime::from_unix_timestamp(bound).context("history date bound")?;
+        }
+        if let (Some(from), Some(before)) = (query.recorded_from, query.recorded_before) {
+            ensure!(from < before, "history date range");
+        }
+        let (queue_in, queue_out) = query
+            .queue
+            .map(HistoryQueue::bindings)
+            .transpose()?
+            .unwrap_or_default();
+        let champions = json_list(&query.played_champions)?;
+        let moments: Vec<_> = query
+            .personal_moments
+            .iter()
+            .copied()
+            .map(MomentPredicate::from)
+            .collect();
+        let moments = json_list(&moments)?;
+        let tag_keys: Vec<_> = crate::clip_bundle::normalize_tags(&query.clip_tags)?
+            .into_iter()
+            .map(|tag| tag.to_lowercase())
+            .collect();
+        let clip_tags_pending = matches!(clip_tags, ClipTagState::Pending);
+        let tags_unavailable = !tag_keys.is_empty() && !matches!(clip_tags, ClipTagState::Ready);
         let event_filter = query.event_kind.is_some()
             || query.stolen.is_some()
             || query.minimum_kill_streak.is_some()
             || query.role.is_some();
-        let mut statement = self.db.prepare(HISTORY_SQL)?;
-        let mut rows = statement.query(params![
-            query.after.as_ref().map(|c| c.recorded_at.as_str()),
-            query.after.as_ref().map(|c| c.media_id.as_str()),
-            query.queue_id.map(sql_u64).transpose()?,
-            query.outcome.as_ref().map(name).transpose()?,
-            query.champion,
-            query.participant_riot_id,
-            event_filter,
-            query.event_kind,
-            query.stolen,
-            query.minimum_kill_streak.map(sql_u64).transpose()?,
-            query.role.as_ref().map(name).transpose()?,
-            u32::from(query.limit) + 1,
-            query.mode,
-            query.saved_only,
-            query.search,
-        ])?;
+        let filter_tags = matches!(clip_tags, ClipTagState::Ready);
+        let tagged_sql;
+        let sql = if filter_tags {
+            tagged_sql =
+                HISTORY_SQL.replace("/* clip tag predicates */", HISTORY_CLIP_TAG_PREDICATE);
+            &tagged_sql
+        } else {
+            HISTORY_SQL
+        };
+        let tagged_keys = if filter_tags {
+            json_list(&tag_keys)?
+        } else {
+            None
+        };
+        let after_date = query
+            .after
+            .as_ref()
+            .map(|cursor| cursor.recorded_at.as_str());
+        let after_media = query.after.as_ref().map(|cursor| cursor.media_id.as_str());
+        let queue_id = query.queue_id.map(sql_u64).transpose()?;
+        let outcome = query.outcome.as_ref().map(name).transpose()?;
+        let minimum_streak = query.minimum_kill_streak.map(sql_u64).transpose()?;
+        let role = query.role.as_ref().map(name).transpose()?;
+        let limit = u32::from(query.limit) + 1;
+        let mut statement = self.db.prepare_cached(sql)?;
+        let mut bindings: Vec<&dyn rusqlite::ToSql> = vec![
+            &after_date,
+            &after_media,
+            &queue_id,
+            &outcome,
+            &query.champion,
+            &query.participant_riot_id,
+            &event_filter,
+            &query.event_kind,
+            &query.stolen,
+            &minimum_streak,
+            &role,
+            &limit,
+            &query.mode,
+            &query.saved_only,
+            &query.search,
+            &queue_in,
+            &queue_out,
+            &champions,
+            &query.player_riot_id,
+            &query.recorded_from,
+            &query.recorded_before,
+            &moments,
+            &tags_unavailable,
+        ];
+        if filter_tags {
+            bindings.push(&tagged_keys);
+        }
+        let mut rows = statement.query(bindings.as_slice())?;
         let mut output = Vec::new();
         let mut next = None;
         let mut last_cursor = None;
@@ -600,16 +847,20 @@ impl Index {
         }
         use super::history_summary::*;
         let mut mask = BASE_UNKNOWN | SOURCE_UNCHECKED;
-        if query.queue_id.is_some() {
+        if query.queue_id.is_some() || query.queue.is_some() {
             mask |= QUEUE_UNKNOWN;
         }
         if query.outcome.is_some() {
             mask |= OUTCOME_UNKNOWN;
         }
-        if query.participant_riot_id.is_some() || query.role.is_some() {
+        if query.participant_riot_id.is_some()
+            || query.player_riot_id.is_some()
+            || query.role.is_some()
+            || !query.personal_moments.is_empty()
+        {
             mask |= ACTOR_UNKNOWN;
         }
-        if event_filter {
+        if event_filter || !query.personal_moments.is_empty() {
             mask |= EVENTS_UNKNOWN;
         }
         let (indexed, uncertain): (u64, u64) = self.db.query_row(
@@ -626,6 +877,7 @@ impl Index {
             indexed_recordings: indexed,
             catalog_recordings: catalog_size as u64,
             unknown_recordings: (catalog_size as u64).saturating_sub(indexed) + uncertain,
+            clip_tags_pending,
         })
     }
 
@@ -825,4 +1077,12 @@ fn validate_text(value: Option<&str>) -> Result<()> {
         "query text"
     );
     Ok(())
+}
+
+fn json_list<T: Serialize>(values: &[T]) -> Result<Option<String>> {
+    if values.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::to_string(values)?))
+    }
 }

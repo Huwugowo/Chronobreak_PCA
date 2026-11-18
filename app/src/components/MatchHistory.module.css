@@ -13,30 +13,25 @@
   margin-bottom: var(--space-3);
 }
 
-.dataFilters { color: var(--text-secondary); margin-bottom: var(--space-2); }
-.dataFilters summary { cursor: pointer; margin-bottom: var(--space-2); }
 .coverage {
-  min-block-size: 1lh;
-  color: var(--text-muted);
-  font-size: var(--type-meta-size);
+  margin: 0;
 }
 
-.searchField {
-  width: 240px;
-  height: var(--control-height);
-  padding: 0 10px;
+.filteredEmpty {
+  margin: var(--space-2) 0;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: var(--type-secondary-size);
+  text-align: center;
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-control);
-  color: var(--text-secondary);
-  background: var(--surface-panel);
-  font-size: var(--type-secondary-size);
 }
 
-.searchField::placeholder {
-  color: var(--text-muted);
-}
-.filterSelect,
 .savedFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
   height: var(--control-height);
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-control);
@@ -47,64 +42,29 @@
     border-color 120ms ease,
     background-color 120ms ease,
     color 120ms ease;
-}
-
-.filterSelect {
-  min-width: 112px;
-  padding: 0 28px 0 10px;
-  color-scheme: dark;
   cursor: pointer;
 }
 
-.savedFilter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-.filterSelect:hover,
 .savedFilter:hover {
   border-color: var(--line-strong);
   background: var(--surface-raised);
   color: var(--text-primary);
 }
 
-.filterSelect:focus-visible,
-.savedFilter:focus-visible,
-.searchField:focus-visible {
+.savedFilter:focus-visible {
   border-color: var(--line-strong);
   outline: none;
 }
 
-.savedFilter[data-active="true"] {
-  border-color: var(--selected-line);
-  color: var(--text-primary);
-  background: var(--selected-surface);
-}
-
 .summaryBar {
   display: flex;
-  margin-left: auto;
   min-height: 32px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--space-2);
   color: var(--text-muted);
   font-size: var(--type-meta-size);
   line-height: var(--type-meta-line);
-}
-
-.summaryBar strong {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.summaryBar i {
-  width: 1px;
-  height: 12px;
-  background: var(--line-subtle);
 }
 
 .matchScroller {
@@ -714,11 +674,6 @@
 
 .matchItem[data-outcome="defeat"] {
   --match-surface: color-mix(in srgb, var(--accent-red) 7%, var(--surface-panel));
-}
-@media (max-width: 720px) {
-  .summaryBar {
-    justify-content: flex-start;
-  }
 }
 
 .matchItem[data-outcome="victory"] {

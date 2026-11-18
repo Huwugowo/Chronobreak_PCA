@@ -658,7 +658,11 @@ mod tests {
                     })
                     .into_iter()
                     .collect(),
-                custom_tags: vec!["Évasion".into()],
+                custom_tags: if title == "Next part" {
+                    vec!["Montage".into()]
+                } else {
+                    vec!["Évasion".into()]
+                },
             };
             fs::write(
                 directory.join(clip_bundle::media_leaf(title).unwrap()),
@@ -695,8 +699,22 @@ mod tests {
         assert!(!library::clip_inventory_changed(&approved, &before).unwrap());
         let mut index = Index::open(cache.path(), root.path()).unwrap();
         index.reconcile(&before.games, &before.token).unwrap();
+        let tagged = HistoryQuery {
+            limit: 8,
+            clip_tags: vec!["ÉVASION".into(), "montage".into()],
+            ..Default::default()
+        };
+        let pending = index.history_for_snapshot(&tagged, 2, &before).unwrap();
+        assert!(pending.clip_tags_pending && pending.rows.is_empty());
         assert!(!index.reconcile_clips(&before, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&before, &|| Ok(())).unwrap());
+        let tagged_matches = index.history_for_snapshot(&tagged, 2, &before).unwrap();
+        assert!(!tagged_matches.clip_tags_pending);
+        assert_eq!(tagged_matches.rows.len(), 1);
+        assert_eq!(
+            tagged_matches.rows[0].game.match_group.as_ref(),
+            Some(&match_group)
+        );
         let unchanged = scan("fresh token");
         assert_ne!(before.token, unchanged.token);
         assert!(index.clip_ready(&unchanged.managed_clip_stamp));
@@ -811,6 +829,8 @@ mod tests {
         let renamed = scan("renamed");
         assert!(!library::clip_inventory_changed(&approved, &renamed).unwrap());
         assert!(!index.clip_ready(&renamed.managed_clip_stamp));
+        let pending = index.history_for_snapshot(&tagged, 2, &renamed).unwrap();
+        assert!(pending.clip_tags_pending && pending.rows.is_empty());
         assert!(!index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
         fs::rename(

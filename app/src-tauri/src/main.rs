@@ -1,5 +1,5 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Launch the desktop app without a console in every Windows build.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();

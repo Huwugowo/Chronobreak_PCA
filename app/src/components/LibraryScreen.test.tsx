@@ -6,11 +6,11 @@ import LibraryScreen from "./LibraryScreen";
 import managedClipStyles from "./ManagedClips.module.css";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
-import { readClipPage } from "../managedClips";
+import { readClipPage, readClipTagSuggestions } from "../managedClips";
 import type { ClipCard, ClipCursor } from "../managedClips";
 
 vi.mock("../managedClips", async original => ({ ...await original<typeof import("../managedClips")>(),
-  readClipPage: vi.fn(),
+  readClipPage: vi.fn(), readClipTagSuggestions: vi.fn(),
 }));
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
@@ -144,7 +144,7 @@ it("shows a safe operational warning without semantic filters and clears it afte
     ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
     actionable snapshotOrigin={origin} busyId={null} onOpenGame={opened} onToggleSaved={() => {}} onDeleteGame={() => {}}
     onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
-  const status = () => host.querySelector('[role="status"]')?.textContent?.trim();
+  const status = () => host.querySelector('[aria-label="Match History summary"] [role="status"]')?.textContent?.trim();
   try {
     expect(status()).toBe("Could not load match data. Recordings remain playable.");
     expect(host.textContent).not.toContain("private database path");
@@ -158,8 +158,7 @@ it("shows a safe operational warning without semantic filters and clears it afte
     expect(status()).toBe("");
     setHistory({ ...history(), indexIssue: { kind: "limited" } });
     expect(status()).toBe("");
-    const event = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
-    event.value = "ChampionKill"; event.dispatchEvent(new Event("change", { bubbles: true }));
+    [...host.querySelectorAll<HTMLButtonElement>("nav button")].find(button => button.textContent === "Arena")!.click();
     expect(status()).toBe("Some match data is unavailable. Results may be incomplete.");
   } finally { dispose(); }
 });
@@ -219,7 +218,11 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
     onDeleteClip={() => {}}
     onOpenClipsFolder={() => {}}
   />, host);
-  expect(host.textContent).toContain("Ahri");
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search played champions"]')!;
+  search.value = "A";
+  search.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(host.querySelector('[role="option"]')?.textContent).toBe("Ahri");
+  expect(host.querySelector('[role="option"] img')).toBeNull();
   expect(host.textContent).toContain("Unknown");
   expect(host.querySelector('[aria-label="Recorded matches"]')?.textContent).not.toContain("Defeat");
   expect(host.textContent).not.toContain("Remake");
@@ -228,18 +231,18 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   const settled = history();
   setHistory({ ...settled, initializing: true, loading: true, indexing: true,
     page: { rows: [], next: null, indexed_recordings: 0, catalog_recordings: 9, unknown_recordings: 9 } });
-  const status = () => host.querySelector('[role="status"]')?.textContent?.trim();
+  const status = () => host.querySelector('[aria-label="Match History summary"] [role="status"]')?.textContent?.trim();
   expect(status()).toBe("Loading match data...");
   setHistory({ ...history(), loading: false, page: { ...history().page!, indexed_recordings: 4, unknown_recordings: 5 } });
   expect(status()).toBe("Loading match data...");
   setHistory({ ...history(), initializing: false, indexing: false });
   expect(status()).toBe("");
-  const eventFilter = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
-  eventFilter.value = "ChampionKill"; eventFilter.dispatchEvent(new Event("change", { bubbles: true }));
+  const queues = [...host.querySelectorAll<HTMLButtonElement>("nav button")];
+  queues.find(button => button.textContent === "Arena")!.click();
   expect(status()).toBe("Some recordings have limited match data. Results may be incomplete.");
   setHistory({ ...history(), indexIssue: { kind: "limited" } });
   expect(status()).toBe("Some match data is unavailable. Results may be incomplete.");
-  eventFilter.value = ""; eventFilter.dispatchEvent(new Event("change", { bubbles: true }));
+  queues.find(button => button.textContent === "All")!.click();
   setHistory(settled);
   const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],keystone_id:9923,secondary_style:8000,summoner_spells:["4","6"],creep_score:136,duration_seconds:985,evidence:null,final_evidence:null,game_tick:null};
   setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
@@ -317,44 +320,110 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   dispose();
 });
 
-it("coalesces typing, applies filters and clearing immediately, and cancels pending text on disposal", async () => {
+it("suggests played champions locally and applies only explicit choices", async () => {
   vi.useFakeTimers();
   const host = document.createElement("div"); document.body.append(host);
   const onQuery = vi.fn();
   const [origin, setOrigin] = createSignal({ root: "A", rootEpoch: 1, request: 1, token: "a", navigation: 1 });
-  const dispose = render(() => <LibraryScreen tab="games" games={[]} clips={[]}
-    ddragon={{ state: "offline", version: null, asset_base_url: null, item_count: 0, champion_count: 0, cache_directory: "", error: null }}
+  const games = ["Ahri", "Ashe", "Janna", "Aatrox", "Akali", "Akshan", "Alistar", "Amumu", "Bard", "Kai'Sa"].map((champion, i): GameSummary => ({
+    timestamp: String(i), media_id: null, match_group: String(i).padStart(64, "0"), champion,
+    game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 2_000, kills: 0, deaths: 0, assists: 0,
+    summoner_spells: [], keystone_id: null, items: [], participants: [],
+    saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null,
+  }));
+  const dispose = render(() => <LibraryScreen tab="games" games={games} clips={[]} clipTagToken={origin().token}
+    ddragon={{ state: "offline", version: null, asset_base_url: "http://assets.test", item_count: 0, champion_count: 0, cache_directory: "", error: null }}
     actionable snapshotOrigin={{ ...origin() }} busyId={null} onHistoryQuery={onQuery}
     onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
     onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
-  const search = host.querySelector<HTMLInputElement>('[aria-label="Search matches"]')!;
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search played champions"]')!;
   const type = (text: string) => { search.value = text; search.dispatchEvent(new Event("input", { bubbles: true })); };
+  const key = (key: string, target: HTMLElement = search) => target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  const button = (label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find(el => el.textContent?.trim() === label)!;
+  const options = () => [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+  const checkbox = (label: string) => [...host.querySelectorAll("fieldset label")].find(el => el.textContent === label)!.querySelector("input")!;
+  search.focus();
   onQuery.mockClear();
-  for (const text of ["M", "Master", "Master Yi"]) { type(text); await vi.advanceTimersByTimeAsync(60); }
+  expect(search.getAttribute("aria-expanded")).toBe("true");
+  expect(options().map(el => el.textContent)).toEqual(["Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Amumu"]);
+  key("Escape");
+  expect(search.getAttribute("aria-expanded")).toBe("false");
+  search.click();
+  expect(search.getAttribute("aria-expanded")).toBe("true");
   expect(onQuery).not.toHaveBeenCalled();
-  expect(host.textContent).toContain("Updating matches.");
-  await vi.advanceTimersByTimeAsync(120);
-  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: "Master Yi" }));
-  onQuery.mockClear(); type("Ahri");
-  const event = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
-  event.value = "ChampionKill"; event.dispatchEvent(new Event("change", { bubbles: true }));
-  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: "Ahri", event_kind: "ChampionKill" }));
-  await vi.advanceTimersByTimeAsync(500);
-  expect(onQuery).toHaveBeenCalledTimes(1);
-  onQuery.mockClear(); type("");
-  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: null }));
-  onQuery.mockClear(); type("new context");
+  type("A");
+  expect(options().map(el => el.textContent)).toEqual(["Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Amumu"]);
+  expect(options()[1].querySelector("img")?.src).toBe("http://assets.test/champion/Ahri");
+  for (const text of ["Ah", "Ahr", "Ahri"]) { type(text); await vi.advanceTimersByTimeAsync(100); }
+  expect(onQuery).not.toHaveBeenCalled();
+  key("ArrowDown");
+  expect(search.getAttribute("aria-activedescendant")).toBe(options()[0].id);
+  key("Enter");
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith({ limit: 50, played_champions: ["Ahri"] });
+  type("kaisa");
+  options()[0].click();
+  expect(onQuery).toHaveBeenLastCalledWith({ limit: 50, played_champions: ["Ahri", "Kai'Sa"] });
+  expect(search.value).toBe("");
+  expect(search.getAttribute("aria-expanded")).toBe("false");
+  search.click();
+  expect(options().map(el => el.textContent)).toEqual(["Aatrox", "Akali", "Akshan", "Alistar", "Amumu", "Ashe"]);
+
+  const ranked = button("Ranked");
+  const enter = new Event("pointerenter");
+  Object.defineProperty(enter, "pointerType", { value: "mouse" });
+  ranked.parentElement!.dispatchEvent(enter);
+  expect(ranked.getAttribute("aria-expanded")).toBe("true");
+  expect(search.getAttribute("aria-expanded")).toBe("false");
+  expect(onQuery).toHaveBeenCalledTimes(2);
+  key("Escape", ranked);
+  expect(ranked.getAttribute("aria-expanded")).toBe("false");
+  key("ArrowDown", ranked);
+  expect(document.activeElement).toBe(button("Ranked Solo/Duo"));
+  button("Ranked 5s").click();
+  expect(document.activeElement).toBe(ranked);
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ queue: "ranked_5s" }));
+
+  vi.mocked(readClipTagSuggestions).mockResolvedValue(["Montage"]);
+  button("Tags").click();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(readClipTagSuggestions).toHaveBeenLastCalledWith("a", "");
+  checkbox("My pentakill").click();
+  checkbox("Montage").click();
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ personal_moments: ["pentakill"], clip_tags: ["Montage"] }));
+  button("Filters").click();
+  const form = host.querySelector("form")!;
+  const player = form.querySelector("input")!;
+  const editPlayer = (value: string) => { player.value = value; player.dispatchEvent(new Event("input", { bubbles: true })); };
+  const apply = () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  onQuery.mockClear();
+  editPlayer("Name"); apply();
+  expect(form.querySelector('[role="alert"]')?.textContent).toContain("full Riot ID");
+  expect(onQuery).not.toHaveBeenCalled();
+  editPlayer("Name#TAG");
+  form.querySelectorAll("select").forEach((el, i) => {
+    el.value = i === 0 ? "yesterday" : "win";
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(onQuery).not.toHaveBeenCalled();
+  apply();
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    player_riot_id: "Name#TAG", outcome: "win", recorded_from: expect.any(Number), recorded_before: expect.any(Number),
+  }));
+  host.querySelector<HTMLButtonElement>('[aria-label="Favorites only"]')!.click();
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ saved_only: true }));
+  host.querySelector<HTMLButtonElement>('[aria-label="Remove Ahri"]')!.click();
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ played_champions: ["Kai'Sa"] }));
+  onQuery.mockClear(); type("no current selection");
   setOrigin({ root: "B", rootEpoch: 2, request: 2, token: "b", navigation: 2 });
-  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ search: "new context" }));
-  await vi.advanceTimersByTimeAsync(500);
-  expect(onQuery).toHaveBeenCalledTimes(1);
-  type("unmounted"); dispose(); onQuery.mockClear();
-  await vi.advanceTimersByTimeAsync(500);
-  expect(onQuery).not.toHaveBeenCalled();
+  expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ played_champions: ["Kai'Sa"] }));
+  button("Clear all").click();
+  expect(onQuery).toHaveBeenLastCalledWith({ limit: 50 });
+  expect(host.querySelector('[aria-label="Active filters"]')).toBeNull();
+  expect(search.value).toBe("");
+  dispose();
 });
 
-it("identifies retained cards during debounce, loading and failure, then clears the notice on success", async () => {
-  vi.useFakeTimers();
+it("identifies retained cards during loading and failure, then clears the notice on success", () => {
   const host = document.createElement("div"); document.body.append(host);
   const game: GameSummary = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
     champion: "Ahri", game_mode: "CLASSIC", recorded_at: "2026-01-01", duration_ms: 120_000,
@@ -372,15 +441,13 @@ it("identifies retained cards during debounce, loading and failure, then clears 
     onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
   setHistory(state => ({ ...state, loading: false }));
   const card = host.querySelector("article");
-  const search = host.querySelector<HTMLInputElement>('[aria-label="Search matches"]')!;
+  const search = host.querySelector<HTMLInputElement>('[aria-label="Search played champions"]')!;
   search.value = "Jinx"; search.dispatchEvent(new Event("input", { bubbles: true }));
   expect(history().loading).toBe(false);
-  expect(host.textContent).toContain("Showing previous results.");
+  expect(host.textContent).not.toContain("Showing previous results.");
   expect(host.querySelector("article")).toBe(card);
-  await vi.advanceTimersByTimeAsync(180);
+  host.querySelector<HTMLButtonElement>('[aria-label="Favorites only"]')!.click();
   expect(history().loading).toBe(true);
-  const filter = host.querySelector<HTMLSelectElement>('[aria-label="Filter by event"]')!;
-  filter.value = "ChampionKill"; filter.dispatchEvent(new Event("change", { bubbles: true }));
   expect(host.querySelector("article")).toBe(card);
   expect(card?.textContent).toContain("11.00:1 KDA");
   expect(host.textContent).toContain("Showing previous results.");
@@ -395,6 +462,7 @@ it("identifies retained cards during debounce, loading and failure, then clears 
   expect(host.querySelector("article")).toBeNull();
   expect(host.textContent).not.toContain("Updating matches.");
   expect(host.textContent).not.toContain("Showing previous results.");
+  expect(host.textContent).toContain("No matches for these filters.");
   dispose();
 });
 

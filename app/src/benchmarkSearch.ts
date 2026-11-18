@@ -42,7 +42,7 @@ export const waitForBenchmarkLibraryReturn = (history: Pick<HistoryController, "
     const check = () => {
       if (finished) return;
       const state = history.value;
-      const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
+      const input = document.querySelector<HTMLInputElement>('input[aria-label="Search played champions"]');
       if (state.error || state.indexIssue) { finish(new Error("library return failed")); return; }
       if (!state.page || state.indexing || state.loading || !input?.isConnected || input.value !== "") {
         frame = requestAnimationFrame(check); return;
@@ -108,7 +108,7 @@ export const waitForBenchmarkMemoryWindow = async (observer: ReplayBenchmarkObse
   const check = () => {
     if (signal.aborted) throw new Error("library search disposed");
     const state = history.value;
-    const input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]');
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Search played champions"]');
     if (state.page !== page || state.loading || state.indexing || state.error || state.indexIssue ||
         !input?.isConnected || input.value !== "" || document.querySelector("video")) {
       throw new Error("memory window left its settled library");
@@ -158,7 +158,7 @@ export const runBenchmarkIndexSearch = async (observer: ReplayBenchmarkObserver,
     observer.emit("indexing_diagnostic_started", { indexing: history.value.indexing }, { required: true });
     progress();
     let input: HTMLInputElement | null = null;
-    while (!(input = document.querySelector<HTMLInputElement>('input[aria-label="Search matches"]'))) {
+    while (!(input = document.querySelector<HTMLInputElement>('input[aria-label="Search played champions"]'))) {
       if (performance.now() - started > 10_000) throw new Error("indexing search input unavailable");
       await delay(16, control.signal);
     }

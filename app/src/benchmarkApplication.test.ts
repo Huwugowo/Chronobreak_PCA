@@ -38,7 +38,7 @@ beforeEach(() => {
   vi.mocked(search.waitForBenchmarkLibraryReturn).mockResolvedValue(2);
   vi.mocked(search.waitForBenchmarkMemoryWindow).mockResolvedValue();
   vi.mocked(runDeliveryRouteProbe).mockResolvedValue([]);
-  const input = document.createElement("input"); input.setAttribute("aria-label", "Search matches"); document.body.append(input);
+  const input = document.createElement("input"); input.setAttribute("aria-label", "Search played champions"); document.body.append(input);
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.resetAllMocks(); document.body.replaceChildren(); });
 

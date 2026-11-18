@@ -4,7 +4,7 @@ import { render } from "solid-js/web";
 import App from "./App";
 import { loadDdragonStatus, loadStorageUsage, refreshLibrary, setGameSaved } from "./api";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex, type HistoryPage } from "./leagueIndex";
-import { reconcileClips } from "./managedClips";
+import { readClipTagSuggestions, reconcileClips } from "./managedClips";
 import { onLibraryCatalogChanged, onPreparedData } from "./preparedData";
 import type { GameSummary, LibrarySnapshot } from "./types";
 
@@ -13,6 +13,7 @@ vi.mock("./benchmark", async original => ({ ...await original<typeof import("./b
 vi.mock("./preparedData", () => ({ onLibraryCatalogChanged: vi.fn(() => () => {}), onPreparedData: vi.fn(() => () => {}) }));
 vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
   usesManagedClips: () => harness.managed, reconcileClips: vi.fn(async () => true),
+  readClipTagSuggestions: vi.fn(async () => ["Montage"]),
 }));
 vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(),
   loadStorageUsage: vi.fn(), refreshLibrary: vi.fn(), setGameSaved: vi.fn(),
@@ -138,7 +139,7 @@ it("keeps populated History cards, filters and images through a favorite and rep
     Array.from(article.querySelectorAll("em")).find(element => element.textContent?.includes("KDA"))!.parentElement!];
   const favorite = star();
   const open = article.querySelector<HTMLButtonElement>('[aria-label^="Open Ahri recording"]')!;
-  const favorites = Array.from(history.querySelectorAll("button")).find(button => button.textContent?.trim() === "Favorites")!;
+  const favorites = history.querySelector<HTMLButtonElement>('[aria-label="Favorites only"]')!;
   const mutations: MutationRecord[] = [];
   const observer = new MutationObserver(records => mutations.push(...records));
   observer.observe(history, { childList: true, subtree: true, attributes: true,
@@ -193,6 +194,38 @@ it("keeps populated History cards, filters and images through a favorite and rep
     expect(mutations.filter(record => stats.some(stat => stat.contains(record.target))).some(record =>
       record.oldValue?.includes("—") || Array.from(record.removedNodes).some(node => node.textContent?.includes("—")))).toBe(false);
   } finally { observer.disconnect(); }
+});
+it("refreshes an empty custom-tag result when the new snapshot's clip index becomes ready", async () => {
+  harness.managed = true;
+  const clipReady = deferred<boolean>();
+  const readyPage: HistoryPage = {
+    rows: [{ media_id: game.media_id!, game, index_status: "ready", clip_count: 1,
+      stats: { source: "unavailable", kills: null, deaths: null, assists: null, items: null,
+        keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null,
+        duration_seconds: null, evidence: null, final_evidence: null, game_tick: null },
+    }], next: null, indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 0,
+  };
+  vi.mocked(queryHistory).mockResolvedValueOnce(readyPage).mockResolvedValueOnce(readyPage)
+    .mockResolvedValueOnce({ ...readyPage, rows: [], clip_tags_pending: true }).mockResolvedValueOnce(readyPage);
+  vi.mocked(reconcileClips).mockResolvedValueOnce(true).mockReturnValueOnce(clipReady.promise);
+  vi.mocked(refreshLibrary).mockReset().mockResolvedValueOnce({ ...snapshot("a"), managed_clip_count: 1 })
+    .mockResolvedValueOnce({ ...snapshot("b", true), managed_clip_count: 1 });
+  vi.mocked(setGameSaved).mockResolvedValueOnce(undefined);
+  const { host, star } = await mount();
+  await vi.waitFor(() => expect(reconcileClips).toHaveBeenCalledOnce());
+  [...host.querySelectorAll("button")].find(button => button.textContent === "Tags")!.click();
+  await vi.waitFor(() => expect(readClipTagSuggestions).toHaveBeenCalledWith("a", ""));
+  const montage = [...host.querySelectorAll("fieldset label")].find(label => label.textContent === "Montage")!;
+  montage.querySelector("input")!.click();
+  await vi.waitFor(() => expect(queryHistory).toHaveBeenCalledTimes(2));
+  star().click();
+  await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ clip_tags: ["Montage"] })));
+  await vi.waitFor(() => expect(host.querySelector("article")).toBeNull());
+  expect(host.textContent).not.toContain("No matches for these filters.");
+  clipReady.resolve(true);
+  await vi.waitFor(() => expect(host.querySelector("article")).not.toBeNull());
+  expect(queryHistory).toHaveBeenCalledTimes(4);
+  expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ clip_tags: ["Montage"] }));
 });
 it("refreshes only the affected data when library notifications arrive during replay", async () => {
   const { host, click } = await mount();

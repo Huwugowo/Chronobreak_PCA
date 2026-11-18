@@ -136,7 +136,7 @@ it.each(["settled", "changed-page", "aborted", "timeout"])("checks the mounted l
   const page = { rows: [{}, {}] } as HistoryPage;
   const state = { page, loading: false, indexing: false, error: null, indexIssue: null };
   const history = { get value() { return state; } } as Pick<HistoryController, "value">;
-  const input = document.createElement("input"); input.setAttribute("aria-label", "Search matches"); document.body.append(input);
+  const input = document.createElement("input"); input.setAttribute("aria-label", "Search played champions"); document.body.append(input);
   const abort = new AbortController();
   const wait = waitForBenchmarkLibraryReturn(history, abort.signal);
   const expectation = outcome === "aborted" || outcome === "timeout" ? expect(wait).rejects.toThrow() : expect(wait).resolves.toBe(2);
@@ -153,7 +153,7 @@ it.each(["settled", "video", "changed-page", "aborted"])("only samples a quiet m
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
   const state = { page: { rows: [{}, {}] } as HistoryPage, loading: false, indexing: false, error: null, indexIssue: null };
   const history = { get value() { return state; } } as Pick<HistoryController, "value">;
-  const input = document.createElement("input"); input.setAttribute("aria-label", "Search matches"); document.body.append(input);
+  const input = document.createElement("input"); input.setAttribute("aria-label", "Search played champions"); document.body.append(input);
   const observer = { emit: vi.fn(), flush: vi.fn(async () => {}) };
   const abort = new AbortController();
   const run = waitForBenchmarkMemoryWindow(observer as unknown as ReplayBenchmarkObserver, history, 2, abort.signal);

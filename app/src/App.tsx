@@ -148,6 +148,7 @@ function App() {
   const acceptedSnapshot = createMemo(() => libraryState().snapshot);
   const [changedCatalogToken, setChangedCatalogToken] = createSignal<string>();
   const libraryActionable = createMemo(() => libraryState().actionable);
+  const clipTagsPending = () => !!acceptedSnapshot()?.managed_clip_count && clipIndexToken() !== acceptedSnapshot()?.token;
   const hasHistoryPage = createMemo(() => Boolean(historyState().page));
   const needsClipIndex = createMemo(() => libraryTab() === "clips" || hasHistoryPage() || navigation().screen === "clip-export");
   createEffect(() => {
@@ -168,7 +169,8 @@ function App() {
         if (!live) return;
         if (ready) {
           setClipIndexToken(origin.token);
-          if (history.value.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
+          const current = history.value;
+          if (current.loading || current.page?.clip_tags_pending || current.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
         }
         else timer = window.setTimeout(() => void step(), 25);
       } catch (error) {
@@ -725,6 +727,11 @@ function App() {
               tab={libraryTab()}
               games={games() ?? []}
               history={historyState()}
+              clipTagToken={managed && acceptedSnapshot()?.managed_clip_count && !clipTagsPending() && libraryActionable()
+                ? acceptedSnapshot()?.token : undefined}
+              clipTagsPending={managed && clipTagsPending()}
+              clipTagError={managed && clipTagsPending() ? clipIndexError() : null}
+              onClipTagRetry={() => setClipIndexRetry(n => n + 1)}
               onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}
               onHistoryNext={() => history.nextPage()}
               onHistoryFirst={() => history.firstPage()}

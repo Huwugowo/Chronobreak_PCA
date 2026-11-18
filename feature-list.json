@@ -2136,46 +2136,48 @@
       "id": "QB-LIB-001",
       "kind": "feature",
       "name": "Searchable Match History",
-      "description": "Search/filter recorded matches using League metadata such as champion, enemy champions, queue/mode, result, participants, and recorded events.",
+      "description": "Find recorded matches with a queue row, played-champion suggestions, favorites, personal moments, linked clip tags, and optional player, date, and result filters.",
       "priority": "P1",
       "area": "library-search",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
         "QB-DATA-001",
         "QB-DATA-002",
-        "QB-LIB-008"
+        "QB-LIB-008",
+        "QB-LIB-034"
       ],
       "evidence": [
-        "The current library derives champion, mode, participants/loadout, and KDA-related summary data from bundle metadata, but exposes no search/filter UI or persisted search index."
+        "The production toolbar and indexed filters passed 618 frontend tests and 216 Tauri tests. On the 10,000-match release fixture, the combined filter's p95 was 16.8 ms. The isolated desktop walkthrough remains pending."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-lib-001-match-history-search.md",
+        "progress": "docs/execution/qb-lib-001.md"
       },
       "acceptance_criteria": [
-        "Search by played champion returns only matching recorded matches.",
-        "Search by enemy champion and supported event returns matching recorded matches.",
-        "Multiple supported filters can be combined.",
-        "Search operates on persisted indexed metadata rather than filenames alone."
+        "Match History has a dedicated All, Ranked, ARAM, Arena and Other queue row, with the approved ranked/ARAM variants, an Other catch-all, and menus available by hover, click and keyboard.",
+        "The primary search opens on focus with local played-champion names and portraits and narrows suggestions from the first character. Typing only updates suggestions. Selected champions are removable chips and match any selected champion across the full library.",
+        "A star-only Favorites control, one Tags dropdown for the recording player's supported moments and linked custom clip tags, and a secondary player/date/result form compose with queue and champion filters. All selected tags must apply to the match. Clear all resets every filter.",
+        "Matches use persisted checked facts before pagination, preserve one card per account-scoped match and the existing playback, clip, favorite and replay-return behavior, and surface unavailable optional data without fabricating matches or outcomes."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Use deterministic library fixtures to verify each supported query and combined filters.",
+          "description": "Use deterministic catalog fixtures and UI integration tests for combined filters, current-scope event attribution, optional-data handling, local suggestions, keyboard and hover controls, paging, and navigation.",
           "command": null
         },
         {
           "type": "manual",
-          "description": "Exercise search/filter UI with a populated test library.",
+          "description": "Exercise the approved interaction in a desktop session with a populated fixture library.",
           "command": null
         }
       ],
-      "notes": "Keep draft until supported filters are reconciled with local-data limits and incomplete-bundle behavior is defined. Result search depends on QB-DATA-002 and remains explicitly unknown when authoritative client data is unavailable.",
+      "notes": "The approved toolbar scopes champions to the recording player and moments to the local participant. Enemy champions and arbitrary game-wide event search are deferred. Custom tag search reuses linked managed clip tags. Existing unconfirmed results remain unknown.",
       "user_value": 4.5,
       "differentiation": 5,
       "difficulty": 4,
-      "stage": "draft"
+      "stage": "ready"
     },
     {
       "id": "QB-LIB-002",

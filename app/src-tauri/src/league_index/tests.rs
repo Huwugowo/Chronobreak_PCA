@@ -743,6 +743,25 @@ async fn history_groups_recording_parts_before_filters_counts_and_pagination() {
         serde_json::to_value(Some(next)).unwrap()
     );
     assert!(index.history(&saved_ahri, 2).unwrap().rows.is_empty());
+    let latest_day = 1_786_060_800; // 2026-08-07 00:00:00 UTC.
+    let played = HistoryQuery {
+        limit: 1,
+        saved_only: Some(true),
+        played_champions: vec!["Ahri".into(), "Lux".into()],
+        recorded_from: Some(latest_day),
+        recorded_before: Some(latest_day + 86_400),
+        ..Default::default()
+    };
+    let played_page = index.history(&played, 2).unwrap();
+    assert_eq!(played_page.rows.len(), 1);
+    assert_eq!(played_page.rows[0].media_id, middle);
+    assert!(played_page.next.is_none());
+    let before_anchor = HistoryQuery {
+        recorded_from: None,
+        recorded_before: Some(latest_day + 36_000),
+        ..played
+    };
+    assert!(index.history(&before_anchor, 2).unwrap().rows.is_empty());
 
     for query in [
         HistoryQuery {
@@ -818,6 +837,199 @@ async fn history_groups_recording_parts_before_filters_counts_and_pagination() {
             .unwrap();
         assert_eq!(response.bytes().await.unwrap().as_ref(), video);
     }
+}
+
+#[test]
+fn simplified_history_uses_checked_queue_roster_and_outcome() {
+    let f = Fixture::new(1);
+    let mut index = f.index();
+    f.ready(&mut index);
+    let media = f.source.media_id.as_str();
+    let query = |queue| HistoryQuery {
+        limit: 50,
+        queue: Some(queue),
+        ..Default::default()
+    };
+    let cases = [
+        (HistoryQueue::RankedSoloDuo, 420),
+        (HistoryQueue::RankedFlex, 440),
+        (HistoryQueue::Ranked5s, 710),
+        (HistoryQueue::AramMayhem, 2400),
+        (HistoryQueue::Aram, 450),
+        (HistoryQueue::AramMayhemClassic, 2450),
+        (HistoryQueue::Arena, 1750),
+        (HistoryQueue::NormalDraft, 400),
+        (HistoryQueue::Swiftplay, 480),
+        (HistoryQueue::Urf, 1900),
+        (HistoryQueue::Other, 900),
+    ];
+    for (expected, id) in cases {
+        index
+            .db
+            .execute(
+                "UPDATE recordings SET queue_id=?1 WHERE media_id=?2",
+                params![id, media],
+            )
+            .unwrap();
+        for (queue, candidate) in cases {
+            let catches_other = matches!(queue, HistoryQueue::Other)
+                && matches!(
+                    expected,
+                    HistoryQueue::NormalDraft | HistoryQueue::Swiftplay | HistoryQueue::Urf
+                );
+            assert_eq!(
+                index.history(&query(queue), 1).unwrap().rows.len(),
+                usize::from(candidate == id || catches_other),
+                "queue {queue:?}, id {id}"
+            );
+        }
+    }
+    index
+        .db
+        .execute(
+            "UPDATE recordings SET queue_id=NULL WHERE media_id=?1",
+            [media],
+        )
+        .unwrap();
+    assert!(
+        index
+            .history(&query(HistoryQueue::Other), 1)
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    assert_eq!(
+        index
+            .history(
+                &HistoryQuery {
+                    limit: 1,
+                    ..Default::default()
+                },
+                1
+            )
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+
+    let player = HistoryQuery {
+        player_riot_id: Some("team mate#euw".into()),
+        outcome: Some(chronobreak_league_data::Outcome::Win),
+        ..query(HistoryQueue::RankedSoloDuo)
+    };
+    index
+        .db
+        .execute(
+            "UPDATE recordings SET queue_id=420, outcome='win' WHERE media_id=?1",
+            [media],
+        )
+        .unwrap();
+    index.db.execute(
+        "INSERT INTO final_players(media_id,player_key,riot_id,is_local,data) VALUES (?1,'fixture','Team Mate#EUW',0,'{}')",
+        [media],
+    ).unwrap();
+    assert_eq!(index.history(&player, 1).unwrap().rows.len(), 1);
+    assert!(
+        index
+            .history(
+                &HistoryQuery {
+                    player_riot_id: Some("Team Mate#NA".into()),
+                    ..player.clone()
+                },
+                1
+            )
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    index
+        .db
+        .execute(
+            "UPDATE recordings SET outcome='unknown' WHERE media_id=?1",
+            [media],
+        )
+        .unwrap();
+    assert!(index.history(&player, 1).unwrap().rows.is_empty());
+}
+
+#[test]
+fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
+    let f = Fixture::new(1);
+    let mut index = f.index();
+    f.ready(&mut index);
+    let media = f.source.media_id.as_str();
+    let run = f.source.run_id.as_str();
+    let local: u32 = index
+        .db
+        .query_row(
+            "SELECT local_participant FROM scopes WHERE media_id=?1 AND run_id=?2 AND epoch=0",
+            params![media, run],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let matches = |moments: &[PersonalMoment]| {
+        !index
+            .history(
+                &HistoryQuery {
+                    limit: 1,
+                    personal_moments: moments.to_vec(),
+                    ..Default::default()
+                },
+                1,
+            )
+            .unwrap()
+            .rows
+            .is_empty()
+    };
+    let event = |sequence, kind, stolen: Option<bool>, streak: Option<u8>, epoch| {
+        index.db.execute(
+            "INSERT INTO events(media_id,run_id,epoch,source_id,sequence,ordinal,kind,stolen,kill_streak,ingestion)
+             VALUES (?1,?2,?3,?4,?4,0,?5,?6,?7,'accepted')",
+            params![media, run, epoch, sequence, kind, stolen, streak],
+        ).unwrap();
+    };
+    let actor = |sequence, participant, status, epoch, revision| {
+        index.db.execute(
+            "INSERT INTO event_actors(media_id,run_id,epoch,sequence,revision_ordinal,role,ordinal,participant_id,status)
+             VALUES (?1,?2,?3,?4,?5,'killer',0,?6,?7)",
+            params![media, run, epoch, sequence, revision, participant, status],
+        ).unwrap();
+    };
+    event(1001, "Multikill", None, Some(5), 0);
+    actor(1001, local + 1, "resolved", 0, 0);
+    event(1002, "Multikill", None, Some(5), 0);
+    actor(1002, local, "resolved", 1, 0);
+    event(1003, "Multikill", None, Some(5), 0);
+    actor(1003, local, "resolved", 0, 1);
+    event(1004, "Multikill", None, Some(5), 0);
+    actor(1004, local, "unknown", 0, 0);
+    assert!(!matches(&[PersonalMoment::Pentakill]));
+    event(1005, "Multikill", None, Some(5), 0);
+    actor(1005, local, "resolved", 0, 0);
+    assert!(matches(&[PersonalMoment::Pentakill]));
+    assert!(!matches(&[PersonalMoment::QuadraKill]));
+    event(1006, "BaronKill", Some(false), None, 0);
+    actor(1006, local, "resolved", 0, 0);
+    assert!(!matches(&[
+        PersonalMoment::BaronSteal,
+        PersonalMoment::Pentakill
+    ]));
+    event(1007, "BaronKill", Some(true), None, 0);
+    actor(1007, local, "resolved", 0, 0);
+    assert!(matches(&[
+        PersonalMoment::BaronSteal,
+        PersonalMoment::Pentakill
+    ]));
+    assert!(!matches(&[PersonalMoment::DragonSteal]));
+    index
+        .db
+        .execute(
+            "UPDATE recordings SET facts_current=0 WHERE media_id=?1",
+            [media],
+        )
+        .unwrap();
+    assert!(!matches(&[PersonalMoment::BaronSteal]));
 }
 
 #[test]

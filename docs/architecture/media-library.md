@@ -256,8 +256,13 @@ observation's own calibration. A timing change invalidates the projection.
 Catalog membership derives from the eligible filesystem snapshot. History groups
 that catalog before filtering, counting or paging. Match facts come from the
 newest checked final result when available, then the newest checked recorded
-facts. Events can match any ready part and Saved includes groups with any saved
-part. Keyset cursors use the newest part's time and media ID, so
+facts. Specific queues use numeric IDs, and player presence uses a full Riot ID
+from the checked roster. Played-champion filters accept any selected champion
+on any part. Each selected personal moment requires a resolved local killer
+in the exact event scope and revision on a ready part. Multikills use the
+recorded streak, and objective steals require an explicit stolen flag. Favorites
+include groups with any saved part. Date bounds and keyset cursors use the newest
+part's recording time, and the cursor also carries its media ID, so
 enriching the card does not move it across pages. Duplicate
 media identity and corrupt/unsupported optional telemetry still fail strict
 semantic import. Optional telemetry failures leave usable recordings available
@@ -407,7 +412,11 @@ Deletion preflights the bundle's owned files.
 The Clips tab pages and filters an additive SQLite projection. One low-priority
 writer step checks a bounded batch against the accepted inventory and only
 parses changed headers. After reconciliation, History attaches counts for its
-visible page in a batched SQL read. Expanding a match reads clips from its
+visible page in a batched SQL read. History's custom tags use the same accepted
+projection and match only when each selected tag appears on a clip in the
+account-scoped group. Separate clips can supply different tags. Tag-filtered
+history waits for the current inventory stamp and re-queries when the clip
+projection is ready. Expanding a match reads clips from its
 account-scoped group. The player resolves source playback by the stored part
 identity, and the viewer validates the descriptor and frame range before seeking.
 

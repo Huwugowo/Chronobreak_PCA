@@ -7,7 +7,6 @@ import type { HistoryState } from "../historyController";
 import type { ClipCard } from "../managedClips";
 import { ClipGroups } from "./ManagedClips";
 import { recordBenchmarkSearchInput, recordBenchmarkSearchSchedule } from "../benchmarkSearch";
-import type { ActorRole } from "../leagueSource";
 import type { DurationDisplay } from "../libraryController";
 import type { LibraryOrigin } from "../libraryController";
 import { MoreIcon, StarIcon } from "../ui/icons";
@@ -17,6 +16,7 @@ import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
 
 import ClipThumbnail from "./ClipThumbnail";
+import MatchHistoryFilters, { emptyHistoryFilters, historyQueryForFilters } from "./MatchHistoryFilters";
 
 type Props = {
   tab: LibraryTab;
@@ -39,6 +39,10 @@ type Props = {
   onRetryDuration?: (filename: string) => void;
   snapshotOrigin: LibraryOrigin | null;
   history?: HistoryState;
+  clipTagToken?: string;
+  clipTagsPending?: boolean;
+  clipTagError?: string | null;
+  onClipTagRetry?: () => void;
   onHistoryQuery?: (query: HistoryQuery, benchmarkActionId?: string) => void;
   onHistoryNext?: () => void;
   onHistoryFirst?: () => void;
@@ -147,15 +151,8 @@ function LibraryScreen(props: Props) {
 }
 
 function GamesLibrary(props: Props) {
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const [championFilter, setChampionFilter] = createSignal("");
-  const [modeFilter, setModeFilter] = createSignal("");
-  const [savedOnly, setSavedOnly] = createSignal(false);
-  const [riotId, setRiotId] = createSignal("");
-  const [eventKind, setEventKind] = createSignal("");
-  const [actorRole, setActorRole] = createSignal("");
-  const [outcomeFilter, setOutcomeFilter] = createSignal("");
-  const [stolenOnly, setStolenOnly] = createSignal(false);
+  const [filters, setFilters] = createSignal(emptyHistoryFilters());
+  const [benchmarkText, setBenchmarkText] = createSignal("");
   const [textPending, setTextPending] = createSignal(false);
   const [expandedMatch, setExpandedMatch] = createSignal<string | null>(null);
   const [expandedClips, setExpandedClips] = createSignal<string | null>(null);
@@ -163,17 +160,14 @@ function GamesLibrary(props: Props) {
   let searchActionId: string | undefined;
   let scheduledSearchActionId: string | undefined;
   createEffect(on(
-    [searchQuery, championFilter, modeFilter, savedOnly, riotId, eventKind,
-      actorRole, outcomeFilter, stolenOnly, () => JSON.stringify(props.snapshotOrigin)],
+    [benchmarkText, filters, () => JSON.stringify(props.snapshotOrigin)],
     (values, previous) => {
       clearTimeout(searchTimer);
       recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId);
       scheduledSearchActionId = undefined;
-      const query: HistoryQuery = { limit: 50, search: searchQuery().trim() || null,
-        champion: championFilter() || null, mode: modeFilter() || null, saved_only: savedOnly(),
-        participant_riot_id: riotId().trim() || null, event_kind: eventKind() || null,
-        role: actorRole() as ActorRole || null, outcome: outcomeFilter() as HistoryQuery["outcome"] || null,
-        stolen: stolenOnly() ? true : null };
+      const query = historyQueryForFilters(values[1]);
+      if (values[0].trim()) query.search = values[0].trim();
+      else if (searchActionId) query.search = null;
       const dispatch = () => {
         scheduledSearchActionId = undefined;
         setTextPending(false);
@@ -181,8 +175,8 @@ function GamesLibrary(props: Props) {
         else props.onHistoryQuery?.(query);
         searchActionId = undefined;
       };
-      // Discrete filters and context changes include the latest text immediately.
-      if (previous && query.search && values.slice(1).every((value, index) => value === previous[index + 1])) {
+      // The synthetic benchmark keeps its original free-text query workload.
+      if (previous && query.search && values[1] === previous[1] && values[2] === previous[2]) {
         setTextPending(true);
         scheduledSearchActionId = searchActionId;
         recordBenchmarkSearchSchedule("scheduled", searchActionId, 180);
@@ -195,13 +189,17 @@ function GamesLibrary(props: Props) {
   ));
   onCleanup(() => { clearTimeout(searchTimer); recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId); });
   const updating = () => textPending() || !!props.history?.loading;
-  const semanticQuery = () => !!(riotId() || eventKind() || actorRole() || outcomeFilter() || stolenOnly());
+  const semanticQuery = () => !!(filters().queue || filters().player || filters().result || filters().moments.length);
+  const waitingForTags = () => !!filters().clipTags.length && !!(props.history?.page?.clip_tags_pending || props.clipTagsPending);
+  const filterActive = createMemo(() => Object.keys(historyQueryForFilters(filters())).length > 1);
   const matchStatus = () => {
     const history = props.history;
     if (history?.initializing) return "Loading match data...";
     if (updating()) return history?.page ? "Updating matches. Showing previous results." : "Updating matches...";
     if (history?.error) return history.page ? "Could not update matches. Showing previous results." : "Match data unavailable. Recordings remain playable.";
     if (history?.indexIssue?.kind === "failed") return "Could not load match data. Recordings remain playable.";
+    if (filters().clipTags.length && props.clipTagError) return "Custom tags are unavailable. Open Tags to try again.";
+    if (waitingForTags()) return "Loading custom tags…";
     if (semanticQuery() && history?.indexIssue?.kind === "limited") return "Some match data is unavailable. Results may be incomplete.";
     if (semanticQuery() && history?.page?.unknown_recordings) return "Some recordings have limited match data. Results may be incomplete.";
     return "";
@@ -223,33 +221,25 @@ function GamesLibrary(props: Props) {
     return byMatch;
   });
   const partsFor = (game: GameSummary) => game.match_group ? groups().get(game.match_group) ?? [] : [];
-  const savedCount = () => [...groups().values()].filter(parts => parts.some(game => game.saved)).length;
   const fallbackCards = createMemo(() => [...groups().values()]
     .sort((a, b) => b[b.length - 1].recorded_at.localeCompare(a[a.length - 1].recorded_at))
     .map(parts => parts.reduce((best, part) => part.league_result || !best.league_result ? part : best)));
-  const representativeByGroup = createMemo(() => {
-    const cards = new Map(fallbackCards().map(game => [game.match_group, game]));
-    for (const row of props.history?.page?.rows ?? []) cards.set(row.game.match_group, row.game);
-    return [...cards.values()];
+  const champions = createMemo(() => {
+    const names = new Set<string>();
+    for (const parts of groups().values()) {
+      for (const part of parts) if (part.champion && part.champion !== "Unknown") names.add(part.champion);
+    }
+    return [...names];
   });
 
-  const champions = () =>
-    [...new Set(representativeByGroup().map((game) => game.champion).filter((champion) => champion !== "Unknown"))]
-      .sort((a, b) => a.localeCompare(b));
-
-  const modes = () =>
-    [...new Set(representativeByGroup().map((game) => game.game_mode).filter((mode) => mode !== "Unknown"))]
-      .sort((a, b) => a.localeCompare(b));
-
   const filteredGames = () => {
-    const query = searchQuery().trim().toLocaleLowerCase();
-    const semantic = semanticQuery();
+    const query = benchmarkText().trim().toLowerCase();
     const rows = props.history?.page?.rows;
     if (rows) {
       const matches = rows.map(row => partsFor(row.game).find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
       return matches;
     }
-    if (semantic) return [];
+    if (semanticQuery() || filters().clipTags.length || filters().date) return [];
     return fallbackCards().filter(basicMatch).slice(0, 50);
     function basicMatch(game: GameSummary) {
       const matchesSearch =
@@ -257,11 +247,11 @@ function GamesLibrary(props: Props) {
         || game.champion.toLocaleLowerCase().includes(query)
         || game.game_mode.toLocaleLowerCase().includes(query);
 
-      const matchesChampion = !championFilter() || game.champion === championFilter();
-      const matchesMode = !modeFilter() || game.game_mode === modeFilter();
-      const matchesSaved = !savedOnly() || partsFor(game).some(part => part.saved);
+      const parts = partsFor(game);
+      const matchesChampion = !filters().champions.length || parts.some(part => filters().champions.includes(part.champion));
+      const matchesSaved = !filters().favorites || parts.some(part => part.saved);
 
-      return matchesSearch && matchesChampion && matchesMode && matchesSaved;
+      return matchesSearch && matchesChampion && matchesSaved;
     }
   };
   const visibleGames = createMemo(() => new Map(filteredGames().map(game => [game.match_group!, game])));
@@ -275,80 +265,26 @@ function GamesLibrary(props: Props) {
 
   return (
     <section class={matchStyles.matchHistory} aria-label="Match History">
-      <div class={matchStyles.toolbar}>
-        <input
-          class={matchStyles.searchField}
-          type="search"
-          value={searchQuery()}
-          onInput={(event) => {
-            searchActionId = recordBenchmarkSearchInput(event.currentTarget);
-            setSearchQuery(event.currentTarget.value);
-          }}
-          placeholder="Search matches..."
-          aria-label="Search matches"
-        />
-
-        <select
-          class={matchStyles.filterSelect}
-          value={championFilter()}
-          onChange={(event) => setChampionFilter(event.currentTarget.value)}
-          aria-label="Filter by champion"
-        >
-          <option value="">All champions</option>
-          <For each={champions()}>
-            {(champion) => <option value={champion}>{champion}</option>}
-          </For>
-        </select>
-
-        <select
-          class={matchStyles.filterSelect}
-          value={modeFilter()}
-          onChange={(event) => setModeFilter(event.currentTarget.value)}
-          aria-label="Filter by mode"
-        >
-          <option value="">All modes</option>
-          <For each={modes()}>
-            {(mode) => <option value={mode}>{mode}</option>}
-          </For>
-        </select>
-
-        <button
-          class={matchStyles.savedFilter}
-          type="button"
-          data-active={savedOnly()}
-          aria-pressed={savedOnly()}
-          onClick={() => setSavedOnly((value) => !value)}
-        >
-          <StarIcon size={15} filled={savedOnly()} />
-          Favorites
-        </button>
-        <div class={matchStyles.summaryBar} aria-label="Match History summary">
-          <span><strong>{groups().size}</strong> {groups().size === 1 ? "match" : "matches"}</span>
-          <i aria-hidden="true" />
-          <span><strong>{savedCount()}</strong> saved</span>
-        </div>
+      <MatchHistoryFilters filters={filters()} onChange={setFilters} champions={champions()}
+        championPortrait={name => ddragonAsset(props.ddragon, "champion", name)}
+        clipTagToken={props.clipTagToken} clipTagsPending={props.clipTagsPending}
+        clipTagError={props.clipTagError} onClipTagRetry={props.onClipTagRetry}
+        onBenchmarkInput={event => {
+          if (event.isTrusted) return false;
+          searchActionId = recordBenchmarkSearchInput(event.currentTarget);
+          if (!searchActionId) return false;
+          setBenchmarkText(event.currentTarget.value);
+          return true;
+        }}
+        onClear={() => { setBenchmarkText(""); setFilters(emptyHistoryFilters()); }} />
+      <div class={matchStyles.summaryBar} aria-label="Match History summary">
+        <Show when={visibleGames().size > 0}>
+          <span>{visibleGames().size} {visibleGames().size === 1 ? "match" : "matches"}
+            {props.history?.page?.next || props.history?.laterPage ? " shown" : ""}</span>
+        </Show>
+        <p class={matchStyles.coverage} role="status">{matchStatus()}</p>
+        <Show when={visibleGames().size > 0}><span>Newest first</span></Show>
       </div>
-
-      <details class={matchStyles.dataFilters}>
-        <summary>League data filters</summary>
-        <div class={matchStyles.toolbar}>
-          <input class={matchStyles.searchField} type="text" placeholder="Player#TAG" aria-label="Exact Riot ID" value={riotId()} onChange={event => setRiotId(event.currentTarget.value)} />
-          <select class={matchStyles.filterSelect} aria-label="Filter by event" value={eventKind()} onChange={event => setEventKind(event.currentTarget.value)}>
-            <option value="">All events</option>
-            <For each={["ChampionKill", "DragonKill", "BaronKill", "HeraldKill", "HordeKill", "TurretKilled", "InhibKilled", "Ace", "Multikill"]}>{kind => <option value={kind}>{kind}</option>}</For>
-          </select>
-          <select class={matchStyles.filterSelect} aria-label="Filter by actor role" value={actorRole()} onChange={event => setActorRole(event.currentTarget.value)}>
-            <option value="">All roles</option><For each={["killer", "victim", "assister", "acer", "recipient"]}>{role => <option value={role}>{role}</option>}</For>
-          </select>
-          <select class={matchStyles.filterSelect} aria-label="Filter by outcome" value={outcomeFilter()} onChange={event => setOutcomeFilter(event.currentTarget.value)}>
-            <option value="">All outcomes</option><option value="win">Victory</option><option value="loss">Defeat</option><option value="unknown">Unknown</option>
-          </select>
-          <label><input type="checkbox" checked={stolenOnly()} onChange={event => setStolenOnly(event.currentTarget.checked)} /> Stolen objective</label>
-        </div>
-      </details>
-      <p class={matchStyles.coverage} role="status">
-        {matchStatus()}
-      </p>
 
       <Show
         when={groups().size > 0}
@@ -716,8 +652,12 @@ function GamesLibrary(props: Props) {
       <div class={matchStyles.toolbar}>
         <Show when={props.history?.laterPage}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryFirst} disabled={paginationDisabled()}>First page</button></Show>
         <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={paginationDisabled()}>Next 50 matches</button></Show>
-        <Show when={groups().size > 0 && filteredGames().length === 0 && !updating()}><span>No observed matches. Coverage may be incomplete.</span></Show>
       </div>
+      <Show when={groups().size > 0 && filterActive() && visibleGames().size === 0 && !updating() && !waitingForTags()
+        && !props.history?.initializing && !props.history?.error && props.history?.indexIssue?.kind !== "failed"
+        && !(filters().clipTags.length && props.clipTagError)}>
+        <p class={matchStyles.filteredEmpty}>No matches for these filters.</p>
+      </Show>
     </section>
   );
 }

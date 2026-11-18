@@ -45,8 +45,8 @@ fn seed_measurement_projection(fixture: &Fixture, index: &mut Index) {
     let tx = index.db.transaction().unwrap();
     {
         let mut recording = tx.prepare_cached(
-            "INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,telemetry_status,match_group)
-             VALUES (?1,?2,?3,?4,?5,0,'unknown',?6,'ready',?7)",
+            "INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,telemetry_status,match_group,queue_id,facts_current)
+             VALUES (?1,?2,?3,?4,?5,0,'unknown',?6,'ready',?7,420,1)",
         ).unwrap();
         let mut scope = tx
             .prepare_cached(
@@ -54,7 +54,7 @@ fn seed_measurement_projection(fixture: &Fixture, index: &mut Index) {
             )
             .unwrap();
         let mut participant = tx.prepare_cached("INSERT INTO participants(media_id,run_id,epoch,participant_id,riot_id,champion,team) VALUES (?1,?2,0,1,'Measure#NA','Syndra','ORDER')").unwrap();
-        let mut event = tx.prepare_cached("INSERT INTO events(media_id,run_id,epoch,source_id,sequence,ordinal,game_tick,kind,stolen,kill_streak,ingestion,replay_tick) VALUES (?1,?2,0,1,1,0,3000000,'DragonKill',0,1,'accepted',48000000)").unwrap();
+        let mut event = tx.prepare_cached("INSERT INTO events(media_id,run_id,epoch,source_id,sequence,ordinal,game_tick,kind,stolen,kill_streak,ingestion,replay_tick) VALUES (?1,?2,0,1,1,0,3000000,'DragonKill',1,1,'accepted',48000000)").unwrap();
         let mut actor = tx.prepare_cached("INSERT INTO event_actors(media_id,run_id,epoch,sequence,revision_ordinal,role,ordinal,participant_id,status) VALUES (?1,?2,0,1,0,'killer',0,1,'resolved')").unwrap();
         for row in 0..(CATALOG_ROWS - 1) {
             let media = synthetic_media(row);
@@ -305,6 +305,14 @@ fn representative_local_sql_query_measurements() {
             &no_string,
             &false,
             &no_string,
+            &no_string,
+            &no_string,
+            &no_string,
+            &no_string,
+            &no_i64,
+            &no_i64,
+            &no_string,
+            &false,
         ],
     );
     let semantic_role = "killer";
@@ -328,6 +336,14 @@ fn representative_local_sql_query_measurements() {
             &no_string,
             &false,
             &no_string,
+            &no_string,
+            &no_string,
+            &no_string,
+            &no_string,
+            &no_i64,
+            &no_i64,
+            &no_string,
+            &false,
         ],
     );
     plan(
@@ -378,6 +394,29 @@ fn representative_local_sql_query_measurements() {
         assert_eq!(
             index
                 .history(&semantic_history, CATALOG_ROWS)
+                .unwrap()
+                .rows
+                .len(),
+            50
+        );
+    });
+    index.db.execute(
+        "INSERT INTO clip_tag_projection(clip_id,tag_key,label) SELECT id,'montage','Montage' FROM clip_projection WHERE header IS NOT NULL",
+        [],
+    ).unwrap();
+    let toolbar_history = HistoryQuery {
+        limit: 50,
+        queue: Some(HistoryQueue::RankedSoloDuo),
+        played_champions: vec![f.summary.champion.clone(), "Ahri".into()],
+        player_riot_id: Some("Measure#NA".into()),
+        personal_moments: vec![PersonalMoment::DragonSteal],
+        clip_tags: vec!["Montage".into()],
+        ..Default::default()
+    };
+    measure("history/combined-toolbar-filter/50-row", || {
+        assert_eq!(
+            index
+                .history_for_snapshot(&toolbar_history, CATALOG_ROWS, &snapshot)
                 .unwrap()
                 .rows
                 .len(),
