@@ -395,32 +395,20 @@ describe("ReplayTimeline event language", () => {
     );
   });
 
-  it("uses the red tower artwork for enemy-related tower events", () => {
-    const { host } = renderTimeline([
-      event("TurretKilled", 20, {
-        killer: "Enemy Carry",
-        turret: "Turret_T1_C_05_A",
-        relation: "enemy",
-      }),
-    ]);
+  it.each([
+    ["TurretKilled", "tower", "ally"],
+    ["TurretKilled", "tower", "enemy"],
+    ["InhibKilled", "inhibitor", "ally"],
+    ["InhibKilled", "inhibitor", "enemy"],
+  ] as const)("tints %s artwork for %s events on the %s side", (eventType, icon, relation) => {
+    const { host } = renderTimeline([event(eventType, 20, { relation })]);
+    const marker = host.querySelector<HTMLButtonElement>(`[data-event-icon="${icon}"]`)!;
+    const glyph = marker.querySelector<HTMLElement>(`.${styles.structureMarker}`)!;
 
-    const marker =
-      host.querySelector(
-        '[data-event-icon="tower"]',
-      );
-
-    expect(marker).not.toBeNull();
-
-    const image =
-      marker?.querySelector("img");
-
-    expect(image).not.toBeNull();
-
-    expect(
-      image?.getAttribute("src"),
-    ).toBe(
-      "/timeline-events/tower-red.png",
-    );
+    expect(marker.classList.contains(styles[`event${relation}`])).toBe(true);
+    expect(glyph.style.getPropertyValue("--marker-mask")).toBe(`url(/timeline-events/${icon}-blue.png)`);
+    expect(glyph.style.width).toBe(icon === "tower" ? "21px" : "13.8px");
+    expect(marker.style.getPropertyValue("--event-hit-width")).toBe(glyph.style.width);
   });
   it("keeps colliding kills individual and shares a chronological hover card", () => {
     const onEventSelect = vi.fn(), onViewportChange = vi.fn();

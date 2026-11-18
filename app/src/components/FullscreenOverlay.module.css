@@ -117,6 +117,7 @@
 .recordedState dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
 
 .bottomHud {
+  --hud-fade-height: 34px;
   position: absolute;
   z-index: 6;
   right: 0;
@@ -124,7 +125,7 @@
   left: 0;
   display: grid;
   gap: 0;
-  padding: 34px 12px 12px;
+  padding: var(--hud-fade-height) 12px 12px;
   background:
     linear-gradient(
       to top,
@@ -138,6 +139,10 @@
   transition:
     opacity 220ms ease,
     transform 260ms cubic-bezier(.4, 0, .2, 1);
+}
+
+[data-fullscreen="true"] .bottomHud {
+  background: linear-gradient(to bottom, transparent, rgb(0 0 0 / 90%) var(--hud-fade-height));
 }
 
 .timelineHud {
@@ -166,7 +171,7 @@
 
 @media (max-height: 740px) {
   .bottomHud {
-    padding-top: 22px;
+    --hud-fade-height: 22px;
   }
 }
 /* Standard player transport */

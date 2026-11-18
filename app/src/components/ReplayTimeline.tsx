@@ -151,26 +151,10 @@ const timelineEventAsset = (
       return "/timeline-events/herald.png";
 
     case "tower":
-      if (relation === "ally") {
-        return "/timeline-events/tower-blue.png";
-      }
-
-      if (relation === "enemy") {
-        return "/timeline-events/tower-red.png";
-      }
-
-      return null;
+      return relation === "neutral" ? null : "/timeline-events/tower-blue.png";
 
     case "inhibitor":
-      if (relation === "ally") {
-        return "/timeline-events/inhibitor-blue.png";
-      }
-
-      if (relation === "enemy") {
-        return "/timeline-events/inhibitor-red.png";
-      }
-
-      return null;
+      return relation === "neutral" ? null : "/timeline-events/inhibitor-blue.png";
 
     default:
       return null;
@@ -181,9 +165,6 @@ const timelineEventAssetScale = (
   icon: TimelineEventIconKey,
 ): number => {
   switch (icon) {
-    case "tower":
-      return 1.19;
-
     case "herald":
       return 1.13;
 
@@ -207,6 +188,16 @@ const timelineEventAssetScale = (
   }
 };
 
+const timelineEventAssetSize = (
+  icon: TimelineEventIconKey,
+  glyphSize = TIMELINE_EVENT_GLYPH_SIZE_PX,
+): number => {
+  // The turret artwork has more transparent padding than the other markers.
+  if (icon === "tower") return glyphSize * 1.4;
+
+  return Math.min(TIMELINE_EVENT_ASSET_MAX_SIZE_PX, glyphSize * timelineEventAssetScale(icon));
+};
+
 const timelineEventVisualWidth = (
   icon: TimelineEventIconKey,
   relation: ViewerEvent["relation"],
@@ -216,11 +207,7 @@ const timelineEventVisualWidth = (
   }
 
   if (timelineEventAsset(icon, relation) !== null) {
-    return Math.min(
-      TIMELINE_EVENT_ASSET_MAX_SIZE_PX,
-      TIMELINE_EVENT_GLYPH_SIZE_PX *
-        timelineEventAssetScale(icon),
-    );
+    return timelineEventAssetSize(icon);
   }
 
   return TIMELINE_EVENT_FALLBACK_SIZE_PX;
@@ -244,17 +231,34 @@ function TimelineEventGlyph(props: TimelineEventGlyphProps) {
       props.relation,
     );
 
-  const assetSize = () =>
-    (props.size ?? TIMELINE_EVENT_GLYPH_SIZE_PX) *
-    timelineEventAssetScale(props.icon);
+  const assetSize = () => timelineEventAssetSize(props.icon, props.size);
+  const dimensions = () => ({
+    width: `${assetSize()}px`,
+    height: `${assetSize()}px`,
+  });
+  const structureAsset = () =>
+    props.icon === "tower" || props.icon === "inhibitor" ? asset() : null;
 
   return (
-    <FallbackImage
-      src={asset()}
-      class={styles.markerAsset}
-      style={{ width: `${assetSize()}px`, height: `${assetSize()}px` }}
-      fallback={<span class={styles.markerFallback} aria-hidden="true" />}
-    />
+    <Show
+      when={structureAsset()}
+      fallback={
+        <FallbackImage
+          src={asset()}
+          class={styles.markerAsset}
+          style={dimensions()}
+          fallback={<span class={styles.markerFallback} aria-hidden="true" />}
+        />
+      }
+    >
+      {(src) => (
+        <span
+          class={`${styles.markerAsset} ${styles.structureMarker}`}
+          style={{ ...dimensions(), "--marker-mask": `url(${src()})` }}
+          aria-hidden="true"
+        />
+      )}
+    </Show>
   );
 }
 
@@ -1028,7 +1032,6 @@ function ReplayTimeline(props: Props) {
                     classList={{
                       [styles.marker]: true,
                       [styles[`event${presentation().relation}`]]: true,
-                      [styles.markerLocal]: locallyEmphasized(),
                     }}
                     style={`left:${railWidth() > 0 ? (item.x / railWidth()) * 100 : 0}%;--event-hit-width:${timelineEventVisualWidth(presentation().icon, presentation().relation)}px`}
                     type="button"

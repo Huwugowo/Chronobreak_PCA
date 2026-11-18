@@ -73,12 +73,14 @@
   pointer-events: none;
 }
 
-.eventally {
+.eventally,
+.sideblue {
   --event-color: #4a70e0;
 }
 
-.eventenemy {
-  --event-color: #c2001c;
+.eventenemy,
+.sidered {
+  --event-color: #e23950;
 }
 
 .eventneutral {
@@ -125,14 +127,7 @@
   z-index: 1;
   display: grid;
   place-items: center;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.82));
   transition: transform 100ms ease;
-}
-
-.markerLocal .markerGlyph {
-  filter:
-    drop-shadow(0 0 2px rgba(248, 245, 239, 0.62))
-    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.82));
 }
 
 .marker:hover {
@@ -149,8 +144,6 @@
   outline-offset: 1px;
 }
 
-.sideblue { --event-color: #4a70e0; }
-.sidered { --event-color: #e23950; }
 .sideunknown { --event-color: #a5a8b0; }
 
 .combatDot {
@@ -159,7 +152,6 @@
   height: 8px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85);
 }
 
 .combatMarker.markerLocal { z-index: 6; }
@@ -237,11 +229,24 @@
 
 .markerAsset {
   display: block;
-  max-width: 18px;
-  max-height: 18px;
   object-fit: contain;
   pointer-events: none;
   user-select: none;
+}
+
+.structureMarker {
+  background: currentColor;
+  mask: var(--marker-mask) center / contain no-repeat;
+}
+
+.structureMarker::before {
+  content: "";
+  display: block;
+  height: 100%;
+  background: var(--marker-mask) center / contain no-repeat;
+  /* Keep the artwork's own rim and interior lines while tinting its fill. */
+  filter: grayscale(1) brightness(2.1) contrast(1.4);
+  mix-blend-mode: multiply;
 }
 
 .markerFallback {
