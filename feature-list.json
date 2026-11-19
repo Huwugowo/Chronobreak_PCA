@@ -2181,9 +2181,10 @@
         "progress": "docs/execution/qb-lib-001.md"
       },
       "acceptance_criteria": [
-        "Match History has a dedicated All, Ranked, ARAM, Arena and Other queue row, with the approved ranked/ARAM variants, an Other catch-all, and menus available by hover, click and keyboard.",
+        "Match History has a dedicated All, Ranked, ARAM, Arena and Other queue row, with the approved ranked/ARAM variants, an Other catch-all, and menus available by hover, click and keyboard. Queue menus match the Filters popup gap and stay open when the pointer crosses it.",
         "The primary search opens on focus with local played-champion names and portraits and narrows suggestions from the first character. Typing only updates suggestions. Selected champions are removable chips and match any selected champion across the full library.",
         "A star-only Favorites control, one Tags dropdown for the recording player's supported moments and linked custom clip tags, and a secondary player/date/result form compose with queue and champion filters. All selected tags must apply to the match. Clear all resets every filter.",
+        "Toggling filters keeps match cards in the same horizontal position when results start or stop needing a vertical scrollbar.",
         "Matches use persisted checked facts before pagination, preserve one card per account-scoped match and the existing playback, clip, favorite and replay-return behavior, and surface unavailable optional data without fabricating matches or outcomes."
       ],
       "verification": [

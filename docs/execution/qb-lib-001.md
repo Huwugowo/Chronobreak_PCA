@@ -20,6 +20,10 @@ Polished the toolbar with flat, underlined queue tabs, a 224 px champion field, 
 
 Reused the accepted snapshot's fingerprint, match count and frontend recording lookup. Materialized match coverage counts in SQLite and pruned candidate matches for slow multikill and absent-player searches.
 
+Reserved the viewport's vertical scrollbar gutter on Match History so applying or clearing filters cannot shift the card rail sideways.
+
+Matched the Ranked, ARAM and Other menu gaps to the Filters popup's 4 px spacing. The gap is transparent and remains part of the hover area.
+
 ## In flight
 
 None.
@@ -52,6 +56,12 @@ Raw p50/p95/p99 logs and preserved executables are under `build/perf/history-com
 That command passed against the final tree and embedded Windows manifest. Its highest p95 was 13.9 ms on the combined filter.
 
 The Windows app suite passed 231 tests with 12 opt-in tests ignored using `cargo test --locked --manifest-path app/src-tauri/Cargo.toml --all-targets --all-features`. Coverage checks exercised legacy backfill, multipart-group changes, rollback and readers spanning a writer commit. The frontend replacement test rejected a stale recording with a reused timestamp and admitted the correct media after retry. All 619 frontend tests, TypeScript, the Vite build, Rustfmt, strict all-target/all-feature Clippy and canonical validation passed.
+
+An isolated Edge preview at 1200×680 and 1440×680 with classic scrollbars reproduced a 7.5 px sideways shift when Favorites reduced the history from five cards to one. With the gutter reserved, toggling Favorites on and off kept the rail and card positions identical at both widths, with no horizontal overflow. The Clips tab retained its default gutter behavior. All 619 frontend tests, TypeScript, the Vite build and canonical validation passed for this change.
+
+An isolated Edge preview measured a 4 px gap for Filters and all three queue menus at 1200×680 and 1440×680. Each queue menu stayed open with the pointer paused in the gap and closed after the pointer left. Arrow Down, Escape, and pointer selection worked. All 619 frontend tests, TypeScript and the Vite build passed.
+
+The production Tauri rebuild passed and was staged at `build/release/chronobreak-match-history-20261119-134259`. The staged executable matched the rebuilt binary, declared the Windows GUI subsystem, and contained the updated stylesheet. The portable media runtime passed its verification.
 
 ## Deviations
 

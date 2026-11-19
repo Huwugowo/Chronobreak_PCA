@@ -601,7 +601,7 @@ function App() {
     state.screen === "settings" ? state.returnTo : state;
 
   return (
-    <div class={styles.appShell} data-screen={navigation().screen}>
+    <div class={styles.appShell} data-screen={navigation().screen} data-library-tab={libraryTab()}>
       <AppHeader
         navigation={navigation()}
         ddragon={ddragon() ?? emptyDdragon}

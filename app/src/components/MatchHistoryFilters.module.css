@@ -1,5 +1,7 @@
 .filters {
   --history-control-height: 36px;
+  --history-popup-gap: 4px;
+  --history-queue-divider: 1px;
   --history-control-surface: #181722;
   --history-popup-surface: #211f2c;
   --history-popup-hover: #2b2939;
@@ -20,7 +22,7 @@
   position: relative;
   z-index: 7;
   gap: 3px;
-  border-block-end: 1px solid var(--line-subtle);
+  border-block-end: var(--history-queue-divider) solid var(--line-subtle);
 }
 
 .toolbar {
@@ -47,7 +49,7 @@
 .queue {
   display: flex;
   min-block-size: 41px;
-  margin-block-end: -1px;
+  margin-block-end: calc(-1 * var(--history-queue-divider));
   padding: 0 12px;
   gap: 4px;
   border: 0;
@@ -161,7 +163,7 @@
 .panel {
   position: absolute;
   z-index: 6;
-  inset-block-start: calc(100% + 4px);
+  inset-block-start: calc(100% + var(--history-popup-gap));
   min-inline-size: max-content;
   padding: 5px;
   border: 1px solid var(--history-border);
@@ -176,9 +178,18 @@
 }
 
 .queuePanel {
-  inset-block-start: 100%;
+  inset-block-start: calc(100% + var(--history-queue-divider) + var(--history-popup-gap));
   inset-inline-start: 0;
   min-inline-size: 176px;
+}
+
+.queuePanel::before {
+  /* Keep the gap hoverable. Include the panel border in the bridge. */
+  content: "";
+  position: absolute;
+  inset-block-end: 100%;
+  inset-inline: -1px;
+  block-size: calc(var(--history-popup-gap) + 1px);
 }
 
 .panel button {
