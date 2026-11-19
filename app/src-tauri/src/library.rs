@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -88,6 +88,10 @@ pub(crate) struct LibraryClip {
 pub(crate) struct LibrarySnapshot {
     pub token: String,
     pub games: Vec<GameSummary>,
+    #[serde(skip)]
+    pub catalog_key: String,
+    #[serde(skip)]
+    pub match_count: usize,
     pub clips: Vec<LibraryClip>,
     pub managed_clip_count: usize,
     pub usage: StorageUsage,
@@ -463,7 +467,7 @@ pub(crate) fn refresh_library_snapshot(
     Ok(snapshot)
 }
 
-fn finish_library_snapshot(
+pub(crate) fn finish_library_snapshot(
     output_directory: &Path,
     origin: &str,
     token: String,
@@ -478,6 +482,12 @@ fn finish_library_snapshot(
         clip_count: 0,
     };
     let games: Vec<_> = inventory.into_iter().filter(usable_recording).collect();
+    let catalog_key = crate::league_index::catalog_key(&games)?;
+    let match_count = games
+        .iter()
+        .filter_map(|game| game.match_group.as_deref())
+        .collect::<HashSet<_>>()
+        .len();
     let sources = games
         .iter()
         .map(|game| (game.timestamp.as_str(), game))
@@ -533,6 +543,8 @@ fn finish_library_snapshot(
     Ok(LibrarySnapshot {
         token,
         games,
+        catalog_key,
+        match_count,
         clips,
         managed_clip_count: managed_clips.len(),
         usage,

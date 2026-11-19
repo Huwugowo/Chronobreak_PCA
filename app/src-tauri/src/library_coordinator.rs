@@ -194,6 +194,25 @@ impl LibraryCoordinator {
             .await
     }
 
+    #[cfg(all(test, feature = "history-command-benchmark"))]
+    pub(crate) async fn refresh_fixture(
+        &self,
+        roots: &MediaRoots,
+        games: Vec<library::GameSummary>,
+    ) -> Result<LibrarySnapshot, LibraryRefreshError> {
+        self.refresh_with(roots, "", move |capture| {
+            library::finish_library_snapshot(
+                capture.root.path(),
+                &capture.origin,
+                capture.token.clone(),
+                || capture.check_current(),
+                games,
+                None,
+            )
+        })
+        .await
+    }
+
     pub(crate) async fn refresh_with_recovery(
         &self,
         roots: &MediaRoots,

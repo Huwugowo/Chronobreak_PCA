@@ -3,6 +3,7 @@ import { HistoryController, type HistoryQueryObservation } from "./historyContro
 import { LibraryController, type LibraryOrigin } from "./libraryController";
 import type { LibrarySnapshot } from "./types";
 import type { CatalogPage, HistoryPage, ImportProgress } from "./leagueIndex";
+import { parseMediaId } from "./replayTime";
 import type { GameSummary } from "./types";
 const origin = (root: string, rootEpoch: number): LibraryOrigin => ({ root, rootEpoch, request: rootEpoch, token: `scan-${rootEpoch}`, navigation: rootEpoch });
 const game = { timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311", match_group: "a".repeat(64) } as GameSummary;
@@ -505,6 +506,33 @@ it("rejects cached media outside the accepted snapshot without hiding core cards
   const controller = new HistoryController({ current: () => true, catalog: async token => catalog(token), recording: vi.fn(), history: async () => ({ ...page(), rows: [{ media_id: game.media_id!, game: { ...game, timestamp: "unaccepted" }, stats: {} as never, index_status: "ready" }] }) });
   controller.setContext(o, [game]); await vi.advanceTimersByTimeAsync(100); await flush();
   expect(controller.value.page).toBeNull(); expect(controller.value.error).toContain("changed since the scan"); controller.close();
+});
+
+it("replaces the admission lookup when a new snapshot reuses a recording timestamp", async () => {
+  vi.useFakeTimers();
+  const replacement = { ...game, media_id: parseMediaId("92eeaf00-1181-4127-a9e1-589eddd2b08c"), match_group: "b".repeat(64) };
+  const result = (recording: GameSummary) => ({
+    ...page(), rows: [{ media_id: recording.media_id!, game: recording, stats: {} as never, index_status: "ready" as const }],
+  });
+  const history = vi.fn()
+    .mockResolvedValueOnce(result(game))
+    .mockResolvedValueOnce(result(game))
+    .mockResolvedValueOnce(result(replacement));
+  const controller = new HistoryController({ current: () => true, catalog: async token => catalog(token), recording: vi.fn(), history });
+  controller.setContext(origin("A", 1), [game]);
+  await vi.advanceTimersByTimeAsync(100);
+  const retained = controller.value.page;
+  expect(retained?.rows[0].media_id).toBe(game.media_id);
+
+  controller.setContext({ ...origin("A", 1), request: 2, token: "scan-2" }, [replacement]);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(controller.value.page).toBe(retained);
+  expect(controller.value.error).toContain("changed since the scan");
+  controller.setQuery({ limit: 50, played_champions: ["Syndra"] });
+  await flush();
+  expect(controller.value.page?.rows[0].media_id).toBe(replacement.media_id);
+  expect(controller.value.error).toBeNull();
+  controller.close();
 });
 
 it("retains accepted pages and pagination until replacement succeeds, including query errors", async () => {

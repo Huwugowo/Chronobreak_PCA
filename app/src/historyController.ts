@@ -14,7 +14,13 @@ export type HistoryQueryObservation = {
   actionId?: string;
   rowCount?: number;
 };
-type Context = { origin: LibraryOrigin; games: GameSummary[]; revision: number; queriedRevision: number };
+type Context = {
+  origin: LibraryOrigin;
+  games: GameSummary[];
+  acceptedGames: ReadonlyMap<string, GameSummary>;
+  revision: number;
+  queriedRevision: number;
+};
 type Dependencies = {
   current: (origin: LibraryOrigin) => boolean;
   catalog: (token: string, after: string | null, origin: LibraryOrigin) => Promise<CatalogPage>;
@@ -78,7 +84,13 @@ export class HistoryController {
     if (!wasSuspended && sameRoot && origin && origin.request === previous.request && origin.token === previous.token) return;
     if (!origin && !this.context) return;
     if (this.queryPending) this.observeQuery("history_query_replaced", this.queryGeneration, this.queryActionId);
-    this.context = origin ? { origin, games, revision: 0, queriedRevision: -1 } : null;
+    this.context = origin ? {
+      origin,
+      games,
+      acceptedGames: new Map(games.map(game => [game.timestamp, game])),
+      revision: 0,
+      queriedRevision: -1,
+    } : null;
     clearTimeout(this.timer);
     this.pending.clear(); this.catalogAfter = null; this.catalogPending = origin !== null;
     if (!retainedPage) this.query = { ...this.query, after: null };
@@ -138,10 +150,9 @@ export class HistoryController {
         return;
       }
       // SQL results cannot admit new media or overwrite the accepted scan.
-      const accepted = new Map(context.games.map(game => [game.timestamp, game]));
       const seen = new Set<string>();
       for (const row of page.rows) {
-        const game = accepted.get(row.game.timestamp);
+        const game = context.acceptedGames.get(row.game.timestamp);
         const group = row.game.match_group;
         if (!group || seen.has(group) || game?.match_group !== group || game.media_id !== row.media_id)
           throw new Error("History recording changed since the scan");

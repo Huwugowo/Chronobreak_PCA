@@ -9,6 +9,39 @@ pub(super) const EVENTS_UNKNOWN: u8 = 16;
 pub(super) const SOURCE_UNCHECKED: u8 = 32;
 
 impl Index {
+    /// Backfill existing projections once, without rebuilding source facts.
+    pub(super) fn install_history_coverage(db: &mut Connection) -> Result<()> {
+        let installed: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='history_coverage_counts')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !installed {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("history_coverage.sql"))?;
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn history_counts(&self, mask: u8) -> Result<(u64, u64)> {
+        let sql = if self.history_coverage_ready {
+            "SELECT COALESCE(SUM(matches),0),
+                COALESCE(SUM(matches) FILTER (WHERE (flags & ?1)!=0),0)
+             FROM history_coverage_counts"
+        } else {
+            // A reader admitted before the first writer upgrades an existing cache
+            // still sees the old schema for its entire read transaction.
+            "SELECT COUNT(*),COALESCE(SUM(unknown),0) FROM (
+                SELECT MAX(facts_current=0 OR (history_flags & ?1)!=0) AS unknown
+                FROM recordings WHERE match_group IS NOT NULL GROUP BY match_group
+            )"
+        };
+        Ok(self.db.query_row(sql, [mask], |row| {
+            Ok((unsigned(row, 0)?, unsigned(row, 1)?))
+        })?)
+    }
+
     /// Materialize one recording's coverage classes after a source-stamp check.
     /// The 64 possible masks have incrementally maintained catalog counts.
     pub(super) fn refresh_history_summary(db: &Connection, media: &MediaId) -> Result<()> {
@@ -51,5 +84,96 @@ impl Index {
             params![media.as_str(), flags],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_coverage_backfill_and_updates_share_the_recording_transaction() {
+        let library = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let (cache, root) = (cache.path(), library.path());
+        let old_schema = Connection::open(cache_path(cache, root)).unwrap();
+        old_schema
+            .execute_batch("PRAGMA journal_mode=WAL;")
+            .unwrap();
+        old_schema
+            .execute_batch(include_str!("schema.sql"))
+            .unwrap();
+        old_schema
+            .execute(
+                "INSERT INTO cache_identity(root,version,catalog_token) VALUES (?1,?2,'existing')",
+                params![root.to_str().unwrap(), VERSION],
+            )
+            .unwrap();
+        old_schema.execute_batch(
+            "INSERT INTO recordings(media_id,bundle,recorded_at,champion,mode,saved,outcome,summary_json,match_group,facts_current,history_flags)
+             VALUES ('a','a','','','',0,'unknown','{}','first',1,2),
+                    ('b','b','','','',0,'unknown','{}','first',0,4),
+                    ('c','c','','','',0,'unknown','{}','second',1,8),
+                    ('d','d','','','',0,'unknown','{}',NULL,0,31);"
+        ).unwrap();
+        drop(old_schema);
+
+        let base = BASE_UNKNOWN | SOURCE_UNCHECKED;
+        let legacy_reader = Index::reader(cache, root).unwrap();
+        assert!(!legacy_reader.history_coverage_ready);
+        assert_eq!(legacy_reader.history_counts(base).unwrap(), (2, 1));
+
+        let mut writer = Index::open(cache, root).unwrap();
+        writer.require_catalog("existing").unwrap();
+        let reader_before = Index::reader(cache, root).unwrap();
+        assert!(reader_before.history_coverage_ready);
+        assert_eq!(
+            reader_before.history_counts(base | ACTOR_UNKNOWN).unwrap(),
+            (2, 2)
+        );
+
+        let tx = writer.db.transaction().unwrap();
+        tx.execute(
+            "UPDATE recordings SET match_group='second', facts_current=1 WHERE media_id='b'",
+            [],
+        )
+        .unwrap();
+        tx.execute("DELETE FROM recordings WHERE media_id='c'", [])
+            .unwrap();
+        let during_write = Index::reader(cache, root).unwrap();
+        assert_eq!(during_write.history_counts(base).unwrap(), (2, 1));
+        tx.commit().unwrap();
+
+        let reader_after = Index::reader(cache, root).unwrap();
+        assert_eq!(
+            reader_after.history_counts(base | ACTOR_UNKNOWN).unwrap(),
+            (2, 0)
+        );
+        assert_eq!(
+            reader_after.history_counts(base | QUEUE_UNKNOWN).unwrap(),
+            (2, 1)
+        );
+        assert_eq!(
+            reader_after.history_counts(base | OUTCOME_UNKNOWN).unwrap(),
+            (2, 1)
+        );
+        assert_eq!(
+            reader_after
+                .history_counts(base | OUTCOME_UNKNOWN | QUEUE_UNKNOWN)
+                .unwrap(),
+            (2, 2)
+        );
+        assert_eq!(reader_before.history_counts(base).unwrap(), (2, 1));
+        assert_eq!(legacy_reader.history_counts(base).unwrap(), (2, 1));
+
+        let tx = writer.db.transaction().unwrap();
+        tx.execute("DELETE FROM recordings", []).unwrap();
+        tx.rollback().unwrap();
+        assert_eq!(writer.history_counts(base).unwrap(), (2, 0));
+        writer
+            .db
+            .execute("DELETE FROM recordings WHERE media_id='a'", [])
+            .unwrap();
+        assert_eq!(writer.history_counts(base | QUEUE_UNKNOWN).unwrap(), (1, 0));
     }
 }

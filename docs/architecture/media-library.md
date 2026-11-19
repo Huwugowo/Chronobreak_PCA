@@ -253,8 +253,9 @@ Event revisions retain evidence and exact `(media_id, run_id, epoch)` scope; act
 joins require stored participant references. Replay ticks are calculated from each
 observation's own calibration. A timing change invalidates the projection.
 
-Catalog membership derives from the eligible filesystem snapshot. History groups
-that catalog before filtering, counting or paging. Match facts come from the
+Catalog membership derives from the eligible filesystem snapshot, which retains
+the catalog fingerprint and eligible match count at publication. History groups
+that catalog before filtering or paging. Match facts come from the
 newest checked final result when available, then the newest checked recorded
 facts. Specific queues use numeric IDs, and player presence uses a full Riot ID
 from the checked roster. Played-champion filters accept any selected champion
@@ -289,8 +290,11 @@ keyset pagination and semantic filters. A new accepted snapshot marks cached sou
 facts unchecked until each bounded catalog import verifies that recording's small
 source stamp; unchanged sources do not require another journal read. Semantic
 matches and statistics remain pending for unchecked sources. Coverage classes are
-materialized during import. Count queries roll up those per-recording flags by
-match without reading historical observations. History describes the last
+materialized during import. SQLite maintains the union of each match's recording
+flags and counts the matches for each flag combination in the same transaction
+as recording changes. History reads those counts in the page's read transaction.
+Existing caches backfill the counts on their next writer open using indexed
+recording facts. History describes the last
 checked projection in its accepted snapshot; selected replay reads also recheck
 the current source stamp before returning data.
 Match History keeps its mounted cards, filters and accepted query across replay

@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
+history-command-benchmark = ["tauri/test"]
 replay-benchmark = []
 
 [dependencies]

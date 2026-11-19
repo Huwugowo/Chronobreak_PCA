@@ -2173,7 +2173,7 @@
         "QB-LIB-034"
       ],
       "evidence": [
-        "The production toolbar and indexed filters passed 618 frontend tests and 216 Tauri tests. On the 10,000-match release fixture, the combined filter's p95 was 16.8 ms. The isolated desktop walkthrough remains pending."
+        "2026-11-19: Across two paired 10,000-match Tauri command runs, browse p95 fell from 23.6–31.9 ms to 9.4–11.7 ms, and rare or empty moment and player queries fell from 192.1–307.4 ms to 6.0–10.2 ms. The 619 frontend and 231 Tauri tests passed. The isolated desktop walkthrough remains pending."
       ],
       "execution": {
         "workflow": "planned",

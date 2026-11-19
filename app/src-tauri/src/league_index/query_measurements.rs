@@ -313,6 +313,7 @@ fn representative_local_sql_query_measurements() {
             &no_i64,
             &no_string,
             &false,
+            &no_i64,
         ],
     );
     let semantic_role = "killer";
@@ -344,6 +345,7 @@ fn representative_local_sql_query_measurements() {
             &no_i64,
             &no_string,
             &false,
+            &no_i64,
         ],
     );
     plan(
@@ -473,6 +475,192 @@ fn seed_clip_count_measurement(fixture: &Fixture, index: &mut Index) -> library:
         )
         .unwrap();
     snapshot
+}
+
+#[test]
+#[cfg(feature = "history-command-benchmark")]
+#[ignore = "measure the 10k Match History Tauri command in release mode"]
+fn representative_history_command_measurements() {
+    use crate::{AppState, MediaRuntimeState, league_index_commands};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex, RwLock};
+    use tauri::{Manager, ipc, test, webview::InvokeRequest};
+
+    let fixture = Fixture::new(1);
+    let roots =
+        Arc::new(crate::playback_server::MediaRoots::new(fixture.root.path().into()).unwrap());
+    let (_, root) = roots.output_pair();
+    let mut index = Index::open(fixture.cache.path(), root.path()).unwrap();
+    index
+        .reconcile(std::slice::from_ref(&fixture.summary), "fixture")
+        .unwrap();
+    fixture.ready(&mut index);
+    seed_measurement_projection(&fixture, &mut index);
+    seed_clip_count_measurement(&fixture, &mut index);
+    index.db.execute_batch(
+        "UPDATE recordings SET recorded_at='2022-01-01T12:00:00Z',
+             summary_json=json_set(summary_json,'$.recorded_at','2022-01-01T12:00:00Z')
+         WHERE bundle BETWEEN 'm00000' AND 'm00011';
+         UPDATE recordings SET saved=1,summary_json=json_set(summary_json,'$.saved',json('true'))
+         WHERE CAST(substr(bundle,2) AS INTEGER)%8=1;
+         INSERT INTO events(media_id,run_id,epoch,source_id,sequence,ordinal,game_tick,kind,stolen,kill_streak,ingestion,replay_tick)
+         SELECT r.media_id,s.run_id,0,2,2,0,4000000,'Multikill',0,
+             CASE WHEN r.bundle BETWEEN 'm00000' AND 'm00002' THEN 5 ELSE 3 END,'accepted',64000000
+         FROM recordings r JOIN scopes s ON s.media_id=r.media_id WHERE r.bundle LIKE 'm%';
+         INSERT INTO event_actors(media_id,run_id,epoch,sequence,revision_ordinal,role,ordinal,participant_id,status)
+         SELECT e.media_id,e.run_id,e.epoch,e.sequence,e.ordinal,'killer',0,1,'resolved'
+         FROM events e WHERE e.kind='Multikill' AND e.sequence=2;
+         INSERT INTO clip_tag_projection(clip_id,tag_key,label)
+         SELECT id,'montage','Montage' FROM clip_projection WHERE header IS NOT NULL;"
+    ).unwrap();
+    let games = {
+        let mut statement = index
+            .db
+            .prepare("SELECT summary_json FROM recordings")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| serde_json::from_str::<GameSummary>(&row.unwrap()).unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(games.len(), CATALOG_ROWS);
+    index
+        .db
+        .execute(
+            "UPDATE cache_identity SET catalog_token=?1",
+            [catalog_key(&games).unwrap()],
+        )
+        .unwrap();
+    drop(index);
+
+    let state = tauri::async_runtime::block_on(async {
+        let dir = fixture.cache.path();
+        AppState {
+            config_mutations: Arc::default(),
+            recorder: crate::recorder_supervisor::RecorderSupervisor::start(true),
+            config_path: dir.join("config.toml"),
+            config: Arc::new(RwLock::new(crate::config::Config::default())),
+            roots,
+            library: crate::library_coordinator::LibraryCoordinator::new(),
+            clip_draft: Default::default(),
+            playback_origin: String::new(),
+            playback_metrics: Arc::default(),
+            hevc_probe_path: dir.join("probe"),
+            league_index_cache: dir.to_owned(),
+            preparation: Mutex::new(None),
+            ddragon_cache: dir.join("ddragon"),
+            ddragon_status: Arc::new(RwLock::new(crate::ddragon::DdragonStatus::loading(dir))),
+            music_directory: dir.join("music"),
+            media_runtime: MediaRuntimeState::Unavailable(Arc::new(
+                queueback_media_runtime::resolve_root(&dir.join("missing"))
+                    .await
+                    .unwrap_err(),
+            )),
+            #[cfg(feature = "replay-benchmark")]
+            benchmark: None,
+            #[cfg(feature = "replay-benchmark")]
+            benchmark_requests: None,
+        }
+    });
+    let accepted =
+        tauri::async_runtime::block_on(state.library.refresh_fixture(&state.roots, games)).unwrap();
+    assert_eq!(accepted.games.len(), CATALOG_ROWS);
+    let app = test::mock_builder()
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            league_index_commands::query_league_history
+        ])
+        .build(test::mock_context(test::noop_assets()))
+        .unwrap();
+    assert_eq!(
+        app.state::<AppState>().league_index_cache,
+        fixture.cache.path()
+    );
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    for (label, query, expected_rows) in [
+        ("browse", json!({ "limit": 50 }), 50),
+        (
+            "queue-champion-favorites",
+            json!({
+                "limit": 50, "queue": "ranked_solo_duo", "played_champions": ["Syndra"], "saved_only": true
+            }),
+            50,
+        ),
+        (
+            "combined",
+            json!({
+                "limit": 50, "queue": "ranked_solo_duo", "played_champions": ["Syndra", "Ahri"],
+                "player_riot_id": "Measure#NA", "personal_moments": ["dragon_steal"], "clip_tags": ["Montage"]
+            }),
+            50,
+        ),
+        (
+            "rare-pentakill",
+            json!({ "limit": 50, "personal_moments": ["pentakill"] }),
+            3,
+        ),
+        (
+            "absent-quadra",
+            json!({ "limit": 50, "personal_moments": ["quadra_kill"] }),
+            0,
+        ),
+        (
+            "nonexistent-player",
+            json!({ "limit": 50, "player_riot_id": "Missing#NA" }),
+            0,
+        ),
+        (
+            "old-date",
+            json!({ "limit": 50, "recorded_from": 1640995200_i64, "recorded_before": 1641081600_i64 }),
+            12,
+        ),
+    ] {
+        let invoke = || {
+            test::get_ipc_response(
+                &window,
+                InvokeRequest {
+                    cmd: "query_league_history".into(),
+                    callback: ipc::CallbackFn(0),
+                    error: ipc::CallbackFn(1),
+                    url: if cfg!(windows) {
+                        "http://tauri.localhost"
+                    } else {
+                        "tauri://localhost"
+                    }
+                    .parse()
+                    .unwrap(),
+                    body: ipc::InvokeBody::Json(
+                        json!({ "snapshotToken": accepted.token, "query": query }),
+                    ),
+                    headers: Default::default(),
+                    invoke_key: test::INVOKE_KEY.into(),
+                },
+            )
+            .unwrap()
+        };
+        let page: Value = invoke().deserialize().unwrap();
+        assert_eq!(
+            page["rows"].as_array().unwrap().len(),
+            expected_rows,
+            "{label}"
+        );
+        assert_eq!(page["catalog_recordings"], CATALOG_ROWS);
+        assert_eq!(page["indexed_recordings"], CATALOG_ROWS);
+        assert!(
+            page["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["clip_count"] == 1),
+            "{label}"
+        );
+        measure(label, || {
+            std::hint::black_box(invoke());
+        });
+    }
 }
 
 #[test]

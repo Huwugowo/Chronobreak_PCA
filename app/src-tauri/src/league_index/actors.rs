@@ -198,6 +198,7 @@ mod tests {
     fn derived_links_are_scoped_by_media_run_and_epoch_and_preserve_raw_states() {
         let index = Index {
             db: Connection::open_in_memory().unwrap(),
+            history_coverage_ready: false,
             _writer: None,
         };
         index.db.execute_batch(include_str!("schema.sql")).unwrap();

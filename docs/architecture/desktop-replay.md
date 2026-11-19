@@ -128,6 +128,8 @@ with an explicit updating state. Pagination is disabled during query work and
 after query failure so a retained page's cursor cannot be combined with a failed
 query's filters. Page and pagination
 position publish together only after query-generation and snapshot admission.
+The controller builds the recording lookup for that admission once per accepted
+snapshot context.
 A new library origin clears retained history; benchmark text timers are cancelled on
 origin changes or disposal. Origin comparison uses its values, not object identity.
 History queries submitted before initial catalog admission remain queued, with

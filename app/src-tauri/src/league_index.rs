@@ -46,6 +46,7 @@ const IMPORT_BATCHES: usize = 32;
 
 pub(crate) struct Index {
     db: Connection,
+    history_coverage_ready: bool,
     _writer: Option<fs::File>,
 }
 
@@ -78,15 +79,20 @@ impl Index {
         )?;
         // All statements in this short-lived reader see one WAL snapshot.
         db.execute_batch("BEGIN DEFERRED")?;
-        let identity: (String, i64) =
-            db.query_row("SELECT root,version FROM cache_identity", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })?;
+        let (cache_root, version, history_coverage_ready): (String, i64, bool) = db.query_row(
+            "SELECT root,version,EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='history_coverage_counts') FROM cache_identity",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
         ensure!(
-            identity.0 == root.to_str().context("index root encoding")? && identity.1 == VERSION,
+            cache_root == root.to_str().context("index root encoding")? && version == VERSION,
             "index identity/version"
         );
-        Ok(Self { db, _writer: None })
+        Ok(Self {
+            db,
+            history_coverage_ready,
+            _writer: None,
+        })
     }
 
     pub(crate) fn open(cache: &Path, root: &Path) -> Result<Self> {
@@ -119,7 +125,7 @@ impl Index {
                 "invalid index cache file"
             );
         }
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
         ensure!(
             rusqlite::version_number() >= 3_051_003,
             "SQLite WAL fix required"
@@ -162,8 +168,10 @@ impl Index {
         }
         let mode: String = db.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
         ensure!(mode == "wal", "index requires WAL mode");
+        Self::install_history_coverage(&mut db)?;
         Ok(Self {
             db,
+            history_coverage_ready: true,
             _writer: writer,
         })
     }
@@ -209,8 +217,14 @@ impl Index {
     }
 
     pub(crate) fn reconcile(&mut self, games: &[GameSummary], _token: &str) -> Result<()> {
-        let token = catalog_key(games)?;
-        let token = token.as_str();
+        self.reconcile_catalog(games, &catalog_key(games)?)
+    }
+
+    pub(crate) fn reconcile_snapshot(&mut self, snapshot: &library::LibrarySnapshot) -> Result<()> {
+        self.reconcile_catalog(&snapshot.games, &snapshot.catalog_key)
+    }
+
+    fn reconcile_catalog(&mut self, games: &[GameSummary], token: &str) -> Result<()> {
         self.refresh_authored(self.root_path()?.as_path())?;
         if self.require_catalog(token).is_ok() {
             return Ok(());

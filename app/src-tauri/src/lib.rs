@@ -150,7 +150,7 @@ async fn refresh_library(
             true,
             move |root, snapshot, _| {
                 let mut index = league_index::Index::open(&cache, root)?;
-                index.reconcile(&snapshot.games, &snapshot.token)
+                index.reconcile_snapshot(snapshot)
             },
         )
         .await;

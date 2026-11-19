@@ -8,6 +8,8 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 // come from another member without changing the cursor or page membership.
 // Keep the personal-moment joins anchored to the match group so SQLite cannot
 // start from all events of the given kind for each candidate match.
+// Uncorrelated player and multikill checks prune candidates before card lookup.
+// The per-match predicates still establish scope and local attribution.
 pub(super) const HISTORY_SQL: &str = "
     SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved
     FROM recordings g INDEXED BY recordings_date CROSS JOIN recordings r ON r.media_id=(
@@ -24,6 +26,15 @@ pub(super) const HISTORY_SQL: &str = "
         LIMIT 1
     )
     WHERE g.match_group IS NOT NULL
+    AND (?19 IS NULL
+        OR EXISTS(SELECT 1 FROM final_players f WHERE f.riot_id=?19 COLLATE NOCASE)
+        OR EXISTS(SELECT 1 FROM participants p WHERE p.riot_id=?19 COLLATE NOCASE))
+    AND (?24 IS NULL OR g.match_group IN (
+        SELECT part.match_group FROM events e INDEXED BY events_kind
+        CROSS JOIN recordings part ON part.media_id=e.media_id
+        WHERE e.kind='Multikill' AND e.kill_streak=?24 AND e.ingestion NOT IN ('invalid','conflict')
+            AND part.match_group IS NOT NULL AND part.facts_current=1 AND part.telemetry_status='ready'
+    ))
     AND (?1 IS NULL OR g.recorded_at<?1 OR (g.recorded_at=?1 AND g.media_id>?2))
     AND g.media_id=(SELECT head.media_id FROM recordings head WHERE head.match_group=g.match_group
         ORDER BY head.recorded_at DESC,head.media_id LIMIT 1)
@@ -70,7 +81,7 @@ pub(super) const HISTORY_SQL: &str = "
     /* clip tag predicates */
     ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12";
 const HISTORY_CLIP_TAG_PREDICATE: &str = "
-    AND NOT EXISTS(SELECT 1 FROM json_each(?24) tag WHERE NOT EXISTS(
+    AND NOT EXISTS(SELECT 1 FROM json_each(?25) tag WHERE NOT EXISTS(
         SELECT 1 FROM clip_projection c INDEXED BY clip_projection_match
         CROSS JOIN clip_tag_projection t ON t.clip_id=c.id
         WHERE c.match_group=g.match_group AND c.header IS NOT NULL AND t.tag_key=tag.value
@@ -722,6 +733,9 @@ impl Index {
             .copied()
             .map(MomentPredicate::from)
             .collect();
+        // One required streak is enough to restrict the candidate groups. The
+        // per-group predicates still check every moment and its local actor.
+        let required_streak = moments.iter().filter_map(|moment| moment.streak).max();
         let moments = json_list(&moments)?;
         let tag_keys: Vec<_> = crate::clip_bundle::normalize_tags(&query.clip_tags)?
             .into_iter()
@@ -782,6 +796,7 @@ impl Index {
             &query.recorded_before,
             &moments,
             &tags_unavailable,
+            &required_streak,
         ];
         if filter_tags {
             bindings.push(&tagged_keys);
@@ -863,14 +878,7 @@ impl Index {
         if event_filter || !query.personal_moments.is_empty() {
             mask |= EVENTS_UNKNOWN;
         }
-        let (indexed, uncertain): (u64, u64) = self.db.query_row(
-            "SELECT COUNT(*),COALESCE(SUM(unknown),0) FROM (
-                SELECT MAX(facts_current=0 OR (history_flags & ?1)!=0) AS unknown
-                FROM recordings WHERE match_group IS NOT NULL GROUP BY match_group
-            )",
-            [mask],
-            |r| Ok((unsigned(r, 0)?, unsigned(r, 1)?)),
-        )?;
+        let (indexed, uncertain) = self.history_counts(mask)?;
         Ok(HistoryPage {
             rows: output,
             next,

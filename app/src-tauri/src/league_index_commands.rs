@@ -220,7 +220,7 @@ pub(crate) async fn index_league_recording(
                 let game = accepted_game(snapshot, &bundle)?;
                 if rebuild {
                     let mut index = Index::open(&cache, root)?;
-                    index.reconcile(&snapshot.games, &snapshot.token)?;
+                    index.reconcile_snapshot(snapshot)?;
                     return index.recording(root, game, true, check);
                 }
                 Ok(Index::reader(&cache, root)
@@ -268,7 +268,7 @@ fn catalog_page(
         None => 0,
     };
     let mut index = Index::open(cache, root)?;
-    index.reconcile(&snapshot.games, &snapshot.token)?;
+    index.reconcile_snapshot(snapshot)?;
     let mut items = Vec::new();
     for game in snapshot.games.iter().skip(start).take(usize::from(limit)) {
         check()?;
@@ -395,14 +395,9 @@ pub(crate) async fn query_league_history(
             false,
             move |root, snapshot, _| {
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
-                let matches = snapshot
-                    .games
-                    .iter()
-                    .filter_map(|game| game.match_group.as_deref())
-                    .collect::<std::collections::HashSet<_>>()
-                    .len();
-                let mut page = index.history_for_snapshot(&query, matches, snapshot)?;
+                index.require_catalog(&snapshot.catalog_key)?;
+                let mut page =
+                    index.history_for_snapshot(&query, snapshot.match_count, snapshot)?;
                 index.attach_clip_counts(snapshot, &mut page)?;
                 Ok(page)
             },
@@ -428,7 +423,7 @@ pub(crate) async fn league_source_scopes(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
+                index.require_catalog(&snapshot.catalog_key)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.scopes(&descriptor.media_timeline.media_id)
             },
@@ -455,7 +450,7 @@ pub(crate) async fn query_league_events(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
+                index.require_catalog(&snapshot.catalog_key)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.events(&query, &descriptor.media_timeline)
             },
@@ -487,7 +482,7 @@ pub(crate) async fn query_league_roster(
                     "roster query media mismatch"
                 );
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
+                index.require_catalog(&snapshot.catalog_key)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.roster_at(&scope, tick)
             },
@@ -512,7 +507,7 @@ pub(crate) async fn query_league_authored(
             true,
             move |root, snapshot, _| {
                 let mut index = Index::open(&cache, root)?;
-                index.reconcile(&snapshot.games, &snapshot.token)?;
+                index.reconcile_snapshot(snapshot)?;
                 index.authored(after.as_ref(), limit)
             },
         )
@@ -538,7 +533,7 @@ pub(crate) async fn query_league_overlay_page(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
+                index.require_catalog(&snapshot.catalog_key)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.overlay_page(&query, &descriptor.media_timeline)
             },
@@ -565,7 +560,7 @@ pub(crate) async fn query_league_replay_window(
             move |root, snapshot, _| {
                 let descriptor = selected_media(root, snapshot, &bundle)?;
                 let index = Index::reader(&cache, root)?;
-                index.require_catalog(&league_index::catalog_key(&snapshot.games)?)?;
+                index.require_catalog(&snapshot.catalog_key)?;
                 index.require_source(root, &bundle, &descriptor.media_timeline.media_id)?;
                 index.replay_window(&query, &descriptor.media_timeline)
             },
