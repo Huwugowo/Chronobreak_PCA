@@ -770,6 +770,7 @@ function App() {
               onPlaySingleClip={managed ? (group, origin, button) => void playSingleClip(group, origin, button) : undefined}
               pendingSingleClipGroup={singleClipRequest()?.group}
               managedClips={managed ? <ManagedClips
+                root={libraryState().root}
                 token={acceptedSnapshot()?.token ?? ""} ready={(!acceptedSnapshot()?.managed_clip_count || clipIndexToken() === acceptedSnapshot()?.token) && libraryActionable()}
                 indexError={clipIndexError()} onRetry={() => setClipIndexRetry(n => n + 1)}
                 ddragon={ddragon() ?? emptyDdragon}

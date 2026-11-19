@@ -708,7 +708,8 @@ WITH filtered AS (
  AND (?2 IS NULL OR champion=?2) AND (?3 IS NULL OR day>=?3 AND day<>'')
  AND (?4 IS NULL OR day<=?4 AND day<>'') AND (?5 IS NULL OR queue=?5 OR lower(json_extract(header,'$.game.mode'))=?5)
  AND (?6 IS NULL OR outcome=?6) AND (?9 IS NULL OR match_group=?9)
- AND (?1='' OR instr(search,?1)>0 OR EXISTS(
+ -- Kind labels are plain ASCII in the projection. Check the raw text before parsing the array.
+ AND (?1='' OR instr(search,?1)>0 OR (?10>0 OR instr(highlights,?1)>0) AND EXISTS(
      SELECT 1 FROM json_each(highlights) h WHERE
      (?10>0 AND h.value->>'tier'>=?10 OR ?10=0 AND instr(h.value->>'kind',?1)>0)))
  AND (?7 IS NULL AND ?8 IS NULL OR EXISTS(
@@ -763,6 +764,10 @@ impl<'a> ClipFilter<'a> {
         args.into_iter()
     }
 }
+
+#[cfg(test)]
+#[path = "clip_grid_measurements.rs"]
+mod measurements;
 
 #[cfg(all(test, windows))]
 mod tests {

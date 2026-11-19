@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { readClipGridPage, type ClipFilters, type ClipGridCard, type ClipGridPage } from "../managedClips";
 import { ManagedClips } from "./ManagedClips";
@@ -27,15 +27,19 @@ function mount() {
   const host = document.createElement("div");
   document.body.append(host);
   const [filters, setFilters] = createSignal<ClipFilters>({});
+  const [token, setToken] = createSignal("snapshot");
+  const [ready, setReady] = createSignal(true);
+  const [indexError, setIndexError] = createSignal<string | null>(null);
   const onOpen = vi.fn();
   dispose = render(() => <ManagedClips
-    token="snapshot" ready indexError={null} onRetry={() => {}}
+    root="fixture" token={token()} ready={ready()} indexError={indexError()} onRetry={() => {}}
     ddragon={{ state: "ready", asset_base_url: "https://fixture/assets", version: "1",
       champion_count: 1, item_count: 0, cache_directory: "", error: null }}
     filters={filters()} onFilters={setFilters} onOpen={onOpen} onOpenFolder={() => {}}
   />, host);
   return {
-    host, onOpen,
+    host, onOpen, setIndexError,
+    accept: (newToken: string, actionable: boolean) => batch(() => { setToken(newToken); setReady(actionable); }),
     cards: () => [...host.querySelectorAll<HTMLButtonElement>("[data-managed-clip]")],
     button: (label: string) => [...host.querySelectorAll("button")].find(button => button.textContent === label)!,
     input: (selector: string, value: string) => {
@@ -90,6 +94,48 @@ it("appends cursor pages in server order and keeps the existing images mounted",
   expect(first.querySelector('img[src$="newer.jpg"]')).toBe(image);
   first.click();
   expect(onOpen).toHaveBeenCalledWith(page.clips[0], first);
+});
+
+it("keeps loaded pages through a catalog error and rejects a late continuation from the old catalog", async () => {
+  const first = fixture("first");
+  const second = fixture("second");
+  const replacement = { ...second, title: "Renamed clip", custom_tags: ["Highlights"] };
+  let complete!: (page: ClipGridPage) => void;
+  vi.mocked(readClipGridPage)
+    .mockResolvedValueOnce({ clips: [first], next: [4, first.id] })
+    .mockResolvedValueOnce({ clips: [second], next: [3, second.id] })
+    .mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }))
+    .mockResolvedValueOnce({ clips: [first], next: [4, first.id] })
+    .mockResolvedValueOnce({ clips: [replacement], next: [3, second.id] });
+  const { host, cards, button, accept, setIndexError, onOpen } = mount();
+  await vi.waitFor(() => expect(cards()).toHaveLength(1));
+  button("More clips").click();
+  await vi.waitFor(() => expect(cards()).toHaveLength(2));
+  const [firstButton, secondButton] = cards();
+  const image = secondButton.querySelector("img");
+  button("More clips").click();
+  await vi.waitFor(() => expect(readClipGridPage).toHaveBeenCalledTimes(3));
+
+  accept("snapshot", false);
+  accept("new", false);
+  setIndexError("Index temporarily unavailable");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Index temporarily unavailable");
+  expect(cards()).toEqual([firstButton, secondButton]);
+  expect(button("More clips").getAttribute("aria-disabled")).toBe("true");
+  secondButton.click();
+  expect(onOpen).not.toHaveBeenCalled();
+  setIndexError(null);
+  accept("new", true);
+  complete({ clips: [fixture("stale")], next: null });
+
+  await vi.waitFor(() => expect(secondButton.getAttribute("aria-label")).toBe("Play Renamed clip"));
+  expect(cards()).toEqual([firstButton, secondButton]);
+  expect(secondButton.querySelector("img")).toBe(image);
+  expect(secondButton.querySelector(`.${styles.customBadge}`)?.textContent).toBe("Highlights");
+  expect(secondButton.getAttribute("aria-describedby")).toContain("grid-clip-second-tags");
+  expect(button("More clips").getAttribute("aria-disabled")).toBe("false");
+  expect(readClipGridPage).toHaveBeenNthCalledWith(4, "new", {}, null);
+  expect(readClipGridPage).toHaveBeenNthCalledWith(5, "new", {}, [4, first.id]);
 });
 
 it("debounces search and match date and discards superseded pages", async () => {

@@ -168,8 +168,8 @@
   .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
-.grid .gridOpen, .grid .gridArtwork { border-radius: var(--radius-surface); }
-.grid .gridArtwork { background-color: var(--surface-panel); }
+.grid .gridOpen { border-radius: var(--radius-surface); }
+.grid .gridArtwork { border-radius: 8px; background-color: var(--surface-panel); }
 .gridOpen:hover .gridTitle { color: var(--text-primary); text-decoration: underline; }
 .grid .gridOpen:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 

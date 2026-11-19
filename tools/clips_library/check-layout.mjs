@@ -22,17 +22,20 @@ try {
   };
   await write("index.html", '<!doctype html><meta charset="utf-8"><div id="root"></div><script type="module" src="./main.tsx"></script>');
   await write("main.tsx", `
-    import { createSignal, Show } from "solid-js";
+    import { batch, createSignal, Show } from "solid-js";
     import { render } from "solid-js/web";
     import { ManagedClips, ManagedClipPlayer } from "/src/components/ManagedClips";
     import shell from "/src/App.module.css";
     import "/src/styles/global.css";
     const [filters, setFilters] = createSignal({});
     const [selected, setSelected] = createSignal();
+    const [token, setToken] = createSignal("fixture");
+    const [ready, setReady] = createSignal(true);
+    window.publishClipCatalog = (token, ready) => batch(() => { setToken(token); setReady(ready); });
     const ddragon = { asset_base_url: "/clip-fixture-image" };
     render(() => <div class={shell.appShell} data-screen="library" data-library-tab="clips">
       <main class={shell.mainContent} id="content">
-        <ManagedClips token="fixture" ready indexError={null} onRetry={() => {}}
+        <ManagedClips root="fixture" token={token()} ready={ready()} indexError={null} onRetry={() => {}}
           ddragon={ddragon} filters={filters()} onFilters={setFilters} onOpenFolder={() => {}}
           onOpen={(clip, button) => setSelected({ clip, button })} />
       </main>
@@ -67,7 +70,11 @@ try {
     window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
       if (command !== "clip_grid_page") throw new Error(command);
       window.gridCalls.push(args);
-      return args.after ? { clips: clips.slice(12), next: null } : { clips: clips.slice(0, 12), next: [1, "11"] };
+      const page = args.after ? { clips: clips.slice(12), next: null } : { clips: clips.slice(0, 12), next: [1, "11"] };
+      if (args.snapshotToken === "renamed") {
+        page.clips = page.clips.map(clip => clip.id === "16" ? { ...clip, title: "Renamed 16" } : clip);
+      }
+      return structuredClone(page);
     } };
   });
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/${basename(fixture)}/`);
@@ -84,12 +91,13 @@ try {
     await page.locator("#content").evaluate((element, width) => { element.style.width = `${width}px`; }, width);
     const sizing = await grid.evaluate(element => {
       const style = getComputedStyle(element);
-      const artwork = element.querySelector("button > span").getBoundingClientRect();
+      const artwork = element.querySelector("button > span");
+      const thumbnail = artwork.getBoundingClientRect();
       const portrait = element.querySelector('[role="img"]').getBoundingClientRect();
       const title = element.querySelector("strong");
       return {
         width: element.clientWidth, columns: style.gridTemplateColumns.split(" ").length,
-        gap: style.gap, ratio: artwork.width / artwork.height,
+        gap: style.gap, ratio: thumbnail.width / thumbnail.height, radius: getComputedStyle(artwork).borderRadius,
         portrait: [portrait.width, portrait.height],
         titleLines: title.offsetHeight / Number.parseFloat(getComputedStyle(title).lineHeight),
       };
@@ -97,6 +105,7 @@ try {
     assert.deepEqual([sizing.width, sizing.columns, sizing.gap, sizing.portrait, sizing.titleLines],
       [width, columns, "24px 16px", [36, 36], 2]);
     assert.ok(Math.abs(sizing.ratio - 16 / 9) < 0.001);
+    assert.equal(sizing.radius, "8px");
     assert.ok(await first.evaluate(node => node.isConnected));
     assert.ok(await image.evaluate(node => node.isConnected));
   }
@@ -130,6 +139,19 @@ try {
   assert.equal(await cards.count(), 20);
   assert.equal(await page.getByRole("searchbox").inputValue(), "ranked");
   assert.equal(await page.evaluate(() => window.gridCalls.length), 3);
+
+  const deepImage = await opener.locator("img").first().elementHandle();
+  await page.evaluate(() => window.publishClipCatalog("fixture", false));
+  assert.equal(await cards.count(), 20);
+  assert.equal(await page.evaluate(() => scrollY), scrollBefore);
+  await page.evaluate(() => window.publishClipCatalog("renamed", true));
+  await page.getByRole("button", { name: "Play Renamed 16", exact: true }).waitFor();
+  assert.equal(await cards.count(), 20);
+  assert.equal(await page.evaluate(() => scrollY), scrollBefore);
+  assert.ok(await previous.evaluate(node => node === document.activeElement && node.isConnected));
+  assert.ok(await deepImage.evaluate(node => node.isConnected));
+  await page.evaluate(() => window.publishClipCatalog("fixture", true));
+  await opener.waitFor();
 
   for (const [width, height] of [[360, 420], [800, 480], [1500, 900]]) {
     await page.setViewportSize({ width, height });

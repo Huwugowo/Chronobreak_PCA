@@ -1,9 +1,10 @@
-import { For, Index, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { createClipGrid } from "../clipGrid";
 import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
-import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipGridPage, readClipPage, type Attribution, type ClipCard,
-  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGridCursor, type ClipGroup, type ClipQuery, type GroupCursor } from "../managedClips";
+import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipPage, type Attribution, type ClipCard,
+  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery, type GroupCursor } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
@@ -268,69 +269,35 @@ const filterOptions = [
 type OpenGridClip = (clip: ClipGridCard, button: HTMLButtonElement) => void;
 
 function ClipGrid(props: {
-  token: string; ready: boolean; query: ClipFilters; ddragon: DdragonStatus;
+  model: ReturnType<typeof createClipGrid>; indexError: string | null; onRetryIndex: () => void; ddragon: DdragonStatus;
   onOpen: OpenGridClip; openingId?: string;
 }) {
   let grid!: HTMLUListElement;
-  const [clips, setClips] = createSignal<ClipGridCard[]>([]);
-  const [next, setNext] = createSignal<ClipGridCursor | null>(null);
-  const [busy, setBusy] = createSignal(false);
-  const [failure, setFailure] = createSignal<{ message: string; cursor: ClipGridCursor | null }>();
-  let generation = 0;
-  let read = Promise.resolve();
-
-  const load = (cursor: ClipGridCursor | null, trigger?: HTMLButtonElement) => {
-    const current = generation;
-    const { token, query } = props;
-    setBusy(true);
-    // Let the current read release its slot before issuing a superseding filter.
-    read = read.then(async () => {
-      if (current !== generation) return;
-      try {
-        const page = await readClipGridPage(token, query, cursor);
-        if (current !== generation) return;
-        const previous = cursor ? clips() : [];
-        const moveFocus = trigger && document.activeElement === trigger;
-        batch(() => {
-          setClips([...previous, ...page.clips]);
-          setNext(page.next);
-          setFailure(undefined);
-        });
-        if (moveFocus && page.clips.length) {
-          grid.children.item(previous.length)?.querySelector("button")?.focus();
-        }
-      } catch (error) {
-        if (current === generation) setFailure({ message: libraryError(error), cursor });
-      } finally {
-        if (current === generation) setBusy(false);
-      }
-    });
+  const { state, current, append, retry } = props.model;
+  const load = async (trigger: HTMLButtonElement, action: typeof append) => {
+    const wasFocused = document.activeElement === trigger;
+    const index = await action();
+    if (index !== undefined && wasFocused && (document.activeElement === trigger ||
+        (!trigger.isConnected && document.activeElement === document.body))) {
+      grid.children.item(index)?.querySelector("button")?.focus();
+    }
   };
 
-  createEffect(() => {
-    generation++;
-    setClips([]);
-    setNext(null);
-    setFailure(undefined);
-    setBusy(false);
-    if (props.ready) load(null);
-  });
-  onCleanup(() => { generation++; });
-
   return <div class={styles.gridRegion}>
-    <Show when={!props.ready || (busy() && clips().length === 0)}><p role="status">Loading clips…</p></Show>
-    <Show when={props.ready && !busy() && !failure() && clips().length === 0}><p>No clips found.</p></Show>
-    <ul ref={grid} class={styles.grid} aria-label="Clips" aria-busy={busy()}>
-      <For each={clips()}>{clip => {
+    <Show when={!props.indexError && !state.failure && state.clips.length === 0}>
+      <Show when={current()} fallback={<p role="status">Loading clips…</p>}><p>No clips found.</p></Show>
+    </Show>
+    <ul ref={grid} class={styles.grid} aria-label="Clips" aria-busy={state.busy}>
+      <For each={state.clips}>{clip => {
         const id = `grid-clip-${clip.id}`;
-        const tagsId = clip.highlights.length || clip.custom_tags.length ? `${id}-tags` : undefined;
-        const description = [`${id}-champion`, `${id}-duration`, tagsId].filter(Boolean).join(" ");
+        const tagsId = () => clip.highlights.length || clip.custom_tags.length ? `${id}-tags` : undefined;
         return <li>
           <button class={`${libraryStyles.clipOpen} ${styles.gridOpen}`} type="button"
             data-managed-clip={clip.id} aria-label={`Play ${clip.title}`}
-            aria-describedby={description}
+            aria-describedby={[`${id}-champion`, `${id}-duration`, tagsId()].filter(Boolean).join(" ")}
             aria-busy={props.openingId === clip.id}
-            onClick={event => props.onOpen(clip, event.currentTarget)}>
+            aria-disabled={!current()}
+            onClick={event => { if (current()) props.onOpen(clip, event.currentTarget); }}>
             <span class={`${libraryStyles.clipArtwork} ${styles.gridArtwork}`}>
               <ClipThumbnail src={clip.thumbnail_url} />
               <em id={`${id}-duration`}>{formatDuration(clipDurationMs(clip.duration))}</em>
@@ -340,33 +307,37 @@ function ClipGrid(props: {
                 ddragon={props.ddragon} class={styles.gridChampion} />
               <span class={styles.gridText}>
                 <strong class={styles.gridTitle} title={clip.title}>{clip.title}</strong>
-                <ClipTags id={tagsId} tags={clip} limit={2} />
+                <ClipTags id={tagsId()} tags={clip} limit={2} />
               </span>
             </span>
           </button>
         </li>;
       }}</For>
     </ul>
-    <Show when={failure()}>{failed =>
-      <p role="alert">{failed().message} <button class={controls.control} type="button" aria-disabled={busy()}
-        onClick={event => { if (!busy()) load(failed().cursor, event.currentTarget); }}>Try again</button></p>
+    <Show when={props.indexError}>{error =>
+      <p role="alert">{error()} <button class={controls.control} type="button" onClick={props.onRetryIndex}>Try again</button></p>
     }</Show>
-    <Show when={!failure() && next()}>{cursor =>
-      <button class={`${controls.control} ${styles.gridMore}`} type="button" aria-disabled={busy()}
-        onClick={event => { if (!busy()) load(cursor(), event.currentTarget); }}>
-        {busy() ? "Loading clips…" : "More clips"}
+    <Show when={state.failure}>{failed =>
+      <p role="alert">{failed().message} <button class={controls.control} type="button" aria-disabled={state.busy}
+        onClick={event => void load(event.currentTarget, retry)}>Try again</button></p>
+    }</Show>
+    <Show when={!state.failure && state.next}>
+      <button class={`${controls.control} ${styles.gridMore}`} type="button" aria-disabled={!current() || state.busy}
+        onClick={event => void load(event.currentTarget, append)}>
+        {state.busy && current() ? "Loading clips…" : "More clips"}
       </button>
-    }</Show>
+    </Show>
   </div>;
 }
 
 export function ManagedClips(props: {
-  token: string; ready: boolean; indexError: string | null; onRetry: () => void;
+  root: string | null; token: string; ready: boolean; indexError: string | null; onRetry: () => void;
   ddragon: DdragonStatus;
   filters: ClipFilters; onFilters: (query: ClipFilters) => void;
   onOpen: OpenGridClip; openingId?: string; onOpenFolder: () => void;
 }) {
   const [query, setQuery] = createSignal(props.filters);
+  const grid = createClipGrid(() => ({ root: props.root, token: props.token, ready: props.ready, query: query() }));
   createEffect(() => {
     const next = props.filters;
     const timer = window.setTimeout(() => setQuery(next), 180);
@@ -400,10 +371,8 @@ export function ManagedClips(props: {
       </select></label>
       <Show when={Object.values(props.filters).some(Boolean)}><button class={controls.control} type="button" onClick={() => props.onFilters({})}>Clear filters</button></Show>
     </div>
-    <Show when={props.indexError} fallback={<ClipGrid token={props.token} ready={props.ready} query={query()}
-      onOpen={props.onOpen} openingId={props.openingId} ddragon={props.ddragon} />}>
-      {error => <p role="alert">{error()} <button class={controls.control} type="button" onClick={props.onRetry}>Try again</button></p>}
-    </Show>
+    <ClipGrid model={grid} indexError={props.indexError} onRetryIndex={props.onRetry}
+      onOpen={props.onOpen} openingId={props.openingId} ddragon={props.ddragon} />
   </section>;
 }
 

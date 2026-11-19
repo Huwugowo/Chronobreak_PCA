@@ -11,7 +11,8 @@ import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
 import { indexCatalog, indexRecording } from "./leagueIndex";
 import type { CatalogPage, ImportProgress } from "./leagueIndex";
-import { readClipGridPage, readClipPage, readClipPlayback, type ClipCard, type ClipGridCard, type ClipPage, type ClipPlayback } from "./managedClips";
+import { editManagedClip, readClipDetail, readClipGridPage, readClipPage, readClipPlayback, reconcileClips,
+  type ClipCard, type ClipGridCard, type ClipPage, type ClipPlayback } from "./managedClips";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
@@ -25,6 +26,8 @@ vi.mock("./managedClips", async original => ({ ...await original<typeof import("
   readClipPage: vi.fn(async (): Promise<ClipPage> => ({ groups: [], next: null })),
   readClipGridPage: vi.fn(),
   readClipPlayback: vi.fn(),
+  readClipDetail: vi.fn(),
+  editManagedClip: vi.fn(async () => {}),
 }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(),
   initializeReplayBenchmark: vi.fn(async () => null) }));
@@ -87,6 +90,9 @@ let dispose: (() => void) | undefined;
 afterEach(() => {
   dispose?.(); dispose = undefined;
   document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); vi.restoreAllMocks();
+  vi.mocked(readClipGridPage).mockReset();
+  vi.mocked(readClipDetail).mockReset();
+  vi.mocked(reconcileClips).mockReset();
   harness.root = "A"; harness.revision = 0; harness.viewer = null; harness.exporter = null;
   harness.clip = null; harness.sourceMissing = false; harness.requireHistoryPage = false; harness.failReplay = false;
   harness.renderManagedGrid = false;
@@ -327,6 +333,93 @@ it("discards a pending grid activation after navigating away", async () => {
   complete({ clip, file_size_bytes: 512 });
   await Promise.resolve();
   expect(host.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clearing the open, filtered grid", async operation => {
+  harness.renderManagedGrid = true;
+  const clip = makeClip();
+  harness.clip = clip;
+  clip.header.custom_tags = ["Keep"];
+  const edited = gridCard(clip);
+  const first = { ...edited, id: "first", title: "Keep first", thumbnail_url: "http://fixture/first.jpg" };
+  const replacement = { ...first, id: "replacement", title: "Keep next" };
+  const tail = { ...first, id: "tail", title: "Keep last" };
+  const renamed = { ...edited, title: "Renamed fight" };
+  const second = operation === "rename" ? renamed : replacement;
+  const refreshedCursor: [number, string] = operation === "rename" ? [3, edited.id] : [2, replacement.id];
+  vi.mocked(readClipGridPage).mockImplementation(async (token, query, after) => {
+    if (!query.search) return { clips: [], next: null };
+    if (!after) return { clips: [first], next: [4, first.id] };
+    if (token === "A-1") return { clips: [edited], next: [3, edited.id] };
+    if (after[1] === first.id) return { clips: [second], next: refreshedCursor };
+    return { clips: [tail], next: null };
+  });
+  vi.mocked(readClipPlayback).mockResolvedValueOnce({ clip, file_size_bytes: 512 });
+  if (operation === "tags") {
+    vi.mocked(readClipDetail).mockResolvedValueOnce({ header: clip.header, candidates: [], events: { availability: "unavailable", events: [] } });
+  }
+  const { host, click } = await mount();
+  const button = (label: string, within: ParentNode = host) => [...within.querySelectorAll("button")]
+    .find(element => element.textContent?.trim() === label);
+  const card = (id: string) => host.querySelector<HTMLButtonElement>(`[data-managed-clip="${id}"]`);
+  click("clips");
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  search.value = "keep";
+  search.dispatchEvent(new Event("input", { bubbles: true }));
+  await vi.waitFor(() => expect(card(first.id)).not.toBeNull());
+  button("More clips")!.click();
+  await vi.waitFor(() => expect(card(edited.id)).not.toBeNull());
+  const firstButton = card(first.id)!;
+  const firstThumbnail = firstButton.querySelector("img");
+  const editButton = card(edited.id)!;
+  const editThumbnail = editButton.querySelector("img");
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  editButton.click();
+  await vi.waitFor(() => expect(button("Rename")).toBeDefined());
+
+  let acceptIndex!: (ready: boolean) => void;
+  vi.mocked(reconcileClips).mockImplementationOnce(() => new Promise(resolve => { acceptIndex = resolve; }));
+  if (operation === "rename") {
+    button("Rename")!.click();
+    const title = host.querySelector<HTMLInputElement>('[role="dialog"] input[required]')!;
+    title.value = renamed.title;
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    title.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  } else if (operation === "tags") {
+    button("Edit tags")!.click();
+    await vi.waitFor(() => expect(button("Save tags")?.disabled).toBe(false));
+    host.querySelector<HTMLButtonElement>('[aria-label="Remove tag Keep"]')!.click();
+    button("Save tags")!.click();
+  } else {
+    button("Delete clip")!.click();
+    button("Delete clip", host.querySelector('[role="alertdialog"]')!)!.click();
+  }
+
+  const edit = operation === "rename" ? { kind: "rename", title: renamed.title } : operation === "tags"
+    ? { kind: "tags", custom_tags: [], highlights: [] } : { kind: "delete" };
+  expect(editManagedClip).toHaveBeenCalledExactlyOnceWith("A-1", edited.id, edit);
+  await vi.waitFor(() => expect(acceptIndex).toBeDefined());
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(card(first.id)).toBe(firstButton);
+  expect(card(edited.id)).toBe(editButton);
+  expect(button("More clips")?.getAttribute("aria-disabled")).toBe("true");
+  acceptIndex(true);
+
+  await vi.waitFor(() => expect(card(second.id)?.getAttribute("aria-label")).toBe(`Play ${second.title}`));
+  expect(card(first.id)).toBe(firstButton);
+  expect(firstButton.querySelector("img")).toBe(firstThumbnail);
+  if (operation === "rename") {
+    expect(card(edited.id)).toBe(editButton);
+    expect(editButton.querySelector("img")).toBe(editThumbnail);
+  } else expect(card(edited.id)).toBeNull();
+  expect(search.value).toBe("keep");
+  expect(scrollTo).not.toHaveBeenCalled();
+  expect(vi.mocked(readClipGridPage).mock.calls.slice(-2)).toEqual([
+    ["A-2", { search: "keep" }, null], ["A-2", { search: "keep" }, [4, first.id]],
+  ]);
+  button("More clips")!.click();
+  await vi.waitFor(() => expect(card(tail.id)).not.toBeNull());
+  expect(readClipGridPage).toHaveBeenLastCalledWith("A-2", { search: "keep" }, refreshedCursor);
 });
 
 it("shares the actual App writer wiring across early replay open and return", async () => {
