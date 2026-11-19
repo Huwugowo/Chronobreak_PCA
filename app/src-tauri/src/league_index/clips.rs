@@ -1,8 +1,10 @@
 //! Disposable projection of accepted clip headers. Event payloads stay on disk.
 use super::*;
-use crate::clip_bundle::{ClipDescriptor, ClipHeader, ClipId, HighlightKind};
+use crate::clip_bundle::{ClipDescriptor, ClipGame, ClipHeader, ClipId, Highlight, HighlightKind};
 use crate::library::LibrarySnapshot;
-use chronobreak_replay_time::{MediaTimelineV2, RoundingMode, frame_boundary_to_replay_tick};
+use chronobreak_replay_time::{
+    MediaTimelineV2, ReplayTick, RoundingMode, frame_boundary_to_replay_tick,
+};
 use std::collections::HashMap;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -10,6 +12,7 @@ const BATCH: usize = 64;
 const GROUPS: usize = 8;
 const INITIAL: usize = 4;
 const MORE: usize = 24;
+const GRID_PAGE_SIZE: usize = 24;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS clip_projection_state(
@@ -28,6 +31,14 @@ CREATE TABLE IF NOT EXISTS clip_tag_projection(
     tag_key TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY(clip_id,tag_key)
 );
 CREATE INDEX IF NOT EXISTS clip_tag_prefix ON clip_tag_projection(tag_key,label);
+";
+
+const GRID_SCHEMA: &str = "
+ALTER TABLE clip_projection ADD COLUMN created INTEGER GENERATED ALWAYS AS (
+    CAST(json_extract(header,'$.exported_at') AS INTEGER)
+) VIRTUAL;
+CREATE INDEX clip_projection_created ON clip_projection(created DESC,id DESC)
+    WHERE header IS NOT NULL;
 ";
 
 #[derive(Debug, Default, Deserialize)]
@@ -65,12 +76,11 @@ impl ClipCard {
         origin: &str,
         capability: &str,
     ) -> Self {
-        let url = format!("{origin}/clips/{}", clip.id.as_str());
         Self {
+            video_url: clip_url(&clip.id, "video", origin, capability),
+            thumbnail_url: clip_url(&clip.id, "thumbnail", origin, capability),
             header,
             title: clip.title().into(),
-            video_url: format!("{url}/video?g={capability}"),
-            thumbnail_url: format!("{url}/thumbnail?g={capability}"),
             game_clock: None,
         }
     }
@@ -81,24 +91,53 @@ pub(crate) struct ClipGroup {
     pub key: String,
     pub clips: Vec<ClipCard>,
     pub next: Option<(i64, i64, ClipId)>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub match_facts: Option<ClipMatchFacts>,
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct ClipMatchFacts {
-    pub champion: String,
-    pub outcome: Option<chronobreak_league_data::Outcome>,
-    pub summoner_spells: Option<[Option<String>; 2]>,
-    pub final_kda: Option<[Option<u64>; 3]>,
-    pub final_items: Option<Vec<Option<u64>>>,
-    pub duration_seconds: Option<u64>,
+pub(crate) struct ClipGridCard {
+    pub id: ClipId,
+    pub title: String,
+    pub champion: Option<String>,
+    pub duration: ReplayTick,
+    pub thumbnail_url: String,
+    pub highlights: Vec<Highlight>,
+    pub custom_tags: Vec<String>,
+}
+
+pub(crate) type ClipGridCursor = (i64, ClipId);
+
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct ClipGridPage {
+    pub clips: Vec<ClipGridCard>,
+    pub next: Option<ClipGridCursor>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ClipPlayback {
+    pub clip: ClipCard,
+    pub file_size_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ClipPage {
     pub groups: Vec<ClipGroup>,
     pub next: Option<(i64, String)>,
+}
+
+fn clip_url(id: &ClipId, asset: &str, origin: &str, capability: &str) -> String {
+    format!("{origin}/clips/{}/{asset}?g={capability}", id.as_str())
+}
+
+fn grid_page_sql(after: bool) -> String {
+    let seek = if after {
+        "WHERE (created,id)<(?12,?13)"
+    } else {
+        ""
+    };
+    format!(
+        "{CLIP_FILTER}
+        SELECT id,created,header FROM filtered {seek} ORDER BY created DESC,id DESC LIMIT ?11"
+    )
 }
 
 fn date_value(date: Option<&str>) -> Option<i64> {
@@ -159,10 +198,24 @@ impl Index {
         snapshot: &LibrarySnapshot,
         check: &dyn Fn() -> Result<()>,
     ) -> Result<bool> {
+        // Install the seek index independently of inventory changes. Existing
+        // projections keep their rows and do not need to reread clip headers.
+        let installed: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='index' AND name='clip_projection_created')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !installed {
+            check()?;
+            let tx = self.db.transaction()?;
+            tx.execute_batch(SCHEMA)?;
+            tx.execute_batch(GRID_SCHEMA)?;
+            check()?;
+            tx.commit()?;
+        }
         if self.clip_ready(&snapshot.managed_clip_stamp) {
             return Ok(true);
         }
-        self.db.execute_batch(SCHEMA)?;
         let (phase, after): (i64, String) = self
             .db
             .query_row(
@@ -220,6 +273,81 @@ impl Index {
         check()?;
         tx.commit()?;
         Ok(next_phase == 2)
+    }
+
+    pub(crate) fn clip_grid_page(
+        &self,
+        snapshot: &LibrarySnapshot,
+        query: &ClipQuery,
+        after: Option<&ClipGridCursor>,
+        origin: &str,
+        capability: &str,
+    ) -> Result<ClipGridPage> {
+        ensure!(
+            self.clip_ready(&snapshot.managed_clip_stamp),
+            "clip catalog is pending"
+        );
+        let filter = ClipFilter::new(query)?;
+        let mut statement = self.db.prepare(&grid_page_sql(after.is_some()))?;
+        let limit = (GRID_PAGE_SIZE + 1) as i64;
+        let after_id = after.map(|(_, id)| id.as_str());
+        let seek = after.map(|(created, _)| [created as &dyn rusqlite::ToSql, &after_id]);
+        let args = filter
+            .args()
+            .chain([&limit as &dyn rusqlite::ToSql])
+            .chain(seek.into_iter().flatten());
+        let mut rows = statement.query(rusqlite::params_from_iter(args))?;
+        let mut page = ClipGridPage::default();
+        let mut last = None;
+        while let Some(row) = rows.next()? {
+            if page.clips.len() == GRID_PAGE_SIZE {
+                page.next = last;
+                break;
+            }
+            let id = ClipId::parse(&row.get::<_, String>(0)?)?;
+            let descriptor = snapshot
+                .managed_clips
+                .get(&id)
+                .context("clip catalog changed")?;
+            let header: ClipHeader = serde_json::from_str(&row.get::<_, String>(2)?)?;
+            last = Some((row.get(1)?, id.clone()));
+            page.clips.push(ClipGridCard {
+                thumbnail_url: clip_url(&id, "thumbnail", origin, capability),
+                id,
+                title: descriptor.title().into(),
+                champion: header.game.champion,
+                duration: header.duration,
+                highlights: header.highlights,
+                custom_tags: header.custom_tags,
+            });
+        }
+        Ok(page)
+    }
+
+    pub(crate) fn clip_playback(
+        &self,
+        snapshot: &LibrarySnapshot,
+        id: &ClipId,
+        origin: &str,
+        capability: &str,
+    ) -> Result<ClipPlayback> {
+        ensure!(
+            self.clip_ready(&snapshot.managed_clip_stamp),
+            "clip catalog is pending"
+        );
+        let descriptor = snapshot.managed_clips.get(id).context("clip unavailable")?;
+        let json: String = self.db.query_row(
+            "SELECT header FROM clip_projection WHERE id=?1 AND header IS NOT NULL",
+            [id.as_str()],
+            |row| row.get(0),
+        )?;
+        let mut header: ClipHeader = serde_json::from_str(&json)?;
+        // A missing or rebuilding match index never blocks independent playback.
+        let _ = self.enrich_clip_game(&snapshot.catalog_key, &mut header.game);
+        Ok(ClipPlayback {
+            clip: ClipCard::new(descriptor, header, origin, capability),
+            file_size_bytes: descriptor.video.length(),
+        })
     }
 
     pub(crate) fn attach_clip_counts(
@@ -327,61 +455,47 @@ impl Index {
             groups
                 .push(self.clip_group(snapshot, &filter, &key, None, INITIAL, origin, capability)?);
         }
-        if query.match_group.is_none() && self.require_catalog(&snapshot.catalog_key).is_ok() {
-            self.attach_clip_match_facts(&mut groups)?;
-        }
         Ok(ClipPage { groups, next })
     }
 
-    fn attach_clip_match_facts(&self, groups: &mut [ClipGroup]) -> Result<()> {
-        let keys: Vec<_> = groups
-            .iter()
-            .map(|group| group.key.strip_prefix("game:"))
-            .collect();
-        if keys.iter().all(Option::is_none) {
+    pub(crate) fn enrich_clip_game(&self, catalog_key: &str, game: &mut ClipGame) -> Result<()> {
+        let Some(group) = &game.match_group else {
             return Ok(());
-        }
+        };
+        self.require_catalog(catalog_key)?;
         // Use the same checked part priority as History. Parts without final
         // facts or a local roster have no extra stats to add to the clip header.
-        let mut statement = self.db.prepare_cached(
-            "SELECT g.key,r.media_id,r.champion,r.result_json
-             FROM json_each(?1) g CROSS JOIN recordings r ON r.media_id=(
-                 SELECT part.media_id FROM recordings part
-                 WHERE part.match_group=g.value AND part.facts_current=1
-                   AND (part.result_json IS NOT NULL OR (part.telemetry_status='ready' AND EXISTS(
-                       SELECT 1 FROM scopes s JOIN roster_members m ON m.media_id=s.media_id
-                           AND m.run_id=s.run_id AND m.epoch=s.epoch AND m.participant_id=s.local_participant
-                       WHERE s.media_id=part.media_id
-                   )))
-                 ORDER BY part.result_json IS NULL,part.recorded_at DESC,part.media_id LIMIT 1
-             )",
-        )?;
-        let mut rows = statement.query([serde_json::to_string(&keys)?])?;
-        while let Some(row) = rows.next()? {
-            let media = MediaId::parse(&row.get::<_, String>(1)?)?;
-            let result = row
-                .get::<_, Option<String>>(3)?
-                .map(|json| serde_json::from_str::<ResultFile>(&json))
-                .transpose()?;
-            let stats = self.history_stats(&media, result.as_ref())?;
-            let final_kda = [stats.kills, stats.deaths, stats.assists];
-            let champion = result
-                .as_ref()
-                .and_then(|result| result.local_player.as_ref())
-                .and_then(|player| player.champion_name.clone());
-            let group = usize::try_from(row.get::<_, i64>(0)?)?;
-            groups[group].match_facts = Some(ClipMatchFacts {
-                champion: match champion {
-                    Some(champion) => champion,
-                    None => row.get(2)?,
-                },
-                outcome: result.as_ref().map(|result| result.outcome),
-                summoner_spells: stats.summoner_spells,
-                final_kda: (result.is_some() && final_kda.iter().any(Option::is_some))
-                    .then_some(final_kda),
-                final_items: if result.is_some() { stats.items } else { None },
-                duration_seconds: stats.duration_seconds,
-            });
+        let part = self.db.prepare_cached(
+            "SELECT part.media_id,part.champion,part.result_json FROM recordings part
+             WHERE part.match_group=?1 AND part.facts_current=1
+               AND (part.result_json IS NOT NULL OR (part.telemetry_status='ready' AND EXISTS(
+                   SELECT 1 FROM scopes s JOIN roster_members m ON m.media_id=s.media_id
+                       AND m.run_id=s.run_id AND m.epoch=s.epoch AND m.participant_id=s.local_participant
+                   WHERE s.media_id=part.media_id
+               )))
+             ORDER BY part.result_json IS NULL,part.recorded_at DESC,part.media_id LIMIT 1",
+        )?.query_row([group], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+        }).optional()?;
+        if let Some((media, champion, result)) = part {
+            if game
+                .champion
+                .as_deref()
+                .is_none_or(|name| name == "Unknown")
+                && champion != "Unknown"
+            {
+                game.champion = crate::clip_bundle::display_label(Some(&champion));
+            }
+            if let Some(result) = result {
+                game.apply_final_result(&serde_json::from_str::<ResultFile>(&result)?);
+            } else if let Some(spells) = self
+                .history_stats(&MediaId::parse(&media)?, None)?
+                .summoner_spells
+            {
+                // A recorded roster can supply spells, but its items, KDA and
+                // game clock are snapshots rather than final match statistics.
+                game.fill_spells(spells);
+            }
         }
         Ok(())
     }
@@ -505,7 +619,6 @@ impl Index {
                     key: key.into(),
                     clips,
                     next: last,
-                    match_facts: None,
                 });
             }
             let id = ClipId::parse(&row.get::<_, String>(0)?)?;
@@ -521,7 +634,6 @@ impl Index {
             key: key.into(),
             clips,
             next: None,
-            match_facts: None,
         })
     }
 }
@@ -557,9 +669,10 @@ fn project_clip(db: &Connection, clip: &ClipDescriptor, stamp: &str) -> Result<(
         .transpose()?
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap_or_default();
-    let kda = game
-        .final_kda
-        .map_or_else(String::new, |[k, d, a]| format!("{k}/{d}/{a}"));
+    let kda = game.final_kda.map_or_else(String::new, |kda| {
+        kda.map(|value| value.map_or_else(String::new, |number| number.to_string()))
+            .join("/")
+    });
     let search = format!(
         "{}\n{}\n{champion}\n{mode}\n{queue}\n{outcome}\n{day}\n{}\n{kda}",
         clip.title(),
@@ -660,6 +773,29 @@ mod tests {
     use crate::clip_export::ClipExportPreset;
     use chronobreak_replay_time::{ClipRange, FrameBoundary, ReplayTick};
 
+    fn write_clip_fixture(root: &Path, title: &str, header: &ClipHeader) {
+        let directory = root.join("clips").join(header.id.as_str());
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(clip_bundle::media_leaf(title).unwrap()),
+            b"fixture video",
+        )
+        .unwrap();
+        fs::write(directory.join(clip_bundle::THUMBNAIL), b"fixture thumbnail").unwrap();
+        clip_bundle::write_new_json(
+            &directory.join(clip_bundle::HEADER),
+            header,
+            clip_bundle::HEADER_LIMIT,
+        )
+        .unwrap();
+        clip_bundle::write_new_json(
+            &directory.join(clip_bundle::EVENTS),
+            &ClipEvents::unavailable(),
+            clip_bundle::EVENTS_LIMIT,
+        )
+        .unwrap();
+    }
+
     #[test]
     fn selected_highlights_and_account_groups_survive_source_deletion_and_cache_rebuild() {
         let root = tempfile::tempdir().unwrap();
@@ -695,8 +831,6 @@ mod tests {
         assert_ne!(part("102").match_group, initial.match_group);
         let make_clip = |title: &str, game: &library::GameSummary, start: u64, selected: bool| {
             let id = ClipId::new();
-            let directory = root.path().join("clips").join(id.as_str());
-            fs::create_dir_all(&directory).unwrap();
             let end = FrameBoundary::new(start + 300).unwrap();
             let start = FrameBoundary::new(start).unwrap();
             let header = ClipHeader {
@@ -713,7 +847,8 @@ mod tests {
                     queue_id: Some(420),
                     mode: Some("CLASSIC".into()),
                     outcome: Some(chronobreak_league_data::Outcome::Win),
-                    final_kda: Some([9, 2, 7]),
+                    final_kda: Some([Some(9), Some(2), Some(7)]),
+                    ..Default::default()
                 },
                 exported_at: 1786000000,
                 preset: ClipExportPreset::Horizontal,
@@ -734,28 +869,11 @@ mod tests {
                     vec!["Évasion".into()]
                 },
             };
-            fs::write(
-                directory.join(clip_bundle::media_leaf(title).unwrap()),
-                b"fixture video",
-            )
-            .unwrap();
-            fs::write(directory.join(clip_bundle::THUMBNAIL), b"fixture thumbnail").unwrap();
-            clip_bundle::write_new_json(
-                &directory.join(clip_bundle::HEADER),
-                &header,
-                clip_bundle::HEADER_LIMIT,
-            )
-            .unwrap();
-            clip_bundle::write_new_json(
-                &directory.join(clip_bundle::EVENTS),
-                &ClipEvents::unavailable(),
-                clip_bundle::EVENTS_LIMIT,
-            )
-            .unwrap();
+            write_clip_fixture(root.path(), title, &header);
             id
         };
         let selected = make_clip("The finish", &initial, 60, true);
-        make_clip("Next part", part("101"), 30, false);
+        let older_match_part = make_clip("Next part", part("101"), 30, false);
         make_clip("Later in the next part", part("101"), 90, false);
         make_clip("Opening moment", &initial, 0, false);
         make_clip("Third moment", &initial, 90, false);
@@ -808,16 +926,12 @@ mod tests {
             )
             .unwrap();
         assert_eq!(page.groups.len(), 2);
-        let own_group = format!("game:{match_group}");
-        let facts = page
-            .groups
-            .iter()
-            .find(|group| group.key == own_group)
+        let playback = index
+            .clip_playback(&before, &older_match_part, "http://fixture", "generation")
             .unwrap()
-            .match_facts
-            .as_ref()
-            .unwrap();
-        assert_eq!(facts.champion, "Syndra");
+            .clip;
+        let facts = &playback.header.game;
+        assert_eq!(facts.champion.as_deref(), Some("Syndra"));
         assert_eq!(facts.outcome, Some(chronobreak_league_data::Outcome::Loss));
         assert_eq!(
             facts.summoner_spells,
@@ -829,30 +943,10 @@ mod tests {
             Some(vec![Some(3_085), None, Some(3_340)])
         );
         assert_eq!(facts.duration_seconds, Some(1_804));
-        assert!(
-            page.groups
-                .iter()
-                .any(|group| group.key != own_group && group.match_facts.is_none())
-        );
-        let filtered = index
-            .clips(
-                &before,
-                &ClipQuery {
-                    search: Some("Next part".into()),
-                    ..Default::default()
-                },
-                "http://fixture",
-                "generation",
-            )
+        let unrelated = index
+            .clip_playback(&before, &other, "http://fixture", "generation")
             .unwrap();
-        assert_eq!(
-            filtered.groups[0]
-                .match_facts
-                .as_ref()
-                .unwrap()
-                .duration_seconds,
-            Some(1_804)
-        );
+        assert!(unrelated.clip.header.game.duration_seconds.is_none());
         let tagged_matches = index.history_for_snapshot(&tagged, 2, &before).unwrap();
         assert!(!tagged_matches.clip_tags_pending);
         assert_eq!(tagged_matches.rows.len(), 1);
@@ -894,7 +988,6 @@ mod tests {
         let mut page = index
             .clips(&before, &scoped, "http://fixture", "generation")
             .unwrap();
-        assert!(page.groups[0].match_facts.is_none());
         for (bundle, game_clock) in [("100", 1_122_000_000_i64), ("101", 1_370_000_000_i64)] {
             let media = part(bundle).media_id.as_ref().unwrap();
             let stamp =
@@ -990,6 +1083,28 @@ mod tests {
         assert!(!index.clip_ready(&removed.managed_clip_stamp));
         assert!(!index.reconcile_clips(&removed, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&removed, &|| Ok(())).unwrap());
+
+        // The export authority handles exact-part results even without an index.
+        let exact = library::recording_export_authority(&game_path, None)
+            .unwrap()
+            .game;
+        assert_eq!(exact.summoner_spells, facts.summoner_spells);
+        assert_eq!(exact.final_items, facts.final_items);
+        assert_eq!(exact.duration_seconds, facts.duration_seconds);
+        // A draft from an earlier part saves the checked account-scoped result.
+        let mut durable = removed.managed_clips[&older_match_part]
+            .read_header()
+            .unwrap();
+        durable.id = ClipId::new();
+        durable.game = library::recording_export_authority(&root.path().join("games/101"), None)
+            .unwrap()
+            .game;
+        index
+            .enrich_clip_game(&before.catalog_key, &mut durable.game)
+            .unwrap();
+        assert_eq!(durable.game.duration_seconds, Some(1_804));
+        write_clip_fixture(root.path(), "Durable match details", &durable);
+
         fs::remove_dir_all(game_path).unwrap();
         fs::remove_dir_all(root.path().join("games/101")).unwrap();
         fs::remove_dir_all(root.path().join("games/102")).unwrap();
@@ -1013,13 +1128,167 @@ mod tests {
             .add_clip_game_clocks(root.path(), &after, &mut page, &|| Ok(()))
             .unwrap();
         assert_eq!(page.groups.len(), 1);
-        assert!(page.groups[0].match_facts.is_none());
         assert_eq!(page.groups[0].clips.len(), 1);
         let clip = &page.groups[0].clips[0];
         assert_eq!(clip.header.id, selected);
         assert_eq!(clip.title, "The finish");
         assert!(clip.game_clock.is_none());
-        assert_eq!(clip.header.game.final_kda, Some([9, 2, 7]));
+        assert_eq!(
+            clip.header.game.final_kda,
+            Some([Some(9), Some(2), Some(7)])
+        );
         assert!(clip.video_url.contains(selected.as_str()));
+        let persisted = index
+            .clip_playback(&after, &durable.id, "http://fixture", "generation")
+            .unwrap();
+        assert_eq!(persisted.clip.header.game, durable.game);
+        assert_eq!(persisted.file_size_bytes, b"fixture video".len() as u64);
+        let legacy = index
+            .clip_playback(&after, &selected, "http://fixture", "generation")
+            .unwrap();
+        assert_eq!(
+            legacy.clip.header.game.final_kda,
+            Some([Some(9), Some(2), Some(7)])
+        );
+        assert!(legacy.clip.header.game.final_items.is_none());
+        assert!(legacy.clip.header.game.duration_seconds.is_none());
+    }
+
+    #[test]
+    fn clip_grid_seeks_by_creation_time_and_id_independently_of_match_date() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut header = ClipHeader {
+            version: clip_bundle::VERSION,
+            id: ClipId::new(),
+            range: ClipRange::new(
+                MediaId::new_v4(),
+                FrameBoundary::new(0).unwrap(),
+                FrameBoundary::new(300).unwrap(),
+                FrameBoundary::new(300).unwrap(),
+            )
+            .unwrap(),
+            source_timestamp: "100".into(),
+            game: ClipGame {
+                champion: Some("Syndra".into()),
+                ..Default::default()
+            },
+            exported_at: 0,
+            preset: ClipExportPreset::Horizontal,
+            duration: ReplayTick::new(240_000_000).unwrap(),
+            events: EventAvailability::Unavailable,
+            highlights: vec![],
+            custom_tags: vec![],
+        };
+        let mut expected = Vec::new();
+        for position in 0..(GRID_PAGE_SIZE * 2 + 5) {
+            let older_match = position % 2 == 0;
+            header.id = ClipId::new();
+            // The first continuation must cross a set of equal timestamps.
+            header.exported_at = if position < 30 {
+                200
+            } else {
+                140 - position as u64
+            };
+            header.game.played_at = Some(
+                if older_match {
+                    "2026-07-03T10:00:00Z"
+                } else {
+                    "2026-08-05T10:00:00Z"
+                }
+                .into(),
+            );
+            header.custom_tags = if position % 3 == 0 {
+                vec!["Final fight".into()]
+            } else {
+                vec![]
+            };
+            write_clip_fixture(root.path(), &format!("Clip {position}"), &header);
+            expected.push((
+                header.exported_at,
+                header.id.clone(),
+                older_match && position % 3 == 0,
+            ));
+        }
+        expected.sort_by(|a, b| (b.0, b.1.as_str()).cmp(&(a.0, a.1.as_str())));
+        let snapshot =
+            library::build_library_snapshot(root.path(), "", "grid".into(), || Ok(())).unwrap();
+        let mut index = Index::open(cache.path(), root.path()).unwrap();
+        while !index.reconcile_clips(&snapshot, &|| Ok(())).unwrap() {}
+
+        // Upgrading an already-ready projection preserves its existing rows.
+        index.db.execute_batch(
+            "DROP INDEX clip_projection_created; ALTER TABLE clip_projection DROP COLUMN created;"
+        ).unwrap();
+        assert!(index.clip_ready(&snapshot.managed_clip_stamp));
+        assert!(index.reconcile_clips(&snapshot, &|| Ok(())).unwrap());
+        drop(index);
+
+        let index = Index::reader(cache.path(), root.path()).unwrap();
+        let filters = ClipQuery::default();
+        let page = |query, after| {
+            index
+                .clip_grid_page(&snapshot, query, after, "http://fixture", "generation")
+                .unwrap()
+        };
+        let first = page(&filters, None);
+        let second = page(&filters, first.next.as_ref());
+        let last = page(&filters, second.next.as_ref());
+        assert_eq!(
+            [first.clips.len(), second.clips.len(), last.clips.len()],
+            [24, 24, 5]
+        );
+        assert!(last.next.is_none());
+        assert_eq!(
+            first
+                .clips
+                .iter()
+                .chain(&second.clips)
+                .chain(&last.clips)
+                .map(|clip| &clip.id)
+                .collect::<Vec<_>>(),
+            expected.iter().map(|entry| &entry.1).collect::<Vec<_>>(),
+        );
+        let filtered = page(
+            &ClipQuery {
+                from: Some("2026-07-03".into()),
+                to: Some("2026-07-03".into()),
+                search: Some("FINAL FIGHT".into()),
+                ..Default::default()
+            },
+            None,
+        );
+        assert_eq!(
+            filtered
+                .clips
+                .iter()
+                .map(|clip| &clip.id)
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .filter(|entry| entry.2)
+                .map(|entry| &entry.1)
+                .collect::<Vec<_>>(),
+        );
+
+        let plan = format!("EXPLAIN QUERY PLAN {}", grid_page_sql(true));
+        let details = index
+            .db
+            .prepare(&plan)
+            .unwrap()
+            .query_map([None::<i64>; 13], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(
+            details
+                .iter()
+                .any(|line| line.contains("SEARCH") && line.contains("clip_projection_created")),
+            "{details:?}"
+        );
+        assert!(
+            !details.iter().any(|line| line.contains("TEMP B-TREE")),
+            "{details:?}"
+        );
     }
 }

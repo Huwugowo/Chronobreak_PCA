@@ -10,7 +10,11 @@ export type Highlight = { event_index: number; kind: HighlightKind; attribution:
 export type ClipGame = {
   match_group: string | null; played_at: string | null; part_recorded_at: string | null;
   champion: string | null; account: string | null; queue_id: number | null; mode: string | null;
-  outcome: "win" | "loss" | "unknown" | null; final_kda: [number, number, number] | null;
+  outcome: "win" | "loss" | "unknown" | null;
+  final_kda: [number | null, number | null, number | null] | null;
+  summoner_spells?: [string | null, string | null];
+  final_items?: Array<number | null>;
+  duration_seconds?: number;
 };
 export type ClipHeader = {
   version: 1; id: string; source_timestamp: string;
@@ -21,19 +25,22 @@ export type ClipHeader = {
 export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string; game_clock?: string };
 export type GroupCursor = [number, string];
 export type ClipCursor = [number, number, string];
-export type ClipMatchFacts = {
-  champion: string; outcome: ClipGame["outcome"];
-  summoner_spells: [string | null, string | null] | null;
-  final_kda: [number | null, number | null, number | null] | null;
-  final_items: Array<number | null> | null; duration_seconds: number | null;
-};
-export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null; match_facts?: ClipMatchFacts };
+export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null };
 export type ClipPage = { groups: ClipGroup[]; next: GroupCursor | null };
-export type ClipQuery = {
+export type ClipFilters = {
   search?: string; champion?: string; from?: string; to?: string; queue?: string;
-  outcome?: string; highlight?: string; actor?: Attribution; match_group?: string;
+  outcome?: string; highlight?: string; actor?: Attribution;
+};
+export type ClipQuery = ClipFilters & {
+  match_group?: string;
   after?: GroupCursor; group_key?: string; clip_after?: ClipCursor; include_game_clock?: boolean;
 };
+export type ClipGridCard = Pick<ClipHeader, "id" | "duration" | "highlights" | "custom_tags"> & {
+  title: string; champion: string | null; thumbnail_url: string;
+};
+export type ClipGridCursor = [number, string];
+export type ClipGridPage = { clips: ClipGridCard[]; next: ClipGridCursor | null };
+export type ClipPlayback = { clip: ClipCard; file_size_bytes: number };
 export type ClipDetail = { header: ClipHeader; candidates: Highlight[]; events: {
   availability: Availability; events: Array<{ replay_tick: string; event: { name?: string }; attribution: Attribution; actor: string | null }>;
 } };
@@ -45,6 +52,10 @@ export const usesManagedClips = () => isTauri();
 export const reconcileClips = (snapshotToken: string) => invoke<boolean>("reconcile_clips", { snapshotToken });
 export const readClipPage = (snapshotToken: string, query: ClipQuery) =>
   invoke<ClipPage>("clip_page", { snapshotToken, query });
+export const readClipGridPage = (snapshotToken: string, query: ClipFilters, after: ClipGridCursor | null) =>
+  invoke<ClipGridPage>("clip_grid_page", { snapshotToken, query, after });
+export const readClipPlayback = (snapshotToken: string, clipId: string) =>
+  invoke<ClipPlayback>("clip_playback", { snapshotToken, clipId });
 export const readClipDetail = (snapshotToken: string, clipId: string) =>
   invoke<ClipDetail>("clip_detail", { snapshotToken, clipId });
 export const editManagedClip = (snapshotToken: string, clipId: string, edit: ClipEdit) =>
@@ -70,7 +81,7 @@ export function clipTitleError(title: string): string | undefined {
 }
 export const highlightLabel = (tag: Highlight) => [clipLabels[tag.kind], actorLabels[tag.attribution], tag.attribution !== "you" ? tag.actor : null]
   .filter(Boolean).join(" · ");
-export const clipDurationMs = (clip: ClipCard) => Number(parseReplayTick(clip.header.duration)) / 48_000;
+export const clipDurationMs = (duration: string) => Number(parseReplayTick(duration)) / 48_000;
 export const sourcePosition = (clip: ClipCard): ClipDraft => ({
   gameTimestamp: clip.header.source_timestamp,
   mediaId: parseMediaId(clip.header.range.media_id),

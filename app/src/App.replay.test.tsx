@@ -11,17 +11,20 @@ import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
 import { indexCatalog, indexRecording } from "./leagueIndex";
 import type { CatalogPage, ImportProgress } from "./leagueIndex";
-import { readClipPage, type ClipCard, type ClipPage } from "./managedClips";
+import { readClipGridPage, readClipPage, readClipPlayback, type ClipCard, type ClipGridCard, type ClipPage, type ClipPlayback } from "./managedClips";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
   exporter: null as ComponentProps<typeof ClipExporterScreen> | null,
   clip: null as ClipCard | null, sourceMissing: false, requireHistoryPage: false, failReplay: false,
+  renderManagedGrid: false,
 }));
 vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
   usesManagedClips: () => harness.clip !== null,
   reconcileClips: vi.fn(async () => true),
   readClipPage: vi.fn(async (): Promise<ClipPage> => ({ groups: [], next: null })),
+  readClipGridPage: vi.fn(),
+  readClipPlayback: vi.fn(),
 }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(),
   initializeReplayBenchmark: vi.fn(async () => null) }));
@@ -56,6 +59,7 @@ vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(
 vi.mock("./components/LibraryScreen", () => ({ default: (props: ComponentProps<typeof LibraryScreen>) =>
   <>
     <button data-testid="open" onClick={() => props.onOpenGame("1", props.snapshotOrigin)}>Open recording</button>
+    <Show when={harness.renderManagedGrid && props.tab === "clips"}>{props.managedClips}</Show>
     <Show when={harness.clip && (!harness.requireHistoryPage || props.history?.page)}>
       <button data-testid="play-clip" onClick={event => props.onOpenManagedClip?.(harness.clip!, event.currentTarget)}>Play clip</button>
     </Show>
@@ -85,6 +89,7 @@ afterEach(() => {
   document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); vi.restoreAllMocks();
   harness.root = "A"; harness.revision = 0; harness.viewer = null; harness.exporter = null;
   harness.clip = null; harness.sourceMissing = false; harness.requireHistoryPage = false; harness.failReplay = false;
+  harness.renderManagedGrid = false;
 });
 const mount = async () => {
   const host = document.createElement("div"); document.body.append(host);
@@ -109,6 +114,11 @@ const makeClip = (): ClipCard => ({
         queue_id: null, mode: null, outcome: null, final_kda: null },
       duration: "240000000", events: "unavailable", highlights: [], custom_tags: [] },
 });
+const gridCard = (clip: ClipCard): ClipGridCard => {
+  const { id, duration, custom_tags, highlights } = clip.header;
+  return { id, duration, custom_tags, highlights, title: clip.title,
+    champion: clip.header.game.champion, thumbnail_url: clip.thumbnail_url };
+};
 
 it.each([false, true])("keeps the clip playable and only opens its exact source part (missing: %s)", async sourceMissing => {
   harness.sourceMissing = sourceMissing;
@@ -209,6 +219,114 @@ it("opens the sole clip once, discards a lookup after leaving History and restor
   await vi.waitFor(() => expect(host.querySelector("video")?.src).toBe(clip.video_url));
   host.querySelector<HTMLButtonElement>('[aria-labelledby="managed-clip-title"] header button')!.click();
   await vi.waitFor(() => expect(document.activeElement).toBe(host.querySelector('[data-testid="play-single"]')));
+});
+
+it.each([false, true])("opens a grid clip in place with saved context and accessible actions (missing metadata: %s)", async missing => {
+  harness.renderManagedGrid = true;
+  harness.sourceMissing = true;
+  const clip = makeClip();
+  harness.clip = clip;
+  if (missing) clip.header.game.champion = null;
+  else Object.assign(clip.header.game, {
+    champion: "Ahri", outcome: "win", queue_id: 420, played_at: "2026-07-03T12:00:00Z",
+    final_kda: [7, 0, 3], summoner_spells: ["4", "14"], final_items: [1001], duration_seconds: 1_503,
+  });
+  clip.header.custom_tags = ["one", "two", "three"];
+  const card = gridCard(clip);
+  vi.mocked(readClipGridPage).mockResolvedValueOnce({ clips: [card], next: null });
+  vi.mocked(readClipPlayback).mockResolvedValueOnce({ clip, file_size_bytes: 3_500_000 });
+  const { host, click } = await mount();
+  click("clips");
+  const lookup = () => host.querySelector<HTMLButtonElement>(`[data-managed-clip="${card.id}"]`);
+  await vi.waitFor(() => expect(lookup()).not.toBeNull());
+  const trigger = lookup()!;
+  const thumbnail = trigger.querySelector("img");
+  expect(readClipPlayback).not.toHaveBeenCalled();
+  trigger.focus();
+  trigger.click();
+  const dialog = () => host.querySelector('[role="dialog"]');
+  await vi.waitFor(() => expect(dialog()).not.toBeNull());
+  expect(readClipPlayback).toHaveBeenCalledExactlyOnceWith("A-1", card.id);
+  const player = dialog()!;
+  const summary = player.querySelector('[aria-label="Match summary"]')!;
+  const video = player.querySelector("video")!;
+  const details = player.querySelector("#managed-clip-title")!.parentElement!;
+  expect(summary.compareDocumentPosition(video) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(video.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(video.src).toBe(clip.video_url);
+  expect(details.textContent).toContain("0:05 · 3.50 MB");
+  if (missing) {
+    expect(summary.textContent).toMatch(/Unknown result.*Queue unavailable.*KDA unavailable.*Final items unavailable.*Date unavailable.*Duration unavailable/);
+    expect(summary.querySelector('[aria-label="Champion unavailable"]')).not.toBeNull();
+  } else {
+    expect(summary.textContent).toMatch(/Victory.*Ranked Solo\/Duo.*7 \/ 0 \/ 3.*25m 3s/);
+    expect(summary.querySelector("[aria-label='Ahri']")).not.toBeNull();
+    expect(summary.querySelector("[aria-label='4']")).not.toBeNull();
+  }
+  expect(player.textContent).toContain("onetwothree");
+  const buttons = [...player.querySelectorAll("button")];
+  for (const label of ["Rename", "Edit tags", "Show in folder", "Delete clip"]) {
+    expect(buttons.find(button => button.textContent === label)?.disabled).toBe(false);
+  }
+  expect(buttons.find(button => button.textContent === "Source replay unavailable")?.disabled).toBe(true);
+
+  document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(dialog()).toBeNull();
+  expect(lookup()).toBe(trigger);
+  expect(trigger.querySelector("img")).toBe(thumbnail);
+  expect(readClipGridPage).toHaveBeenCalledExactlyOnceWith("A-1", {}, null);
+});
+
+it("preserves the loaded Clips page and restores its scroll position on return from the source replay", async () => {
+  harness.renderManagedGrid = true;
+  const clip = makeClip();
+  harness.clip = clip;
+  const card = gridCard(clip);
+  vi.mocked(readClipGridPage).mockResolvedValueOnce({ clips: [{ ...card, id: "first" }], next: [1, "first"] })
+    .mockResolvedValueOnce({ clips: [card], next: null });
+  vi.mocked(readClipPlayback).mockResolvedValueOnce({ clip, file_size_bytes: 512 });
+  let scrollY = 0;
+  vi.spyOn(window, "scrollY", "get").mockImplementation(() => scrollY);
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  const { host, click } = await mount();
+  const button = (label: string) => [...host.querySelectorAll("button")].find(element => element.textContent?.trim() === label);
+  click("clips");
+  await vi.waitFor(() => expect(button("More clips")).toBeDefined());
+  button("More clips")!.click();
+  const opener = () => host.querySelector<HTMLButtonElement>('[data-managed-clip="clip"]');
+  await vi.waitFor(() => expect(opener()).not.toBeNull());
+  const trigger = opener()!;
+  scrollY = 920;
+  trigger.click();
+  await vi.waitFor(() => expect(button("Open source replay")).toBeDefined());
+  button("Open source replay")!.click();
+  expect(harness.viewer?.initialSourcePosition?.gameTimestamp).toBe(clip.header.source_timestamp);
+  expect(trigger.isConnected).toBe(true);
+  scrollY = 0;
+  click("home");
+  await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 920, behavior: "instant" });
+  expect(opener()).toBe(trigger);
+  expect(readClipGridPage).toHaveBeenCalledTimes(2);
+});
+
+it("discards a pending grid activation after navigating away", async () => {
+  harness.renderManagedGrid = true;
+  const clip = makeClip();
+  harness.clip = clip;
+  vi.mocked(readClipGridPage).mockResolvedValueOnce({ clips: [gridCard(clip)], next: null });
+  let complete!: (value: ClipPlayback) => void;
+  vi.mocked(readClipPlayback).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  const { host, click } = await mount();
+  click("clips");
+  await vi.waitFor(() => expect(host.querySelector("[data-managed-clip]")).not.toBeNull());
+  host.querySelector<HTMLButtonElement>("[data-managed-clip]")!.click();
+  expect(readClipPlayback).toHaveBeenCalledOnce();
+  click("games");
+  complete({ clip, file_size_bytes: 512 });
+  await Promise.resolve();
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
 });
 
 it("shares the actual App writer wiring across early replay open and return", async () => {

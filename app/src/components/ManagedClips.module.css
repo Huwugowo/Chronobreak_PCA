@@ -145,6 +145,59 @@
 .cardContent { min-height: 0; }
 .cardTags { padding: 0 var(--space-3) var(--space-3); }
 
+.gridRegion { container-type: inline-size; min-width: 0; }
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@container (min-width: 560px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container (min-width: 880px) {
+  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@container (min-width: 1320px) {
+  .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.grid .gridOpen, .grid .gridArtwork { border-radius: var(--radius-surface); }
+.grid .gridArtwork { background-color: var(--surface-panel); }
+.gridOpen:hover .gridTitle { color: var(--text-primary); text-decoration: underline; }
+.grid .gridOpen:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+
+.gridMetadata {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 0;
+}
+
+.gridMetadata .gridChampion { width: 36px; height: 36px; }
+.gridText { display: grid; min-width: 0; gap: var(--space-1); }
+
+.gridTitle {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--type-ui-strong-size);
+  line-height: var(--type-ui-strong-line);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.gridMore { display: block; margin: var(--space-5) auto 0; }
+
 .highlights { margin: 0; padding: 0; border: 0; font-size: 0.84rem; }
 .highlights legend { margin-bottom: 0.35rem; }
 .highlights label { display: flex; align-items: center; gap: 0.3rem; }
@@ -206,3 +259,48 @@
 .eventList { margin: 0; max-height: 12rem; overflow: auto; font-size: 0.85rem; }
 
 .player { max-height: calc(100vh - 3rem); overflow: auto; }
+
+html:has(.libraryBackdrop) { overflow: hidden; }
+
+div.libraryBackdrop {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  padding: clamp(8px, 2.5vmin, 24px);
+}
+
+.libraryBackdrop > .libraryPlayer {
+  width: min(100%, 1040px);
+  max-height: 100%;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.libraryPlayer:has(:fullscreen) > :not(:fullscreen) { visibility: hidden; }
+
+.playerTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.playerClipInfo {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.playerClipInfo p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--type-secondary-size);
+}
+
+@media (max-height: 480px) {
+  .libraryPlayer { --clip-video-max-height: 55vh; }
+}
+
+@media (max-width: 420px) {
+  .playerTop { gap: var(--space-2); padding: var(--space-2); }
+  .playerTop > button { align-self: start; }
+  .matchRow { padding-inline: var(--space-2); }
+}

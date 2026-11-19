@@ -1177,35 +1177,25 @@ fn export_game_context(
     use crate::clip_bundle::display_label;
     let candidate = crate::league_match::read(directory, &metadata.media_id);
     let result = crate::league_result::read(directory, &metadata.media_id, candidate.as_ref());
-    let player = result
-        .as_ref()
-        .and_then(|result| result.local_player.as_ref());
     let date = OffsetDateTime::parse(&metadata.recorded_at, &Rfc3339)
         .ok()
         .map(|_| metadata.recorded_at.clone());
-    crate::clip_bundle::ClipGame {
+    let mut game = crate::clip_bundle::ClipGame {
         match_group: candidate.as_ref().map(|value| value.group_key.clone()),
         played_at: date.clone(),
         part_recorded_at: date,
-        champion: display_label(player.and_then(|value| value.champion_name.as_deref()))
-            .or_else(|| display_label(metadata.local_player_champion.as_deref())),
+        champion: display_label(metadata.local_player_champion.as_deref()),
         account: display_label(candidate.as_ref().map(|value| value.local_riot_id.as_str()))
             .or_else(|| display_label(metadata.local_player_summoner_name.as_deref())),
         queue_id: candidate.as_ref().map(|value| value.queue_id),
         mode: display_label(candidate.as_ref().map(|value| value.game_mode.as_str()))
             .or_else(|| display_label(metadata.game_mode.as_deref())),
-        outcome: result
-            .as_ref()
-            .map(|value| value.outcome)
-            .filter(|outcome| *outcome != chronobreak_league_data::Outcome::Unknown),
-        final_kda: player.and_then(|value| {
-            Some([
-                u32::try_from(value.stats.kills?).ok()?,
-                u32::try_from(value.stats.deaths?).ok()?,
-                u32::try_from(value.stats.assists?).ok()?,
-            ])
-        }),
+        ..Default::default()
+    };
+    if let Some(result) = result {
+        game.apply_final_result(&result);
     }
+    game
 }
 
 fn read_metadata(path: &Path) -> Result<MetadataDocument> {

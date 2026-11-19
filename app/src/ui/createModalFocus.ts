@@ -54,7 +54,7 @@ export function createModalFocus(options: {
 
     document.addEventListener("focusin", onFocus);
     window.addEventListener("keydown", onKeyDown);
-    options.initial().focus();
+    options.initial().focus({ preventScroll: true });
     if (!dialog.contains(document.activeElement)) focusFirst();
 
     onCleanup(() => {
@@ -64,7 +64,7 @@ export function createModalFocus(options: {
       queueMicrotask(() => {
         const activeDialog = topDialog();
         if (opener instanceof HTMLElement && opener.isConnected && !opener.closest("[hidden]") &&
-            (!activeDialog || activeDialog.contains(opener))) opener.focus();
+            (!activeDialog || activeDialog.contains(opener))) opener.focus({ preventScroll: true });
         if (activeDialog && !activeDialog.contains(document.activeElement)) activeDialog.focus();
       });
     });

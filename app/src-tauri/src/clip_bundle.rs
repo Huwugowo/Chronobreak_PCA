@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use chronobreak_league_data::{Outcome, observation::Event};
+use chronobreak_league_data::{MAX_COUNTER, Outcome, ResultFile, observation::Event};
 use chronobreak_replay_time::{ClipRange, MediaId, ReplayTick};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -139,7 +139,7 @@ impl ClipId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ClipGame {
     pub match_group: Option<String>,
@@ -150,7 +150,63 @@ pub(crate) struct ClipGame {
     pub queue_id: Option<u32>,
     pub mode: Option<String>,
     pub outcome: Option<Outcome>,
-    pub final_kda: Option<[u32; 3]>,
+    pub final_kda: Option<[Option<u64>; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summoner_spells: Option<[Option<String>; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_items: Option<Vec<Option<u64>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<u64>,
+}
+
+impl ClipGame {
+    /// Adds the compact display facts from a validated final result.
+    pub(crate) fn apply_final_result(&mut self, result: &ResultFile) {
+        if result.outcome != Outcome::Unknown {
+            self.outcome = Some(result.outcome);
+        }
+        if let Some(player) = &result.local_player {
+            if let Some(champion) = display_label(player.champion_name.as_deref()) {
+                self.champion = Some(champion);
+            }
+            let saved_kda = self.final_kda.unwrap_or_default();
+            let kda = [
+                player.stats.kills.or(saved_kda[0]),
+                player.stats.deaths.or(saved_kda[1]),
+                player.stats.assists.or(saved_kda[2]),
+            ];
+            self.final_kda = kda.iter().any(Option::is_some).then_some(kda);
+            let spells = [player.spell1_id, player.spell2_id].map(|id| {
+                id.filter(|id| *id > 0 && u32::try_from(*id).is_ok())
+                    .map(|id| id.to_string())
+            });
+            self.fill_spells(spells);
+        }
+        if let Some(items) = result
+            .source_facts
+            .local_player
+            .as_ref()
+            .and_then(|player| player.items.as_ref())
+        {
+            self.final_items = Some(items.clone());
+        }
+        if let Some(seconds) = result.duration_seconds.filter(|seconds| *seconds > 0) {
+            self.duration_seconds = Some(seconds);
+        }
+    }
+
+    pub(crate) fn fill_spells(&mut self, [one, two]: [Option<String>; 2]) {
+        let [saved_one, saved_two] = self.summoner_spells.take().unwrap_or_default();
+        let spells = [
+            one.as_deref()
+                .and_then(|s| display_label(Some(s)))
+                .or(saved_one),
+            two.as_deref()
+                .and_then(|s| display_label(Some(s)))
+                .or(saved_two),
+        ];
+        self.summoner_spells = spells.iter().any(Option::is_some).then_some(spells);
+    }
 }
 
 pub(crate) fn display_label(value: Option<&str>) -> Option<String> {
@@ -311,7 +367,28 @@ impl ClipHeader {
                     .highlights
                     .iter()
                     .all(|tag| (tag.event_index as usize) < MAX_EVENTS)
-                && normalize_tags(&self.custom_tags)? == self.custom_tags,
+                && normalize_tags(&self.custom_tags)? == self.custom_tags
+                && self
+                    .game
+                    .final_kda
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .all(|v| *v <= MAX_COUNTER)
+                && self
+                    .game
+                    .summoner_spells
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .all(|s| display_label(Some(s)).as_ref() == Some(s))
+                && self.game.final_items.as_ref().is_none_or(|items| {
+                    items.len() <= 8 && items.iter().flatten().all(|v| *v <= MAX_COUNTER)
+                })
+                && self
+                    .game
+                    .duration_seconds
+                    .is_none_or(|seconds| (1..=MAX_COUNTER).contains(&seconds)),
             "invalid clip game or tag data"
         );
         Ok(())

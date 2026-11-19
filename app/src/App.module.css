@@ -3,8 +3,8 @@
   padding: 24px clamp(16px, calc(9.17vw - 83px), 58px) 104px;
 }
 
-/* The page scrolls, so reserve the gutter at the viewport while browsing matches. */
-html:has(.appShell[data-screen="library"][data-library-tab="games"]) {
+/* Keep library content widths stable when a clip dialog locks page scrolling. */
+html:has(.appShell[data-screen="library"]) {
   scrollbar-gutter: stable;
 }
 

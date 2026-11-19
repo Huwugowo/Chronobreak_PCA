@@ -58,7 +58,8 @@ import { HistoryController } from "./historyController";
 import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
-import { editManagedClip, readClipPage, reconcileClips, sourcePosition, usesManagedClips, type ClipCard, type ClipEdit, type ClipQuery } from "./managedClips";
+import { editManagedClip, readClipPage, readClipPlayback, reconcileClips, sourcePosition, usesManagedClips,
+  type ClipCard, type ClipEdit, type ClipFilters, type ClipGridCard } from "./managedClips";
 import styles from "./App.module.css";
 import controls from "./ui/controls.module.css";
 
@@ -134,13 +135,16 @@ function App() {
   });
   const clips = createMemo(() => libraryState().snapshot?.clips);
   const managed = usesManagedClips();
-  const [clipFilters, setClipFilters] = createSignal<ClipQuery>({});
+  const [clipFilters, setClipFilters] = createSignal<ClipFilters>({});
   const [clipIndexToken, setClipIndexToken] = createSignal<string>();
   const [clipIndexError, setClipIndexError] = createSignal<string | null>(null);
   const [clipIndexRetry, setClipIndexRetry] = createSignal(0);
-  const [managedSelection, setManagedSelection] = createSignal<{ clip: ClipCard; origin: LibraryOrigin; button: HTMLElement }>();
+  const [managedSelection, setManagedSelection] = createSignal<{
+    clip: ClipCard; origin: LibraryOrigin; button: HTMLElement; fileSizeBytes?: number;
+  }>();
   const [singleClipRequest, setSingleClipRequest] = createSignal<{ group: string; origin: LibraryOrigin }>();
-  const [clipReturn, setClipReturn] = createSignal<{ tab: LibraryTab; position: ClipDraft; button: HTMLElement }>();
+  const [gridClipRequest, setGridClipRequest] = createSignal<{ id: string; origin: LibraryOrigin; button: HTMLElement }>();
+  const [clipReturn, setClipReturn] = createSignal<{ tab: LibraryTab; position: ClipDraft; button: HTMLElement; scrollY: number }>();
   const libraryTab = createMemo<LibraryTab>(previous => {
     const screen = navigation();
     return screen.screen === "library" ? screen.tab : previous;
@@ -216,6 +220,29 @@ function App() {
     if (origin && controller.mayPublish(origin)) {
       setSingleClipRequest(undefined);
       setManagedSelection({ clip, origin, button });
+    }
+  };
+  const playGridClip = async (clip: ClipGridCard, button: HTMLButtonElement) => {
+    const origin = controller.origin();
+    if (!origin || !controller.mayPublish(origin)) return;
+    const pending = gridClipRequest();
+    if (pending && controller.mayPublish(pending.origin) && pending.button.isConnected) return;
+    const request = { id: clip.id, origin, button };
+    setGridClipRequest(request);
+    const current = () => {
+      const screen = navigation();
+      return gridClipRequest() === request && screen.screen === "library" && screen.tab === "clips"
+        && button.isConnected && controller.mayPublish(origin);
+    };
+    try {
+      const playback = await readClipPlayback(origin.token, clip.id);
+      if (current()) {
+        setManagedSelection({ clip: playback.clip, fileSizeBytes: playback.file_size_bytes, origin, button });
+      }
+    } catch (error) {
+      if (current()) showNotice(libraryError(error));
+    } finally {
+      if (gridClipRequest() === request) setGridClipRequest(undefined);
     }
   };
   const playSingleClip = async (group: string, origin: LibraryOrigin, button: HTMLButtonElement) => {
@@ -295,7 +322,7 @@ function App() {
     try {
       const position = sourcePosition(selected.clip);
       batch(() => {
-        setClipReturn({ tab: current.tab, position, button: selected.button });
+        setClipReturn({ tab: current.tab, position, button: selected.button, scrollY: window.scrollY });
         setManagedSelection(undefined);
         openViewer(source.timestamp);
       });
@@ -307,7 +334,10 @@ function App() {
     const destination = clipReturn();
     openTab(destination?.tab ?? "games");
     if (destination) queueMicrotask(() => {
-      if (destination.button.isConnected) destination.button.focus();
+      if (destination.tab === "clips" && window.scrollY !== destination.scrollY) {
+        window.scrollTo({ top: destination.scrollY, behavior: "instant" });
+      }
+      if (destination.button.isConnected) destination.button.focus({ preventScroll: destination.tab === "clips" });
     });
   };
 
@@ -743,7 +773,8 @@ function App() {
                 token={acceptedSnapshot()?.token ?? ""} ready={(!acceptedSnapshot()?.managed_clip_count || clipIndexToken() === acceptedSnapshot()?.token) && libraryActionable()}
                 indexError={clipIndexError()} onRetry={() => setClipIndexRetry(n => n + 1)}
                 ddragon={ddragon() ?? emptyDdragon}
-                filters={clipFilters()} onFilters={setClipFilters} onOpen={selectManagedClip}
+                filters={clipFilters()} onFilters={setClipFilters}
+                onOpen={(clip, button) => void playGridClip(clip, button)} openingId={gridClipRequest()?.id}
                 onOpenFolder={() => void openClipsFolder().catch(showError)}
               /> : undefined}
               actionable={libraryState().actionable}
@@ -778,6 +809,7 @@ function App() {
       <Show when={managedSelection()} keyed>{selected => <ManagedClipPlayer
         clip={selected.clip} token={selected.origin.token} opener={selected.button} onClose={closeManagedClip} onEdit={applyClipEdit}
         sourceAvailable={Boolean(availableSource(selected.clip))} onSource={openClipSource}
+        library={selected.fileSizeBytes === undefined ? undefined : { fileSizeBytes: selected.fileSizeBytes, ddragon: ddragon() ?? emptyDdragon }}
       />}</Show>
       <Show when={deleteTarget()}>
         {(target) => (

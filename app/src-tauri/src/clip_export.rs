@@ -337,6 +337,7 @@ pub async fn export(
     let metadata = request.metadata.as_ref();
     let title = metadata
         .and_then(|metadata| metadata.title.clone())
+        .or_else(|| draft.as_ref().map(|draft| draft.title.clone()))
         .unwrap_or_else(|| default_title(&authority.game, timing.start_tick));
     let custom_tags = metadata.map_or_else(
         || Ok(Vec::new()),

@@ -27,7 +27,7 @@ export default function MediaTransport(props: Props) {
   const mediaLabel = () => props.mediaLabel ?? "replay";
 
   return (
-    <div class={styles.fullscreenControls}>
+    <div classList={{ [styles.fullscreenControls]: true, [styles.clipTransport]: props.mediaLabel === "clip" }}>
       <button
         class={styles.fullscreenPlay}
         type="button"

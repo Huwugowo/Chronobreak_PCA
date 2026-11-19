@@ -5,7 +5,7 @@ use crate::clip_bundle::{
 use crate::directory_guard::DirectoryGuard;
 use crate::league_index::{
     self, Index,
-    clips::{ClipPage, ClipQuery},
+    clips::{ClipGridCursor, ClipGridPage, ClipPage, ClipPlayback, ClipQuery},
 };
 use crate::library;
 use crate::library_coordinator::Selection;
@@ -47,7 +47,7 @@ pub(crate) struct PreparedClip {
     pub stamp: Option<String>,
     pub game: ClipGame,
     pub events: ClipEvents,
-    title: String,
+    pub title: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,8 +108,9 @@ pub(crate) async fn prepare_clip_draft(
                     RoundingMode::Exact,
                 )?;
                 let stamp = league_index::source_stamp(directory).ok();
+                let index = Index::reader(&cache, root).ok();
                 let events = (|| -> Result<_> {
-                    let index = Index::reader(&cache, root)?;
+                    let index = index.as_ref().context("League index unavailable")?;
                     index.require_source_stamp(
                         &request.game_timestamp,
                         &timeline.media_id,
@@ -137,7 +138,11 @@ pub(crate) async fn prepare_clip_draft(
                         game.played_at = Some(date.clone());
                     }
                 }
+                // Keep the existing title inputs independent of extra display metadata.
                 let title = crate::clip_export::default_title(&game, start);
+                if let Some(index) = &index {
+                    let _ = index.enrich_clip_game(&snapshot.catalog_key, &mut game);
+                }
                 Ok(PreparedClip {
                     snapshot: snapshot.token.clone(),
                     token: crate::playback_policy::random_capability()?,
@@ -218,6 +223,62 @@ pub(crate) async fn clip_page(
                     index.add_clip_game_clocks(root, snapshot, &mut page, check)?;
                 }
                 Ok(page)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn clip_grid_page(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    query: ClipQuery,
+    after: Option<ClipGridCursor>,
+) -> std::result::Result<ClipGridPage, LibraryRefreshError> {
+    let cache = state.league_index_cache.clone();
+    let origin = state.playback_origin.clone();
+    let capability = state.roots.clip_capability();
+    state
+        .library
+        .index_job(
+            Arc::clone(&state.roots),
+            &snapshot_token,
+            None,
+            false,
+            move |root, snapshot, _| {
+                if snapshot.managed_clips.is_empty() {
+                    return Ok(ClipGridPage::default());
+                }
+                Index::reader(&cache, root)?.clip_grid_page(
+                    snapshot,
+                    &query,
+                    after.as_ref(),
+                    &origin,
+                    &capability,
+                )
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn clip_playback(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+    clip_id: ClipId,
+) -> std::result::Result<ClipPlayback, LibraryRefreshError> {
+    let cache = state.league_index_cache.clone();
+    let origin = state.playback_origin.clone();
+    let capability = state.roots.clip_capability();
+    state
+        .library
+        .index_job(
+            Arc::clone(&state.roots),
+            &snapshot_token,
+            None,
+            false,
+            move |root, snapshot, _| {
+                Index::reader(&cache, root)?.clip_playback(snapshot, &clip_id, &origin, &capability)
             },
         )
         .await

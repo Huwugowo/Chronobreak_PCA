@@ -9,7 +9,7 @@
   display: block;
   width: 100%;
   min-height: 100px;
-  max-height: 72vh;
+  max-height: var(--clip-video-max-height, 72vh);
   object-fit: contain;
 }
 
