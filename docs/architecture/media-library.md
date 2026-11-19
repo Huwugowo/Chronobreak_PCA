@@ -424,6 +424,15 @@ projection is ready. Expanding a match reads clips from its
 account-scoped group. The player resolves source playback by the stored part
 identity, and the viewer validates the descriptor and frame range before seeking.
 
+The standalone Clips page reads compact match facts for the visible groups in
+the same SQLite snapshot as the clip page. It uses the account-scoped group and
+the same checked recording-part priority as History. A recorded roster can
+supply summoner spells. Final KDA, items and game duration require final facts,
+with saved clip context still available if the source is gone. The queue label
+uses the saved queue ID and recorded mode. Each group's standalone carousel
+uses the existing clip cursor when the right arrow reaches the end of loaded
+clips. Inline History clips and clip continuations skip the match facts read.
+
 Every preset exports H.264/AAC, including a valid recording whose media timeline
 declares no source audio. The exporter derives audio presence from that validated
 timeline and supplies finite stereo 48 kHz silence only for absent source audio.

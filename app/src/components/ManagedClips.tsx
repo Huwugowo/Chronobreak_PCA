@@ -1,10 +1,13 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { formatDate, formatDuration } from "../format";
+import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
+import { formatDate, formatDuration, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
 import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipPage, type Attribution, type ClipCard,
-  type ClipCursor, type ClipEdit, type ClipGame, type ClipGroup, type ClipPage, type ClipQuery, type GroupCursor } from "../managedClips";
+  type ClipCursor, type ClipEdit, type ClipGame, type ClipGroup, type ClipMatchFacts, type ClipPage, type ClipQuery, type GroupCursor } from "../managedClips";
+import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
+import type { DdragonStatus } from "../types";
 import { ArrowLeftIcon, ArrowRightIcon, PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
 import { createModalFocus } from "../ui/createModalFocus";
@@ -13,16 +16,82 @@ import ClipThumbnail from "./ClipThumbnail";
 import ClipVideoPlayer from "./ClipVideoPlayer";
 import ConfirmDialog from "./ConfirmDialog";
 import libraryStyles from "./Library.module.css";
+import matchStyles from "./MatchHistory.module.css";
 import styles from "./ManagedClips.module.css";
 
 const gameCaption = (game: ClipGame) => [
   game.played_at ? formatDate(game.played_at) : null, game.account,
-  game.mode ?? (game.queue_id === null ? null : `Queue ${game.queue_id}`),
+  matchQueueLabel(game.queue_id, game.mode),
   game.outcome === "win" ? "Win" : game.outcome === "loss" ? "Loss" : null,
   game.final_kda?.join("/"),
 ].filter(Boolean).join(" · ");
 
 type OpenClip = (clip: ClipCard, button: HTMLElement) => void;
+
+const spellSlots = [0, 1] as const;
+const itemSlots = [0, 1, 2, 3, 4, 5, 6] as const;
+
+function ClipMatchHeader(props: { game: ClipGame; facts?: ClipMatchFacts; ddragon: DdragonStatus }) {
+  const outcome = () => props.facts?.outcome ?? props.game.outcome;
+  const result = () => outcome() === "win" ? "Victory" : outcome() === "loss" ? "Defeat" : "Unknown result";
+  const queue = () => matchQueueLabel(props.game.queue_id, props.game.mode) ?? "Queue unavailable";
+  const champion = () => {
+    const name = props.facts?.champion === "Unknown" ? props.game.champion : props.facts?.champion ?? props.game.champion;
+    return name === "Unknown" ? null : name;
+  };
+  const championName = () => champion() ?? "Champion unavailable";
+  const playedAt = () => props.game.played_at ?? props.game.part_recorded_at;
+  const duration = () => props.facts?.duration_seconds;
+  const kda = () => props.facts?.final_kda ?? props.game.final_kda;
+
+  return <header class={styles.matchRow} data-outcome={outcome() ?? undefined}>
+    <div class={styles.matchContext}>
+      <h2 class={styles.matchResult} aria-label={`${championName()} · ${result()}`}>{result()}</h2>
+      <span class={`${styles.matchMeta} ${styles.matchQueue}`} title={queue()}>{queue()}</span>
+    </div>
+    <span class={matchStyles.championLoadout}>
+      <span class={`${matchStyles.championSlot} ${styles.matchChampion}`} role="img" aria-label={championName()} title={championName()}>
+        <span aria-hidden="true">?</span>
+        <Show when={ddragonAsset(props.ddragon, "champion", champion())} keyed>
+          {src => <img src={src} alt="" loading="lazy" decoding="async" onError={hideFailedImage} />}
+        </Show>
+      </span>
+      <span class={`${matchStyles.spells} ${styles.matchSpells}`}>
+        <For each={spellSlots}>{slot => {
+          const spell = () => props.facts?.summoner_spells?.[slot];
+          const label = () => spell()?.replace(/^Summoner/, "") ?? "Summoner spell unavailable";
+          return <span class={matchStyles.assetIcon} role="img" title={label()} aria-label={label()}>
+            <Show when={ddragonAsset(props.ddragon, "spell", spell())} keyed>
+              {src => <img src={src} alt="" loading="lazy" decoding="async" onError={hideFailedImage} />}
+            </Show>
+          </span>;
+        }}</For>
+      </span>
+    </span>
+    <span class={`${matchStyles.kda} ${styles.matchKda}`}>
+      <Show when={kda()} fallback={<span class={styles.matchMeta}>KDA unavailable</span>}>
+        {score => <><strong>{score()[0] ?? "—"} <i>/</i> {score()[1] ?? "—"} <i>/</i> {score()[2] ?? "—"}</strong><em>Final KDA</em></>}
+      </Show>
+    </span>
+    <Show when={props.facts?.final_items} fallback={<span class={styles.matchMeta}>Final items unavailable</span>}>
+      {items => <span class={matchStyles.items} role="group" aria-label="Final items">
+        <For each={itemSlots}>{slot => <span class={matchStyles.itemSlot}>
+          <Show when={ddragonAsset(props.ddragon, "item", items()[slot])} keyed>
+            {src => <img src={src} alt={`Item ${items()[slot]}`} loading="lazy" decoding="async" onError={hideFailedImage} />}
+          </Show>
+        </span>}</For>
+      </span>}
+    </Show>
+    <span class={styles.matchDate}>
+      <Show when={playedAt()} fallback={<span>Date unavailable</span>}>
+        {date => <time dateTime={date()} title={formatDate(date())}>{formatDate(date(), true)}</time>}
+      </Show>
+      <Show when={duration()} fallback={<span class={styles.matchMeta}>Duration unavailable</span>}>
+        {seconds => <span class={styles.matchMeta}>{formatMatchDuration(seconds() * 1_000)}</span>}
+      </Show>
+    </span>
+  </header>;
+}
 
 function ClipTags(props: { header: ClipCard["header"]; class?: string }) {
   return <Show when={props.header.highlights.length || props.header.custom_tags.length}>
@@ -33,11 +102,13 @@ function ClipTags(props: { header: ClipCard["header"]; class?: string }) {
   </Show>;
 }
 
-function ClipStrip(props: { children: JSX.Element }) {
+function ClipStrip(props: { children: JSX.Element; clipCount: number; onMore?: () => void; busy?: boolean }) {
   let viewport!: HTMLDivElement;
   let track!: HTMLDivElement;
+  let appendFrom: number | undefined;
   const [canScrollLeft, setCanScrollLeft] = createSignal(false);
   const [canScrollRight, setCanScrollRight] = createSignal(false);
+  const canGoRight = () => canScrollRight() || (props.onMore !== undefined && !props.busy);
 
   const updateArrows = () => {
     setCanScrollLeft(viewport.scrollLeft > 1);
@@ -53,17 +124,41 @@ function ClipStrip(props: { children: JSX.Element }) {
     onCleanup(() => observer.disconnect());
   });
 
+  const scrollTo = (left: number) => viewport.scrollTo({
+    left,
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+  });
+
+  createEffect(() => {
+    const count = props.clipCount;
+    const busy = props.busy;
+    if (appendFrom === undefined) return;
+    if (count > appendFrom) {
+      const [first, next] = [track.children[0], track.children[appendFrom]] as HTMLElement[];
+      appendFrom = undefined;
+      updateArrows();
+      scrollTo(next.offsetLeft - first.offsetLeft);
+    } else if (!busy) {
+      appendFrom = undefined;
+    }
+  });
+
   const scroll = (direction: -1 | 1) => {
-    if (!(direction < 0 ? canScrollLeft() : canScrollRight())) return;
+    if (direction > 0 && !canScrollRight()) {
+      if (props.onMore && !props.busy) {
+        appendFrom = props.clipCount;
+        props.onMore();
+      }
+      return;
+    }
+    if (direction < 0 && !canScrollLeft()) return;
+    if (direction < 0) appendFrom = undefined;
     const [first, second] = track.children as HTMLCollectionOf<HTMLElement>;
     const stride = second ? second.offsetLeft - first.offsetLeft : viewport.clientWidth;
     if (stride <= 0) return;
     const tilesPerPage = Math.max(1, Math.floor(viewport.clientWidth / stride));
     const currentTile = Math.round(viewport.scrollLeft / stride);
-    viewport.scrollTo({
-      left: (currentTile + direction * tilesPerPage) * stride,
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    });
+    scrollTo((currentTile + direction * tilesPerPage) * stride);
   };
 
   return <div class={styles.carousel}>
@@ -72,7 +167,7 @@ function ClipStrip(props: { children: JSX.Element }) {
       <ArrowLeftIcon size={18} />
     </button>
     <button type="button" class={`${styles.stripArrow} ${styles.stripNext}`} aria-label="Scroll clips right"
-      aria-disabled={!canScrollRight()} tabIndex={canScrollRight() ? 0 : -1} onClick={() => scroll(1)}>
+      aria-disabled={!canGoRight()} tabIndex={canGoRight() ? 0 : -1} onClick={() => scroll(1)}>
       <ArrowRightIcon size={18} />
     </button>
     <div ref={viewport} class={styles.stripViewport} onScroll={updateArrows}>
@@ -81,36 +176,35 @@ function ClipStrip(props: { children: JSX.Element }) {
   </div>;
 }
 
-function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolean }) {
-  const cards = <For each={props.clips}>{clip =>
-    <article class={libraryStyles.clipCard}>
-      <button class={libraryStyles.clipOpen} type="button"
-        data-managed-clip={clip.header.id}
-        onClick={event => props.onOpen(clip, event.currentTarget)} aria-label={`Play ${clip.title}`}>
-        <span class={libraryStyles.clipArtwork}>
-          <ClipThumbnail src={clip.thumbnail_url} />
-          <em>{formatDuration(clipDurationMs(clip))}</em>
-          <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
-        </span>
-        <span class={`${libraryStyles.clipContent} ${styles.cardContent}`}>
-          <strong>{clip.title}</strong>
-          <Show when={props.inline} fallback={<small>{clip.header.preset}</small>}>
-            <small>{clip.game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip.game_clock)}`}</small>
-          </Show>
-        </span>
-        <ClipTags header={clip.header} class={styles.cardTags} />
-      </button>
-    </article>
-  }</For>;
-  return <Show when={props.inline} fallback={<div class={libraryStyles.clipGrid}>{cards}</div>}>
-    <ClipStrip>{cards}</ClipStrip>
-  </Show>;
+function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip; inline?: boolean; onMore?: () => void; busy?: boolean }) {
+  return <ClipStrip clipCount={props.clips.length} onMore={props.onMore} busy={props.busy}>
+    <For each={props.clips}>{clip =>
+      <article class={libraryStyles.clipCard}>
+        <button class={libraryStyles.clipOpen} type="button"
+          data-managed-clip={clip.header.id}
+          onClick={event => props.onOpen(clip, event.currentTarget)} aria-label={`Play ${clip.title}`}>
+          <span class={libraryStyles.clipArtwork}>
+            <ClipThumbnail src={clip.thumbnail_url} />
+            <em>{formatDuration(clipDurationMs(clip))}</em>
+            <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
+          </span>
+          <span class={`${libraryStyles.clipContent} ${styles.cardContent}`}>
+            <strong>{clip.title}</strong>
+            <Show when={props.inline} fallback={<small>{clip.header.preset}</small>}>
+              <small>{clip.game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip.game_clock)}`}</small>
+            </Show>
+          </span>
+          <ClipTags header={clip.header} class={styles.cardTags} />
+        </button>
+      </article>
+    }</For>
+  </ClipStrip>;
 }
 
 /** One owner for a page read and its explicit continuations. Superseded results stay local. */
 export function ClipGroups(props: {
-  token: string; ready: boolean; query: ClipQuery; onOpen: OpenClip; inline?: boolean;
-}) {
+  token: string; ready: boolean; query: ClipQuery; onOpen: OpenClip;
+} & ({ inline: true; ddragon?: never } | { inline?: false; ddragon: DdragonStatus })) {
   const inputs = createMemo(
     () => ({ token: props.token, query: props.query, ready: props.ready }),
     undefined,
@@ -173,14 +267,19 @@ export function ClipGroups(props: {
     {/* Pagination updates groups in place so each strip can keep its scroll position. */}
     <Index each={groups()}>{group => {
       const game = () => group().clips[0]?.header.game;
+      const moreClips = (after: ClipCursor) => load("group", undefined, { key: group().key, after });
+      const continueStrip = () => {
+        const cursor = group().next;
+        return !props.inline && cursor ? () => moreClips(cursor) : undefined;
+      };
       return <section class={styles.group}>
-        <Show when={!props.inline && game()}>{value => <header>
-          <h2>{value().champion ?? "Game details unavailable"}</h2>
-          <p>{gameCaption(value())}</p>
-        </header>}</Show>
-        <ClipCards clips={group().clips} onOpen={props.onOpen} inline={props.inline} />
-        <Show when={group().next}>{cursor => <button class={controls.control} type="button" disabled={busy()}
-          onClick={() => load("group", undefined, { key: group().key, after: cursor() })}>More clips from this game</button>}</Show>
+        <Show when={!props.inline && game()}>{value =>
+          <ClipMatchHeader game={value()} facts={group().match_facts} ddragon={props.ddragon!} />
+        }</Show>
+        <ClipCards clips={group().clips} onOpen={props.onOpen} inline={props.inline} busy={busy()}
+          onMore={continueStrip()} />
+        <Show when={props.inline && group().next}>{cursor => <button class={controls.control} type="button" disabled={busy()}
+          onClick={() => moreClips(cursor())}>More clips from this game</button>}</Show>
       </section>;
     }}</Index>
     <Show when={next()}>{cursor => <button class={controls.control} type="button" disabled={busy()}
@@ -196,6 +295,7 @@ const filterOptions = [
 
 export function ManagedClips(props: {
   token: string; ready: boolean; indexError: string | null; onRetry: () => void;
+  ddragon: DdragonStatus;
   filters: ClipQuery; onFilters: (query: ClipQuery) => void; onOpen: OpenClip; onOpenFolder: () => void;
 }) {
   const [query, setQuery] = createSignal(props.filters);
@@ -232,7 +332,8 @@ export function ManagedClips(props: {
       </select></label>
       <Show when={Object.values(props.filters).some(Boolean)}><button class={controls.control} type="button" onClick={() => props.onFilters({})}>Clear filters</button></Show>
     </div>
-    <Show when={props.indexError} fallback={<ClipGroups token={props.token} ready={props.ready} query={query()} onOpen={props.onOpen} />}>
+    <Show when={props.indexError} fallback={<ClipGroups token={props.token} ready={props.ready} query={query()}
+      onOpen={props.onOpen} ddragon={props.ddragon} />}>
       {error => <p role="alert">{error()} <button class={controls.control} type="button" onClick={props.onRetry}>Try again</button></p>}
     </Show>
   </section>;

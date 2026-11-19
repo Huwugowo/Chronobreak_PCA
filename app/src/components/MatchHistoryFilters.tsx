@@ -1,14 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js";
 import type { HistoryQuery, HistoryQueue, PersonalMoment } from "../leagueIndex";
 import { readClipTagSuggestions } from "../managedClips";
+import { queueLabels } from "../matchQueues";
 import { CheckIcon, FilterIcon, SearchIcon, StarIcon, TagIcon } from "../ui/icons";
 import styles from "./MatchHistoryFilters.module.css";
 
-const queueLabels: Record<HistoryQueue, string> = {
-  ranked_solo_duo: "Ranked Solo/Duo", ranked_flex: "Ranked Flex", ranked_5s: "Ranked 5s",
-  aram_mayhem: "ARAM: Mayhem", aram: "ARAM", aram_mayhem_classic: "ARAM: Mayhem Classic-ish",
-  arena: "Arena", other: "All other queues", normal_draft: "Normal Draft", swiftplay: "Swiftplay", urf: "URF",
-};
 const queueGroups = {
   Ranked: ["ranked_solo_duo", "ranked_flex", "ranked_5s"],
   ARAM: ["aram_mayhem", "aram", "aram_mayhem_classic"],

@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
-import { formatBytes, formatDate, formatDuration, formatTimestampDate } from "../format";
+import { formatBytes, formatDate, formatDuration, formatMatchDuration, formatTimestampDate } from "../format";
+import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHistoryPreview";
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
 import type { HistoryQuery, HistoryStats } from "../leagueIndex";
@@ -50,20 +51,7 @@ type Props = {
 
 const itemSlots = Array.from({ length: 7 }, (_, slot) => slot);
 
-const ddragonAsset = (
-  status: DdragonStatus,
-  kind: "champion" | "spell" | "rune" | "item",
-  asset: string | number | null | undefined,
-): string | null => {
-  if (!status.asset_base_url || asset === null || asset === undefined || asset === "") return null;
-  return `${status.asset_base_url}/${kind}/${encodeURIComponent(String(asset))}`;
-};
-
 const unavailableStats: HistoryStats = { source: "unavailable", kills: null, deaths: null, assists: null, items: null, keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null };
-
-const hideFailedImage = (event: Event) => {
-  if (event.currentTarget instanceof HTMLImageElement) event.currentTarget.hidden = true;
-};
 
 const formatKdaRatio = (stats: HistoryStats): string => {
   if (stats.kills === null || stats.deaths === null || stats.assists === null) return "—";
@@ -125,13 +113,6 @@ const formatRelativeAge = (value: string): string => {
   const [unit, size] = units.find(([, size]) => absolute >= size) ?? units[units.length - 1];
   return new Intl.RelativeTimeFormat("en", { numeric: "always" })
     .format(Math.round(delta / size), unit);
-};
-
-const formatMatchDuration = (durationMs: number): string => {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${seconds}s`;
 };
 
 const closeActionMenu = (event: MouseEvent) => {

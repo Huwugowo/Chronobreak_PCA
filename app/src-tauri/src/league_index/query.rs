@@ -975,7 +975,11 @@ impl Index {
             .collect())
     }
 
-    fn history_stats(&self, media: &MediaId, result: Option<&ResultFile>) -> Result<HistoryStats> {
+    pub(super) fn history_stats(
+        &self,
+        media: &MediaId,
+        result: Option<&ResultFile>,
+    ) -> Result<HistoryStats> {
         if let Some(result) = result {
             let p = result.local_player.as_ref();
             return Ok(HistoryStats {

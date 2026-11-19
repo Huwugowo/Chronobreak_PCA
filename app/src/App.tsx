@@ -742,6 +742,7 @@ function App() {
               managedClips={managed ? <ManagedClips
                 token={acceptedSnapshot()?.token ?? ""} ready={(!acceptedSnapshot()?.managed_clip_count || clipIndexToken() === acceptedSnapshot()?.token) && libraryActionable()}
                 indexError={clipIndexError()} onRetry={() => setClipIndexRetry(n => n + 1)}
+                ddragon={ddragon() ?? emptyDdragon}
                 filters={clipFilters()} onFilters={setClipFilters} onOpen={selectManagedClip}
                 onOpenFolder={() => void openClipsFolder().catch(showError)}
               /> : undefined}

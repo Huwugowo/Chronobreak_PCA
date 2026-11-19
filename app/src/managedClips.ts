@@ -21,7 +21,13 @@ export type ClipHeader = {
 export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string; game_clock?: string };
 export type GroupCursor = [number, string];
 export type ClipCursor = [number, number, string];
-export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null };
+export type ClipMatchFacts = {
+  champion: string; outcome: ClipGame["outcome"];
+  summoner_spells: [string | null, string | null] | null;
+  final_kda: [number | null, number | null, number | null] | null;
+  final_items: Array<number | null> | null; duration_seconds: number | null;
+};
+export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null; match_facts?: ClipMatchFacts };
 export type ClipPage = { groups: ClipGroup[]; next: GroupCursor | null };
 export type ClipQuery = {
   search?: string; champion?: string; from?: string; to?: string; queue?: string;

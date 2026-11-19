@@ -5687,6 +5687,59 @@
       ]
     },
     {
+      "id": "QB-LIB-038",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Compact match headers in Clips",
+      "description": "Summarize the game above each clip group in a slim row styled like Match History.",
+      "priority": "P2",
+      "area": "clip-library",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-002", "QB-LIB-030"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "Each standalone Clips group shows a slim header with Match History win or loss styling, champion portrait, two summoner spell slots, final KDA and items, played date and game duration. The header omits team rosters and fits at narrow desktop widths.",
+        "Existing clips use available checked match data and keep their saved context when source recordings are unavailable. Unknown results are neutral, missing final facts remain unavailable, and clip or recording length is never used as game duration.",
+        "Clip filtering, ordering, pagination and playback retain their behavior. Clips attached to a Match History card keep their existing layout."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Verify checked account-scoped facts and missing data with fixtures. Run applicable backend, frontend and canonical checks."},
+        {"type": "manual", "description": "Inspect browser fixture rows at narrow and wide desktop widths for loaded icons, outcome styling, and no horizontal overflow."}
+      ],
+      "evidence": [
+        "2026-11-19: The native clip fixture verified final spells, KDA, items and duration from the checked account-scoped match, including an older recording part, filtered results, and saved context after source removal and cache rebuild.",
+        "Edge fixtures at 500, 800 and 1280 px verified loaded icons, blue win/red loss/neutral unknown styling, no horizontal overflow, filtering, continuation and clip activation. Desktop-width rows were 58 px tall. Evidence: build/verification/qb-lib-038/browser-report.json.",
+        "All 619 frontend tests and 217 enabled desktop tests passed (11 opt-in tests ignored). TypeScript, frontend production build, Rust formatting and strict Clippy passed."
+      ]
+    },
+    {
+      "id": "QB-LIB-039",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Queue labels and clip carousels in Clips",
+      "description": "Show the queue in each Clips match header and browse each game's clips with horizontal arrows.",
+      "priority": "P2",
+      "area": "clip-library",
+      "status": "done",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-038"],
+      "execution": {"workflow": "direct", "plan": null},
+      "acceptance_criteria": [
+        "The standalone Clips header shows the recorded queue label, preserves available game mode as a fallback, and identifies missing queue information.",
+        "Each standalone group contains one horizontal strip of clips with left and right arrow navigation. The right arrow can continue into additional pages when the end of the loaded strip is reached.",
+        "Clip search, ordering and activation keep working. Inline Match History clips retain their existing layout and controls."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Run frontend tests, type checking, production frontend build, and canonical validation."},
+        {"type": "manual", "description": "Exercise queues, narrow and wide carousel layout, arrows, continuation, filtering and clip activation with a browser fixture."}
+      ],
+      "evidence": [
+        "2026-11-19: Edge fixtures at 500, 800 and 1280 px verified Ranked Solo/Duo, ARAM, recorded-mode fallback and missing queue labels. Clips stayed on one row. Left/right arrows, keyboard continuation, loaded clip order, clip activation and search passed with no horizontal page overflow. The 1280 px fixture loaded more clips even though the initial four fit. Evidence: build/verification/qb-lib-039/browser-report.json.",
+        "All 619 frontend tests passed, including existing inline Match History clip coverage. TypeScript, the frontend production build and canonical validation passed."
+      ]
+    },
+    {
       "id": "QB-PERF-006",
       "kind": "feature",
       "stage": "ready",

@@ -20,6 +20,13 @@ export const formatDuration = (milliseconds: number): string => {
     : `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
+export const formatMatchDuration = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+};
+
 export const formatDate = (value: string, compact = false): string => {
   if (!value) return "Date unavailable";
   const date = new Date(value);
