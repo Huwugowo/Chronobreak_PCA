@@ -3,7 +3,7 @@ import { createClipGrid } from "../clipGrid";
 import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
-import { actorLabels, clipDurationMs, clipTitleError, highlightLabel, readClipDetail, readClipPage, type Attribution, type ClipCard,
+import { clipDurationMs, clipTitleError, clipLabels, readClipDetail, readClipPage, type ClipCard,
   type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery, type GroupCursor } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
@@ -12,7 +12,8 @@ import type { DdragonStatus } from "../types";
 import { ArrowLeftIcon, ArrowRightIcon, PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
 import { createModalFocus } from "../ui/createModalFocus";
-import { ClipHighlights, ClipTagInput } from "./ClipMetadataFields";
+import ClipsFilters from "./ClipsFilters";
+import { ClipTagEditor } from "./ClipMetadataFields";
 import ClipThumbnail from "./ClipThumbnail";
 import ClipVideoPlayer from "./ClipVideoPlayer";
 import ConfirmDialog from "./ConfirmDialog";
@@ -93,14 +94,19 @@ function ClipMatchHeader(props: { game: ClipGame; ddragon: DdragonStatus }) {
   </div>;
 }
 
-function ClipTags(props: { tags: Pick<ClipCard["header"], "highlights" | "custom_tags">; class?: string; limit?: number; id?: string }) {
-  const tagCount = () => props.tags.highlights.length + props.tags.custom_tags.length;
+function ClipTags(props: { tags: Pick<ClipGridCard, "custom_tags" | "predefined_tags">; class?: string; limit?: number; id?: string }) {
+  const predefined = () => props.tags.predefined_tags;
+  const custom = createMemo(() => {
+    const names = new Set(predefined().map(kind => clipLabels[kind].toLowerCase()));
+    return props.tags.custom_tags.filter(tag => !names.has(tag.toLowerCase()));
+  });
+  const tagCount = () => predefined().length + custom().length;
   const limit = () => props.limit ?? tagCount();
   const remaining = () => Math.max(0, tagCount() - limit());
   return <Show when={tagCount()}>
     <span id={props.id} class={props.class ? `${styles.clipTags} ${props.class}` : styles.clipTags}>
-      <For each={props.tags.highlights.slice(0, limit())}>{tag => <span class={styles.highlightBadge}>{highlightLabel(tag)}</span>}</For>
-      <For each={props.tags.custom_tags.slice(0, Math.max(0, limit() - props.tags.highlights.length))}>
+      <For each={predefined().slice(0, limit())}>{tag => <span class={styles.highlightBadge}>{clipLabels[tag]}</span>}</For>
+      <For each={custom().slice(0, Math.max(0, limit() - predefined().length))}>
         {tag => <span class={styles.customBadge}>{tag}</span>}
       </For>
       <Show when={remaining()}>
@@ -260,12 +266,6 @@ export function ClipGroups(props: {
   </div>;
 }
 
-const filterOptions = [
-  ["2", "Double kill or higher"], ["3", "Triple kill or higher"], ["4", "Quadra kill or higher"],
-  ["5", "Pentakill"], ["first blood", "First Blood"], ["dragon steal", "Dragon steal"],
-  ["baron steal", "Baron steal"], ["herald steal", "Herald steal"],
-] as const;
-
 type OpenGridClip = (clip: ClipGridCard, button: HTMLButtonElement) => void;
 
 function ClipGrid(props: {
@@ -290,7 +290,7 @@ function ClipGrid(props: {
     <ul ref={grid} class={styles.grid} aria-label="Clips" aria-busy={state.busy}>
       <For each={state.clips}>{clip => {
         const id = `grid-clip-${clip.id}`;
-        const tagsId = () => clip.highlights.length || clip.custom_tags.length ? `${id}-tags` : undefined;
+        const tagsId = () => clip.predefined_tags.length || clip.custom_tags.length ? `${id}-tags` : undefined;
         return <li>
           <button class={`${libraryStyles.clipOpen} ${styles.gridOpen}`} type="button"
             data-managed-clip={clip.id} aria-label={`Play ${clip.title}`}
@@ -339,38 +339,14 @@ export function ManagedClips(props: {
   const [query, setQuery] = createSignal(props.filters);
   const grid = createClipGrid(() => ({ root: props.root, token: props.token, ready: props.ready, query: query() }));
   createEffect(() => {
-    const next = props.filters;
-    const timer = window.setTimeout(() => setQuery(next), 180);
+    const next = { ...props.filters, search: props.filters.search?.trim() || undefined };
+    const timer = window.setTimeout(() => setQuery(previous =>
+      JSON.stringify(previous) === JSON.stringify(next) ? previous : next), 180);
     onCleanup(() => window.clearTimeout(timer));
   });
-  const setFilter = <K extends keyof ClipFilters>(key: K, value: ClipFilters[K]) =>
-    props.onFilters({ ...props.filters, [key]: value || undefined });
   return <section class={styles.panel} aria-label="Clips library">
-    <div class={styles.search}>
-      <label>Search clips<input type="search" maxLength={80} value={props.filters.search ?? ""}
-        onInput={event => setFilter("search", event.currentTarget.value)} placeholder="Title, tag, champion or highlight" /></label>
-      <button class={controls.control} type="button" onClick={props.onOpenFolder}>Open clips folder</button>
-    </div>
-    <div class={styles.filters}>
-      <label>Champion<input maxLength={50} value={props.filters.champion ?? ""}
-        onInput={event => setFilter("champion", event.currentTarget.value.trim())} /></label>
-      <label>Queue or mode<input maxLength={50} value={props.filters.queue ?? ""}
-        onInput={event => setFilter("queue", event.currentTarget.value)} /></label>
-      <label>Played from<input type="date" value={props.filters.from ?? ""}
-        onInput={event => setFilter("from", event.currentTarget.value)} /></label>
-      <label>Played through<input type="date" value={props.filters.to ?? ""}
-        onInput={event => setFilter("to", event.currentTarget.value)} /></label>
-      <label>Result<select value={props.filters.outcome ?? ""} onChange={event => setFilter("outcome", event.currentTarget.value)}>
-        <option value="">Any result</option><option value="win">Win</option><option value="loss">Loss</option>
-      </select></label>
-      <label>Highlight<select value={props.filters.highlight ?? ""} onChange={event => setFilter("highlight", event.currentTarget.value)}>
-        <option value="">Any highlight</option><For each={filterOptions}>{([id, label]) => <option value={id}>{label}</option>}</For>
-      </select></label>
-      <label>Actor<select value={props.filters.actor ?? ""} onChange={event => setFilter("actor", event.currentTarget.value as Attribution)}>
-        <option value="">Any actor</option><For each={Object.entries(actorLabels)}>{([id, label]) => <option value={id}>{label}</option>}</For>
-      </select></label>
-      <Show when={Object.values(props.filters).some(Boolean)}><button class={controls.control} type="button" onClick={() => props.onFilters({})}>Clear filters</button></Show>
-    </div>
+    <ClipsFilters library={props.root} filters={props.filters} onChange={props.onFilters} token={props.ready ? props.token : undefined}
+      championPortrait={name => ddragonAsset(props.ddragon, "champion", name)} onOpenFolder={props.onOpenFolder} />
     <ClipGrid model={grid} indexError={props.indexError} onRetryIndex={props.onRetry}
       onOpen={props.onOpen} openingId={props.openingId} ddragon={props.ddragon} />
   </section>;
@@ -389,7 +365,7 @@ export function ManagedClipPlayer(props: {
   const [busy, setBusy] = createSignal(false);
   const [title, setTitle] = createSignal(props.clip.title);
   const [tags, setTags] = createSignal(props.clip.header.custom_tags);
-  const [selected, setSelected] = createSignal(props.clip.header.highlights.map(tag => tag.event_index));
+  const [predefinedTags, setPredefinedTags] = createSignal(props.clip.header.predefined_tags);
   const [detail, setDetail] = createSignal<Awaited<ReturnType<typeof readClipDetail>>>();
   const [detailError, setDetailError] = createSignal(false);
   const [reading, setReading] = createSignal(false);
@@ -451,7 +427,7 @@ export function ManagedClipPlayer(props: {
             <Show when={props.onSource}><button class={controls.control} type="button" disabled={!props.sourceAvailable || busy()}
               onClick={props.onSource}>{props.sourceAvailable ? "Open source replay" : "Source replay unavailable"}</button></Show>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => setEditing("title")}>Rename</button>
-            <button class={controls.control} type="button" disabled={busy()} onClick={() => { setEditing("tags"); loadEvents(); }}>Edit tags</button>
+            <button class={controls.control} type="button" disabled={busy()} onClick={() => setEditing("tags")}>Edit tags</button>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => void submit({ kind: "reveal" })}>Show in folder</button>
             <button ref={deleteButton} class={controls.control} type="button" disabled={busy()} onClick={() => setDeleting(true)}>Delete clip</button>
           </div>
@@ -468,12 +444,11 @@ export function ManagedClipPlayer(props: {
             </form>
           </Show>
           <Show when={editing() === "tags"}>
-            <ClipTagInput token={props.token} tags={tags()} onChange={setTags} disabled={busy()} />
-            <ClipHighlights candidates={detail()?.candidates ?? []} availability={detail()?.events.availability ?? props.clip.header.events}
-              selected={selected()} onChange={setSelected} disabled={busy() || reading()} />
+            <ClipTagEditor token={props.token} customTags={tags()} predefinedTags={predefinedTags()}
+              onCustomTagsChange={setTags} onPredefinedTagsChange={setPredefinedTags} disabled={busy()} />
             <div class={styles.actions}>
-              <button class={controls.control} type="button" disabled={busy() || reading()}
-                onClick={() => void submit({ kind: "tags", custom_tags: tags(), highlights: selected() })}>Save tags</button>
+              <button class={controls.control} type="button" disabled={busy()}
+                onClick={() => void submit({ kind: "tags", custom_tags: tags(), predefined_tags: predefinedTags() })}>Save tags</button>
               <button class={controls.control} type="button" onClick={() => setEditing(null)}>Cancel</button>
             </div>
           </Show>

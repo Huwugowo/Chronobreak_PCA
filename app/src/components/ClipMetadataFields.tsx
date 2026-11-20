@@ -1,13 +1,22 @@
-import { For, Show, createEffect, createSignal, createUniqueId, onCleanup } from "solid-js";
-import { highlightLabel, readClipTagSuggestions, usesManagedClips, type Availability, type Highlight } from "../managedClips";
+import { For, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { clipLabels, readClipTagSuggestions, usesManagedClips, type HighlightKind } from "../managedClips";
 import controls from "../ui/controls.module.css";
+import { FilterCheckbox } from "./FilterControls";
 import styles from "./ManagedClips.module.css";
 
-export function ClipTagInput(props: { token: string; tags: string[]; onChange: (tags: string[]) => void; disabled?: boolean }) {
-  const list = createUniqueId();
+const predefinedOptions = Object.keys(clipLabels) as HighlightKind[];
+
+export function ClipTagEditor(props: {
+  token: string; customTags: string[]; predefinedTags: HighlightKind[];
+  onCustomTagsChange: (tags: string[]) => void; onPredefinedTagsChange: (tags: HighlightKind[]) => void;
+  disabled?: boolean;
+}) {
   const [text, setText] = createSignal("");
   const [focused, setFocused] = createSignal(false);
-  const [suggestions, setSuggestions] = createSignal<string[]>([]);
+  const [suggestions, setSuggestions] = createSignal<{ token: string; tags: string[] }>({ token: "", tags: [] });
+  const kindForLabel = (label: string) => predefinedOptions.find(kind => clipLabels[kind].toLowerCase() === label.toLowerCase());
+  const selected = createMemo(() => props.customTags.filter(tag => !kindForLabel(tag)));
+  const isKnownCustom = (tag: string) => selected().some(value => value.toLowerCase() === tag.toLowerCase());
   createEffect(() => {
     if (!focused() || !usesManagedClips()) return;
     const prefix = text().trim();
@@ -15,56 +24,75 @@ export function ClipTagInput(props: { token: string; tags: string[]; onChange: (
     let active = true;
     const timer = window.setTimeout(() => {
       void readClipTagSuggestions(token, prefix).then(
-        tags => { if (active) setSuggestions(tags); },
-        () => { if (active) setSuggestions([]); },
+        tags => { if (active) setSuggestions({ token, tags }); },
+        () => { if (active) setSuggestions({ token, tags: [] }); },
       );
     }, 180);
     onCleanup(() => { active = false; window.clearTimeout(timer); });
   });
-  const add = () => {
-    const tag = text().trim();
-    if (!tag || props.tags.length >= 32) return;
-    if (!props.tags.some(value => value.toLowerCase() === tag.toLowerCase())) props.onChange([...props.tags, tag]);
+  const add = (candidate = text().trim()) => {
+    const tag = candidate.trim();
+    const kind = kindForLabel(tag);
+    if (kind) {
+      if (!props.predefinedTags.includes(kind)) props.onPredefinedTagsChange([...props.predefinedTags, kind]);
+      setText("");
+      return;
+    }
+    if (!tag || props.customTags.length >= 32 || isKnownCustom(tag)) return;
+    props.onCustomTagsChange([...props.customTags, tag]);
     setText("");
   };
-  return <div class={styles.tagEditor}>
-    <div class={styles.tagInput}>
-      <label>Custom tags
-        <input list={list} value={text()} maxLength={40} onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)} disabled={props.disabled || props.tags.length >= 32}
-          onInput={event => setText(event.currentTarget.value)}
-          onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); add(); } }} />
-      </label>
-      <datalist id={list}><For each={suggestions()}>{tag => <option value={tag} />}</For></datalist>
-      <button class={controls.control} type="button" onClick={add} disabled={props.disabled || !text().trim() || props.tags.length >= 32}>Add tag</button>
+  const checked = (kind: HighlightKind) => props.predefinedTags.includes(kind) ||
+    props.customTags.some(tag => kindForLabel(tag) === kind);
+  const removeBuiltIn = (kind: HighlightKind) => {
+    props.onPredefinedTagsChange(props.predefinedTags.filter(tag => tag !== kind));
+    props.onCustomTagsChange(props.customTags.filter(tag => kindForLabel(tag) !== kind));
+  };
+  const optionLabels = createMemo(() => {
+    const term = text().trim().toLowerCase();
+    const labels = new Map<string, string>();
+    const add = (label: string) => {
+      const key = label.toLowerCase();
+      if (key.includes(term) && !labels.has(key)) labels.set(key, label);
+    };
+    for (const kind of predefinedOptions) add(clipLabels[kind]);
+    if (suggestions().token === props.token) for (const tag of suggestions().tags) add(tag);
+    for (const tag of selected()) add(tag);
+    return [...labels.values()];
+  });
+  const isChecked = (label: string) => {
+    const kind = kindForLabel(label);
+    return kind ? checked(kind) : isKnownCustom(label);
+  };
+  const optionDisabled = (label: string) => props.disabled ||
+    (!isChecked(label) && !kindForLabel(label) && props.customTags.length >= 32);
+  const changeOption = (label: string, value: boolean) => {
+    const kind = kindForLabel(label);
+    if (kind) {
+      if (value) props.onPredefinedTagsChange([...props.predefinedTags, kind]);
+      else removeBuiltIn(kind);
+    } else if (value) add(label); else props.onCustomTagsChange(props.customTags.filter(current => current.toLowerCase() !== label.toLowerCase()));
+  };
+  const canAdd = () => {
+    const tag = text().trim();
+    return !!tag && (!!kindForLabel(tag) || (!isKnownCustom(tag) && props.customTags.length < 32));
+  };
+  return <fieldset class={styles.tagFieldset} disabled={props.disabled}>
+    <legend>Tags</legend>
+    <div class={styles.tagEditor}>
+      <div class={styles.tagInput}>
+        <label>Find or create a tag
+          <input value={text()} maxLength={40} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+            onInput={event => setText(event.currentTarget.value)}
+            onKeyDown={event => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); add(); } }} />
+        </label>
+        <button class={controls.control} type="button" onClick={() => add()} disabled={!canAdd()}>Add tag</button>
+      </div>
+      <div class={styles.tagOptions} role="group" aria-label="Tag options">
+        <For each={optionLabels()}>{label => <FilterCheckbox label={label} labelClass={styles.tagOption}
+          checked={isChecked(label)} disabled={optionDisabled(label)}
+          onChange={event => changeOption(label, event.currentTarget.checked)} />}</For>
+      </div>
     </div>
-    <div class={styles.tags}>
-      <For each={props.tags}>{tag =>
-        <button class={controls.control} type="button" disabled={props.disabled} aria-label={`Remove tag ${tag}`}
-          onClick={() => props.onChange(props.tags.filter(value => value !== tag))}>{tag} ×</button>
-      }</For>
-    </div>
-  </div>;
-}
-
-export function ClipHighlights(props: {
-  candidates: Highlight[]; availability: Availability; selected: number[];
-  onChange: (selected: number[]) => void; disabled?: boolean;
-}) {
-  return <fieldset class={styles.highlights} disabled={props.disabled}>
-    <legend>Highlights</legend>
-    <Show when={props.availability === "unavailable"}><small>Event data is unavailable for this clip.</small></Show>
-    <Show when={props.availability === "partial"}><small>Some event data is unavailable.</small></Show>
-    <Show when={props.availability === "available" && props.candidates.length === 0}>
-      <small>No highlight tags found in this range.</small>
-    </Show>
-    <For each={props.candidates}>{tag =>
-      <label>
-        <input type="checkbox" checked={props.selected.includes(tag.event_index)}
-          onChange={event => props.onChange(event.currentTarget.checked
-            ? [...props.selected, tag.event_index] : props.selected.filter(id => id !== tag.event_index))} />
-        {highlightLabel(tag)}
-      </label>
-    }</For>
   </fieldset>;
 }

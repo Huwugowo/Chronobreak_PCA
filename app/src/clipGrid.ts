@@ -66,13 +66,15 @@ export function createClipGrid(source: Accessor<GridSource>) {
 
   createEffect(on(source, (next, previous) => {
     // A catalog token grants read access. The root and filters define the browse session.
-    const newSession = !previous || next.root !== previous.root || next.query !== previous.query;
+    const newLibrary = !previous || next.root !== previous.root;
+    const newSession = newLibrary || next.query !== previous?.query;
     if (!newSession && next.token === previous.token && next.ready === previous.ready) return;
     generation++;
     batch(() => {
       if (newSession) {
         depth = 1;
-        setState({ clips: [], next: null, token: undefined });
+        setState({ next: null, token: undefined });
+        if (newLibrary) setState("clips", []);
       }
       setState({ busy: false, failure: undefined });
       if (next.ready && !current()) void load("refresh");

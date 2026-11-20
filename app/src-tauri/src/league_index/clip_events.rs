@@ -204,7 +204,7 @@ mod tests {
     use crate::clip_bundle::HighlightKind;
 
     #[test]
-    fn keeps_earliest_highest_tier_per_actor_and_only_explicit_steals() {
+    fn keeps_the_event_timeline_and_only_detects_tags_for_the_recording_player() {
         let multikill = |tick, actor: Option<&str>, attribution, tier| Retained {
             event: ClipEvent {
                 replay_tick: ReplayTick::new(tick).unwrap(),
@@ -219,7 +219,7 @@ mod tests {
             multikill_actor: actor.map(str::to_owned),
             order: (ReplayTick::new(tick).unwrap(), 0, tick),
         };
-        let dragon = |tick, stolen| Retained {
+        let dragon = |tick, attribution, stolen| Retained {
             event: ClipEvent {
                 replay_tick: ReplayTick::new(tick).unwrap(),
                 event: obs::Event {
@@ -227,8 +227,8 @@ mod tests {
                     stolen,
                     ..Default::default()
                 },
-                attribution: Attribution::Ally,
-                actor: Some("Ally".into()),
+                attribution,
+                actor: None,
             },
             multikill_actor: None,
             order: (ReplayTick::new(tick).unwrap(), 0, tick),
@@ -241,9 +241,11 @@ mod tests {
                 multikill(3, Some("Enemy"), Attribution::Enemy, 3),
                 multikill(6, None, Attribution::Unknown, 5),
                 multikill(2, None, Attribution::Unknown, 3),
-                dragon(7, None),
-                dragon(8, Some(false)),
-                dragon(9, Some(true)),
+                dragon(7, Attribution::You, None),
+                dragon(8, Attribution::You, Some(false)),
+                dragon(9, Attribution::Ally, Some(true)),
+                dragon(10, Attribution::You, Some(true)),
+                dragon(11, Attribution::You, Some(true)),
             ],
             true,
         );
@@ -254,20 +256,11 @@ mod tests {
                 .iter()
                 .map(|event| event.replay_tick.get())
                 .collect::<Vec<_>>(),
-            [3, 4, 6, 7, 8, 9]
+            [3, 4, 6, 7, 8, 9, 10, 11]
         );
         assert_eq!(
-            events
-                .candidates()
-                .into_iter()
-                .map(|tag| (tag.kind, tag.attribution))
-                .collect::<Vec<_>>(),
-            [
-                (HighlightKind::TripleKill, Attribution::Enemy),
-                (HighlightKind::QuadraKill, Attribution::You),
-                (HighlightKind::Pentakill, Attribution::Unknown),
-                (HighlightKind::DragonSteal, Attribution::Ally),
-            ]
+            events.detected_tags(),
+            [HighlightKind::QuadraKill, HighlightKind::DragonSteal]
         );
     }
 }

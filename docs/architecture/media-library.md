@@ -376,8 +376,10 @@ Each exported MP4 has a UUID folder under `clips/`. The MP4 stem is the editable
 title. The folder also contains `thumbnail.jpg`, the bounded `clip.json` header
 and the separately bounded `events.json`. The header retains game context,
 the exact source media ID and half-open frame interval, the validated output
-duration, custom tags and selected highlights. The event file contains retained
-mapped observations. It is opened only for explicit clip detail or tag editing.
+duration, custom tags and selected predefined tags. The event file contains
+mapped observations and is opened for explicit clip detail. Tag editing uses
+the clip header. Export preselects tags from events attributed to the recorded
+player. All predefined tags are available for manual selection.
 When the exact recording part is gone, the clip and its saved context remain.
 
 `export_staging` owns `clips/.chronobreak-export/<32-hex-id>/`: one strict,
@@ -426,14 +428,15 @@ identity, and the viewer validates the descriptor and frame range before seeking
 
 The standalone Clips grid seeks by export time and clip ID in the clip projection.
 Match-date filters use the saved played date independently of that ordering.
+The grid uses the same exact, case-insensitive lookup for custom and predefined
+tag labels. A clip must contain every selected tag.
 Grid queries return titles, champions, clip durations, tags and thumbnail URLs.
 Opening a clip reads its header and size and may supplement the saved context
 from the account-scoped match, using the same checked recording-part priority
 as History. A recorded roster can supply summoner spells. Final KDA, items and
 game duration come from final results. New exports save the available compact
 facts in the clip header, which stays readable after source deletion and cache
-rebuild. Earlier headers still carry their originally saved context. Inline
-History clips retain recording-part and frame ordering.
+rebuild. Inline History clips retain recording-part and frame ordering.
 
 Every preset exports H.264/AAC, including a valid recording whose media timeline
 declares no source audio. The exporter derives audio presence from that validated

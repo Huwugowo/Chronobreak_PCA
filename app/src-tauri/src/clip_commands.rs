@@ -1,11 +1,11 @@
 use super::{AppState, LibraryRefreshError, command_error};
 use crate::clip_bundle::{
-    self, ClipDescriptor, ClipEvents, ClipGame, ClipHeader, ClipId, EventAvailability, Highlight,
+    self, ClipDescriptor, ClipEvents, ClipGame, ClipId, EventAvailability, HighlightKind,
 };
 use crate::directory_guard::DirectoryGuard;
 use crate::league_index::{
     self, Index,
-    clips::{ClipGridCursor, ClipGridPage, ClipPage, ClipPlayback, ClipQuery},
+    clips::{ClipGridCursor, ClipGridPage, ClipGridQuery, ClipPage, ClipPlayback, ClipQuery},
 };
 use crate::library;
 use crate::library_coordinator::Selection;
@@ -64,7 +64,7 @@ pub(crate) struct DraftSummary {
     token: String,
     title: String,
     availability: EventAvailability,
-    candidates: Vec<Highlight>,
+    detected_tags: Vec<HighlightKind>,
 }
 
 #[tauri::command]
@@ -168,7 +168,7 @@ pub(crate) async fn prepare_clip_draft(
         token: draft.token.clone(),
         title: draft.title.clone(),
         availability: draft.events.availability,
-        candidates: draft.events.candidates(),
+        detected_tags: draft.events.detected_tags(),
     };
     *accepted = Some(Arc::new(draft));
     Ok(summary)
@@ -232,7 +232,7 @@ pub(crate) async fn clip_page(
 pub(crate) async fn clip_grid_page(
     state: State<'_, AppState>,
     snapshot_token: String,
-    query: ClipQuery,
+    query: ClipGridQuery,
     after: Option<ClipGridCursor>,
 ) -> std::result::Result<ClipGridPage, LibraryRefreshError> {
     let cache = state.league_index_cache.clone();
@@ -256,6 +256,29 @@ pub(crate) async fn clip_grid_page(
                     &origin,
                     &capability,
                 )
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn clip_grid_champions(
+    state: State<'_, AppState>,
+    snapshot_token: String,
+) -> std::result::Result<Vec<String>, LibraryRefreshError> {
+    let cache = state.league_index_cache.clone();
+    state
+        .library
+        .index_job(
+            Arc::clone(&state.roots),
+            &snapshot_token,
+            None,
+            false,
+            move |root, snapshot, _| {
+                if snapshot.managed_clips.is_empty() {
+                    return Ok(Vec::new());
+                }
+                Index::reader(&cache, root)?.clip_grid_champions(&snapshot.managed_clip_stamp)
             },
         )
         .await
@@ -311,9 +334,7 @@ pub(crate) async fn clip_tag_suggestions(
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ClipDetail {
-    header: ClipHeader,
     events: ClipEvents,
-    candidates: Vec<Highlight>,
 }
 
 #[tauri::command]
@@ -335,16 +356,10 @@ pub(crate) async fn clip_detail(
                     .get(&clip_id)
                     .context("clip unavailable")?;
                 let _directory = checked_directory(clip, false)?;
-                let header = clip.read_header()?;
                 let events = clip
                     .read_events()
                     .unwrap_or_else(|_| ClipEvents::unavailable());
-                let candidates = events.candidates();
-                Ok(ClipDetail {
-                    header,
-                    events,
-                    candidates,
-                })
+                Ok(ClipDetail { events })
             },
         )
         .await
@@ -371,7 +386,7 @@ pub(crate) enum ClipEdit {
     },
     Tags {
         custom_tags: Vec<String>,
-        highlights: Vec<u32>,
+        predefined_tags: Vec<HighlightKind>,
     },
     Delete,
     Reveal,
@@ -429,26 +444,12 @@ pub(crate) async fn edit_managed_clip(
                     }
                     ClipEdit::Tags {
                         custom_tags,
-                        highlights,
+                        predefined_tags,
                     } => {
-                        ensure!(
-                            highlights.len() <= clip_bundle::MAX_HIGHLIGHTS,
-                            "too many clip highlights"
-                        );
                         let mut header = clip.read_header()?;
                         header.custom_tags = clip_bundle::normalize_tags(&custom_tags)?;
-                        header.highlights = match clip.read_events() {
-                            Ok(events) => events.select(&highlights)?,
-                            Err(_)
-                                if highlights
-                                    .iter()
-                                    .copied()
-                                    .eq(header.highlights.iter().map(|tag| tag.event_index)) =>
-                            {
-                                header.highlights
-                            }
-                            Err(error) => return Err(error),
-                        };
+                        header.predefined_tags =
+                            clip_bundle::normalize_predefined_tags(predefined_tags);
                         header.validate(&clip.id)?;
                         let json = serde_json::to_vec(&header)?;
                         ensure!(

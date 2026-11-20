@@ -469,7 +469,7 @@ fn seed_clip_count_measurement(fixture: &Fixture, index: &mut Index) -> library:
         .db
         .execute(
             "INSERT INTO clip_projection
-         SELECT bundle,'fixture',match_group,match_group,0,0,0,'','','','','','[]','[]','{}'
+         SELECT bundle,'fixture',match_group,match_group,0,0,0,'','','','','','{}'
          FROM recordings WHERE match_group IS NOT NULL",
             [],
         )

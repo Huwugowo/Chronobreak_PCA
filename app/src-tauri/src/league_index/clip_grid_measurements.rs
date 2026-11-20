@@ -1,10 +1,12 @@
-use super::{ClipFilter, ClipQuery, GRID_PAGE_SIZE, GRID_SCHEMA, SCHEMA, grid_page_sql};
+use super::{
+    ClipGridFilter, ClipGridOutcome, ClipGridQuery, ClipGridQueue, GRID_PAGE_SIZE, SCHEMA,
+    grid_page_sql,
+};
 use rusqlite::{Connection, StatementStatus, ToSql, params, params_from_iter};
 use std::time::Instant;
 
 fn populate(db: &Connection, count: i64) {
     db.execute_batch(SCHEMA).unwrap();
-    db.execute_batch(GRID_SCHEMA).unwrap();
     // Seed the same projection and cache schema as the application, without touching media.
     db.execute(
         "WITH RECURSIVE clips(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM clips WHERE n<?1)
@@ -15,28 +17,48 @@ fn populate(db: &Connection, count: i64) {
                 CASE WHEN n<=?1/5 THEN '2026-10-01' ELSE '2026-11-01' END,
                 CASE WHEN n%3=0 THEN '420' ELSE '400' END,
                 CASE WHEN n%7=0 THEN 'win' ELSE 'loss' END,
-                lower(printf('Solo queue %s | %s | %s',n,
+                lower(printf('Solo queue %s | %s | %s | %s',n,
                     CASE WHEN n%19=0 THEN 'Tower dive' ELSE 'Team fight' END,
-                    CASE WHEN n%251=0 THEN 'Late comeback' ELSE 'Ranked' END)),
-                CASE WHEN n%43=0 THEN '[{\"kind\":\"pentakill\",\"tier\":5,\"actor\":\"you\"}]'
-                    ELSE '[{\"kind\":\"double kill\",\"tier\":2,\"actor\":\"ally\"}]' END,
-                CASE WHEN n%251=0 THEN '[\"Late comeback\"]' ELSE '[\"Ranked\"]' END,
+                    CASE WHEN n%251=0 THEN 'Late comeback' ELSE 'Ranked' END,
+                    CASE WHEN n%43=0 THEN 'Pentakill' ELSE 'Double Kill' END)),
                 json_object('exported_at', n/4, 'game', json_object('mode', 'CLASSIC',
                     'champion','Lux','account','Fixture#EUW','played_at','2026-11-01T12:00:00Z'),
                     'id',printf('grid-%08d',n),'source_timestamp','1-2','duration','240000000',
+                    'predefined_tags',json_array(
+                        CASE WHEN n%43=0 THEN 'pentakill' ELSE 'double_kill' END),
+                    'custom_tags',json_array(CASE WHEN n%251=0 THEN 'Late comeback' ELSE 'Ranked' END),
                     'range',json_object('start_frame',n*900,'end_frame_exclusive',n*900+300),
-                    'preset','horizontal','version',1)
+                    'preset','horizontal','version',2)
          FROM clips",
         params![count],
     )
     .unwrap();
-    db.execute_batch("ANALYZE").unwrap();
+    db.execute_batch(
+        "INSERT INTO clip_tag_projection
+         SELECT clip.id,lower(tag.value),tag.value FROM clip_projection clip,
+             json_each(clip.header,'$.custom_tags') tag;
+         INSERT INTO clip_grid_tag_projection
+         SELECT tag.tag_key,clip.created,clip.id FROM clip_tag_projection tag
+             JOIN clip_projection clip ON clip.id=tag.clip_id;
+         INSERT INTO clip_grid_tag_projection
+         SELECT CASE tag.value WHEN 'pentakill' THEN 'pentakill' ELSE 'double kill' END,
+             clip.created,clip.id FROM clip_projection clip,
+             json_each(clip.header,'$.predefined_tags') tag;
+         ANALYZE;",
+    )
+    .unwrap();
 }
 
-fn measure(db: &Connection, name: &str, query: ClipQuery, after: Option<i64>, expected: &[i64]) {
+fn measure(
+    db: &Connection,
+    name: &str,
+    query: ClipGridQuery,
+    after: Option<i64>,
+    expected: &[i64],
+) {
     let after_id = after.map(|n| format!("grid-{n:08}"));
     let created = after.map(|n| n / 4);
-    let filter = ClipFilter::new(&query).unwrap();
+    let filter = ClipGridFilter::new(&query).unwrap();
     let limit = (GRID_PAGE_SIZE + 1) as i64;
     let arguments = || {
         filter.args().chain([&limit as &dyn ToSql]).chain(
@@ -46,7 +68,7 @@ fn measure(db: &Connection, name: &str, query: ClipQuery, after: Option<i64>, ex
                 .flatten(),
         )
     };
-    let sql = grid_page_sql(after.is_some());
+    let sql = grid_page_sql(&filter, after.is_some());
     let plan = db
         .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
         .unwrap()
@@ -95,6 +117,14 @@ fn measure(db: &Connection, name: &str, query: ClipQuery, after: Option<i64>, ex
         !plan.iter().any(|line| line.contains("TEMP B-TREE")),
         "{name}: {plan:?}"
     );
+    if !query.tags.is_empty() {
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("SEARCH anchor") && line.contains("tag_key=?")),
+            "{name}: {plan:?}"
+        );
+        assert_eq!(scan_steps, 0, "{name}: {plan:?}");
+    }
     eprintln!(
         "{name:24} median {:>6} µs, vm={vm_steps:>8} fullscan={scan_steps:>6} sorts={sorts} | {}",
         samples[samples.len() / 2],
@@ -111,10 +141,16 @@ fn representative_clip_grid_queries() {
         eprintln!("{count} projected clips");
         let desc = (1..=count).rev();
         let all = desc.clone().collect::<Vec<_>>();
-        measure(&db, "Newest", ClipQuery::default(), None, &all);
+        measure(&db, "Newest", ClipGridQuery::default(), None, &all);
         let deep = count / 4;
         let after = desc.clone().filter(|&n| n < deep).collect::<Vec<_>>();
-        measure(&db, "Deep cursor", ClipQuery::default(), Some(deep), &after);
+        measure(
+            &db,
+            "Deep cursor",
+            ClipGridQuery::default(),
+            Some(deep),
+            &after,
+        );
         let earlier = desc
             .clone()
             .filter(|n| *n <= count / 5 && n % 21 == 0)
@@ -122,12 +158,12 @@ fn representative_clip_grid_queries() {
         measure(
             &db,
             "Older match filters",
-            ClipQuery {
-                champion: Some("Ahri".into()),
+            ClipGridQuery {
+                champions: vec!["Ahri".into()],
                 from: Some("2026-10-01".into()),
                 to: Some("2026-10-01".into()),
-                queue: Some("420".into()),
-                outcome: Some("win".into()),
+                queue: Some(ClipGridQueue::Ranked),
+                outcome: Some(ClipGridOutcome::Win),
                 ..Default::default()
             },
             None,
@@ -141,7 +177,7 @@ fn representative_clip_grid_queries() {
             measure(
                 &db,
                 name,
-                ClipQuery {
+                ClipGridQuery {
                     search: Some(search.into()),
                     ..Default::default()
                 },
@@ -151,10 +187,9 @@ fn representative_clip_grid_queries() {
         }
         measure(
             &db,
-            "Highlight and actor",
-            ClipQuery {
-                highlight: Some("5".into()),
-                actor: Some("you".into()),
+            "Exact predefined tag",
+            ClipGridQuery {
+                tags: vec!["Pentakill".into()],
                 ..Default::default()
             },
             None,
@@ -162,8 +197,21 @@ fn representative_clip_grid_queries() {
         );
         measure(
             &db,
+            "Exact tags after cursor",
+            ClipGridQuery {
+                tags: vec!["Pentakill".into(), "Ranked".into()],
+                ..Default::default()
+            },
+            Some(deep),
+            &desc
+                .clone()
+                .filter(|&n| n < deep && n % 43 == 0 && n % 251 != 0)
+                .collect::<Vec<_>>(),
+        );
+        measure(
+            &db,
             "Missing substring",
-            ClipQuery {
+            ClipGridQuery {
                 search: Some("nomatch".into()),
                 ..Default::default()
             },

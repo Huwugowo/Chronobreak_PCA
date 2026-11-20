@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::process::Command;
 
-use crate::clip_bundle::{self, ClipEvents, ClipHeader, ClipId};
+use crate::clip_bundle::{self, ClipEvents, ClipHeader, ClipId, HighlightKind};
 use crate::export_process::{self, Cancellation, Interrupted, Limits};
 use crate::export_staging::{Batch, Destination, Lease, RecoveryMode};
 use crate::playback_file::ApprovedRoot;
@@ -83,7 +83,7 @@ pub(crate) struct ExportMetadata {
     pub draft_token: Option<String>,
     pub title: Option<String>,
     pub custom_tags: Vec<String>,
-    pub highlights: Vec<u32>,
+    pub predefined_tags: Vec<HighlightKind>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -345,15 +345,10 @@ pub async fn export(
     )?;
     let unavailable = ClipEvents::unavailable();
     let events = draft.as_ref().map_or(&unavailable, |draft| &draft.events);
-    let highlights = if let (Some(_), Some(metadata)) = (&draft, metadata) {
-        anyhow::ensure!(
-            metadata.highlights.len() <= clip_bundle::MAX_HIGHLIGHTS,
-            "too many clip highlights"
-        );
-        events.select(&metadata.highlights)?
-    } else {
-        Vec::new()
-    };
+    let predefined_tags = metadata.map_or_else(
+        || events.detected_tags(),
+        |metadata| clip_bundle::normalize_predefined_tags(metadata.predefined_tags.iter().copied()),
+    );
     let mut destinations = Vec::with_capacity(total_outputs);
     let mut final_paths = Vec::with_capacity(total_outputs);
     for &preset in &request.presets {
@@ -410,7 +405,7 @@ pub async fn export(
             preset,
             duration: ReplayTick::new(diagnostics.validation.video_replay_end)?,
             events: events.availability,
-            highlights: highlights.clone(),
+            predefined_tags: predefined_tags.clone(),
             custom_tags: custom_tags.clone(),
         };
         header.validate(&paths.clip_id)?;

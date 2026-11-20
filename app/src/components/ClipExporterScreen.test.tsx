@@ -5,6 +5,7 @@ import { render } from "solid-js/web";
 import ClipExporterScreen from "./ClipExporterScreen";
 import {
   chooseMusicFile,
+  exportClip,
   loadBuiltInMusic,
   loadReplayDescriptor,
   prepareImportedMusicPreview,
@@ -43,7 +44,7 @@ it("keeps replay navigation and plain section labels and previews filenames with
   vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
   vi.spyOn(managedClips, "usesManagedClips").mockReturnValue(true);
   vi.spyOn(managedClips, "prepareClipDraft").mockResolvedValue({
-    token: "test-draft", title: "Ahri - 2026-09-14 - 0m01s", availability: "available", candidates: [],
+    token: "test-draft", title: "Ahri - 2026-09-14 - 0m01s", availability: "available", detected_tags: [],
   });
   const draft = {
     gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId,
@@ -83,6 +84,43 @@ it("keeps replay navigation and plain section labels and previews filenames with
     title.value = "My clip – Ahri";
     title.dispatchEvent(new Event("input", { bubbles: true }));
     expect(host.textContent).toContain("My clip – Ahri - Discord.mp4");
+  } finally { dispose(); }
+});
+
+it("edits neutral predefined tags and exports the unified metadata", async () => {
+  vi.mocked(loadReplayDescriptor).mockResolvedValue({
+    snapshot_token: "test-snapshot", game_timestamp: "1",
+    media_timeline: descriptor.media_timeline, video_url: descriptor.video_url,
+  });
+  vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
+  vi.spyOn(managedClips, "usesManagedClips").mockReturnValue(true);
+  vi.spyOn(managedClips, "prepareClipDraft").mockResolvedValue({
+    token: "test-draft", title: "Ahri clip", availability: "available", detected_tags: ["pentakill"],
+  });
+  vi.mocked(exportClip).mockResolvedValue({ outputs: [], elapsed_ms: 1 } as never);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <ClipExporterScreen admissionError={null}
+    draft={{ gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId, startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
+    outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }}
+    onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work => work("test-snapshot")} />, host);
+  try {
+    await vi.waitFor(() => expect([...host.querySelectorAll("fieldset label")]
+      .find(label => label.textContent?.includes("Pentakill"))!.querySelector("input")!.checked).toBe(true));
+    const labels = [...host.querySelectorAll("fieldset label")];
+    expect(labels.map(label => label.textContent?.trim())).toEqual(expect.arrayContaining([
+      "Double Kill", "Triple Kill", "Quadra Kill", "Pentakill", "First Blood", "Dragon Steal", "Baron Steal", "Herald Steal",
+    ]));
+    labels.find(label => label.textContent?.includes("Double Kill"))!.querySelector("input")!.click();
+    const custom = labels.find(label => label.textContent?.trim() === "Find or create a tag")!.querySelector("input")!;
+    custom.value = "Ranked";
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+    [...host.querySelectorAll("button")].find(button => button.textContent === "Add tag")!.click();
+    [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT 1 MP4"))!.click();
+    await vi.waitFor(() => expect(exportClip).toHaveBeenCalledOnce());
+    expect(vi.mocked(exportClip).mock.calls[0][0].metadata).toEqual({
+      draft_token: "test-draft", title: null, custom_tags: ["Ranked"], predefined_tags: ["pentakill", "double_kill"],
+    });
   } finally { dispose(); }
 });
 

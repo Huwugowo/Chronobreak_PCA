@@ -3,7 +3,11 @@ import type { HistoryQuery, HistoryQueue, PersonalMoment } from "../leagueIndex"
 import { readClipTagSuggestions } from "../managedClips";
 import { queueLabels } from "../matchQueues";
 import { CheckIcon, FilterIcon, SearchIcon, StarIcon, TagIcon } from "../ui/icons";
-import styles from "./MatchHistoryFilters.module.css";
+import {
+  ChampionAutocomplete, ClearFiltersButton, FilterCheckbox, FilterChip, FilterDropdownTrigger, FilterTabButton,
+  datePresets as dateLabels, filterControlStyles as styles,
+} from "./FilterControls";
+import historyStyles from "./MatchHistoryFilters.module.css";
 
 const queueGroups = {
   Ranked: ["ranked_solo_duo", "ranked_flex", "ranked_5s"],
@@ -14,7 +18,6 @@ const momentLabels: Record<PersonalMoment, string> = {
   pentakill: "My pentakill", quadra_kill: "My quadra kill",
   baron_steal: "My Baron steal", dragon_steal: "My dragon steal",
 };
-const dateLabels = { today: "Today", yesterday: "Yesterday", week: "Last 7 days", month: "Last 30 days" };
 const resultLabels = { win: "Victory", loss: "Defeat" };
 const dateOffsets = { today: [0, 1], yesterday: [-1, 0], week: [-6, 1], month: [-29, 1] };
 const maxClipTags = 32;
@@ -46,7 +49,6 @@ export function historyQueryForFilters(filters: HistoryFilters, now = new Date()
   return query;
 }
 
-const championKey = (name: string) => name.normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 const tagKey = (name: string) => name.trim().toLowerCase();
 const toggle = <T,>(values: T[], value: T) => values.includes(value) ? values.filter(item => item !== value) : [...values, value];
 const validPlayer = (value: string) => {
@@ -75,21 +77,18 @@ export default function MatchHistoryFilters(props: Props) {
   const [pinned, setPinned] = createSignal(false);
   const [draft, setDraft] = createSignal<AdvancedFilters>(emptyAdvanced);
   const [playerError, setPlayerError] = createSignal(false);
-  const [championText, setChampionText] = createSignal("");
-  const [championOpen, setChampionOpen] = createSignal(false);
-  const [activeOption, setActiveOption] = createSignal(-1);
   const [clipPrefix, setClipPrefix] = createSignal("");
   const [clipChoices, setClipChoices] = createSignal<string[]>([]);
   const [clipLoading, setClipLoading] = createSignal(false);
   const [clipFailed, setClipFailed] = createSignal(false);
   const [clipRetry, setClipRetry] = createSignal(0);
+  const [championReset, resetChampion] = createSignal(0);
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let root!: HTMLDivElement;
-  let input!: HTMLInputElement;
+  let championInput!: HTMLInputElement;
 
   const commit = (patch: Partial<HistoryFilters>) => props.onChange({ ...props.filters, ...patch });
   const popupId = (name: Popup) => `${id}-${name.toLowerCase()}`;
-  const optionsId = `${id}-champions`;
   const trigger = (name: Popup) => root.querySelector<HTMLButtonElement>(`[aria-controls="${popupId(name)}"]`);
   const close = (restore = false) => {
     clearTimeout(closeTimer);
@@ -98,17 +97,8 @@ export default function MatchHistoryFilters(props: Props) {
     setPinned(false);
     if (restore && name) trigger(name)?.focus();
   };
-  const closeChampionList = () => {
-    setChampionOpen(false);
-    setActiveOption(-1);
-  };
-  const openChampionList = () => {
-    close();
-    setChampionOpen(true);
-  };
   const open = (name: Popup, pin: boolean) => {
     clearTimeout(closeTimer);
-    closeChampionList();
     setPopup(name);
     setPinned(pin);
   };
@@ -124,7 +114,6 @@ export default function MatchHistoryFilters(props: Props) {
   const dismissOutside = (event: Event) => {
     if (event.target instanceof Node && !root.contains(event.target)) {
       close();
-      closeChampionList();
     }
   };
   document.addEventListener("pointerdown", dismissOutside);
@@ -135,27 +124,6 @@ export default function MatchHistoryFilters(props: Props) {
     clearTimeout(closeTimer);
   });
 
-  const championCatalog = createMemo(() => props.champions.map(name => ({ name, key: championKey(name) }))
-    .sort((a, b) => a.name.localeCompare(b.name)));
-  const suggestions = createMemo(() => {
-    const key = championKey(championText());
-    const selected = new Set(props.filters.champions);
-    const exact: string[] = [], prefixes: string[] = [], contains: string[] = [];
-    for (const champion of championCatalog()) {
-      if (selected.has(champion.name) || !champion.key.includes(key)) continue;
-      if (champion.key === key) exact.push(champion.name);
-      else if (champion.key.startsWith(key)) prefixes.push(champion.name);
-      else contains.push(champion.name);
-    }
-    return [...exact, ...prefixes, ...contains].slice(0, 6);
-  });
-  const optionId = (index: number) => `${optionsId}-${index}`;
-  const selectChampion = (name: string) => {
-    commit({ champions: [...props.filters.champions, name] });
-    setChampionText("");
-    input.focus();
-    closeChampionList();
-  };
 
   createEffect(() => {
     const token = props.clipTagToken;
@@ -202,15 +170,15 @@ export default function MatchHistoryFilters(props: Props) {
           if (event.pointerType !== "mouse" || pinned()) return;
           closeTimer = setTimeout(() => { if (expanded() && !pinned()) close(); }, 150);
         }}>
-        <button type="button" class={styles.queue} data-active={selected()} aria-expanded={expanded()}
+        <FilterTabButton class={styles.queue} active={selected()} aria-expanded={expanded()}
           aria-controls={popupId(name)} onClick={() => openByClick(name)}
           onKeyDown={event => {
             if (event.key !== "ArrowDown") return;
             event.preventDefault();
             open(name, true);
             root.querySelector<HTMLButtonElement>(`#${popupId(name)} button`)?.focus();
-          }}>{name}<i class={styles.chevron} aria-hidden="true" /></button>
-        <div class={`${styles.panel} ${styles.queuePanel}`} id={popupId(name)} hidden={!expanded()} data-history-popup>
+          }}>{name}<i class={styles.chevron} aria-hidden="true" /></FilterTabButton>
+        <div class={`${styles.panel} ${historyStyles.queuePanel}`} id={popupId(name)} hidden={!expanded()} data-history-popup>
           <For each={choices}>{queue =>
             <button type="button" aria-pressed={props.filters.queue === queue} onClick={() => chooseQueue(queue, true)}>
               {queueLabels[queue]}<Show when={props.filters.queue === queue}><CheckIcon size={15} /></Show>
@@ -220,19 +188,6 @@ export default function MatchHistoryFilters(props: Props) {
       </div>
     );
   };
-  const Portrait = (item: { name: string }) => (
-    <span class={styles.portrait} aria-hidden="true">
-      <Show when={props.championPortrait(item.name)} keyed>{src =>
-        <img src={src} alt="" decoding="async" onError={event => { event.currentTarget.hidden = true; }} />
-      }</Show>
-    </span>
-  );
-  const Chip = (item: { label: string; champion?: string; remove: () => void }) => (
-    <button type="button" class={styles.chip} aria-label={`Remove ${item.label}`} onClick={item.remove}>
-      <Show when={item.champion}><Portrait name={item.champion!} /></Show>
-      {item.label}<span aria-hidden="true">×</span>
-    </button>
-  );
   const hasAdvanced = () => !!(props.filters.player || props.filters.date || props.filters.result);
   const hasCriteria = () => hasAdvanced() || props.filters.queue || props.filters.favorites
     || props.filters.champions.length || props.filters.moments.length || props.filters.clipTags.length;
@@ -242,70 +197,29 @@ export default function MatchHistoryFilters(props: Props) {
       if (event.key === "Escape" && popup()) { event.preventDefault(); close(true); }
     }}>
       <nav class={styles.queues} aria-label="Match queue">
-        <button type="button" class={styles.queue} aria-pressed={props.filters.queue === null} data-active={props.filters.queue === null}
-          onClick={() => chooseQueue(null)}>All</button>
+        <FilterTabButton class={styles.queue} active={props.filters.queue === null} aria-pressed={props.filters.queue === null}
+          onClick={() => chooseQueue(null)}>All</FilterTabButton>
         <QueueGroup name="Ranked" />
         <QueueGroup name="ARAM" />
-        <button type="button" class={styles.queue} aria-pressed={props.filters.queue === "arena"} data-active={props.filters.queue === "arena"}
-          onClick={() => chooseQueue("arena")}>Arena</button>
+        <FilterTabButton class={styles.queue} active={props.filters.queue === "arena"} aria-pressed={props.filters.queue === "arena"}
+          onClick={() => chooseQueue("arena")}>Arena</FilterTabButton>
         <QueueGroup name="Other" />
       </nav>
       <div class={styles.toolbar}>
-        <div class={`${styles.anchor} ${styles.championPicker}`}>
-          <label class={styles.searchBox}>
-            <SearchIcon class={styles.searchIcon} size={16} />
-            <input ref={input!} type="search" role="combobox" aria-label="Search played champions"
-              aria-autocomplete="list" aria-expanded={championOpen()} aria-controls={optionsId}
-              aria-activedescendant={championOpen() && suggestions()[activeOption()] ? optionId(activeOption()) : undefined}
-              placeholder="Search played champions…" autocomplete="off" spellcheck={false} value={championText()}
-              onFocus={openChampionList} onClick={openChampionList} onBlur={closeChampionList}
-              onInput={event => {
-                if (props.onBenchmarkInput(event)) return;
-                setChampionText(event.currentTarget.value);
-                openChampionList();
-                setActiveOption(-1);
-              }}
-              onKeyDown={event => {
-                if (event.isComposing) return;
-                if (event.key === "Escape" && championOpen()) {
-                  event.preventDefault();
-                  closeChampionList();
-                }
-                const choices = suggestions();
-                if (!choices.length) return;
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  openChampionList();
-                  setActiveOption(index => event.key === "ArrowDown" ? (index + 1) % choices.length
-                    : index <= 0 ? choices.length - 1 : index - 1);
-                } else if (event.key === "Enter" && championOpen()) {
-                  event.preventDefault();
-                  selectChampion(choices[activeOption()] ?? choices[0]);
-                }
-              }} />
-          </label>
-          <div class={`${styles.panel} ${styles.suggestions}`} hidden={!championOpen()}>
-            <div role="listbox" aria-label="Played champions" id={optionsId}>
-              <For each={suggestions()}>{(name, index) => (
-                <button type="button" id={optionId(index())} role="option" tabIndex={-1} aria-selected={index() === activeOption()}
-                  onMouseDown={event => event.preventDefault()} onClick={() => selectChampion(name)}>
-                  <Portrait name={name} />{name}
-                </button>
-              )}</For>
-            </div>
-            <Show when={championOpen() && !suggestions().length}><p role="status">No played champions found</p></Show>
-          </div>
-        </div>
+        <ChampionAutocomplete champions={props.champions} selected={props.filters.champions} championPortrait={props.championPortrait}
+          dismiss={!!popup()} reset={championReset()} inputRef={element => { championInput = element; }}
+          leadingIcon={<SearchIcon size={16} />} onSelect={name => commit({ champions: [...props.filters.champions, name] })}
+          onOpen={() => close()} onBenchmarkInput={props.onBenchmarkInput} />
         <div class={styles.anchor}>
-          <button type="button" class={styles.tool} data-active={!!(props.filters.moments.length || props.filters.clipTags.length)}
+          <FilterDropdownTrigger chevron active={!!(props.filters.moments.length || props.filters.clipTags.length)}
             aria-controls={popupId("Tags")} aria-expanded={popup() === "Tags"} onClick={() => openByClick("Tags")}>
-            <TagIcon size={16} />Tags<i class={styles.chevron} aria-hidden="true" />
-          </button>
+            <TagIcon size={16} />Tags
+          </FilterDropdownTrigger>
           <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("Tags")} hidden={popup() !== "Tags"} data-history-popup>
             <fieldset><legend>Personal moments</legend>
               <For each={Object.keys(momentLabels) as PersonalMoment[]}>{moment =>
-                <label><input type="checkbox" checked={props.filters.moments.includes(moment)}
-                  onChange={() => commit({ moments: toggle(props.filters.moments, moment) })} />{momentLabels[moment]}</label>
+                <FilterCheckbox label={momentLabels[moment]} checked={props.filters.moments.includes(moment)}
+                  onChange={() => commit({ moments: toggle(props.filters.moments, moment) })} />
               }</For>
             </fieldset>
             <fieldset><legend>Custom tags</legend>
@@ -315,8 +229,8 @@ export default function MatchHistoryFilters(props: Props) {
               </Show>
               <For each={displayedTags()}>{tag => {
                 const checked = () => props.filters.clipTags.some(value => tagKey(value) === tagKey(tag));
-                return <label><input type="checkbox" checked={checked()} disabled={!checked() && props.filters.clipTags.length >= maxClipTags}
-                  onChange={() => toggleTag(tag)} />{tag}</label>;
+                return <FilterCheckbox label={tag} checked={checked()} disabled={!checked() && props.filters.clipTags.length >= maxClipTags}
+                  onChange={() => toggleTag(tag)} />;
               }}</For>
               <Show when={props.clipTagError || clipFailed()}><p role="status">Custom tags are unavailable.</p>
                 <button type="button" class={styles.smallAction} onClick={() => props.clipTagError ? props.onClipTagRetry?.() : setClipRetry(n => n + 1)}>Try again</button>
@@ -329,16 +243,16 @@ export default function MatchHistoryFilters(props: Props) {
             </fieldset>
           </div>
         </div>
-        <button type="button" class={`${styles.tool} ${styles.star}`} title="Favorites only" aria-label="Favorites only"
+        <button type="button" class={`${styles.tool} ${historyStyles.star}`} title="Favorites only" aria-label="Favorites only"
           aria-pressed={props.filters.favorites} data-active={props.filters.favorites} onClick={() => {
             close();
             commit({ favorites: !props.filters.favorites });
           }}><StarIcon size={16} filled={props.filters.favorites} /></button>
         <div class={styles.anchor}>
-          <button type="button" class={styles.tool} data-active={hasAdvanced()} aria-controls={popupId("Filters")}
+          <FilterDropdownTrigger active={hasAdvanced()} aria-controls={popupId("Filters")}
             aria-expanded={popup() === "Filters"} onClick={() => openByClick("Filters")}>
             <FilterIcon size={16} />Filters
-          </button>
+          </FilterDropdownTrigger>
           <form class={`${styles.panel} ${styles.advanced}`} id={popupId("Filters")} hidden={popup() !== "Filters"} data-history-popup
             onSubmit={event => {
               event.preventDefault();
@@ -368,23 +282,22 @@ export default function MatchHistoryFilters(props: Props) {
       </div>
       <Show when={hasCriteria()}>
         <div class={styles.criteria} aria-label="Active filters">
-          <For each={props.filters.champions}>{name => <Chip label={name} champion={name} remove={() => commit({ champions: toggle(props.filters.champions, name) })} />}</For>
-          <For each={props.filters.moments}>{moment => <Chip label={momentLabels[moment]} remove={() => commit({ moments: toggle(props.filters.moments, moment) })} />}</For>
-          <For each={props.filters.clipTags}>{tag => <Chip label={tag} remove={() => toggleTag(tag)} />}</For>
-          <Show when={props.filters.queue}>{queue => <Chip label={queueLabels[queue()]} remove={() => chooseQueue(null)} />}</Show>
-          <Show when={props.filters.player}><Chip label={props.filters.player} remove={() => commit({ player: "" })} /></Show>
+          <For each={props.filters.champions}>{name => <FilterChip label={name} champion={name} championPortrait={props.championPortrait} onRemove={() => commit({ champions: toggle(props.filters.champions, name) })} />}</For>
+          <For each={props.filters.moments}>{moment => <FilterChip label={momentLabels[moment]} onRemove={() => commit({ moments: toggle(props.filters.moments, moment) })} />}</For>
+          <For each={props.filters.clipTags}>{tag => <FilterChip label={tag} onRemove={() => toggleTag(tag)} />}</For>
+          <Show when={props.filters.queue}>{queue => <FilterChip label={queueLabels[queue()]} onRemove={() => chooseQueue(null)} />}</Show>
+          <Show when={props.filters.player}><FilterChip label={props.filters.player} onRemove={() => commit({ player: "" })} /></Show>
           <Show when={props.filters.date ? dateLabels[props.filters.date] : null}>{label =>
-            <Chip label={label()} remove={() => commit({ date: "" })} />}</Show>
+            <FilterChip label={label()} onRemove={() => commit({ date: "" })} />}</Show>
           <Show when={props.filters.result ? resultLabels[props.filters.result] : null}>{label =>
-            <Chip label={label()} remove={() => commit({ result: "" })} />}</Show>
-          <button type="button" class={styles.clear} onClick={() => {
+            <FilterChip label={label()} onRemove={() => commit({ result: "" })} />}</Show>
+          <ClearFiltersButton onClear={() => {
             close();
-            setChampionText("");
             setClipPrefix("");
-            setActiveOption(-1);
+            resetChampion(value => value + 1);
             props.onClear();
-            input.focus();
-          }}>Clear all</button>
+            championInput.focus();
+          }} />
         </div>
       </Show>
     </div>

@@ -1,0 +1,48 @@
+.filters {
+  container-type: inline-size;
+}
+
+.toolbar .search {
+  flex: 1 1 16rem;
+  min-inline-size: 0;
+  max-inline-size: 32rem;
+}
+
+.folder {
+  margin-inline-start: auto;
+}
+
+.anchor .popup {
+  min-inline-size: 0;
+  inset-inline: auto 0;
+}
+
+.popup button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@container (max-width: 820px) {
+  .toolbar {
+    position: relative;
+  }
+
+  .toolbar .anchor {
+    position: static;
+  }
+
+  .anchor .popup {
+    inset-inline: 0 auto;
+    inline-size: min(310px, 100%);
+  }
+}
+
+@container (max-width: 470px) {
+  .toolbar .search {
+    flex-basis: 100%;
+  }
+
+  .queues button {
+    padding-inline: 8px;
+  }
+}

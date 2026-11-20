@@ -41,11 +41,11 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
   const fixtureClip: ClipCard = {
     title: "Last fight", video_url: "http://fixture/clip.mp4", thumbnail_url: "http://fixture/thumb.jpg",
     game_clock: "1122000000",
-    header: { version: 1, id: "clip", source_timestamp: newest.timestamp, preset: "horizontal", exported_at: 0,
+    header: { version: 2, id: "clip", source_timestamp: newest.timestamp, preset: "horizontal", exported_at: 0,
       range: { media_id: newest.media_id!, start_frame: "0", end_frame_exclusive: "300" },
       game: { match_group: group, champion: "Ahri", played_at: null, part_recorded_at: null, account: null,
         queue_id: null, mode: null, outcome: null, final_kda: null },
-      duration: "240000000", events: "unavailable", highlights: [], custom_tags: [] },
+      duration: "240000000", events: "unavailable", predefined_tags: [], custom_tags: [] },
   };
   const play = vi.fn();
   const playSingle = vi.fn();

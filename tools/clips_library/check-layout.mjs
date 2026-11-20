@@ -65,9 +65,11 @@ try {
     const clips = Array.from({ length: 20 }, (_, index) => ({
       id: String(index), title: index === 0 ? "A long title ".repeat(14) : `Clip ${index}`,
       champion: "Ahri", duration: "240000000", thumbnail_url: `/clip-fixture-image/${index}.png`,
-      custom_tags: index === 0 ? [] : ["ranked", "outplay", "river"], highlights: [],
+      custom_tags: index === 0 ? [] : ["ranked", "outplay", "river"], predefined_tags: [],
     }));
     window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+      if (command === "clip_grid_champions") return ["Ahri", "Jinx"];
+      if (command === "clip_tag_suggestions") return ["Outplay"];
       if (command !== "clip_grid_page") throw new Error(command);
       window.gridCalls.push(args);
       const page = args.after ? { clips: clips.slice(12), next: null } : { clips: clips.slice(0, 12), next: [1, "11"] };
@@ -111,6 +113,19 @@ try {
   }
 
   await page.locator("#content").evaluate(element => { element.style.removeProperty("width"); });
+  for (const width of [360, 620, 1020]) {
+    await page.setViewportSize({ width, height: 650 });
+    for (const name of ["Tags", "Filters"]) {
+      const trigger = page.getByRole("button", { name, exact: true });
+      await trigger.click();
+      const popup = page.locator(`[id="${await trigger.getAttribute("aria-controls")}"]`);
+      await popup.waitFor();
+      const bounds = await popup.boundingBox();
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, `${name} fits at ${width}px`);
+      await page.keyboard.press("Escape");
+      assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+    }
+  }
   await page.setViewportSize({ width: 620, height: 650 });
   await page.getByRole("searchbox", { name: "Search clips" }).fill("ranked");
   await page.waitForFunction(() => window.gridCalls.at(-1)?.query.search === "ranked");
@@ -171,7 +186,7 @@ try {
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
   }
   assert.deepEqual(errors, []);
-  console.log("Verified eight content-width samples, three modal sizes, pagination, fullscreen and scroll/focus restoration.");
+  console.log("Verified responsive grid and filter menus, three modal sizes, pagination, fullscreen and scroll/focus restoration.");
 } finally {
   await browser?.close();
   await server?.close();

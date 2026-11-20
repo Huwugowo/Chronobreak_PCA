@@ -6,7 +6,6 @@ export type Attribution = "you" | "ally" | "enemy" | "unknown";
 export type Availability = "available" | "partial" | "unavailable";
 export type HighlightKind = "double_kill" | "triple_kill" | "quadra_kill" | "pentakill"
   | "first_blood" | "dragon_steal" | "baron_steal" | "herald_steal";
-export type Highlight = { event_index: number; kind: HighlightKind; attribution: Attribution; actor: string | null };
 export type ClipGame = {
   match_group: string | null; played_at: string | null; part_recorded_at: string | null;
   champion: string | null; account: string | null; queue_id: number | null; mode: string | null;
@@ -17,36 +16,37 @@ export type ClipGame = {
   duration_seconds?: number;
 };
 export type ClipHeader = {
-  version: 1; id: string; source_timestamp: string;
+  version: 2; id: string; source_timestamp: string;
   range: { media_id: string; start_frame: string; end_frame_exclusive: string };
   game: ClipGame; exported_at: number; preset: ClipExportPreset; duration: string;
-  events: Availability; highlights: Highlight[]; custom_tags: string[];
+  events: Availability; predefined_tags: HighlightKind[]; custom_tags: string[];
 };
 export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string; game_clock?: string };
 export type GroupCursor = [number, string];
 export type ClipCursor = [number, number, string];
 export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null };
 export type ClipPage = { groups: ClipGroup[]; next: GroupCursor | null };
+export type ClipQueue = "ranked" | "aram" | "arena" | "other";
 export type ClipFilters = {
-  search?: string; champion?: string; from?: string; to?: string; queue?: string;
-  outcome?: string; highlight?: string; actor?: Attribution;
+  search?: string; champions?: string[]; from?: string; to?: string; queue?: ClipQueue;
+  outcome?: "win" | "loss"; tags?: string[];
 };
-export type ClipQuery = ClipFilters & {
+export type ClipQuery = {
   match_group?: string;
   after?: GroupCursor; group_key?: string; clip_after?: ClipCursor; include_game_clock?: boolean;
 };
-export type ClipGridCard = Pick<ClipHeader, "id" | "duration" | "highlights" | "custom_tags"> & {
+export type ClipGridCard = Pick<ClipHeader, "id" | "duration" | "custom_tags" | "predefined_tags"> & {
   title: string; champion: string | null; thumbnail_url: string;
 };
 export type ClipGridCursor = [number, string];
 export type ClipGridPage = { clips: ClipGridCard[]; next: ClipGridCursor | null };
 export type ClipPlayback = { clip: ClipCard; file_size_bytes: number };
-export type ClipDetail = { header: ClipHeader; candidates: Highlight[]; events: {
+export type ClipDetail = { events: {
   availability: Availability; events: Array<{ replay_tick: string; event: { name?: string }; attribution: Attribution; actor: string | null }>;
 } };
-export type DraftSummary = { token: string; title: string; availability: Availability; candidates: Highlight[] };
+export type DraftSummary = { token: string; title: string; availability: Availability; detected_tags: HighlightKind[] };
 export type ClipEdit = { kind: "rename"; title: string } |
-  { kind: "tags"; custom_tags: string[]; highlights: number[] } | { kind: "delete" } | { kind: "reveal" };
+  { kind: "tags"; custom_tags: string[]; predefined_tags: HighlightKind[] } | { kind: "delete" } | { kind: "reveal" };
 
 export const usesManagedClips = () => isTauri();
 export const reconcileClips = (snapshotToken: string) => invoke<boolean>("reconcile_clips", { snapshotToken });
@@ -54,6 +54,8 @@ export const readClipPage = (snapshotToken: string, query: ClipQuery) =>
   invoke<ClipPage>("clip_page", { snapshotToken, query });
 export const readClipGridPage = (snapshotToken: string, query: ClipFilters, after: ClipGridCursor | null) =>
   invoke<ClipGridPage>("clip_grid_page", { snapshotToken, query, after });
+export const readClipGridChampions = (snapshotToken: string) =>
+  invoke<string[]>("clip_grid_champions", { snapshotToken });
 export const readClipPlayback = (snapshotToken: string, clipId: string) =>
   invoke<ClipPlayback>("clip_playback", { snapshotToken, clipId });
 export const readClipDetail = (snapshotToken: string, clipId: string) =>
@@ -69,18 +71,15 @@ export const prepareClipDraft = (snapshotToken: string, draft: ClipDraft) =>
   } });
 
 export const clipLabels: Record<HighlightKind, string> = {
-  double_kill: "Double kill", triple_kill: "Triple kill", quadra_kill: "Quadra kill", pentakill: "Pentakill",
-  first_blood: "First Blood", dragon_steal: "Dragon steal", baron_steal: "Baron steal", herald_steal: "Herald steal",
+  double_kill: "Double Kill", triple_kill: "Triple Kill", quadra_kill: "Quadra Kill", pentakill: "Pentakill",
+  first_blood: "First Blood", dragon_steal: "Dragon Steal", baron_steal: "Baron Steal", herald_steal: "Herald Steal",
 };
-export const actorLabels: Record<Attribution, string> = { you: "You", ally: "Ally", enemy: "Enemy", unknown: "Unattributed" };
 export function clipTitleError(title: string): string | undefined {
   if (!title || title.length > 120 || /[<>:"/\\|?*\p{Cc}]|\.$|\.mp4$/iu.test(title))
     return "Enter a title of up to 120 characters without a file extension or Windows filename characters.";
   if (/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|(?:COM|LPT)[0-9¹²³])$/i.test(title.split(".")[0].trimEnd()))
     return "This name is reserved by Windows. Enter a different title.";
 }
-export const highlightLabel = (tag: Highlight) => [clipLabels[tag.kind], actorLabels[tag.attribution], tag.attribution !== "you" ? tag.actor : null]
-  .filter(Boolean).join(" · ");
 export const clipDurationMs = (duration: string) => Number(parseReplayTick(duration)) / 48_000;
 export const sourcePosition = (clip: ClipCard): ClipDraft => ({
   gameTimestamp: clip.header.source_timestamp,

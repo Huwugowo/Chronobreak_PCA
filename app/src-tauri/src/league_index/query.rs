@@ -234,7 +234,7 @@ pub(crate) enum HistoryQueue {
 }
 
 impl HistoryQueue {
-    const FEATURED: [Self; 7] = [
+    pub(super) const FEATURED: [Self; 7] = [
         Self::RankedSoloDuo,
         Self::RankedFlex,
         Self::Ranked5s,
@@ -244,7 +244,7 @@ impl HistoryQueue {
         Self::Arena,
     ];
 
-    fn ids(self) -> &'static [u32] {
+    pub(super) fn ids(self) -> &'static [u32] {
         // Riot queues.json and the client observations linked in the ExecPlan.
         match self {
             Self::RankedSoloDuo => &[4, 420],
