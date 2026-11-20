@@ -5,7 +5,8 @@ import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHi
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
 import type { HistoryQuery, HistoryStats } from "../leagueIndex";
 import type { HistoryState } from "../historyController";
-import type { ClipCard } from "../managedClips";
+import type { ClipCard, ClipTagUpdate, Tag } from "../managedClips";
+import { TagBadges, TagEditor } from "./ClipMetadataFields";
 import { ClipGroups } from "./ManagedClips";
 import { recordBenchmarkSearchInput, recordBenchmarkSearchSchedule } from "../benchmarkSearch";
 import type { DurationDisplay } from "../libraryController";
@@ -40,10 +41,11 @@ type Props = {
   onRetryDuration?: (filename: string) => void;
   snapshotOrigin: LibraryOrigin | null;
   history?: HistoryState;
-  clipTagToken?: string;
-  clipTagsPending?: boolean;
-  clipTagError?: string | null;
-  onClipTagRetry?: () => void;
+  tagToken?: string;
+  onEditMatchTags?: (group: string, previous: Tag[], selected: Tag[]) => Promise<boolean>;
+  onTagRenamed?: (tag: Tag) => void;
+  renamedTag?: Tag;
+  clipTagUpdate?: ClipTagUpdate;
   onHistoryQuery?: (query: HistoryQuery, benchmarkActionId?: string) => void;
   onHistoryNext?: () => void;
   onHistoryFirst?: () => void;
@@ -137,6 +139,18 @@ function GamesLibrary(props: Props) {
   const [textPending, setTextPending] = createSignal(false);
   const [expandedMatch, setExpandedMatch] = createSignal<string | null>(null);
   const [expandedClips, setExpandedClips] = createSignal<string | null>(null);
+  const [tagEdit, setTagEdit] = createSignal<{ group: string; previous: Tag[] }>();
+  const [draftTags, setDraftTags] = createSignal<Tag[]>([]);
+  const [savingTags, setSavingTags] = createSignal(false);
+  const saveTags = async () => {
+    const edit = tagEdit();
+    if (!edit || savingTags() || !props.onEditMatchTags) return;
+    setSavingTags(true);
+    try {
+      if (await props.onEditMatchTags(edit.group, edit.previous, draftTags())) setTagEdit(undefined);
+    } finally { setSavingTags(false); }
+  };
+  createEffect(on(() => props.snapshotOrigin?.root, () => setTagEdit(undefined), { defer: true }));
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchActionId: string | undefined;
   let scheduledSearchActionId: string | undefined;
@@ -171,7 +185,6 @@ function GamesLibrary(props: Props) {
   onCleanup(() => { clearTimeout(searchTimer); recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId); });
   const updating = () => textPending() || !!props.history?.loading;
   const semanticQuery = () => !!(filters().queue || filters().player || filters().result || filters().moments.length);
-  const waitingForTags = () => !!filters().clipTags.length && !!(props.history?.page?.clip_tags_pending || props.clipTagsPending);
   const filterActive = createMemo(() => Object.keys(historyQueryForFilters(filters())).length > 1);
   const matchStatus = () => {
     const history = props.history;
@@ -179,8 +192,6 @@ function GamesLibrary(props: Props) {
     if (updating()) return history?.page ? "Updating matches. Showing previous results." : "Updating matches...";
     if (history?.error) return history.page ? "Could not update matches. Showing previous results." : "Match data unavailable. Recordings remain playable.";
     if (history?.indexIssue?.kind === "failed") return "Could not load match data. Recordings remain playable.";
-    if (filters().clipTags.length && props.clipTagError) return "Custom tags are unavailable. Open Tags to try again.";
-    if (waitingForTags()) return "Loading custom tags…";
     if (semanticQuery() && history?.indexIssue?.kind === "limited") return "Some match data is unavailable. Results may be incomplete.";
     if (semanticQuery() && history?.page?.unknown_recordings) return "Some recordings have limited match data. Results may be incomplete.";
     return "";
@@ -220,7 +231,7 @@ function GamesLibrary(props: Props) {
       const matches = rows.map(row => partsFor(row.game).find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
       return matches;
     }
-    if (semanticQuery() || filters().clipTags.length || filters().date) return [];
+    if (semanticQuery() || filters().tags.length || filters().date) return [];
     return fallbackCards().filter(basicMatch).slice(0, 50);
     function basicMatch(game: GameSummary) {
       const matchesSearch =
@@ -248,8 +259,7 @@ function GamesLibrary(props: Props) {
     <section class={matchStyles.matchHistory} aria-label="Match History">
       <MatchHistoryFilters filters={filters()} onChange={setFilters} champions={champions()}
         championPortrait={name => ddragonAsset(props.ddragon, "champion", name)}
-        clipTagToken={props.clipTagToken} clipTagsPending={props.clipTagsPending}
-        clipTagError={props.clipTagError} onClipTagRetry={props.onClipTagRetry}
+        tagToken={props.tagToken} renamedTag={props.renamedTag}
         onBenchmarkInput={event => {
           if (event.isTrusted) return false;
           searchActionId = recordBenchmarkSearchInput(event.currentTarget);
@@ -289,6 +299,7 @@ function GamesLibrary(props: Props) {
                 const outcome = () => displayedOutcome(rowFor(game())?.game ?? game());
                 const health = () => replayHealth(game());
                 const stats = () => statsFor(game());
+                const matchTags = () => rowFor(game())?.tags ?? [];
                 const participants = createMemo(() => rowFor(game())?.game.participants ?? game().participants, undefined, {
                   equals: (before, after) => before.length === after.length && before.every((player, index) => {
                     const next = after[index];
@@ -594,11 +605,35 @@ function GamesLibrary(props: Props) {
                        </Show>
                      </div>
                     </div>
+                  <Show when={matchTags().length || (rowFor(game()) && props.onEditMatchTags && props.tagToken)}>
+                    <div class={matchStyles.matchTags}>
+                      <TagBadges tags={matchTags()} />
+                      <Show when={rowFor(game()) && props.onEditMatchTags && props.tagToken}>
+                        <button class={controlStyles.control} type="button" disabled={mutationsBlocked() || savingTags()}
+                          aria-expanded={tagEdit()?.group === group} aria-controls={`match-tags-${group}`}
+                          onClick={() => {
+                            if (tagEdit()?.group === group) { setTagEdit(undefined); return; }
+                            const previous = matchTags();
+                            setDraftTags(previous);
+                            setTagEdit({ group, previous });
+                          }}>Edit tags</button>
+                      </Show>
+                    </div>
+                  </Show>
+                  <Show when={tagEdit()?.group === group && props.tagToken}>
+                    <div class={matchStyles.matchTagEditor} id={`match-tags-${group}`}>
+                      <TagEditor token={props.tagToken!} tags={draftTags()} onTagsChange={setDraftTags}
+                        disabled={savingTags()} onTagRenamed={props.onTagRenamed} />
+                      <button type="button" class={controlStyles.control} disabled={savingTags()} onClick={() => void saveTags()}>Save tags</button>
+                      <button type="button" class={controlStyles.control} disabled={savingTags()} onClick={() => setTagEdit(undefined)}>Cancel</button>
+                    </div>
+                  </Show>
                   <Show when={props.onOpenManagedClip && group && (clipCount() ?? 0) > 1}>
                     <section class={matchStyles.matchClipStrip} id={clipRegionId} aria-label="Clips from this match" hidden={!clipsExpanded()}>
                       <Show when={props.snapshotOrigin && clipsExpanded()}>
                         <ClipGroups token={props.snapshotOrigin!.token} ready={props.actionable}
-                          query={matchClipQuery} onOpen={props.onOpenManagedClip!} inline />
+                          query={matchClipQuery} onOpen={props.onOpenManagedClip!} tagUpdate={props.clipTagUpdate}
+                          renamedTag={props.renamedTag} inline />
                       </Show>
                     </section>
                   </Show>
@@ -634,9 +669,9 @@ function GamesLibrary(props: Props) {
         <Show when={props.history?.laterPage}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryFirst} disabled={paginationDisabled()}>First page</button></Show>
         <Show when={props.history?.page?.next}><button type="button" class={matchStyles.savedFilter} onClick={props.onHistoryNext} disabled={paginationDisabled()}>Next 50 matches</button></Show>
       </div>
-      <Show when={groups().size > 0 && filterActive() && visibleGames().size === 0 && !updating() && !waitingForTags()
+      <Show when={groups().size > 0 && filterActive() && visibleGames().size === 0 && !updating()
         && !props.history?.initializing && !props.history?.error && props.history?.indexIssue?.kind !== "failed"
-        && !(filters().clipTags.length && props.clipTagError)}>
+        }>
         <p class={matchStyles.filteredEmpty}>No matches for these filters.</p>
       </Show>
     </section>

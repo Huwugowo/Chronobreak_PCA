@@ -27,6 +27,11 @@ mod playback_policy;
 mod playback_server;
 mod recorder_supervisor;
 mod replay_index;
+mod tag_commands;
+mod tag_migration;
+mod tag_store;
+pub use tag_migration::migrate_clip_tags_headless;
+mod tags;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1464,7 +1469,11 @@ pub fn run() {
         clip_commands::clip_grid_page,
         clip_commands::clip_grid_champions,
         clip_commands::clip_playback,
-        clip_commands::clip_tag_suggestions,
+        tag_commands::tag_choices,
+        tag_commands::create_tag,
+        tag_commands::rename_tag,
+        tag_commands::edit_match_tags,
+        tag_commands::edit_clip_tags,
         clip_commands::clip_detail,
         clip_commands::edit_managed_clip,
         list_games,
@@ -1528,7 +1537,11 @@ pub fn run() {
         clip_commands::clip_grid_page,
         clip_commands::clip_grid_champions,
         clip_commands::clip_playback,
-        clip_commands::clip_tag_suggestions,
+        tag_commands::tag_choices,
+        tag_commands::create_tag,
+        tag_commands::rename_tag,
+        tag_commands::edit_match_tags,
+        tag_commands::edit_clip_tags,
         clip_commands::clip_detail,
         clip_commands::edit_managed_clip,
         list_games,

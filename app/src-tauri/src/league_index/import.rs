@@ -140,6 +140,10 @@ impl Index {
             params![media.as_str(),serde_json::to_string(&header)?,identity,serde_json::to_string(&page.recovery.position)?,
                 std::str::from_utf8(&cp.encode()?)?,if ready {"ready"} else {"pending"},sql_u64(page.recovery.tail_bytes)?,
                 ready.then_some(stamp)])?;
+        if ready {
+            super::match_tags::refresh_recording(&tx, media)?;
+            super::match_tags::refresh_group_for_media(&tx, media)?;
+        }
         Self::refresh_history_summary(&tx, media)?;
         check()?;
         tx.commit()?;

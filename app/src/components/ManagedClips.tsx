@@ -1,10 +1,11 @@
-import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { createClipGrid } from "../clipGrid";
 import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
-import { clipDurationMs, clipTitleError, clipLabels, readClipDetail, readClipPage, type ClipCard,
-  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery, type GroupCursor } from "../managedClips";
+import { clipDurationMs, clipTitleError, readClipDetail, readClipPage, replaceTagDefinition, type ClipCard,
+  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery,
+  type ClipTagUpdate, type GroupCursor, type Tag } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
@@ -13,7 +14,7 @@ import { ArrowLeftIcon, ArrowRightIcon, PlayIcon } from "../ui/icons";
 import controls from "../ui/controls.module.css";
 import { createModalFocus } from "../ui/createModalFocus";
 import ClipsFilters from "./ClipsFilters";
-import { ClipTagEditor } from "./ClipMetadataFields";
+import { TagBadges, TagEditor } from "./ClipMetadataFields";
 import ClipThumbnail from "./ClipThumbnail";
 import ClipVideoPlayer from "./ClipVideoPlayer";
 import ConfirmDialog from "./ConfirmDialog";
@@ -94,28 +95,6 @@ function ClipMatchHeader(props: { game: ClipGame; ddragon: DdragonStatus }) {
   </div>;
 }
 
-function ClipTags(props: { tags: Pick<ClipGridCard, "custom_tags" | "predefined_tags">; class?: string; limit?: number; id?: string }) {
-  const predefined = () => props.tags.predefined_tags;
-  const custom = createMemo(() => {
-    const names = new Set(predefined().map(kind => clipLabels[kind].toLowerCase()));
-    return props.tags.custom_tags.filter(tag => !names.has(tag.toLowerCase()));
-  });
-  const tagCount = () => predefined().length + custom().length;
-  const limit = () => props.limit ?? tagCount();
-  const remaining = () => Math.max(0, tagCount() - limit());
-  return <Show when={tagCount()}>
-    <span id={props.id} class={props.class ? `${styles.clipTags} ${props.class}` : styles.clipTags}>
-      <For each={predefined().slice(0, limit())}>{tag => <span class={styles.highlightBadge}>{clipLabels[tag]}</span>}</For>
-      <For each={custom().slice(0, Math.max(0, limit() - predefined().length))}>
-        {tag => <span class={styles.customBadge}>{tag}</span>}
-      </For>
-      <Show when={remaining()}>
-        <span class={styles.customBadge} title={`${remaining()} more tags`}>+{remaining()}</span>
-      </Show>
-    </span>
-  </Show>;
-}
-
 function ClipStrip(props: { children: JSX.Element }) {
   let viewport!: HTMLDivElement;
   let track!: HTMLDivElement;
@@ -167,31 +146,34 @@ function ClipStrip(props: { children: JSX.Element }) {
 }
 
 function ClipCards(props: { clips: ClipCard[]; onOpen: OpenClip }) {
+  const cards = createMemo(() => new Map(props.clips.map(clip => [clip.header.id, clip])));
   return <ClipStrip>
-    <For each={props.clips}>{clip =>
-      <article class={libraryStyles.clipCard}>
+    <For each={props.clips.map(clip => clip.header.id)}>{id => {
+      const clip = () => cards().get(id)!;
+      return <article class={libraryStyles.clipCard}>
         <button class={libraryStyles.clipOpen} type="button"
-          data-managed-clip={clip.header.id}
-          onClick={event => props.onOpen(clip, event.currentTarget)} aria-label={`Play ${clip.title}`}>
+          data-managed-clip={id}
+          onClick={event => props.onOpen(clip(), event.currentTarget)} aria-label={`Play ${clip().title}`}>
           <span class={libraryStyles.clipArtwork}>
-            <ClipThumbnail src={clip.thumbnail_url} />
-            <em>{formatDuration(clipDurationMs(clip.header.duration))}</em>
+            <ClipThumbnail src={clip().thumbnail_url} />
+            <em>{formatDuration(clipDurationMs(clip().header.duration))}</em>
             <i class={libraryStyles.playGlyph} aria-hidden="true"><PlayIcon size={14} /></i>
           </span>
           <span class={`${libraryStyles.clipContent} ${styles.cardContent}`}>
-            <strong>{clip.title}</strong>
-            <small>{clip.game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip.game_clock)}`}</small>
+            <strong>{clip().title}</strong>
+            <small>{clip().game_clock === undefined ? "Game time unavailable" : `Game ≈${recordedGameClock(clip().game_clock!)}`}</small>
           </span>
-          <ClipTags tags={clip.header} class={styles.cardTags} />
+          <TagBadges tags={clip().header.tags} class={styles.cardTags} />
         </button>
       </article>
-    }</For>
+    }}</For>
   </ClipStrip>;
 }
 
 /** One owner for a page read and its explicit continuations. Superseded results stay local. */
 export function ClipGroups(props: {
   token: string; ready: boolean; query: ClipQuery; onOpen: OpenClip; inline: true;
+  tagUpdate?: ClipTagUpdate; renamedTag?: Tag;
 }) {
   const inputs = createMemo(
     () => ({ token: props.token, query: props.query, ready: props.ready }),
@@ -203,6 +185,18 @@ export function ClipGroups(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [retry, setRetry] = createSignal(0);
+  const updateTags = (forClip: (clip: ClipCard) => Tag[]) => {
+    setGroups(previous => previous.map(group => ({ ...group, clips: group.clips.map(clip => {
+      const tags = forClip(clip);
+      return tags === clip.header.tags ? clip : { ...clip, header: { ...clip.header, tags } };
+    }) })));
+  };
+  createEffect(on(() => props.tagUpdate, update => {
+    if (update) updateTags(clip => clip.header.id === update.id ? update.tags : clip.header.tags);
+  }, { defer: true }));
+  createEffect(on(() => props.renamedTag, tag => {
+    if (tag) updateTags(clip => replaceTagDefinition(clip.header.tags, tag));
+  }, { defer: true }));
   let generation = 0;
   let active = false;
   let pending: (() => void) | null = null;
@@ -290,7 +284,7 @@ function ClipGrid(props: {
     <ul ref={grid} class={styles.grid} aria-label="Clips" aria-busy={state.busy}>
       <For each={state.clips}>{clip => {
         const id = `grid-clip-${clip.id}`;
-        const tagsId = () => clip.predefined_tags.length || clip.custom_tags.length ? `${id}-tags` : undefined;
+        const tagsId = () => clip.tags.length ? `${id}-tags` : undefined;
         return <li>
           <button class={`${libraryStyles.clipOpen} ${styles.gridOpen}`} type="button"
             data-managed-clip={clip.id} aria-label={`Play ${clip.title}`}
@@ -307,7 +301,7 @@ function ClipGrid(props: {
                 ddragon={props.ddragon} class={styles.gridChampion} />
               <span class={styles.gridText}>
                 <strong class={styles.gridTitle} title={clip.title}>{clip.title}</strong>
-                <ClipTags id={tagsId()} tags={clip} limit={2} />
+                <TagBadges id={tagsId()} tags={clip.tags} limit={2} />
               </span>
             </span>
           </button>
@@ -335,9 +329,13 @@ export function ManagedClips(props: {
   ddragon: DdragonStatus;
   filters: ClipFilters; onFilters: (query: ClipFilters) => void;
   onOpen: OpenGridClip; openingId?: string; onOpenFolder: () => void;
+  tagUpdate?: ClipTagUpdate;
+  renamedTag?: Tag;
 }) {
   const [query, setQuery] = createSignal(props.filters);
   const grid = createClipGrid(() => ({ root: props.root, token: props.token, ready: props.ready, query: query() }));
+  createEffect(on(() => props.tagUpdate, update => { if (update) grid.tagsEdited(update); }, { defer: true }));
+  createEffect(on(() => props.renamedTag, tag => { if (tag) grid.tagRenamed(tag); }, { defer: true }));
   createEffect(() => {
     const next = { ...props.filters, search: props.filters.search?.trim() || undefined };
     const timer = window.setTimeout(() => setQuery(previous =>
@@ -346,6 +344,7 @@ export function ManagedClips(props: {
   });
   return <section class={styles.panel} aria-label="Clips library">
     <ClipsFilters library={props.root} filters={props.filters} onChange={props.onFilters} token={props.ready ? props.token : undefined}
+      renamedTag={props.renamedTag}
       championPortrait={name => ddragonAsset(props.ddragon, "champion", name)} onOpenFolder={props.onOpenFolder} />
     <ClipGrid model={grid} indexError={props.indexError} onRetryIndex={props.onRetry}
       onOpen={props.onOpen} openingId={props.openingId} ddragon={props.ddragon} />
@@ -354,6 +353,8 @@ export function ManagedClips(props: {
 
 export function ManagedClipPlayer(props: {
   clip: ClipCard; token: string; onClose: () => void; onEdit: (edit: ClipEdit) => Promise<boolean>;
+  onEditTags: (tags: Tag[]) => Promise<boolean>;
+  onTagRenamed?: (tag: Tag) => void;
   sourceAvailable?: boolean; onSource?: () => void; opener?: HTMLElement;
   library?: { fileSizeBytes: number; ddragon: DdragonStatus };
 }) {
@@ -364,8 +365,7 @@ export function ManagedClipPlayer(props: {
   const [deleting, setDeleting] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [title, setTitle] = createSignal(props.clip.title);
-  const [tags, setTags] = createSignal(props.clip.header.custom_tags);
-  const [predefinedTags, setPredefinedTags] = createSignal(props.clip.header.predefined_tags);
+  const [tags, setTags] = createSignal(props.clip.header.tags);
   const [detail, setDetail] = createSignal<Awaited<ReturnType<typeof readClipDetail>>>();
   const [detailError, setDetailError] = createSignal(false);
   const [reading, setReading] = createSignal(false);
@@ -395,6 +395,12 @@ export function ManagedClipPlayer(props: {
       if (await props.onEdit(edit)) { setEditing(null); setDeleting(false); }
     } finally { setBusy(false); }
   };
+  const submitTags = async () => {
+    if (busy()) return;
+    setBusy(true);
+    try { if (await props.onEditTags(tags())) setEditing(null); }
+    finally { setBusy(false); }
+  };
   const caption = createMemo(() => gameCaption(props.clip.header.game));
   const duration = () => formatDuration(clipDurationMs(props.clip.header.duration));
   const close = () => <button ref={closeButton} class={controls.control} type="button"
@@ -422,12 +428,13 @@ export function ManagedClipPlayer(props: {
             <h2 id="managed-clip-title">{props.clip.title}</h2>
             <p><span>{duration()}</span><span aria-hidden="true"> · </span><span>{formatBytes(library().fileSizeBytes)}</span></p>
           </div>}</Show>
-          <ClipTags tags={props.clip.header} />
+          <TagBadges tags={props.clip.header.tags} />
           <div class={styles.actions}>
             <Show when={props.onSource}><button class={controls.control} type="button" disabled={!props.sourceAvailable || busy()}
               onClick={props.onSource}>{props.sourceAvailable ? "Open source replay" : "Source replay unavailable"}</button></Show>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => setEditing("title")}>Rename</button>
-            <button class={controls.control} type="button" disabled={busy()} onClick={() => setEditing("tags")}>Edit tags</button>
+            <button class={controls.control} type="button" disabled={busy()}
+              onClick={() => { setTags(props.clip.header.tags); setEditing("tags"); }}>Edit tags</button>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => void submit({ kind: "reveal" })}>Show in folder</button>
             <button ref={deleteButton} class={controls.control} type="button" disabled={busy()} onClick={() => setDeleting(true)}>Delete clip</button>
           </div>
@@ -444,11 +451,10 @@ export function ManagedClipPlayer(props: {
             </form>
           </Show>
           <Show when={editing() === "tags"}>
-            <ClipTagEditor token={props.token} customTags={tags()} predefinedTags={predefinedTags()}
-              onCustomTagsChange={setTags} onPredefinedTagsChange={setPredefinedTags} disabled={busy()} />
+            <TagEditor token={props.token} tags={tags()} onTagsChange={setTags} disabled={busy()} onTagRenamed={props.onTagRenamed} />
             <div class={styles.actions}>
               <button class={controls.control} type="button" disabled={busy()}
-                onClick={() => void submit({ kind: "tags", custom_tags: tags(), predefined_tags: predefinedTags() })}>Save tags</button>
+                onClick={() => void submitTags()}>Save tags</button>
               <button class={controls.control} type="button" onClick={() => setEditing(null)}>Cancel</button>
             </div>
           </Show>

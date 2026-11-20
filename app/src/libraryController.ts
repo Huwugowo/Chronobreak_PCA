@@ -27,7 +27,7 @@ type Dependencies = {
 type DurationIntent = { origin: LibraryOrigin; epoch: number; ids: string[]; retry: boolean };
 export type ReplayReadLane = "details" | "overlay";
 export type ReplayRead = <T>(work: (token: string) => Promise<T>, lane?: ReplayReadLane) => Promise<T>;
-export type IndexWritePurpose = "history" | "replay" | "maintenance" | "clips";
+export type IndexWritePurpose = "history" | "replay" | "maintenance" | "clips" | "tags";
 type ReplayIntent = { run: () => Promise<void>; cancel: () => void };
 export type OperationResult<T> =
   | { admitted: true; value: T }
@@ -186,7 +186,7 @@ export class LibraryController {
   /** Native writes cannot be cancelled by leaving a screen. Keep their owner
    * until settlement, with at most one latest queued intent per purpose. */
   writeIndex<T>(origin: LibraryOrigin, purpose: IndexWritePurpose, work: (token: string) => Promise<T>): Promise<T> {
-    const current = () => purpose === "replay" ? this.mayPublish(origin) : this.mayStart(origin);
+    const current = () => purpose === "replay" || purpose === "tags" ? this.mayPublish(origin) : this.mayStart(origin);
     const staleError = () => new Error("Library index request became stale. Refresh the library.");
     if (!current()) return Promise.reject(staleError());
     this.indexPending.get(purpose)?.cancel();
@@ -209,7 +209,7 @@ export class LibraryController {
   }
   private pumpIndex() {
     if (this.closed || this.indexActive) return;
-    const purpose = (["maintenance", "replay", "history", "clips"] as const).find(p => this.indexPending.has(p));
+    const purpose = (["maintenance", "tags", "replay", "history", "clips"] as const).find(p => this.indexPending.has(p));
     if (!purpose) return;
     const intent = this.indexPending.get(purpose)!;
     this.indexPending.delete(purpose);
@@ -264,7 +264,8 @@ export class LibraryController {
   }
 
   async mutate<T>(origin: LibraryOrigin, id: string, work: (token: string) => Promise<T>,
-    independentExport = false): Promise<OperationResult<T>> {
+    mode: boolean | "metadata" = false): Promise<OperationResult<T>> {
+    const independentExport = mode === true;
     if (!this.mayStart(origin) || (!independentExport && this.exclusiveActionActive))
       return { admitted: false, error: "The library changed. Refresh and select the item again." };
     if (!independentExport) {
@@ -281,7 +282,7 @@ export class LibraryController {
     }
     // Includes stale-token rejection and partial-error completion. M2 can reject
     // an old export response AFTER publishing its files into the captured root.
-    if (!this.closed && origin.root === this.state.root)
+    if (mode !== "metadata" && !this.closed && origin.root === this.state.root)
       this.refresh(admitted ? { origin, succeeded: error === undefined } : null);
     this.pumpRefresh();
     return admitted && error === undefined ? { admitted: true, value: value as T }

@@ -4,12 +4,11 @@ use crate::clip_bundle::{
     Attribution, ClipEvent, ClipEvents, EVENTS_LIMIT, EventAvailability, MAX_EVENTS,
 };
 use chronobreak_replay_time::{GameCalibrationV2, MappedReplayTime, MediaTimelineV2, ReplayTick};
-use obs::events::{ActorRole, ActorStatus};
+use obs::events::ActorStatus;
 use std::collections::HashMap;
 
 struct Retained {
     event: ClipEvent,
-    multikill_actor: Option<String>,
     order: (ReplayTick, u64, u64),
 }
 
@@ -93,11 +92,8 @@ impl Index {
                         unsigned(row, 2)?,
                         &event.actors,
                     )?;
-                    let role = match event.name.as_deref() {
-                        Some("FirstBlood") if event.recipient.is_some() => ActorRole::Recipient,
-                        Some("Ace") => ActorRole::Acer,
-                        _ => ActorRole::Killer,
-                    };
+                    let role = crate::tags::event_role(event.name.as_deref().unwrap_or_default())
+                        .unwrap_or(obs::events::ActorRole::Killer);
                     let actor = event
                         .actors
                         .as_ref()
@@ -125,18 +121,6 @@ impl Index {
                     };
                     let label = identity
                         .and_then(|p| p.riot_id.clone().or_else(|| p.champion_name.clone()));
-                    let key = if attribution == Attribution::You {
-                        Some("local".into())
-                    } else {
-                        actor.map(|id| {
-                            identity
-                                .and_then(|p| p.riot_id.as_ref())
-                                .map(|name| format!("riot:{}", name.to_lowercase()))
-                                .unwrap_or_else(|| {
-                                    format!("{}:{}:{}", scope.run_id.as_str(), scope.epoch, id.0)
-                                })
-                        })
-                    };
                     let event = ClipEvent {
                         replay_tick: tick,
                         event,
@@ -150,7 +134,6 @@ impl Index {
                     }
                     records.push(Retained {
                         event,
-                        multikill_actor: key,
                         order: (tick, scope.epoch, unsigned(row, 5)?),
                     });
                 }
@@ -158,35 +141,12 @@ impl Index {
                 row = next;
             }
         }
-        Ok(reduce(records, partial))
+        Ok(ordered_events(records, partial))
     }
 }
 
-fn reduce(mut records: Vec<Retained>, partial: bool) -> ClipEvents {
+fn ordered_events(mut records: Vec<Retained>, partial: bool) -> ClipEvents {
     records.sort_by_key(|row| row.order);
-    let mut best = HashMap::new();
-    for (index, row) in records.iter().enumerate() {
-        if row.event.event.name.as_deref() == Some("Multikill")
-            && let Some(tier @ 2..=5) = row.event.event.kill_streak
-        {
-            let key = row.multikill_actor.as_deref();
-            let best = best.entry(key).or_insert((index, tier));
-            if tier > best.1 {
-                *best = (index, tier);
-            }
-        }
-    }
-    let retained = best
-        .values()
-        .map(|&(index, _)| index)
-        .collect::<std::collections::HashSet<_>>();
-    let mut events = Vec::new();
-    for (index, row) in records.into_iter().enumerate() {
-        if row.event.event.name.as_deref() == Some("Multikill") && !retained.contains(&index) {
-            continue;
-        }
-        events.push(row.event);
-    }
     let availability = if partial {
         EventAvailability::Partial
     } else {
@@ -194,17 +154,15 @@ fn reduce(mut records: Vec<Retained>, partial: bool) -> ClipEvents {
     };
     ClipEvents {
         availability,
-        events,
+        events: records.into_iter().map(|row| row.event).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clip_bundle::HighlightKind;
-
     #[test]
-    fn keeps_the_event_timeline_and_only_detects_tags_for_the_recording_player() {
+    fn keeps_the_observed_event_timeline_for_all_actors() {
         let multikill = |tick, actor: Option<&str>, attribution, tier| Retained {
             event: ClipEvent {
                 replay_tick: ReplayTick::new(tick).unwrap(),
@@ -216,7 +174,6 @@ mod tests {
                 attribution,
                 actor: actor.map(str::to_owned),
             },
-            multikill_actor: actor.map(str::to_owned),
             order: (ReplayTick::new(tick).unwrap(), 0, tick),
         };
         let dragon = |tick, attribution, stolen| Retained {
@@ -230,10 +187,9 @@ mod tests {
                 attribution,
                 actor: None,
             },
-            multikill_actor: None,
             order: (ReplayTick::new(tick).unwrap(), 0, tick),
         };
-        let events = reduce(
+        let events = ordered_events(
             vec![
                 multikill(5, Some("Local"), Attribution::You, 4),
                 multikill(1, Some("Local"), Attribution::You, 2),
@@ -252,15 +208,19 @@ mod tests {
         assert_eq!(events.availability, EventAvailability::Partial);
         assert_eq!(
             events
+                .detected_tags()
+                .iter()
+                .map(|tag| tag.id.as_str())
+                .collect::<Vec<_>>(),
+            ["builtin:quadra_kill", "builtin:dragon_steal"]
+        );
+        assert_eq!(
+            events
                 .events
                 .iter()
                 .map(|event| event.replay_tick.get())
                 .collect::<Vec<_>>(),
-            [3, 4, 6, 7, 8, 9, 10, 11]
-        );
-        assert_eq!(
-            events.detected_tags(),
-            [HighlightKind::QuadraKill, HighlightKind::DragonSteal]
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         );
     }
 }

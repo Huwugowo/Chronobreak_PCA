@@ -11,6 +11,7 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 // Uncorrelated player and multikill checks prune candidates before card lookup.
 // The per-match predicates still establish scope and local attribution.
 pub(super) const HISTORY_SQL: &str = "
+    /* match tag candidates */
     SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved
     FROM recordings g INDEXED BY recordings_date CROSS JOIN recordings r ON r.media_id=(
         SELECT part.media_id FROM recordings part WHERE part.match_group=g.match_group
@@ -29,10 +30,10 @@ pub(super) const HISTORY_SQL: &str = "
     AND (?19 IS NULL
         OR EXISTS(SELECT 1 FROM final_players f WHERE f.riot_id=?19 COLLATE NOCASE)
         OR EXISTS(SELECT 1 FROM participants p WHERE p.riot_id=?19 COLLATE NOCASE))
-    AND (?24 IS NULL OR g.match_group IN (
+    AND (?23 IS NULL OR g.match_group IN (
         SELECT part.match_group FROM events e INDEXED BY events_kind
         CROSS JOIN recordings part ON part.media_id=e.media_id
-        WHERE e.kind='Multikill' AND e.kill_streak=?24 AND e.ingestion NOT IN ('invalid','conflict')
+        WHERE e.kind='Multikill' AND e.kill_streak=?23 AND e.ingestion NOT IN ('invalid','conflict')
             AND part.match_group IS NOT NULL AND part.facts_current=1 AND part.telemetry_status='ready'
     ))
     AND (?1 IS NULL OR g.recorded_at<?1 OR (g.recorded_at=?1 AND g.media_id>?2))
@@ -77,15 +78,21 @@ pub(super) const HISTORY_SQL: &str = "
                 AND (json_extract(moment.value,'$.stolen') IS NULL OR e.stolen=1)
         )
     ))
-    AND NOT ?23
-    /* clip tag predicates */
+    /* match tag predicates */
     ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12";
-const HISTORY_CLIP_TAG_PREDICATE: &str = "
-    AND NOT EXISTS(SELECT 1 FROM json_each(?25) tag WHERE NOT EXISTS(
-        SELECT 1 FROM clip_projection c INDEXED BY clip_projection_match
-        CROSS JOIN clip_tag_projection t ON t.clip_id=c.id
-        WHERE c.match_group=g.match_group AND c.header IS NOT NULL AND t.tag_key=tag.value
-    ))";
+// Resolve assignment filters before the date-ordered recording and match detail lookups.
+const HISTORY_MATCH_TAG_CANDIDATES: &str = "
+    WITH tag_candidates AS MATERIALIZED (
+        SELECT candidate.match_group FROM json_each(json_extract(?24,'$[0]')) accepted
+        CROSS JOIN match_tag_effective candidate ON candidate.tag_id=accepted.value
+        WHERE NOT EXISTS(SELECT 1 FROM json_each(?24) tag WHERE tag.key>0 AND NOT EXISTS(
+            SELECT 1 FROM json_each(tag.value) implied
+            CROSS JOIN match_tag_effective t WHERE t.match_group=candidate.match_group AND t.tag_id=implied.value
+        ))
+    )";
+const HISTORY_MATCH_TAG_PREDICATE: &str = "
+    AND EXISTS(SELECT 1 FROM tag_candidates)
+    AND g.match_group IN (SELECT match_group FROM tag_candidates)";
 pub(super) const GAME_TICK_ROSTER_LOOKUP_SQL: &str = "SELECT r.observation_id,r.game_tick,e.data FROM rosters r JOIN evidence e
     ON e.media_id=r.media_id AND e.run_id=r.run_id AND e.epoch=r.epoch AND e.observation_id=r.observation_id
     WHERE r.media_id=?1 AND r.run_id=?2 AND r.epoch=?3 AND r.game_tick<=?4 ORDER BY r.game_tick DESC,r.observation_id DESC LIMIT 1";
@@ -213,7 +220,7 @@ pub(crate) struct HistoryQuery {
     #[serde(default)]
     pub personal_moments: Vec<PersonalMoment>,
     #[serde(default)]
-    pub clip_tags: Vec<String>,
+    pub tags: Vec<crate::tags::TagId>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -303,11 +310,6 @@ impl From<PersonalMoment> for MomentPredicate {
     }
 }
 
-enum ClipTagState {
-    Empty,
-    Pending,
-    Ready,
-}
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StatsSource {
@@ -358,6 +360,8 @@ pub(crate) struct HistoryRow {
     pub index_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_count: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<crate::tags::TagDefinition>,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct HistoryPage {
@@ -367,8 +371,6 @@ pub(crate) struct HistoryPage {
     pub catalog_recordings: u64,
     /// Excluded/unfinished sources are unknown, never negative query evidence.
     pub unknown_recordings: u64,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub clip_tags_pending: bool,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceScope {
@@ -651,32 +653,19 @@ impl Index {
     }
 
     pub(crate) fn history(&self, query: &HistoryQuery, catalog_size: usize) -> Result<HistoryPage> {
-        self.history_query(query, catalog_size, ClipTagState::Empty)
+        self.history_query(query, catalog_size)
     }
 
     pub(crate) fn history_for_snapshot(
         &self,
         query: &HistoryQuery,
         catalog_size: usize,
-        snapshot: &library::LibrarySnapshot,
+        _snapshot: &library::LibrarySnapshot,
     ) -> Result<HistoryPage> {
-        if query.clip_tags.is_empty() || snapshot.managed_clips.is_empty() {
-            return self.history(query, catalog_size);
-        }
-        let clip_tags = if self.clip_ready(&snapshot.managed_clip_stamp) {
-            ClipTagState::Ready
-        } else {
-            ClipTagState::Pending
-        };
-        self.history_query(query, catalog_size, clip_tags)
+        self.history(query, catalog_size)
     }
 
-    fn history_query(
-        &self,
-        query: &HistoryQuery,
-        catalog_size: usize,
-        clip_tags: ClipTagState,
-    ) -> Result<HistoryPage> {
+    fn history_query(&self, query: &HistoryQuery, catalog_size: usize) -> Result<HistoryPage> {
         ensure!(query.limit > 0 && query.limit <= 50, "history page limit");
         ensure!(
             query.played_champions.len() <= 200,
@@ -737,27 +726,32 @@ impl Index {
         // per-group predicates still check every moment and its local actor.
         let required_streak = moments.iter().filter_map(|moment| moment.streak).max();
         let moments = json_list(&moments)?;
-        let tag_keys: Vec<_> = crate::clip_bundle::normalize_tags(&query.clip_tags)?
-            .into_iter()
-            .map(|tag| tag.to_lowercase())
-            .collect();
-        let clip_tags_pending = matches!(clip_tags, ClipTagState::Pending);
-        let tags_unavailable = !tag_keys.is_empty() && !matches!(clip_tags, ClipTagState::Ready);
+        ensure!(
+            query.tags.len() <= crate::tags::MAX_ASSIGNMENTS,
+            "history tag capacity"
+        );
         let event_filter = query.event_kind.is_some()
             || query.stolen.is_some()
             || query.minimum_kill_streak.is_some()
             || query.role.is_some();
-        let filter_tags = matches!(clip_tags, ClipTagState::Ready);
+        let filter_tags = !query.tags.is_empty();
         let tagged_sql;
         let sql = if filter_tags {
-            tagged_sql =
-                HISTORY_SQL.replace("/* clip tag predicates */", HISTORY_CLIP_TAG_PREDICATE);
+            tagged_sql = HISTORY_SQL
+                .replace("/* match tag candidates */", HISTORY_MATCH_TAG_CANDIDATES)
+                .replace("/* match tag predicates */", HISTORY_MATCH_TAG_PREDICATE);
             &tagged_sql
         } else {
             HISTORY_SQL
         };
         let tagged_keys = if filter_tags {
-            json_list(&tag_keys)?
+            json_list(
+                &query
+                    .tags
+                    .iter()
+                    .map(crate::tags::matching_ids)
+                    .collect::<Vec<_>>(),
+            )?
         } else {
             None
         };
@@ -795,7 +789,6 @@ impl Index {
             &query.recorded_from,
             &query.recorded_before,
             &moments,
-            &tags_unavailable,
             &required_streak,
         ];
         if filter_tags {
@@ -838,6 +831,7 @@ impl Index {
             } else {
                 Vec::new()
             };
+            let tags = self.match_tag_definitions(&game.match_group)?;
             let item = HistoryRow {
                 media_id: media,
                 game,
@@ -848,6 +842,7 @@ impl Index {
                     "pending".into()
                 },
                 clip_count: None,
+                tags,
             };
             output_bytes += serde_json::to_vec(&item)?.len();
             ensure!(
@@ -885,7 +880,6 @@ impl Index {
             indexed_recordings: indexed,
             catalog_recordings: catalog_size as u64,
             unknown_recordings: (catalog_size as u64).saturating_sub(indexed) + uncertain,
-            clip_tags_pending,
         })
     }
 

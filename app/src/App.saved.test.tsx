@@ -4,7 +4,8 @@ import { render } from "solid-js/web";
 import App from "./App";
 import { loadDdragonStatus, loadStorageUsage, refreshLibrary, setGameSaved } from "./api";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex, type HistoryPage } from "./leagueIndex";
-import { readClipTagSuggestions, reconcileClips } from "./managedClips";
+import { tagChoices, reconcileClips } from "./managedClips";
+import { customTag } from "./tagFixtures";
 import { onLibraryCatalogChanged, onPreparedData } from "./preparedData";
 import type { GameSummary, LibrarySnapshot } from "./types";
 
@@ -13,7 +14,7 @@ vi.mock("./benchmark", async original => ({ ...await original<typeof import("./b
 vi.mock("./preparedData", () => ({ onLibraryCatalogChanged: vi.fn(() => () => {}), onPreparedData: vi.fn(() => () => {}) }));
 vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
   usesManagedClips: () => harness.managed, reconcileClips: vi.fn(async () => true),
-  readClipTagSuggestions: vi.fn(async () => ["Montage"]),
+  tagChoices: vi.fn(async () => [{ id: "test:Montage", label: "Montage", tier: null, builtin: false }]),
 }));
 vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(),
   loadStorageUsage: vi.fn(), refreshLibrary: vi.fn(), setGameSaved: vi.fn(),
@@ -195,7 +196,7 @@ it("keeps populated History cards, filters and images through a favorite and rep
       record.oldValue?.includes("—") || Array.from(record.removedNodes).some(node => node.textContent?.includes("—")))).toBe(false);
   } finally { observer.disconnect(); }
 });
-it("refreshes an empty custom-tag result when the new snapshot's clip index becomes ready", async () => {
+it("queries assigned match tags while clip indexing is still pending", async () => {
   harness.managed = true;
   const clipReady = deferred<boolean>();
   const readyPage: HistoryPage = {
@@ -206,7 +207,7 @@ it("refreshes an empty custom-tag result when the new snapshot's clip index beco
     }], next: null, indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 0,
   };
   vi.mocked(queryHistory).mockResolvedValueOnce(readyPage).mockResolvedValueOnce(readyPage)
-    .mockResolvedValueOnce({ ...readyPage, rows: [], clip_tags_pending: true }).mockResolvedValueOnce(readyPage);
+    .mockResolvedValueOnce(readyPage).mockResolvedValueOnce(readyPage);
   vi.mocked(reconcileClips).mockResolvedValueOnce(true).mockReturnValueOnce(clipReady.promise);
   vi.mocked(refreshLibrary).mockReset().mockResolvedValueOnce({ ...snapshot("a"), managed_clip_count: 1 })
     .mockResolvedValueOnce({ ...snapshot("b", true), managed_clip_count: 1 });
@@ -214,18 +215,17 @@ it("refreshes an empty custom-tag result when the new snapshot's clip index beco
   const { host, star } = await mount();
   await vi.waitFor(() => expect(reconcileClips).toHaveBeenCalledOnce());
   [...host.querySelectorAll("button")].find(button => button.textContent === "Tags")!.click();
-  await vi.waitFor(() => expect(readClipTagSuggestions).toHaveBeenCalledWith("a", ""));
+  await vi.waitFor(() => expect(tagChoices).toHaveBeenCalledWith("a", ""));
   const montage = [...host.querySelectorAll("fieldset label")].find(label => label.textContent === "Montage")!;
   montage.querySelector("input")!.click();
   await vi.waitFor(() => expect(queryHistory).toHaveBeenCalledTimes(2));
   star().click();
-  await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ clip_tags: ["Montage"] })));
-  await vi.waitFor(() => expect(host.querySelector("article")).toBeNull());
-  expect(host.textContent).not.toContain("No matches for these filters.");
+  await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [customTag("Montage").id] })));
+  expect(host.querySelector("article")).not.toBeNull();
   clipReady.resolve(true);
   await vi.waitFor(() => expect(host.querySelector("article")).not.toBeNull());
-  expect(queryHistory).toHaveBeenCalledTimes(4);
-  expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ clip_tags: ["Montage"] }));
+  expect(queryHistory).toHaveBeenCalledTimes(3);
+  expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [customTag("Montage").id] }));
 });
 it("refreshes only the affected data when library notifications arrive during replay", async () => {
   const { host, click } = await mount();

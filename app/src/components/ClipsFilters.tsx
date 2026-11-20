@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js";
-import { clipLabels, readClipGridChampions, readClipTagSuggestions, type ClipFilters, type ClipQueue } from "../managedClips";
+import { MAX_TAG_FILTERS, readClipGridChampions, tagChoices, type ClipFilters, type ClipQueue, type Tag } from "../managedClips";
 import { FilterIcon, SearchIcon, TagIcon } from "../ui/icons";
 import {
   ChampionAutocomplete, ClearFiltersButton, FilterCheckbox, FilterChip, FilterDropdownTrigger, FilterTabButton,
@@ -16,8 +16,6 @@ const presets = [
   { label: datePresets.week, from: -6, to: 0 }, { label: datePresets.month, from: -29, to: 0 },
 ];
 const resultLabels = { win: "Victory", loss: "Defeat" };
-const tagKey = (tag: string) => tag.trim().toLowerCase();
-const predefined = Object.values(clipLabels);
 type Popup = "Tags" | "Filters";
 type Advanced = Pick<ClipFilters, "from" | "to" | "outcome">;
 
@@ -40,6 +38,7 @@ function dateCaption(filters: Advanced, dates: ReturnType<typeof dateChoices>) {
 
 export default function ClipsFilters(props: {
   filters: ClipFilters; onChange: (filters: ClipFilters) => void; token?: string; library: string | null;
+  renamedTag?: Tag;
   championPortrait: (name: string) => string | null; onOpenFolder: () => void;
 }) {
   const id = createUniqueId();
@@ -56,12 +55,13 @@ export default function ClipsFilters(props: {
   const [championsLoading, setChampionsLoading] = createSignal(false);
   const [championsError, setChampionsError] = createSignal(false);
   const [championsRetry, retryChampions] = createSignal(0);
-  const [suggestions, setSuggestions] = createSignal<string[]>([]);
+  const [suggestions, setSuggestions] = createSignal<Tag[]>([]);
   const [tagsLoading, setTagsLoading] = createSignal(false);
   const [tagsError, setTagsError] = createSignal(false);
   const [tagsRetry, retryTags] = createSignal(0);
   let championToken: string | undefined;
-  let lastTags: { token: string; prefix: string; choices: string[] } | undefined;
+  let lastTags: { token: string; prefix: string; renamed?: Tag; choices: Tag[] } | undefined;
+  const [tagLabels, setTagLabels] = createSignal<Record<string, string>>({});
 
   const change = (patch: Partial<ClipFilters>) => props.onChange({ ...props.filters, ...patch });
   const close = (restoreFocus = false) => {
@@ -75,6 +75,7 @@ export default function ClipsFilters(props: {
     lastTags = undefined;
     setChampions([]);
     setSuggestions([]);
+    setTagLabels({});
   });
   const toggle = (name: Popup) => {
     if (popup() === name) { close(); return; }
@@ -117,10 +118,13 @@ export default function ClipsFilters(props: {
   createEffect(() => {
     const token = props.token;
     const term = prefix().trim();
+    const renamed = props.renamedTag;
+    if (renamed) setTagLabels(previous => ({ ...previous, [renamed.id]: renamed.label }));
     tagsRetry();
     if (popup() !== "Tags") return;
     setTagsError(false);
-    const cached = lastTags?.token === token && lastTags?.prefix === term ? lastTags.choices : undefined;
+    const cached = lastTags?.token === token && lastTags?.prefix === term && lastTags?.renamed === renamed
+      ? lastTags.choices : undefined;
     if (!token || cached) {
       setSuggestions(cached ?? []);
       setTagsLoading(false);
@@ -129,11 +133,12 @@ export default function ClipsFilters(props: {
     let current = true;
     setTagsLoading(true);
     setSuggestions([]);
-    const timer = window.setTimeout(() => void readClipTagSuggestions(token, term).then(
+    const timer = window.setTimeout(() => void tagChoices(token, term).then(
       choices => {
         if (!current) return;
-        lastTags = { token, prefix: term, choices };
+        lastTags = { token, prefix: term, renamed, choices };
         setSuggestions(choices);
+        setTagLabels(previous => ({ ...previous, ...Object.fromEntries(choices.map(tag => [tag.id, tag.label])) }));
         setTagsLoading(false);
       },
       () => { if (current) { setTagsError(true); setTagsLoading(false); } },
@@ -142,19 +147,17 @@ export default function ClipsFilters(props: {
   });
 
   const selected = () => props.filters.tags ?? [];
-  const selectedKeys = createMemo(() => new Set(selected().map(tagKey)));
+  const selectedKeys = createMemo(() => new Set(selected()));
   const tags = createMemo(() => {
-    const term = tagKey(prefix());
-    const choices = new Map<string, string>();
-    for (const label of [...predefined.filter(tag => tagKey(tag).includes(term)), ...suggestions(), ...selected()]) {
-      const key = tagKey(label);
-      if (!choices.has(key)) choices.set(key, label);
-    }
+    const choices = new Map<string, Tag>();
+    for (const tag of suggestions()) choices.set(tag.id, tag);
+    for (const id of selected()) if (!choices.has(id)) choices.set(id, { id, label: tagLabels()[id] ?? id, tier: null, builtin: false });
+    const renamed = props.renamedTag;
+    if (renamed && choices.has(renamed.id)) choices.set(renamed.id, renamed);
     return [...choices.values()];
   });
-  const toggleTag = (tag: string) => {
-    const key = tagKey(tag);
-    const next = selectedKeys().has(key) ? selected().filter(value => tagKey(value) !== key) : [...selected(), tag];
+  const toggleTag = (tag: Tag) => {
+    const next = selectedKeys().has(tag.id) ? selected().filter(value => value !== tag.id) : [...selected(), tag.id];
     change({ tags: next.length ? next : undefined });
   };
   const championNames = () => props.filters.champions ?? [];
@@ -202,8 +205,8 @@ export default function ClipsFilters(props: {
             <input class={shared.field} type="search" aria-label="Find tags" placeholder="Find tags…"
               value={prefix()} maxLength={40} onInput={event => setPrefix(event.currentTarget.value)} />
             <For each={tags()}>{tag => {
-              const checked = () => selectedKeys().has(tagKey(tag));
-              return <FilterCheckbox label={tag} checked={checked()} disabled={!checked() && selected().length >= 32}
+              const checked = () => selectedKeys().has(tag.id);
+              return <FilterCheckbox label={tag.label} checked={checked()} disabled={!checked() && selected().length >= MAX_TAG_FILTERS}
                 onChange={() => toggleTag(tag)} />;
             }}</For>
             <Show when={tagsLoading()}><p role="status">Loading tags…</p></Show>
@@ -268,7 +271,8 @@ export default function ClipsFilters(props: {
             const next = championNames().filter(value => value !== name);
             change({ champions: next.length ? next : undefined });
           }} />}</For>
-        <For each={selected()}>{tag => <FilterChip label={tag} onRemove={() => toggleTag(tag)} />}</For>
+        <For each={selected()}>{id => <FilterChip label={tags().find(tag => tag.id === id)?.label ?? id}
+          onRemove={() => toggleTag({ id, label: id, tier: null, builtin: false })} />}</For>
         <Show when={dateCaption(props.filters, dates())}>{label =>
           <FilterChip label={label()} onRemove={() => change({ from: undefined, to: undefined })} />}</Show>
         <Show when={props.filters.outcome}>{result =>

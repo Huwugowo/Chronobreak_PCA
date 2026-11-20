@@ -1,9 +1,8 @@
 //! Disposable projection of accepted clip headers. Event payloads stay on disk.
 use super::*;
-use crate::clip_bundle::{
-    ClipDescriptor, ClipGame, ClipHeader, ClipId, HighlightKind, normalize_tags,
-};
+use crate::clip_bundle::{ClipDescriptor, ClipGame, ClipHeader, ClipId};
 use crate::library::LibrarySnapshot;
+use crate::tags::{TagDefinition, TagId, implied_ids};
 use chronobreak_replay_time::{
     MediaTimelineV2, ReplayTick, RoundingMode, frame_boundary_to_replay_tick,
 };
@@ -35,16 +34,36 @@ CREATE INDEX IF NOT EXISTS clip_projection_grid_champion ON clip_projection(cham
     WHERE header IS NOT NULL;
 CREATE TABLE IF NOT EXISTS clip_tag_projection(
     clip_id TEXT NOT NULL REFERENCES clip_projection(id) ON DELETE CASCADE,
-    tag_key TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY(clip_id,tag_key)
+    tag_id TEXT NOT NULL, label TEXT NOT NULL, label_key TEXT NOT NULL,
+    PRIMARY KEY(clip_id,tag_id)
 );
-CREATE INDEX IF NOT EXISTS clip_tag_prefix ON clip_tag_projection(tag_key,label);
+CREATE INDEX IF NOT EXISTS clip_tag_id_label ON clip_tag_projection(tag_id,label_key,label);
+CREATE INDEX IF NOT EXISTS clip_tag_label_prefix ON clip_tag_projection(label_key,tag_id,label);
+CREATE TABLE IF NOT EXISTS clip_recovered_tag_definition(
+    tag_id TEXT PRIMARY KEY, label TEXT NOT NULL, label_key TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS clip_recovered_tag_label_prefix
+    ON clip_recovered_tag_definition(label_key,tag_id);
+CREATE TRIGGER IF NOT EXISTS clip_tag_projection_recover_insert
+AFTER INSERT ON clip_tag_projection BEGIN
+    INSERT OR REPLACE INTO clip_recovered_tag_definition
+    SELECT tag_id,label,label_key FROM clip_tag_projection WHERE tag_id=NEW.tag_id
+    ORDER BY label_key,label LIMIT 1;
+END;
+CREATE TRIGGER IF NOT EXISTS clip_tag_projection_recover_delete
+AFTER DELETE ON clip_tag_projection BEGIN
+    DELETE FROM clip_recovered_tag_definition WHERE tag_id=OLD.tag_id;
+    INSERT OR REPLACE INTO clip_recovered_tag_definition
+    SELECT tag_id,label,label_key FROM clip_tag_projection WHERE tag_id=OLD.tag_id
+    ORDER BY label_key,label LIMIT 1;
+END;
 CREATE TABLE IF NOT EXISTS clip_grid_tag_projection(
-    tag_key TEXT NOT NULL,
+    tag_id TEXT NOT NULL,
     created INTEGER NOT NULL,
     clip_id TEXT NOT NULL REFERENCES clip_projection(id) ON DELETE CASCADE,
-    PRIMARY KEY(tag_key,created DESC,clip_id DESC)
+    PRIMARY KEY(tag_id,created DESC,clip_id DESC)
 ) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS clip_grid_tag_clip ON clip_grid_tag_projection(clip_id,tag_key);
+CREATE INDEX IF NOT EXISTS clip_grid_tag_clip ON clip_grid_tag_projection(clip_id,tag_id);
 ";
 
 #[derive(Debug, Default, Deserialize)]
@@ -68,7 +87,7 @@ pub(crate) struct ClipGridQuery {
     pub from: Option<String>,
     pub to: Option<String>,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub tags: Vec<TagId>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -128,8 +147,7 @@ pub(crate) struct ClipGridCard {
     pub champion: Option<String>,
     pub duration: ReplayTick,
     pub thumbnail_url: String,
-    pub predefined_tags: Vec<HighlightKind>,
-    pub custom_tags: Vec<String>,
+    pub tags: Vec<TagDefinition>,
 }
 
 pub(crate) type ClipGridCursor = (i64, ClipId);
@@ -164,7 +182,7 @@ fn grid_page_sql(filter: &ClipGridFilter, after: bool) -> String {
     };
     let source = if filter.has_tags {
         "clip_grid_tag_projection anchor JOIN clip_projection p ON p.id=anchor.clip_id
-         WHERE anchor.tag_key=json_extract(?7,'$[0]')"
+         WHERE anchor.tag_id=json_extract(?7,'$[0]')"
     } else {
         "clip_projection p WHERE 1=1"
     };
@@ -173,8 +191,18 @@ fn grid_page_sql(filter: &ClipGridFilter, after: bool) -> String {
     } else {
         "p.id,p.created,p.header"
     };
+    let custom_search = if filter.search.is_empty() {
+        ""
+    } else {
+        "matching_custom AS MATERIALIZED (
+            SELECT id FROM tag_definition WHERE instr(label_key,?1)>0
+            UNION ALL
+            SELECT r.tag_id FROM clip_recovered_tag_definition r
+            WHERE instr(r.label_key,?1)>0 AND NOT EXISTS(SELECT 1 FROM tag_definition d WHERE d.id=r.tag_id)
+        ),"
+    };
     format!(
-        "WITH filtered AS (
+        "WITH {custom_search} filtered AS (
         SELECT {select} FROM {source} AND p.header IS NOT NULL{}
         )
         SELECT id,created,header FROM filtered {seek} ORDER BY created DESC,id DESC LIMIT ?8",
@@ -205,6 +233,7 @@ impl Index {
         snapshot: &LibrarySnapshot,
         check: &dyn Fn() -> Result<()>,
     ) -> Result<bool> {
+        self.refresh_tags_from_root(&self.root_path()?)?;
         if self.clip_ready(&snapshot.managed_clip_stamp) {
             return Ok(true);
         }
@@ -321,8 +350,7 @@ impl Index {
                 title: descriptor.title().into(),
                 champion: header.game.champion,
                 duration: header.duration,
-                predefined_tags: header.predefined_tags,
-                custom_tags: header.custom_tags,
+                tags: self.resolve_tags(header.tags)?,
             });
         }
         Ok(page)
@@ -367,6 +395,7 @@ impl Index {
             |row| row.get(0),
         )?;
         let mut header: ClipHeader = serde_json::from_str(&json)?;
+        header.tags = self.resolve_tags(header.tags)?;
         // A missing or rebuilding match index never blocks independent playback.
         let _ = self.enrich_clip_game(&snapshot.catalog_key, &mut header.game);
         Ok(ClipPlayback {
@@ -416,18 +445,13 @@ impl Index {
         Ok(())
     }
 
-    pub(crate) fn clip_tags(&self, inventory_stamp: &str, prefix: &str) -> Result<Vec<String>> {
-        if !self.clip_ready(inventory_stamp) {
-            return Ok(Vec::new());
-        }
-        let prefix = prefix.to_lowercase();
-        let mut query = self.db.prepare(
-            "SELECT min(label) FROM clip_tag_projection WHERE tag_key>=?1 AND tag_key<?1||X'FF'
-             GROUP BY tag_key ORDER BY tag_key LIMIT 12",
-        )?;
-        Ok(query
-            .query_map([prefix], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?)
+    /// Rebuild one changed header without invalidating the accepted inventory projection.
+    pub(crate) fn reproject_clip(&mut self, clip: &ClipDescriptor) -> Result<()> {
+        let stamp = clip.stamp();
+        let tx = self.db.transaction()?;
+        project_clip(&tx, clip, &stamp)?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub(crate) fn clips(
@@ -641,7 +665,8 @@ impl Index {
                 .managed_clips
                 .get(&id)
                 .context("clip catalog changed")?;
-            let header = serde_json::from_str(&row.get::<_, String>(3)?)?;
+            let mut header: ClipHeader = serde_json::from_str(&row.get::<_, String>(3)?)?;
+            header.tags = self.resolve_tags(header.tags)?;
             clips.push(ClipCard::new(descriptor, header, origin, capability));
             last = Some((row.get(1)?, row.get(2)?, id));
         }
@@ -697,10 +722,10 @@ fn project_clip(db: &Connection, clip: &ClipDescriptor, stamp: &str) -> Result<(
             .join("/")
     });
     let tag_labels = header
-        .predefined_tags
+        .tags
         .iter()
-        .map(|tag| tag.label())
-        .chain(header.custom_tags.iter().map(String::as_str))
+        .filter(|tag| tag.builtin)
+        .map(|tag| tag.label.as_str())
         .collect::<Vec<_>>();
     let search = format!(
         "{}\n{}\n{champion}\n{mode}\n{queue}\n{outcome}\n{day}\n{}\n{kda}",
@@ -727,15 +752,22 @@ fn project_clip(db: &Connection, clip: &ClipDescriptor, stamp: &str) -> Result<(
             serde_json::to_string(&header)?
         ],
     )?;
-    let mut insert = db.prepare_cached("INSERT INTO clip_tag_projection VALUES(?1,?2,?3)")?;
-    for label in &header.custom_tags {
-        insert.execute(params![clip.id.as_str(), label.to_lowercase(), label])?;
+    let mut insert = db.prepare_cached("INSERT INTO clip_tag_projection VALUES(?1,?2,?3,?4)")?;
+    for tag in header.tags.iter().filter(|tag| !tag.builtin) {
+        insert.execute(params![
+            clip.id.as_str(),
+            tag.id.as_str(),
+            tag.label,
+            tag.label.to_lowercase(),
+        ])?;
     }
     let mut grid_insert =
         db.prepare_cached("INSERT OR IGNORE INTO clip_grid_tag_projection VALUES(?1,?2,?3)")?;
     let created = sql_u64(header.exported_at)?;
-    for label in tag_labels {
-        grid_insert.execute(params![label.to_lowercase(), created, clip.id.as_str()])?;
+    for tag in &header.tags {
+        for tag_id in implied_ids(&tag.id) {
+            grid_insert.execute(params![tag_id.as_str(), created, clip.id.as_str()])?;
+        }
     }
     Ok(())
 }
@@ -786,10 +818,13 @@ impl ClipGridFilter {
                 .is_none_or(|(from, to)| from <= to),
             "invalid clip date range"
         );
-        let tags = normalize_tags(&query.tags)?;
-        let tag_keys = tags
-            .into_iter()
-            .map(|tag| tag.to_lowercase())
+        ensure!(query.tags.len() <= 40, "too many clip tags");
+        let mut seen_tags = HashSet::new();
+        let tag_ids = query
+            .tags
+            .iter()
+            .filter(|tag| seen_tags.insert(*tag))
+            .map(|tag| tag.as_str())
             .collect::<Vec<_>>();
         let (queue, queue_predicate) = match query.queue {
             None => (None, String::new()),
@@ -808,18 +843,26 @@ impl ClipGridFilter {
             ClipGridOutcome::Win => "win".to_owned(),
             ClipGridOutcome::Loss => "loss".to_owned(),
         });
+        let search_predicate = if search.is_empty() {
+            " AND ?1=''"
+        } else {
+            " AND (instr(p.search,?1)>0 OR (EXISTS(SELECT 1 FROM matching_custom)
+               AND EXISTS(SELECT 1 FROM matching_custom named
+                          CROSS JOIN clip_tag_projection assigned
+                          WHERE assigned.clip_id=p.id AND assigned.tag_id=named.id)))"
+        };
         let mut predicate = format!(
-            " AND (?1='' OR instr(p.search,?1)>0)
+            " {search_predicate}
                AND (?2 IS NULL OR p.champion IN (SELECT value FROM json_each(?2)))
                AND (?3 IS NULL OR p.day>=?3 AND p.day<>'')
                AND (?4 IS NULL OR p.day<=?4 AND p.day<>'')
                {queue_predicate}
                AND (?6 IS NULL OR p.outcome=?6)"
         );
-        for index in 1..tag_keys.len() {
+        for index in 1..tag_ids.len() {
             predicate.push_str(&format!(
                 " AND EXISTS(SELECT 1 FROM clip_grid_tag_projection tag{index}
-                    WHERE tag{index}.clip_id=p.id AND tag{index}.tag_key=json_extract(?7,'$[{index}]'))"
+                    WHERE tag{index}.clip_id=p.id AND tag{index}.tag_id=json_extract(?7,'$[{index}]'))"
             ));
         }
         Ok(Self {
@@ -831,10 +874,10 @@ impl ClipGridFilter {
             to,
             queue,
             outcome,
-            tags: (!tag_keys.is_empty())
-                .then(|| serde_json::to_string(&tag_keys))
+            tags: (!tag_ids.is_empty())
+                .then(|| serde_json::to_string(&tag_ids))
                 .transpose()?,
-            has_tags: !tag_keys.is_empty(),
+            has_tags: !tag_ids.is_empty(),
             predicate,
         })
     }
@@ -893,6 +936,7 @@ mod tests {
     use super::*;
     use crate::clip_bundle::{self, ClipEvents, ClipGame, EventAvailability};
     use crate::clip_export::ClipExportPreset;
+    use crate::tags::{TagDefinition, TagId, builtin_definition};
     use chronobreak_replay_time::{ClipRange, FrameBoundary, ReplayTick};
 
     fn write_clip_fixture(root: &Path, title: &str, header: &ClipHeader) {
@@ -951,6 +995,8 @@ mod tests {
         let match_group = initial.match_group.clone().unwrap();
         assert_eq!(part("101").match_group, initial.match_group);
         assert_ne!(part("102").match_group, initial.match_group);
+        let evasion = TagDefinition::custom("Évasion").unwrap();
+        let montage = TagDefinition::custom("Montage").unwrap();
         let make_clip = |title: &str, game: &library::GameSummary, start: u64, selected: bool| {
             let id = ClipId::new();
             let end = FrameBoundary::new(start + 300).unwrap();
@@ -976,15 +1022,17 @@ mod tests {
                 preset: ClipExportPreset::Horizontal,
                 duration: ReplayTick::new(240_000_000).unwrap(),
                 events: EventAvailability::Available,
-                predefined_tags: selected
-                    .then_some(HighlightKind::Pentakill)
+                tags: selected
+                    .then(|| {
+                        builtin_definition(&TagId::parse("builtin:pentakill").unwrap()).unwrap()
+                    })
                     .into_iter()
+                    .chain(std::iter::once(if title == "Next part" {
+                        montage.clone()
+                    } else {
+                        evasion.clone()
+                    }))
                     .collect(),
-                custom_tags: if title == "Next part" {
-                    vec!["Montage".into()]
-                } else {
-                    vec!["Évasion".into()]
-                },
             };
             write_clip_fixture(root.path(), title, &header);
             id
@@ -1025,13 +1073,6 @@ mod tests {
                 .history_recording(root.path(), part(bundle), false, &|| Ok(()))
                 .unwrap();
         }
-        let tagged = HistoryQuery {
-            limit: 8,
-            clip_tags: vec!["ÉVASION".into(), "montage".into()],
-            ..Default::default()
-        };
-        let pending = index.history_for_snapshot(&tagged, 2, &before).unwrap();
-        assert!(pending.clip_tags_pending && pending.rows.is_empty());
         assert!(!index.reconcile_clips(&before, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&before, &|| Ok(())).unwrap());
         let page = index
@@ -1064,13 +1105,6 @@ mod tests {
             .clip_playback(&before, &other, "http://fixture", "generation")
             .unwrap();
         assert!(unrelated.clip.header.game.duration_seconds.is_none());
-        let tagged_matches = index.history_for_snapshot(&tagged, 2, &before).unwrap();
-        assert!(!tagged_matches.clip_tags_pending);
-        assert_eq!(tagged_matches.rows.len(), 1);
-        assert_eq!(
-            tagged_matches.rows[0].game.match_group.as_ref(),
-            Some(&match_group)
-        );
         let unchanged = scan("fresh token");
         assert_ne!(before.token, unchanged.token);
         assert!(index.clip_ready(&unchanged.managed_clip_stamp));
@@ -1170,7 +1204,12 @@ mod tests {
         assert_eq!(more.groups[0].clips[0].title, "Later in the next part");
         assert!(more.groups[0].next.is_none());
         assert_eq!(
-            index.clip_tags(&before.managed_clip_stamp, "ÉV").unwrap(),
+            index
+                .tag_choices("ÉV")
+                .unwrap()
+                .into_iter()
+                .map(|tag| tag.label)
+                .collect::<Vec<_>>(),
             ["Évasion"]
         );
         let selected_dir = root.path().join("clips").join(selected.as_str());
@@ -1185,8 +1224,6 @@ mod tests {
         let renamed = scan("renamed");
         assert!(!library::clip_inventory_changed(&approved, &renamed).unwrap());
         assert!(!index.clip_ready(&renamed.managed_clip_stamp));
-        let pending = index.history_for_snapshot(&tagged, 2, &renamed).unwrap();
-        assert!(pending.clip_tags_pending && pending.rows.is_empty());
         assert!(!index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
         assert!(index.reconcile_clips(&renamed, &|| Ok(())).unwrap());
         fs::rename(
@@ -1296,8 +1333,7 @@ mod tests {
             preset: ClipExportPreset::Horizontal,
             duration: ReplayTick::new(240_000_000).unwrap(),
             events: EventAvailability::Unavailable,
-            predefined_tags: vec![],
-            custom_tags: vec![],
+            tags: vec![],
         };
         let mut expected = Vec::new();
         for position in 0..(GRID_PAGE_SIZE * 2 + 5) {
@@ -1327,21 +1363,20 @@ mod tests {
             header.game.outcome = (position % 3 == 0)
                 .then_some(chronobreak_league_data::Outcome::Win)
                 .or(Some(chronobreak_league_data::Outcome::Loss));
-            header.custom_tags = if position % 3 == 0 {
-                vec!["Anchor".into(), "Final fight".into()]
-            } else {
-                vec!["Anchor".into()]
-            };
-            header.predefined_tags = (position % 5 == 0)
-                .then_some(HighlightKind::Pentakill)
+            header.tags = (position % 3 == 0)
+                .then(|| builtin_definition(&TagId::parse("builtin:baron_steal").unwrap()).unwrap())
                 .into_iter()
+                .chain((position % 5 != 0).then(|| {
+                    builtin_definition(&TagId::parse("builtin:pentakill").unwrap()).unwrap()
+                }))
                 .collect();
             write_clip_fixture(root.path(), &format!("Clip {position}"), &header);
             expected.push((
                 header.exported_at,
                 header.id.clone(),
                 older_match && position % 3 == 0,
-                older_match && position % 4 == 0 && position % 3 == 0 && position % 5 == 0,
+                older_match && position % 4 == 0 && position % 3 == 0 && position % 5 != 0,
+                position % 5 != 0,
             ));
         }
         expected.sort_by(|a, b| (b.0, b.1.as_str()).cmp(&(a.0, a.1.as_str())));
@@ -1387,8 +1422,8 @@ mod tests {
         let filtered_query = ClipGridQuery {
             from: Some("2026-07-03".into()),
             to: Some("2026-07-03".into()),
-            search: Some("FINAL FIGHT".into()),
-            tags: vec!["Final fight".into()],
+            search: Some("BARON STEAL".into()),
+            tags: vec![TagId::parse("builtin:baron_steal").unwrap()],
             ..Default::default()
         };
         let filtered = page(&filtered_query, None);
@@ -1408,7 +1443,10 @@ mod tests {
             champions: vec!["syndra".into()],
             queue: Some(ClipGridQueue::Ranked),
             outcome: Some(ClipGridOutcome::Win),
-            tags: vec!["Pentakill".into(), "Final fight".into()],
+            tags: vec![
+                TagId::parse("builtin:pentakill").unwrap(),
+                TagId::parse("builtin:baron_steal").unwrap(),
+            ],
             ..Default::default()
         };
         let exact_tags = page(&exact_tag_query, None);
@@ -1424,31 +1462,32 @@ mod tests {
                 .map(|entry| &entry.1)
                 .collect::<Vec<_>>(),
         );
-        assert!(
-            exact_tags
-                .clips
+        assert!(exact_tags.clips.iter().all(|clip| {
+            clip.tags
                 .iter()
-                .all(|clip| clip.predefined_tags == [HighlightKind::Pentakill])
-        );
-        let anchor_query = ClipGridQuery {
-            tags: vec!["anchor".into()],
+                .any(|tag| tag.id.as_str() == "builtin:pentakill")
+        }));
+        let implied_quadra_query = ClipGridQuery {
+            // A Pentakill carries the lower multikill IDs in the seek projection.
+            tags: vec![TagId::parse("builtin:quadra_kill").unwrap()],
             ..Default::default()
         };
-        let anchor_first = page(&anchor_query, None);
-        let anchor_second = page(&anchor_query, anchor_first.next.as_ref());
-        let anchor_last = page(&anchor_query, anchor_second.next.as_ref());
-        assert_eq!(anchor_first.clips.len(), GRID_PAGE_SIZE);
-        assert_eq!(anchor_second.clips.len(), GRID_PAGE_SIZE);
-        assert!(anchor_last.next.is_none());
+        let anchor_first = page(&implied_quadra_query, None);
+        assert!(anchor_first.next.is_some());
+        let anchor_second = page(&implied_quadra_query, anchor_first.next.as_ref());
+        assert!(anchor_second.next.is_none());
         assert_eq!(
             anchor_first
                 .clips
                 .iter()
                 .chain(&anchor_second.clips)
-                .chain(&anchor_last.clips)
                 .map(|clip| &clip.id)
                 .collect::<Vec<_>>(),
-            expected.iter().map(|entry| &entry.1).collect::<Vec<_>>(),
+            expected
+                .iter()
+                .filter(|entry| entry.4)
+                .map(|entry| &entry.1)
+                .collect::<Vec<_>>(),
         );
 
         let filter = ClipGridFilter::new(&ClipGridQuery::default()).unwrap();

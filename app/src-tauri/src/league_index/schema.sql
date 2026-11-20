@@ -104,6 +104,52 @@ CREATE TABLE IF NOT EXISTS event_actors(
   PRIMARY KEY(media_id,sequence,revision_ordinal,role,ordinal)
 );
 CREATE INDEX IF NOT EXISTS event_actor_predicate ON event_actors(media_id,run_id,epoch,participant_id,role,sequence,revision_ordinal);
+-- Derived from verified, local-player event observations. This is deliberately
+-- source-scoped: the match-level effective set below is rebuilt from every
+-- ready checked part plus durable match overrides.
+CREATE TABLE IF NOT EXISTS match_tag_observed(
+  media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,
+  tag_id TEXT NOT NULL,
+  PRIMARY KEY(media_id,tag_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS match_tag_dirty(match_group TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS match_tag_recording_removed BEFORE DELETE ON recordings
+WHEN OLD.match_group IS NOT NULL AND OLD.facts_current=1 AND OLD.telemetry_status='ready'
+ AND EXISTS(SELECT 1 FROM match_tag_observed WHERE media_id=OLD.media_id)
+BEGIN
+  INSERT OR IGNORE INTO match_tag_dirty VALUES(OLD.match_group);
+END;
+CREATE TRIGGER IF NOT EXISTS match_tag_recording_changed
+AFTER UPDATE OF match_group,facts_current,telemetry_status ON recordings
+WHEN (OLD.match_group IS NOT NEW.match_group OR OLD.facts_current<>NEW.facts_current
+ OR OLD.telemetry_status<>NEW.telemetry_status)
+ AND EXISTS(SELECT 1 FROM match_tag_observed WHERE media_id=NEW.media_id)
+BEGIN
+  INSERT OR IGNORE INTO match_tag_dirty SELECT OLD.match_group
+    WHERE OLD.match_group IS NOT NULL AND OLD.facts_current=1 AND OLD.telemetry_status='ready';
+  INSERT OR IGNORE INTO match_tag_dirty SELECT NEW.match_group
+    WHERE NEW.match_group IS NOT NULL AND NEW.facts_current=1 AND NEW.telemetry_status='ready';
+END;
+-- Overrides are user-authored intent, keyed by the account-scoped match group.
+-- They intentionally do not reference a recording so they survive source
+-- re-indexing and replacement parts.
+CREATE TABLE IF NOT EXISTS match_tag_overrides(
+  match_group TEXT NOT NULL, tag_id TEXT NOT NULL,
+  added INTEGER NOT NULL CHECK(added IN (0,1)),
+  suppressed INTEGER NOT NULL CHECK(suppressed IN (0,1)),
+  PRIMARY KEY(match_group,tag_id)
+);
+CREATE TABLE IF NOT EXISTS match_tag_effective(
+  match_group TEXT NOT NULL, tag_id TEXT NOT NULL,
+  PRIMARY KEY(match_group,tag_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS match_tag_effective_tag ON match_tag_effective(tag_id,match_group);
+CREATE TABLE IF NOT EXISTS tag_catalog_state(
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1), stamp TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tag_definition(
+  id TEXT PRIMARY KEY, label TEXT NOT NULL, label_key TEXT NOT NULL UNIQUE
+);
 -- App-derived identity is disposable and never changes the producer's revision.
 CREATE TABLE IF NOT EXISTS derived_actor_links(
   media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,

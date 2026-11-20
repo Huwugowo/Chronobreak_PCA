@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js";
 import type { HistoryQuery, HistoryQueue, PersonalMoment } from "../leagueIndex";
-import { readClipTagSuggestions } from "../managedClips";
+import { MAX_TAG_FILTERS, tagChoices, type Tag } from "../managedClips";
 import { queueLabels } from "../matchQueues";
 import { CheckIcon, FilterIcon, SearchIcon, StarIcon, TagIcon } from "../ui/icons";
 import {
@@ -20,15 +20,14 @@ const momentLabels: Record<PersonalMoment, string> = {
 };
 const resultLabels = { win: "Victory", loss: "Defeat" };
 const dateOffsets = { today: [0, 1], yesterday: [-1, 0], week: [-6, 1], month: [-29, 1] };
-const maxClipTags = 32;
 
 type AdvancedFilters = { player: string; date: keyof typeof dateLabels | ""; result: keyof typeof resultLabels | "" };
 export type HistoryFilters = AdvancedFilters & {
-  queue: HistoryQueue | null; champions: string[]; moments: PersonalMoment[]; clipTags: string[]; favorites: boolean;
+  queue: HistoryQueue | null; champions: string[]; moments: PersonalMoment[]; tags: Tag[]; favorites: boolean;
 };
 const emptyAdvanced: AdvancedFilters = { player: "", date: "", result: "" };
 export const emptyHistoryFilters = (): HistoryFilters => ({
-  ...emptyAdvanced, queue: null, champions: [], moments: [], clipTags: [], favorites: false,
+  ...emptyAdvanced, queue: null, champions: [], moments: [], tags: [], favorites: false,
 });
 
 export function historyQueryForFilters(filters: HistoryFilters, now = new Date()): HistoryQuery {
@@ -36,7 +35,7 @@ export function historyQueryForFilters(filters: HistoryFilters, now = new Date()
   if (filters.queue) query.queue = filters.queue;
   if (filters.champions.length) query.played_champions = filters.champions;
   if (filters.moments.length) query.personal_moments = filters.moments;
-  if (filters.clipTags.length) query.clip_tags = filters.clipTags;
+  if (filters.tags.length) query.tags = filters.tags.map(tag => tag.id);
   if (filters.favorites) query.saved_only = true;
   if (filters.player) query.player_riot_id = filters.player;
   if (filters.result) query.outcome = filters.result;
@@ -49,24 +48,21 @@ export function historyQueryForFilters(filters: HistoryFilters, now = new Date()
   return query;
 }
 
-const tagKey = (name: string) => name.trim().toLowerCase();
 const toggle = <T,>(values: T[], value: T) => values.includes(value) ? values.filter(item => item !== value) : [...values, value];
 const validPlayer = (value: string) => {
   const parts = value.split("#");
   return parts.length === 2 && parts.every(part => part !== "" && part === part.trim())
     && !/\p{Cc}/u.test(value) && new TextEncoder().encode(value).length <= 256;
 };
-type Popup = keyof typeof queueGroups | "Tags" | "Filters";
+type Popup = keyof typeof queueGroups | "Tags" | "My events" | "Filters";
 
 type Props = {
   filters: HistoryFilters;
   onChange: (filters: HistoryFilters) => void;
   champions: readonly string[];
   championPortrait: (name: string) => string | null;
-  clipTagToken?: string;
-  clipTagsPending?: boolean;
-  clipTagError?: string | null;
-  onClipTagRetry?: () => void;
+  tagToken?: string;
+  renamedTag?: Tag;
   onBenchmarkInput: (event: InputEvent & { currentTarget: HTMLInputElement }) => boolean;
   onClear: () => void;
 };
@@ -77,18 +73,18 @@ export default function MatchHistoryFilters(props: Props) {
   const [pinned, setPinned] = createSignal(false);
   const [draft, setDraft] = createSignal<AdvancedFilters>(emptyAdvanced);
   const [playerError, setPlayerError] = createSignal(false);
-  const [clipPrefix, setClipPrefix] = createSignal("");
-  const [clipChoices, setClipChoices] = createSignal<string[]>([]);
-  const [clipLoading, setClipLoading] = createSignal(false);
-  const [clipFailed, setClipFailed] = createSignal(false);
-  const [clipRetry, setClipRetry] = createSignal(0);
+  const [tagPrefix, setTagPrefix] = createSignal("");
+  const [choices, setChoices] = createSignal<Tag[]>([]);
+  const [tagLoading, setTagLoading] = createSignal(false);
+  const [tagFailed, setTagFailed] = createSignal(false);
+  const [tagRetry, setTagRetry] = createSignal(0);
   const [championReset, resetChampion] = createSignal(0);
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let root!: HTMLDivElement;
   let championInput!: HTMLInputElement;
 
   const commit = (patch: Partial<HistoryFilters>) => props.onChange({ ...props.filters, ...patch });
-  const popupId = (name: Popup) => `${id}-${name.toLowerCase()}`;
+  const popupId = (name: Popup) => `${id}-${name.toLowerCase().replace(" ", "-")}`;
   const trigger = (name: Popup) => root.querySelector<HTMLButtonElement>(`[aria-controls="${popupId(name)}"]`);
   const close = (restore = false) => {
     clearTimeout(closeTimer);
@@ -126,31 +122,32 @@ export default function MatchHistoryFilters(props: Props) {
 
 
   createEffect(() => {
-    const token = props.clipTagToken;
-    const prefix = clipPrefix().trim();
-    clipRetry();
-    setClipChoices([]);
-    setClipFailed(false);
-    setClipLoading(false);
+    const token = props.tagToken;
+    props.renamedTag;
+    const prefix = tagPrefix().trim();
+    tagRetry();
+    setChoices([]);
+    setTagFailed(false);
+    setTagLoading(false);
     if (popup() !== "Tags" || !token) return;
     let current = true;
-    setClipLoading(true);
-    const timer = setTimeout(() => void readClipTagSuggestions(token, prefix).then(
-      choices => { if (current) { setClipChoices(choices); setClipLoading(false); } },
-      () => { if (current) { setClipFailed(true); setClipLoading(false); } },
+    setTagLoading(true);
+    const timer = setTimeout(() => void tagChoices(token, prefix).then(
+      options => { if (current) { setChoices(options); setTagLoading(false); } },
+      () => { if (current) { setTagFailed(true); setTagLoading(false); } },
     ), prefix ? 120 : 0);
     onCleanup(() => { current = false; clearTimeout(timer); });
   });
   const displayedTags = createMemo(() => {
-    const byKey = new Map(props.filters.clipTags.map(tag => [tagKey(tag), tag]));
-    for (const tag of clipChoices()) if (!byKey.has(tagKey(tag))) byKey.set(tagKey(tag), tag);
+    const byKey = new Map([...props.filters.tags, ...choices()].map(tag => [tag.id, tag]));
+    const renamed = props.renamedTag;
+    if (renamed && byKey.has(renamed.id)) byKey.set(renamed.id, renamed);
     return [...byKey.values()];
   });
-  const toggleTag = (tag: string) => {
-    const previous = props.filters.clipTags;
-    const key = tagKey(tag);
-    commit({ clipTags: previous.some(value => tagKey(value) === key)
-      ? previous.filter(value => tagKey(value) !== key) : [...previous, tag] });
+  const toggleTag = (tag: Tag) => {
+    const previous = props.filters.tags;
+    commit({ tags: previous.some(value => value.id === tag.id)
+      ? previous.filter(value => value.id !== tag.id) : [...previous, tag] });
   };
   const chooseQueue = (queue: HistoryQueue | null, restore = false) => {
     if (props.filters.queue !== queue) commit({ queue });
@@ -190,7 +187,7 @@ export default function MatchHistoryFilters(props: Props) {
   };
   const hasAdvanced = () => !!(props.filters.player || props.filters.date || props.filters.result);
   const hasCriteria = () => hasAdvanced() || props.filters.queue || props.filters.favorites
-    || props.filters.champions.length || props.filters.moments.length || props.filters.clipTags.length;
+    || props.filters.champions.length || props.filters.moments.length || props.filters.tags.length;
 
   return (
     <div class={styles.filters} ref={root!} onKeyDown={event => {
@@ -211,34 +208,42 @@ export default function MatchHistoryFilters(props: Props) {
           leadingIcon={<SearchIcon size={16} />} onSelect={name => commit({ champions: [...props.filters.champions, name] })}
           onOpen={() => close()} onBenchmarkInput={props.onBenchmarkInput} />
         <div class={styles.anchor}>
-          <FilterDropdownTrigger chevron active={!!(props.filters.moments.length || props.filters.clipTags.length)}
-            aria-controls={popupId("Tags")} aria-expanded={popup() === "Tags"} onClick={() => openByClick("Tags")}>
-            <TagIcon size={16} />Tags
+          <FilterDropdownTrigger chevron active={!!props.filters.moments.length}
+            aria-controls={popupId("My events")} aria-expanded={popup() === "My events"} onClick={() => openByClick("My events")}>
+            My events
           </FilterDropdownTrigger>
-          <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("Tags")} hidden={popup() !== "Tags"} data-history-popup>
-            <fieldset><legend>Personal moments</legend>
+          <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("My events")} hidden={popup() !== "My events"} data-history-popup>
+            <fieldset><legend>My events</legend>
               <For each={Object.keys(momentLabels) as PersonalMoment[]}>{moment =>
                 <FilterCheckbox label={momentLabels[moment]} checked={props.filters.moments.includes(moment)}
                   onChange={() => commit({ moments: toggle(props.filters.moments, moment) })} />
               }</For>
             </fieldset>
-            <fieldset><legend>Custom tags</legend>
-              <Show when={props.clipTagToken}>
-                <input class={styles.field} type="search" aria-label="Find custom tags" placeholder="Find custom tags…"
-                  value={clipPrefix()} maxLength={40} onInput={event => setClipPrefix(event.currentTarget.value)} />
+          </div>
+        </div>
+        <div class={styles.anchor}>
+          <FilterDropdownTrigger chevron active={!!props.filters.tags.length}
+            aria-controls={popupId("Tags")} aria-expanded={popup() === "Tags"} onClick={() => openByClick("Tags")}>
+            <TagIcon size={16} />Tags
+          </FilterDropdownTrigger>
+          <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("Tags")} hidden={popup() !== "Tags"} data-history-popup>
+            <fieldset><legend>Tags</legend>
+              <Show when={props.tagToken}>
+                <input class={styles.field} type="search" aria-label="Find tags" placeholder="Find tags…"
+                  value={tagPrefix()} maxLength={40} onInput={event => setTagPrefix(event.currentTarget.value)} />
               </Show>
               <For each={displayedTags()}>{tag => {
-                const checked = () => props.filters.clipTags.some(value => tagKey(value) === tagKey(tag));
-                return <FilterCheckbox label={tag} checked={checked()} disabled={!checked() && props.filters.clipTags.length >= maxClipTags}
+                const checked = () => props.filters.tags.some(value => value.id === tag.id);
+                return <FilterCheckbox label={tag.label} checked={checked()} disabled={!checked() && props.filters.tags.length >= MAX_TAG_FILTERS}
                   onChange={() => toggleTag(tag)} />;
               }}</For>
-              <Show when={props.clipTagError || clipFailed()}><p role="status">Custom tags are unavailable.</p>
-                <button type="button" class={styles.smallAction} onClick={() => props.clipTagError ? props.onClipTagRetry?.() : setClipRetry(n => n + 1)}>Try again</button>
+              <Show when={tagFailed()}><p role="status">Tags are unavailable.</p>
+                <button type="button" class={styles.smallAction} onClick={() => setTagRetry(n => n + 1)}>Try again</button>
               </Show>
-              <Show when={!props.clipTagError && !clipFailed()}>
-                <Show when={props.clipTagsPending || clipLoading()} fallback={
-                  <Show when={!displayedTags().length}><p role="status">{clipPrefix().trim() ? "No matching tags" : "No custom tags yet"}</p></Show>
-                }><p role="status">Loading custom tags…</p></Show>
+              <Show when={!tagFailed()}>
+                <Show when={tagLoading()} fallback={
+                  <Show when={!displayedTags().length}><p role="status">No matching tags</p></Show>
+                }><p role="status">Loading tags…</p></Show>
               </Show>
             </fieldset>
           </div>
@@ -284,7 +289,8 @@ export default function MatchHistoryFilters(props: Props) {
         <div class={styles.criteria} aria-label="Active filters">
           <For each={props.filters.champions}>{name => <FilterChip label={name} champion={name} championPortrait={props.championPortrait} onRemove={() => commit({ champions: toggle(props.filters.champions, name) })} />}</For>
           <For each={props.filters.moments}>{moment => <FilterChip label={momentLabels[moment]} onRemove={() => commit({ moments: toggle(props.filters.moments, moment) })} />}</For>
-          <For each={props.filters.clipTags}>{tag => <FilterChip label={tag} onRemove={() => toggleTag(tag)} />}</For>
+          <For each={props.filters.tags}>{tag => <FilterChip label={displayedTags().find(value => value.id === tag.id)?.label ?? tag.label}
+            onRemove={() => toggleTag(tag)} />}</For>
           <Show when={props.filters.queue}>{queue => <FilterChip label={queueLabels[queue()]} onRemove={() => chooseQueue(null)} />}</Show>
           <Show when={props.filters.player}><FilterChip label={props.filters.player} onRemove={() => commit({ player: "" })} /></Show>
           <Show when={props.filters.date ? dateLabels[props.filters.date] : null}>{label =>
@@ -293,7 +299,7 @@ export default function MatchHistoryFilters(props: Props) {
             <FilterChip label={label()} onRemove={() => commit({ result: "" })} />}</Show>
           <ClearFiltersButton onClear={() => {
             close();
-            setClipPrefix("");
+            setTagPrefix("");
             resetChampion(value => value + 1);
             props.onClear();
             championInput.focus();

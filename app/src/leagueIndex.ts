@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockOverlayPage, mockReplayWindow } from "./dev/mockReplay";
 import { decodeGameSummary, decodeLeagueMatch, decodeMappedReplayTick, loadGames, useMockApi } from "./api";
 import { decodeLeagueResult, resultEvidence, type LeagueResult, type ResultEvidence } from "./leagueResult";
+import { MAX_MATCH_TAGS, type Tag } from "./managedClips";
 import { parseMediaId, parseReplayTick, type MediaId, type ReplayTick } from "./replayTime";
 import type { GameSummary, LeagueMatch } from "./types";
 import { array, decodeActors, decodeEvidence, decodeSource, exact, gameTick, integer, issues, nullableInteger, object, sameSource, text,
@@ -29,12 +30,12 @@ export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_
   participant_riot_id?: string | null; event_kind?: string | null; stolen?: boolean | null;
   minimum_kill_streak?: number | null; role?: ActorRole | null;
   queue?: HistoryQueue; played_champions?: string[]; player_riot_id?: string; recorded_from?: number;
-  recorded_before?: number; personal_moments?: PersonalMoment[]; clip_tags?: string[] };
+  recorded_before?: number; personal_moments?: PersonalMoment[]; tags?: string[] };
 export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavailable"; kills: number | null; deaths: number | null; assists: number | null;
   items: Array<number | null> | null; summoner_spells: Array<string | null> | null; keystone_id: number | null; secondary_style: number | null; creep_score: number | null; duration_seconds: number | null;
   evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
-export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; clip_count?: number };
-export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number; clip_tags_pending?: true };
+export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; tags?: Tag[]; clip_count?: number };
+export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
 export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number; history_ready?: boolean };
 type Position = { end_offset: number; last_sequence: number; checksum: number[] };
 export type CatalogPage = { snapshot_token: string; items: Array<{ game_timestamp: string; media_id: MediaId | null; progress: ImportProgress | null; error: string | null }>;
@@ -111,12 +112,11 @@ export function decodeCatalogPage(value: unknown, token: string): CatalogPage {
 }
 export function decodeHistoryPage(value: unknown): HistoryPage {
   const keys = ["rows", "next", "indexed_recordings", "catalog_recordings", "unknown_recordings"];
-  const hasPendingTags = Object.prototype.hasOwnProperty.call(object(value), "clip_tags_pending");
-  if (hasPendingTags) keys.push("clip_tags_pending");
   const r = exact(value, keys);
-  if (hasPendingTags && r.clip_tags_pending !== true) throw new Error("history clip tag state");
   const rows = array(r.rows, 50).map(value => {
     const keys = ["media_id", "game", "stats", "index_status"];
+    const hasTags = Object.prototype.hasOwnProperty.call(object(value), "tags");
+    if (hasTags) keys.push("tags");
     const hasClipCount = Object.prototype.hasOwnProperty.call(object(value), "clip_count");
     if (hasClipCount) keys.push("clip_count");
     const row = exact(value, keys, "history.row");
@@ -132,13 +132,17 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
       items: s.items === null ? null : array(s.items, 32).map(nullableInteger), evidence, final_evidence: s.final_evidence as ResultEvidence | null,
       game_tick: s.game_tick === null ? null : gameTick(s.game_tick) };
     return { media_id: media, game, stats, index_status: status(row.index_status),
+      ...(hasTags ? { tags: array(row.tags, MAX_MATCH_TAGS).map(value => {
+        const tag = exact(value, ["id", "label", "tier", "builtin"]);
+        if (typeof tag.builtin !== "boolean") throw new Error("history tag builtin");
+        return { id: text(tag.id), label: text(tag.label), tier: tag.tier === null ? null : integer(tag.tier), builtin: tag.builtin };
+      }) } : {}),
       ...(hasClipCount ? { clip_count: integer(row.clip_count) } : {}) };
   });
   let next: HistoryCursor | null = null; if (r.next !== null) { const c = exact(r.next, ["recorded_at", "media_id"]); next = { recorded_at: text(c.recorded_at, 64), media_id: parseMediaId(c.media_id) }; }
   const indexed = integer(r.indexed_recordings), catalog = integer(r.catalog_recordings), unknown = integer(r.unknown_recordings);
   if (indexed > catalog || unknown > catalog) throw new Error("history catalog counts");
-  return { rows, next, indexed_recordings: indexed, catalog_recordings: catalog, unknown_recordings: unknown,
-    ...(hasPendingTags ? { clip_tags_pending: true as const } : {}) };
+  return { rows, next, indexed_recordings: indexed, catalog_recordings: catalog, unknown_recordings: unknown };
 }
 function sourceEvent(value: unknown): SourceEvent {
   const r = object(value); const allowed = ["source_id", "source_time", "game_tick", "name", "killer", "victim", "assisters", "recipient", "kill_streak", "acer", "acing_team", "dragon_type", "stolen", "turret", "inhibitor", "result", "actors", "issues"];
@@ -228,7 +232,7 @@ export async function queryHistory(token: string, query: HistoryQuery): Promise<
       if (query.outcome && game.league_result?.outcome !== query.outcome) return false;
       return !query.player_riot_id || game.participants.some(player => player.summoner_name.toLowerCase() === query.player_riot_id!.toLowerCase());
     });
-    const unsupportedSemantic = !!(query.queue || query.queue_id != null || query.participant_riot_id || query.event_kind || query.stolen != null || query.minimum_kill_streak != null || query.role || query.personal_moments?.length || query.clip_tags?.length);
+    const unsupportedSemantic = !!(query.queue || query.queue_id != null || query.participant_riot_id || query.event_kind || query.stolen != null || query.minimum_kill_streak != null || query.role || query.personal_moments?.length || query.tags?.length);
     if (unsupportedSemantic) games = [];
     games.sort((a, b) => b.recorded_at.localeCompare(a.recorded_at) || a.media_id!.localeCompare(b.media_id!));
     if (query.after) games = games.filter(game => game.recorded_at < query.after!.recorded_at || (game.recorded_at === query.after!.recorded_at && game.media_id! > query.after!.media_id));

@@ -58,8 +58,8 @@ import { HistoryController } from "./historyController";
 import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
-import { editManagedClip, readClipPage, readClipPlayback, reconcileClips, sourcePosition, usesManagedClips,
-  type ClipCard, type ClipEdit, type ClipFilters, type ClipGridCard } from "./managedClips";
+import { editClipTags, editManagedClip, editMatchTags, readClipPage, readClipPlayback, reconcileClips, replaceTagDefinition, sourcePosition, usesManagedClips,
+  type ClipCard, type ClipEdit, type ClipFilters, type ClipGridCard, type Tag } from "./managedClips";
 import styles from "./App.module.css";
 import controls from "./ui/controls.module.css";
 
@@ -136,6 +136,12 @@ function App() {
   const clips = createMemo(() => libraryState().snapshot?.clips);
   const managed = usesManagedClips();
   const [clipFilters, setClipFilters] = createSignal<ClipFilters>({});
+  const [renamedTag, setRenamedTag] = createSignal<Tag>();
+  const [clipTagUpdate, setClipTagUpdate] = createSignal<{ id: string; tags: Tag[] }>();
+  createEffect(on(() => libraryState().root, () => {
+    setRenamedTag(undefined);
+    setClipTagUpdate(undefined);
+  }, { defer: true }));
   const [clipIndexToken, setClipIndexToken] = createSignal<string>();
   const [clipIndexError, setClipIndexError] = createSignal<string | null>(null);
   const [clipIndexRetry, setClipIndexRetry] = createSignal(0);
@@ -152,7 +158,6 @@ function App() {
   const acceptedSnapshot = createMemo(() => libraryState().snapshot);
   const [changedCatalogToken, setChangedCatalogToken] = createSignal<string>();
   const libraryActionable = createMemo(() => libraryState().actionable);
-  const clipTagsPending = () => !!acceptedSnapshot()?.managed_clip_count && clipIndexToken() !== acceptedSnapshot()?.token;
   const hasHistoryPage = createMemo(() => Boolean(historyState().page));
   const needsClipIndex = createMemo(() => libraryTab() === "clips" || hasHistoryPage() || navigation().screen === "clip-export");
   createEffect(() => {
@@ -174,7 +179,7 @@ function App() {
         if (ready) {
           setClipIndexToken(origin.token);
           const current = history.value;
-          if (current.loading || current.page?.clip_tags_pending || current.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
+          if (current.loading || current.page?.rows.some(row => row.clip_count === undefined)) history.prepared();
         }
         else timer = window.setTimeout(() => void step(), 25);
       } catch (error) {
@@ -284,7 +289,7 @@ function App() {
     const result = await controller.mutate(selected.origin, id, token => editManagedClip(token, id, edit));
     if (result.admitted) {
       closeManagedClip();
-      showNotice(edit.kind === "delete" ? "Clip deleted." : edit.kind === "rename" ? "Clip renamed." : "Clip tags saved.");
+      showNotice(edit.kind === "delete" ? "Clip deleted." : "Clip renamed.");
       return true;
     }
     if (result.error) {
@@ -292,6 +297,40 @@ function App() {
       closeManagedClip();
     }
     return false;
+  };
+  const applyClipTags = async (tags: Tag[]) => {
+    const selected = managedSelection();
+    if (!selected || !controller.mayPublish(selected.origin)) return false;
+    const result = await controller.mutate(selected.origin, selected.clip.header.id,
+      () => controller.writeIndex(selected.origin, "tags", token => editClipTags(token, selected.clip.header.id, tags)), "metadata");
+    if (result.admitted) {
+      setClipTagUpdate({ id: selected.clip.header.id, tags: result.value });
+      setManagedSelection({ ...selected, clip: { ...selected.clip, header: { ...selected.clip.header, tags: result.value } } });
+      showNotice("Clip tags saved.");
+      return true;
+    }
+    if (result.error) showError(result.error);
+    return false;
+  };
+  const applyMatchTags = async (group: string, previous: Tag[], tags: Tag[]) => {
+    const origin = controller.origin();
+    if (!origin) return false;
+    const result = await controller.mutate(origin, group, () => controller.writeIndex(origin, "tags", token =>
+      editMatchTags(token, group, previous.map(tag => tag.id), tags.map(tag => tag.id))), "metadata");
+    if (!result.admitted) {
+      if (result.error) showError(result.error);
+      return false;
+    }
+    history.tagsEdited(group, result.value);
+    return true;
+  };
+  const onTagRenamed = (tag: Tag) => {
+    setRenamedTag(tag);
+    history.tagRenamed(tag);
+    setManagedSelection(selected => selected ? { ...selected,
+      clip: { ...selected.clip, header: { ...selected.clip.header,
+        tags: replaceTagDefinition(selected.clip.header.tags, tag),
+      } } } : selected);
   };
 
   const reloadLibrary = () => controller.refresh();
@@ -757,11 +796,11 @@ function App() {
               tab={libraryTab()}
               games={games() ?? []}
               history={historyState()}
-              clipTagToken={managed && acceptedSnapshot()?.managed_clip_count && !clipTagsPending() && libraryActionable()
-                ? acceptedSnapshot()?.token : undefined}
-              clipTagsPending={managed && clipTagsPending()}
-              clipTagError={managed && clipTagsPending() ? clipIndexError() : null}
-              onClipTagRetry={() => setClipIndexRetry(n => n + 1)}
+              tagToken={managed && libraryActionable() ? acceptedSnapshot()?.token : undefined}
+              onEditMatchTags={managed ? applyMatchTags : undefined}
+              onTagRenamed={onTagRenamed}
+              renamedTag={renamedTag()}
+              clipTagUpdate={clipTagUpdate()}
               onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}
               onHistoryNext={() => history.nextPage()}
               onHistoryFirst={() => history.firstPage()}
@@ -772,6 +811,8 @@ function App() {
               managedClips={managed ? <ManagedClips
                 root={libraryState().root}
                 token={acceptedSnapshot()?.token ?? ""} ready={(!acceptedSnapshot()?.managed_clip_count || clipIndexToken() === acceptedSnapshot()?.token) && libraryActionable()}
+                renamedTag={renamedTag()}
+                tagUpdate={clipTagUpdate()}
                 indexError={clipIndexError()} onRetry={() => setClipIndexRetry(n => n + 1)}
                 ddragon={ddragon() ?? emptyDdragon}
                 filters={clipFilters()} onFilters={setClipFilters}
@@ -807,10 +848,11 @@ function App() {
         </Show>
       </Show>
       <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => controller.selectClip(null)} />}</Show>
-      <Show when={managedSelection()} keyed>{selected => <ManagedClipPlayer
-        clip={selected.clip} token={selected.origin.token} opener={selected.button} onClose={closeManagedClip} onEdit={applyClipEdit}
-        sourceAvailable={Boolean(availableSource(selected.clip))} onSource={openClipSource}
-        library={selected.fileSizeBytes === undefined ? undefined : { fileSizeBytes: selected.fileSizeBytes, ddragon: ddragon() ?? emptyDdragon }}
+      <Show when={managedSelection()}>{selected => <ManagedClipPlayer
+        clip={selected().clip} token={selected().origin.token} opener={selected().button} onClose={closeManagedClip} onEdit={applyClipEdit} onEditTags={applyClipTags}
+        onTagRenamed={onTagRenamed}
+        sourceAvailable={Boolean(availableSource(selected().clip))} onSource={openClipSource}
+        library={selected().fileSizeBytes === undefined ? undefined : { fileSizeBytes: selected().fileSizeBytes!, ddragon: ddragon() ?? emptyDdragon }}
       />}</Show>
       <Show when={deleteTarget()}>
         {(target) => (

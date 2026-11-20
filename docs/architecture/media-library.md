@@ -376,11 +376,29 @@ Each exported MP4 has a UUID folder under `clips/`. The MP4 stem is the editable
 title. The folder also contains `thumbnail.jpg`, the bounded `clip.json` header
 and the separately bounded `events.json`. The header retains game context,
 the exact source media ID and half-open frame interval, the validated output
-duration, custom tags and selected predefined tags. The event file contains
-mapped observations and is opened for explicit clip detail. Tag editing uses
-the clip header. Export preselects tags from events attributed to the recorded
-player. All predefined tags are available for manual selection.
-When the exact recording part is gone, the clip and its saved context remain.
+duration, and confirmed tag assignments. The event file contains mapped factual
+observations for all actors and is opened for explicit clip detail. Export
+preselects tags from verified recording-player events. Users can select any
+tag before exporting or edit the saved assignments later. Playback, match
+context and saved tags survive deletion of the source recording.
+
+Games and clips use the same tag vocabulary and stable IDs. Both display only
+the highest assigned multikill tier. A lower-tier tag filter also matches
+higher tiers. Match History's My events filter queries observed evidence
+directly. Match tags default to tags inferred from current checked parts of the
+recording. Manual additions, replacements and suppressions in the root's
+`league_tags.json` override that default. The same file owns the library's
+custom names. SQLite projects effective tags and exact membership for search.
+
+Each clip carries its assigned custom IDs and labels in `clip.json`. If the
+library vocabulary is absent, the clip index recovers those definitions from
+accepted headers. Definitions with the same ID use the library's name when
+present. Different recovered IDs with colliding names remain distinguishable.
+Tag edits update one clip header and its projection while retaining the current
+media catalog. A library-wide rename updates the shared definition without
+rewriting exported clips. Each detached clip can recover the label last saved
+in its header. The explicit `--migrate-clip-tags <absolute library path>` command
+converts v2 development headers once and can be rerun after an interruption.
 
 `export_staging` owns `clips/.chronobreak-export/<32-hex-id>/`: one strict,
 versioned ownership record (8 KiB maximum, at most three destinations) and one
@@ -418,18 +436,14 @@ Deletion preflights the bundle's owned files.
 The Clips tab pages and filters an additive SQLite projection. One low-priority
 writer step checks a bounded batch against the accepted inventory and only
 parses changed headers. After reconciliation, History attaches counts for its
-visible page in a batched SQL read. History's custom tags use the same accepted
-projection and match only when each selected tag appears on a clip in the
-account-scoped group. Separate clips can supply different tags. Tag-filtered
-history waits for the current inventory stamp and re-queries when the clip
-projection is ready. Expanding a match reads clips from its
+visible page in a batched SQL read. Expanding a match reads clips from its
 account-scoped group. The player resolves source playback by the stored part
 identity, and the viewer validates the descriptor and frame range before seeking.
 
 The standalone Clips grid seeks by export time and clip ID in the clip projection.
 Match-date filters use the saved played date independently of that ordering.
-The grid uses the same exact, case-insensitive lookup for custom and predefined
-tag labels. A clip must contain every selected tag.
+The grid seeks through exact tag IDs in creation order and requires each
+selected tag or an assigned higher tier. Text search uses the current tag labels.
 Grid queries return titles, champions, clip durations, tags and thumbnail URLs.
 Opening a clip reads its header and size and may supplement the saved context
 from the account-scoped match, using the same checked recording-part priority

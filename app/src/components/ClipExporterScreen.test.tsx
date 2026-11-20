@@ -88,6 +88,15 @@ it("keeps replay navigation and plain section labels and previews filenames with
 });
 
 it("edits neutral predefined tags and exports the unified metadata", async () => {
+  const builtins = [
+    ["double_kill", "Double Kill", 2], ["triple_kill", "Triple Kill", 3], ["quadra_kill", "Quadra Kill", 4],
+    ["pentakill", "Pentakill", 5], ["first_blood", "First Blood", null], ["dragon_steal", "Dragon Steal", null],
+    ["baron_steal", "Baron Steal", null], ["herald_steal", "Herald Steal", null],
+  ] as const;
+  const tags = builtins.map(([key, label, tier]) => ({ id: `builtin:${key}`, label, tier, builtin: true }));
+  const ranked = { id: "custom:11111111-2222-4333-8444-555555555555", label: "Ranked", builtin: false, tier: null };
+  vi.spyOn(managedClips, "tagChoices").mockResolvedValue(tags);
+  vi.spyOn(managedClips, "createTag").mockResolvedValue(ranked);
   vi.mocked(loadReplayDescriptor).mockResolvedValue({
     snapshot_token: "test-snapshot", game_timestamp: "1",
     media_timeline: descriptor.media_timeline, video_url: descriptor.video_url,
@@ -95,7 +104,7 @@ it("edits neutral predefined tags and exports the unified metadata", async () =>
   vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
   vi.spyOn(managedClips, "usesManagedClips").mockReturnValue(true);
   vi.spyOn(managedClips, "prepareClipDraft").mockResolvedValue({
-    token: "test-draft", title: "Ahri clip", availability: "available", detected_tags: ["pentakill"],
+    token: "test-draft", title: "Ahri clip", availability: "available", detected_tags: [tags[3]],
   });
   vi.mocked(exportClip).mockResolvedValue({ outputs: [], elapsed_ms: 1 } as never);
   const host = document.createElement("div");
@@ -107,6 +116,7 @@ it("edits neutral predefined tags and exports the unified metadata", async () =>
   try {
     await vi.waitFor(() => expect([...host.querySelectorAll("fieldset label")]
       .find(label => label.textContent?.includes("Pentakill"))!.querySelector("input")!.checked).toBe(true));
+    await vi.waitFor(() => expect(host.textContent).toContain("Herald Steal"));
     const labels = [...host.querySelectorAll("fieldset label")];
     expect(labels.map(label => label.textContent?.trim())).toEqual(expect.arrayContaining([
       "Double Kill", "Triple Kill", "Quadra Kill", "Pentakill", "First Blood", "Dragon Steal", "Baron Steal", "Herald Steal",
@@ -116,10 +126,11 @@ it("edits neutral predefined tags and exports the unified metadata", async () =>
     custom.value = "Ranked";
     custom.dispatchEvent(new Event("input", { bubbles: true }));
     [...host.querySelectorAll("button")].find(button => button.textContent === "Add tag")!.click();
+    await vi.waitFor(() => expect(host.textContent).toContain("Ranked"));
     [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT 1 MP4"))!.click();
     await vi.waitFor(() => expect(exportClip).toHaveBeenCalledOnce());
     expect(vi.mocked(exportClip).mock.calls[0][0].metadata).toEqual({
-      draft_token: "test-draft", title: null, custom_tags: ["Ranked"], predefined_tags: ["pentakill", "double_kill"],
+      draft_token: "test-draft", title: null, tags: [tags[0], ranked],
     });
   } finally { dispose(); }
 });

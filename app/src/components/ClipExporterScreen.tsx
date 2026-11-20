@@ -34,8 +34,8 @@ import {
   frameBoundaryToReplayTick,
 } from "../replayTime";
 import { clamp } from "../viewerUtils";
-import { clipTitleError, prepareClipDraft, usesManagedClips, type DraftSummary, type HighlightKind } from "../managedClips";
-import { ClipTagEditor } from "./ClipMetadataFields";
+import { clipTitleError, prepareClipDraft, usesManagedClips, type DraftSummary, type Tag } from "../managedClips";
+import { TagEditor } from "./ClipMetadataFields";
 import BackButton from "../ui/BackButton";
 import { ArrowRightIcon, CheckIcon, PauseIcon, PlayIcon } from "../ui/icons";
 import controlStyles from "../ui/controls.module.css";
@@ -136,27 +136,7 @@ function ClipExporterScreen(props: Props) {
     const base = title().trim();
     return (base ? clipTitleError(base) : undefined) ?? outputTitles().map(clipTitleError).find(Boolean);
   });
-  const [tags, setTags] = createSignal<string[]>([]);
-  const [detectedPredefinedTags, setDetectedPredefinedTags] = createSignal<HighlightKind[]>([]);
-  const [manualPredefinedAdditions, setManualPredefinedAdditions] = createSignal<HighlightKind[]>([]);
-  const [manualPredefinedRemovals, setManualPredefinedRemovals] = createSignal<HighlightKind[]>([]);
-  const predefinedTags = createMemo(() => [...new Set([
-    ...detectedPredefinedTags().filter(kind => !manualPredefinedRemovals().includes(kind)),
-    ...manualPredefinedAdditions(),
-  ])]);
-  const setPredefinedTags = (next: HighlightKind[]) => {
-    const current = predefinedTags();
-    const added = next.filter(kind => !current.includes(kind));
-    const removed = current.filter(kind => !next.includes(kind));
-    if (added.length) {
-      setManualPredefinedAdditions(value => [...new Set([...value, ...added])]);
-      setManualPredefinedRemovals(value => value.filter(kind => !added.includes(kind)));
-    }
-    if (removed.length) {
-      setManualPredefinedAdditions(value => value.filter(kind => !removed.includes(kind)));
-      setManualPredefinedRemovals(value => [...new Set([...value, ...removed])]);
-    }
-  };
+  const [tags, setTags] = createSignal<Tag[]>([]);
   const [progress, setProgress] = createSignal<ClipExportProgress>({
     stage: "encoding",
     percent: 0,
@@ -188,13 +168,14 @@ function ClipExporterScreen(props: Props) {
     const draft = props.draft;
     let live = true;
     setMetadataDraft(null);
-    setDetectedPredefinedTags([]);
+    setTags([]);
     setLoadingMetadata(true);
     const timer = window.setTimeout(() => {
       void props.readReplay(current => prepareClipDraft(current, draft)).then(value => {
         if (!live || token !== props.snapshotToken) return;
         setMetadataDraft(value);
-        setDetectedPredefinedTags(value.detected_tags);
+        // Detected tags are preselected once for this draft. Subsequent user changes win.
+        setTags(value.detected_tags);
       }, () => {}).finally(() => { if (live) setLoadingMetadata(false); });
     }, 100);
     onCleanup(() => { live = false; window.clearTimeout(timer); });
@@ -566,7 +547,7 @@ function ClipExporterScreen(props: Props) {
           ...(usesManagedClips() ? { metadata: {
             draft_token: metadataDraft()?.token ?? null,
             title: title().trim() || null,
-            custom_tags: tags(), predefined_tags: predefinedTags(),
+            tags: tags(),
           } } : {}),
         },
         setProgress,
@@ -803,8 +784,7 @@ function ClipExporterScreen(props: Props) {
                   <Show when={titleError()} fallback={<For each={outputTitles()}>{name => <small>{name}.mp4</small>}</For>}>
                     {error => <small role="alert">{error()}</small>}
                   </Show>
-                  <ClipTagEditor token={props.snapshotToken} customTags={tags()} predefinedTags={predefinedTags()}
-                    onCustomTagsChange={setTags} onPredefinedTagsChange={setPredefinedTags} disabled={exporting()} />
+                  <TagEditor token={props.snapshotToken} tags={tags()} onTagsChange={setTags} disabled={exporting()} />
                   <Show when={loadingMetadata()}><small role="status">Checking this range for detected tags…</small></Show>
                 </section>
               </Show>

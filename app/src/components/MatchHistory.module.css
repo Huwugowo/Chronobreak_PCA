@@ -688,3 +688,15 @@
 .matchItem[data-outcome="terminated"] {
   --match-accent: var(--accent-neutral);
 }
+.matchTags,
+.matchTagEditor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+.matchTagEditor > fieldset {
+  flex-basis: 100%;
+}

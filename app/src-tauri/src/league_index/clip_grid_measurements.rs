@@ -2,8 +2,12 @@ use super::{
     ClipGridFilter, ClipGridOutcome, ClipGridQuery, ClipGridQueue, GRID_PAGE_SIZE, SCHEMA,
     grid_page_sql,
 };
+use crate::tags::TagId;
 use rusqlite::{Connection, StatementStatus, ToSql, params, params_from_iter};
 use std::time::Instant;
+
+const RANKED: &str = "custom:11111111-2222-4333-8444-555555555555";
+const COMEBACK: &str = "custom:11111111-2222-4333-8444-555555555556";
 
 fn populate(db: &Connection, count: i64) {
     db.execute_batch(SCHEMA).unwrap();
@@ -17,33 +21,34 @@ fn populate(db: &Connection, count: i64) {
                 CASE WHEN n<=?1/5 THEN '2026-10-01' ELSE '2026-11-01' END,
                 CASE WHEN n%3=0 THEN '420' ELSE '400' END,
                 CASE WHEN n%7=0 THEN 'win' ELSE 'loss' END,
-                lower(printf('Solo queue %s | %s | %s | %s',n,
+                lower(printf('Solo queue %s | %s | %s',n,
                     CASE WHEN n%19=0 THEN 'Tower dive' ELSE 'Team fight' END,
-                    CASE WHEN n%251=0 THEN 'Late comeback' ELSE 'Ranked' END,
                     CASE WHEN n%43=0 THEN 'Pentakill' ELSE 'Double Kill' END)),
                 json_object('exported_at', n/4, 'game', json_object('mode', 'CLASSIC',
                     'champion','Lux','account','Fixture#EUW','played_at','2026-11-01T12:00:00Z'),
                     'id',printf('grid-%08d',n),'source_timestamp','1-2','duration','240000000',
-                    'predefined_tags',json_array(
-                        CASE WHEN n%43=0 THEN 'pentakill' ELSE 'double_kill' END),
-                    'custom_tags',json_array(CASE WHEN n%251=0 THEN 'Late comeback' ELSE 'Ranked' END),
                     'range',json_object('start_frame',n*900,'end_frame_exclusive',n*900+300),
-                    'preset','horizontal','version',2)
+                    'preset','horizontal','version',3)
          FROM clips",
         params![count],
     )
     .unwrap();
+    db.execute("INSERT INTO clip_tag_projection
+         SELECT id,CASE WHEN (frame/900)%251=0 THEN ?1 ELSE ?2 END,
+              CASE WHEN (frame/900)%251=0 THEN 'Late comeback' ELSE 'Ranked' END,
+              CASE WHEN (frame/900)%251=0 THEN 'late comeback' ELSE 'ranked' END FROM clip_projection",
+         params![COMEBACK,RANKED]).unwrap();
     db.execute_batch(
-        "INSERT INTO clip_tag_projection
-         SELECT clip.id,lower(tag.value),tag.value FROM clip_projection clip,
-             json_each(clip.header,'$.custom_tags') tag;
+        "CREATE TABLE tag_definition(id TEXT PRIMARY KEY,label TEXT,label_key TEXT UNIQUE);
          INSERT INTO clip_grid_tag_projection
-         SELECT tag.tag_key,clip.created,clip.id FROM clip_tag_projection tag
+         SELECT tag.tag_id,clip.created,clip.id FROM clip_tag_projection tag
              JOIN clip_projection clip ON clip.id=tag.clip_id;
          INSERT INTO clip_grid_tag_projection
-         SELECT CASE tag.value WHEN 'pentakill' THEN 'pentakill' ELSE 'double kill' END,
-             clip.created,clip.id FROM clip_projection clip,
-             json_each(clip.header,'$.predefined_tags') tag;
+         SELECT 'builtin:double_kill',created,id FROM clip_projection;
+         INSERT INTO clip_grid_tag_projection
+         SELECT keys.value,created,clip_projection.id FROM clip_projection,
+             json_each(json_array('builtin:triple_kill','builtin:quadra_kill','builtin:pentakill')) keys
+         WHERE (frame/900)%43=0;
          ANALYZE;",
     )
     .unwrap();
@@ -120,7 +125,7 @@ fn measure(
     if !query.tags.is_empty() {
         assert!(
             plan.iter()
-                .any(|line| line.contains("SEARCH anchor") && line.contains("tag_key=?")),
+                .any(|line| line.contains("SEARCH anchor") && line.contains("tag_id=?")),
             "{name}: {plan:?}"
         );
         assert_eq!(scan_steps, 0, "{name}: {plan:?}");
@@ -189,7 +194,7 @@ fn representative_clip_grid_queries() {
             &db,
             "Exact predefined tag",
             ClipGridQuery {
-                tags: vec!["Pentakill".into()],
+                tags: vec![TagId::parse("builtin:pentakill").unwrap()],
                 ..Default::default()
             },
             None,
@@ -197,9 +202,12 @@ fn representative_clip_grid_queries() {
         );
         measure(
             &db,
-            "Exact tags after cursor",
+            "Tier and custom seek",
             ClipGridQuery {
-                tags: vec!["Pentakill".into(), "Ranked".into()],
+                tags: vec![
+                    TagId::parse("builtin:quadra_kill").unwrap(),
+                    TagId::parse(RANKED).unwrap(),
+                ],
                 ..Default::default()
             },
             Some(deep),

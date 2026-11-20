@@ -11,8 +11,10 @@ import { initializeReplayBenchmark } from "./benchmark";
 import { parseMediaId, type FrameBoundary } from "./replayTime";
 import { indexCatalog, indexRecording } from "./leagueIndex";
 import type { CatalogPage, ImportProgress } from "./leagueIndex";
-import { editManagedClip, readClipDetail, readClipGridPage, readClipPage, readClipPlayback, readClipTagSuggestions, reconcileClips,
+import { editClipTags, editManagedClip, readClipDetail, readClipGridPage, readClipPage, readClipPlayback, tagChoices, reconcileClips,
   type ClipCard, type ClipGridCard, type ClipPage, type ClipPlayback } from "./managedClips";
+
+import { customTag, pentakill } from "./tagFixtures";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
@@ -27,7 +29,8 @@ vi.mock("./managedClips", async original => ({ ...await original<typeof import("
   readClipGridPage: vi.fn(),
   readClipPlayback: vi.fn(),
   readClipDetail: vi.fn(),
-  readClipTagSuggestions: vi.fn(),
+  tagChoices: vi.fn(),
+  editClipTags: vi.fn(async () => []),
   editManagedClip: vi.fn(async () => {}),
 }));
 vi.mock("./benchmark", async original => ({ ...await original<typeof import("./benchmark")>(),
@@ -115,15 +118,15 @@ const mount = async () => {
 const media = "22222222-3333-4444-8555-666666666666";
 const makeClip = (): ClipCard => ({
     title: "Last fight", video_url: "http://fixture/clip.mp4", thumbnail_url: "http://fixture/thumb.jpg",
-    header: { version: 2, id: "clip", source_timestamp: "1-2", preset: "horizontal", exported_at: 0,
+    header: { version: 3, id: "clip", source_timestamp: "1-2", preset: "horizontal", exported_at: 0,
       range: { media_id: media, start_frame: "420", end_frame_exclusive: "720" },
       game: { match_group: "fixture", champion: "A", played_at: null, part_recorded_at: null, account: null,
         queue_id: null, mode: null, outcome: null, final_kda: null },
-      duration: "240000000", events: "unavailable", predefined_tags: [], custom_tags: [] },
+      duration: "240000000", events: "unavailable", tags: [] },
 });
 const gridCard = (clip: ClipCard): ClipGridCard => {
-  const { id, duration, custom_tags } = clip.header;
-  return { id, duration, custom_tags, predefined_tags: clip.header.predefined_tags, title: clip.title,
+  const { id, duration, tags } = clip.header;
+  return { id, duration, tags, title: clip.title,
     champion: clip.header.game.champion, thumbnail_url: clip.thumbnail_url };
 };
 
@@ -238,7 +241,7 @@ it.each([false, true])("opens a grid clip in place with saved context and access
     champion: "Ahri", outcome: "win", queue_id: 420, played_at: "2026-07-03T12:00:00Z",
     final_kda: [7, 0, 3], summoner_spells: ["4", "14"], final_items: [1001], duration_seconds: 1_503,
   });
-  clip.header.custom_tags = ["one", "two", "three"];
+  clip.header.tags = ["one", "two", "three"].map(customTag);
   const card = gridCard(clip);
   vi.mocked(readClipGridPage).mockResolvedValueOnce({ clips: [card], next: null });
   vi.mocked(readClipPlayback).mockResolvedValueOnce({ clip, file_size_bytes: 3_500_000 });
@@ -340,8 +343,7 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   harness.renderManagedGrid = true;
   const clip = makeClip();
   harness.clip = clip;
-  clip.header.custom_tags = ["Keep"];
-  clip.header.predefined_tags = ["pentakill"];
+  clip.header.tags = [pentakill, customTag("Keep")];
   const edited = gridCard(clip);
   const first = { ...edited, id: "first", title: "Keep first", thumbnail_url: "http://fixture/first.jpg" };
   const replacement = { ...first, id: "replacement", title: "Keep next" };
@@ -350,14 +352,15 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   const second = operation === "rename" ? renamed : replacement;
   const refreshedCursor: [number, string] = operation === "rename" ? [3, edited.id] : [2, replacement.id];
   vi.mocked(readClipGridPage).mockImplementation(async (token, query, after) => {
-    if (!query.search || !query.tags?.includes("Pentakill")) return { clips: [], next: null };
+    if (!query.search || !query.tags?.includes(pentakill.id)) return { clips: [], next: null };
     if (!after) return { clips: [first], next: [4, first.id] };
-    if (token === "A-1") return { clips: [edited], next: [3, edited.id] };
+    if (token === "A-1" && !vi.mocked(editClipTags).mock.calls.length) return { clips: [edited], next: [3, edited.id] };
     if (after[1] === first.id) return { clips: [second], next: refreshedCursor };
     return { clips: [tail], next: null };
   });
   vi.mocked(readClipPlayback).mockResolvedValueOnce({ clip, file_size_bytes: 512 });
-  vi.mocked(readClipTagSuggestions).mockResolvedValue([]);
+  vi.mocked(editClipTags).mockClear();
+  vi.mocked(tagChoices).mockResolvedValue([pentakill]);
   const { host, click } = await mount();
   const button = (label: string, within: ParentNode = host) => [...within.querySelectorAll("button")]
     .find(element => element.textContent?.trim() === label);
@@ -368,6 +371,7 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   search.dispatchEvent(new Event("input", { bubbles: true }));
   button("Tags")!.click();
   const tagPanel = host.querySelector('[aria-label="Tags"]')!;
+  await vi.waitFor(() => expect(tagPanel.textContent).toContain("Pentakill"));
   [...tagPanel.querySelectorAll("label")].find(label => label.textContent === "Pentakill")!.querySelector("input")!.click();
   button("Tags")!.click();
   await vi.waitFor(() => expect(card(first.id)).not.toBeNull());
@@ -404,15 +408,22 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
     button("Delete clip", host.querySelector('[role="alertdialog"]')!)!.click();
   }
 
-  const edit = operation === "rename" ? { kind: "rename", title: renamed.title } : operation === "tags"
-    ? { kind: "tags", custom_tags: [], predefined_tags: [] } : { kind: "delete" };
-  expect(editManagedClip).toHaveBeenCalledExactlyOnceWith("A-1", edited.id, edit);
-  await vi.waitFor(() => expect(acceptIndex).toBeDefined());
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
   expect(card(first.id)).toBe(firstButton);
-  expect(card(edited.id)).toBe(editButton);
-  expect(button("More clips")?.getAttribute("aria-disabled")).toBe("true");
-  acceptIndex(true);
+  if (operation === "tags") {
+    expect(editClipTags).toHaveBeenCalledExactlyOnceWith("A-1", edited.id, []);
+    expect(editManagedClip).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(button("Save tags")).toBeUndefined());
+    button("Close")!.click();
+    expect(acceptIndex).toBeUndefined();
+  } else {
+    const edit = operation === "rename" ? { kind: "rename", title: renamed.title } : { kind: "delete" };
+    expect(editManagedClip).toHaveBeenCalledExactlyOnceWith("A-1", edited.id, edit);
+    await vi.waitFor(() => expect(acceptIndex).toBeDefined());
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(card(edited.id)).toBe(editButton);
+    expect(button("More clips")?.getAttribute("aria-disabled")).toBe("true");
+    acceptIndex(true);
+  }
 
   await vi.waitFor(() => expect(card(second.id)?.getAttribute("aria-label")).toBe(`Play ${second.title}`));
   expect(card(first.id)).toBe(firstButton);
@@ -423,13 +434,14 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   } else expect(card(edited.id)).toBeNull();
   expect(search.value).toBe("keep");
   expect(scrollTo).not.toHaveBeenCalled();
+  const token = operation === "tags" ? "A-1" : "A-2";
   expect(vi.mocked(readClipGridPage).mock.calls.slice(-2)).toEqual([
-    ["A-2", { search: "keep", tags: ["Pentakill"] }, null],
-    ["A-2", { search: "keep", tags: ["Pentakill"] }, [4, first.id]],
+    [token, { search: "keep", tags: [pentakill.id] }, null],
+    [token, { search: "keep", tags: [pentakill.id] }, [4, first.id]],
   ]);
   button("More clips")!.click();
   await vi.waitFor(() => expect(card(tail.id)).not.toBeNull());
-  expect(readClipGridPage).toHaveBeenLastCalledWith("A-2", { search: "keep", tags: ["Pentakill"] }, refreshedCursor);
+  expect(readClipGridPage).toHaveBeenLastCalledWith(token, { search: "keep", tags: [pentakill.id] }, refreshedCursor);
 });
 
 it("shares the actual App writer wiring across early replay open and return", async () => {

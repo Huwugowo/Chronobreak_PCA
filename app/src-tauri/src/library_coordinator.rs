@@ -30,6 +30,7 @@ struct PublishedSnapshot {
     path: PathBuf,
     root: ApprovedRoot,
     snapshot: Arc<LibrarySnapshot>,
+    clip_headers: Arc<library::ClipHeaderUpdates>,
 }
 
 #[derive(Default)]
@@ -176,12 +177,22 @@ impl LibraryCoordinator {
     pub(crate) fn selected_snapshot(
         &self,
         path: &std::path::Path,
-    ) -> Option<(ApprovedRoot, Arc<LibrarySnapshot>)> {
+    ) -> Option<(
+        ApprovedRoot,
+        Arc<LibrarySnapshot>,
+        Arc<library::ClipHeaderUpdates>,
+    )> {
         let publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
         let current = publication.current.as_ref()?;
         (current.path == path
             && publication.selected_token.as_ref() == Some(&current.snapshot.token))
-        .then(|| (current.root.clone(), Arc::clone(&current.snapshot)))
+        .then(|| {
+            (
+                current.root.clone(),
+                Arc::clone(&current.snapshot),
+                Arc::clone(&current.clip_headers),
+            )
+        })
     }
 
     #[cfg(test)]
@@ -335,6 +346,7 @@ impl LibraryCoordinator {
                 path: capture.path.clone(),
                 root: capture.root.clone(),
                 snapshot: Arc::clone(&snapshot),
+                clip_headers: Arc::default(),
             });
             publication.selected_token = Some(capture.token.clone());
             (snapshot, previous)
@@ -484,9 +496,42 @@ impl LibraryCoordinator {
             .current
             .as_ref()
             .filter(|current| current.snapshot.token == token)
-            .and_then(|current| current.snapshot.managed_clips.get(id))
-            .cloned()
+            .and_then(|current| {
+                let mut clip = current.snapshot.managed_clips.get(id)?.clone();
+                if let Some(header) = current.clip_headers.get(id) {
+                    clip.header = header.clone();
+                }
+                Some(clip)
+            })
             .ok_or(LibraryRefreshError::Superseded)
+    }
+
+    /// A guarded metadata edit leaves the accepted media inventory and its URLs live.
+    /// Track the new file identity separately from the shared immutable inventory.
+    pub(crate) fn publish_clip_header(
+        &self,
+        token: &str,
+        clip: &crate::clip_bundle::ClipDescriptor,
+    ) -> anyhow::Result<()> {
+        let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+        anyhow::ensure!(
+            publication.selected_token.as_deref() == Some(token),
+            "clip edit superseded"
+        );
+        let current = publication
+            .current
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("clip edit superseded"))?;
+        anyhow::ensure!(
+            current
+                .snapshot
+                .managed_clips
+                .get(&clip.id)
+                .is_some_and(|accepted| accepted.generation == clip.generation),
+            "clip folder changed"
+        );
+        Arc::make_mut(&mut current.clip_headers).insert(clip.id.clone(), clip.header.clone());
+        Ok(())
     }
 
     /// One owned blocking read shared by descriptor and full-probe requests.

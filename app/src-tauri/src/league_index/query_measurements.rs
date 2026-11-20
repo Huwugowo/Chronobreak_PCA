@@ -312,7 +312,6 @@ fn representative_local_sql_query_measurements() {
             &no_i64,
             &no_i64,
             &no_string,
-            &false,
             &no_i64,
         ],
     );
@@ -344,7 +343,6 @@ fn representative_local_sql_query_measurements() {
             &no_i64,
             &no_i64,
             &no_string,
-            &false,
             &no_i64,
         ],
     );
@@ -402,17 +400,21 @@ fn representative_local_sql_query_measurements() {
             50
         );
     });
-    index.db.execute(
-        "INSERT INTO clip_tag_projection(clip_id,tag_key,label) SELECT id,'montage','Montage' FROM clip_projection WHERE header IS NOT NULL",
-        [],
-    ).unwrap();
+    index
+        .db
+        .execute(
+            "INSERT INTO match_tag_effective SELECT DISTINCT match_group,'builtin:pentakill'
+         FROM recordings WHERE match_group IS NOT NULL",
+            [],
+        )
+        .unwrap();
     let toolbar_history = HistoryQuery {
         limit: 50,
         queue: Some(HistoryQueue::RankedSoloDuo),
         played_champions: vec![f.summary.champion.clone(), "Ahri".into()],
         player_riot_id: Some("Measure#NA".into()),
         personal_moments: vec![PersonalMoment::DragonSteal],
-        clip_tags: vec!["Montage".into()],
+        tags: vec![crate::tags::TagId::parse("builtin:quadra_kill").unwrap()],
         ..Default::default()
     };
     measure("history/combined-toolbar-filter/50-row", || {
@@ -478,6 +480,67 @@ fn seed_clip_count_measurement(fixture: &Fixture, index: &mut Index) -> library:
 }
 
 #[test]
+#[ignore = "targeted warmed Match History tag query benchmark"]
+fn representative_match_tag_queries() {
+    let fixture = Fixture::new(1);
+    let mut index = fixture.index();
+    fixture.ready(&mut index);
+    seed_measurement_projection(&fixture, &mut index);
+    index
+        .db
+        .execute_batch(
+            "INSERT INTO match_tag_effective SELECT match_group,'builtin:pentakill' FROM recordings
+         WHERE match_group IS NOT NULL AND rowid%5=0;
+         INSERT INTO match_tag_effective SELECT match_group,'builtin:baron_steal' FROM recordings
+         WHERE match_group IS NOT NULL AND rowid%43=0;
+         ANALYZE;",
+        )
+        .unwrap();
+    let query = |names: &[&str]| HistoryQuery {
+        limit: 50,
+        tags: names
+            .iter()
+            .map(|name| crate::tags::TagId::parse(name).unwrap())
+            .collect(),
+        ..Default::default()
+    };
+    let first = query(&["builtin:quadra_kill"]);
+    let page = index.history(&first, CATALOG_ROWS).unwrap();
+    assert_eq!(page.rows.len(), 50);
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.tags.iter().any(|tag| tag.tier == Some(5)))
+    );
+    let cases = [
+        ("unfiltered", query(&[]), 50),
+        ("implied", first.clone(), 50),
+        (
+            "implied continuation",
+            HistoryQuery {
+                after: page.next,
+                ..first
+            },
+            50,
+        ),
+        (
+            "implied and exact",
+            query(&["builtin:quadra_kill", "builtin:baron_steal"]),
+            46,
+        ),
+        ("missing tag", query(&["builtin:dragon_steal"]), 0),
+    ];
+    for (label, query, expected) in cases {
+        measure(&format!("history/tags/{label}"), || {
+            assert_eq!(
+                index.history(&query, CATALOG_ROWS).unwrap().rows.len(),
+                expected
+            );
+        });
+    }
+}
+
+#[test]
 #[cfg(feature = "history-command-benchmark")]
 #[ignore = "measure the 10k Match History Tauri command in release mode"]
 fn representative_history_command_measurements() {
@@ -510,8 +573,8 @@ fn representative_history_command_measurements() {
          INSERT INTO event_actors(media_id,run_id,epoch,sequence,revision_ordinal,role,ordinal,participant_id,status)
          SELECT e.media_id,e.run_id,e.epoch,e.sequence,e.ordinal,'killer',0,1,'resolved'
          FROM events e WHERE e.kind='Multikill' AND e.sequence=2;
-         INSERT INTO clip_tag_projection(clip_id,tag_key,label)
-         SELECT id,'montage','Montage' FROM clip_projection WHERE header IS NOT NULL;"
+         INSERT INTO match_tag_effective SELECT DISTINCT match_group,'builtin:pentakill'
+         FROM recordings WHERE match_group IS NOT NULL;"
     ).unwrap();
     let games = {
         let mut statement = index
@@ -593,7 +656,7 @@ fn representative_history_command_measurements() {
             "combined",
             json!({
                 "limit": 50, "queue": "ranked_solo_duo", "played_champions": ["Syndra", "Ahri"],
-                "player_riot_id": "Measure#NA", "personal_moments": ["dragon_steal"], "clip_tags": ["Montage"]
+                "player_riot_id": "Measure#NA", "personal_moments": ["dragon_steal"], "tags": ["builtin:quadra_kill"]
             }),
             50,
         ),

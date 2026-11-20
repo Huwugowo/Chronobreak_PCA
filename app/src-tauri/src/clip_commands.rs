@@ -1,7 +1,5 @@
 use super::{AppState, LibraryRefreshError, command_error};
-use crate::clip_bundle::{
-    self, ClipDescriptor, ClipEvents, ClipGame, ClipId, EventAvailability, HighlightKind,
-};
+use crate::clip_bundle::{self, ClipDescriptor, ClipEvents, ClipGame, ClipId, EventAvailability};
 use crate::directory_guard::DirectoryGuard;
 use crate::league_index::{
     self, Index,
@@ -9,13 +7,13 @@ use crate::league_index::{
 };
 use crate::library;
 use crate::library_coordinator::Selection;
+use crate::tags::TagDefinition;
 use anyhow::{Context, Result, ensure};
 use chronobreak_replay_time::{
     ClipRange, FrameBoundary, MediaId, RoundingMode, frame_boundary_to_replay_tick,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
-use std::io::Write;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -64,7 +62,7 @@ pub(crate) struct DraftSummary {
     token: String,
     title: String,
     availability: EventAvailability,
-    detected_tags: Vec<HighlightKind>,
+    detected_tags: Vec<TagDefinition>,
 }
 
 #[tauri::command]
@@ -307,31 +305,6 @@ pub(crate) async fn clip_playback(
         .await
 }
 
-#[tauri::command]
-pub(crate) async fn clip_tag_suggestions(
-    state: State<'_, AppState>,
-    snapshot_token: String,
-    prefix: String,
-) -> std::result::Result<Vec<String>, LibraryRefreshError> {
-    let cache = state.league_index_cache.clone();
-    state
-        .library
-        .index_job(
-            Arc::clone(&state.roots),
-            &snapshot_token,
-            None,
-            false,
-            move |root, snapshot, _| {
-                ensure!(prefix.chars().count() <= 40, "tag prefix is too long");
-                if snapshot.managed_clips.is_empty() {
-                    return Ok(Vec::new());
-                }
-                Index::reader(&cache, root)?.clip_tags(&snapshot.managed_clip_stamp, &prefix)
-            },
-        )
-        .await
-}
-
 #[derive(Debug, Serialize)]
 pub(crate) struct ClipDetail {
     events: ClipEvents,
@@ -365,7 +338,7 @@ pub(crate) async fn clip_detail(
         .await
 }
 
-fn checked_directory(clip: &ClipDescriptor, movable: bool) -> Result<DirectoryGuard> {
+pub(crate) fn checked_directory(clip: &ClipDescriptor, movable: bool) -> Result<DirectoryGuard> {
     let directory = if movable {
         DirectoryGuard::open_movable(&clip.directory)?
     } else {
@@ -381,13 +354,7 @@ fn checked_directory(clip: &ClipDescriptor, movable: bool) -> Result<DirectoryGu
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ClipEdit {
-    Rename {
-        title: String,
-    },
-    Tags {
-        custom_tags: Vec<String>,
-        predefined_tags: Vec<HighlightKind>,
-    },
+    Rename { title: String },
     Delete,
     Reveal,
 }
@@ -441,30 +408,6 @@ pub(crate) async fn edit_managed_clip(
                             target.rename_file(&directory, OsStr::new(&leaf))?;
                         }
                         Ok(())
-                    }
-                    ClipEdit::Tags {
-                        custom_tags,
-                        predefined_tags,
-                    } => {
-                        let mut header = clip.read_header()?;
-                        header.custom_tags = clip_bundle::normalize_tags(&custom_tags)?;
-                        header.predefined_tags =
-                            clip_bundle::normalize_predefined_tags(predefined_tags);
-                        header.validate(&clip.id)?;
-                        let json = serde_json::to_vec(&header)?;
-                        ensure!(
-                            json.len() as u64 <= clip_bundle::HEADER_LIMIT,
-                            "clip metadata exceeds its limit"
-                        );
-                        atomicwrites::AtomicFile::new(
-                            directory.path.join(clip_bundle::HEADER),
-                            atomicwrites::AllowOverwrite,
-                        )
-                        .write(|file| {
-                            file.write_all(&json)?;
-                            file.sync_all()
-                        })
-                        .map_err(anyhow::Error::from)
                     }
                     ClipEdit::Delete => directory.remove_owned_files(&[
                         (&clip.video_leaf, &clip.video),

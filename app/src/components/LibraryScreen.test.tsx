@@ -6,11 +6,12 @@ import LibraryScreen from "./LibraryScreen";
 import managedClipStyles from "./ManagedClips.module.css";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
-import { readClipPage, readClipTagSuggestions } from "../managedClips";
+import { readClipPage, tagChoices } from "../managedClips";
+import { customTag } from "../tagFixtures";
 import type { ClipCard, ClipCursor } from "../managedClips";
 
 vi.mock("../managedClips", async original => ({ ...await original<typeof import("../managedClips")>(),
-  readClipPage: vi.fn(), readClipTagSuggestions: vi.fn(),
+  readClipPage: vi.fn(), tagChoices: vi.fn(),
 }));
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
@@ -41,11 +42,11 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
   const fixtureClip: ClipCard = {
     title: "Last fight", video_url: "http://fixture/clip.mp4", thumbnail_url: "http://fixture/thumb.jpg",
     game_clock: "1122000000",
-    header: { version: 2, id: "clip", source_timestamp: newest.timestamp, preset: "horizontal", exported_at: 0,
+    header: { version: 3, id: "clip", source_timestamp: newest.timestamp, preset: "horizontal", exported_at: 0,
       range: { media_id: newest.media_id!, start_frame: "0", end_frame_exclusive: "300" },
       game: { match_group: group, champion: "Ahri", played_at: null, part_recorded_at: null, account: null,
         queue_id: null, mode: null, outcome: null, final_kda: null },
-      duration: "240000000", events: "unavailable", predefined_tags: [], custom_tags: [] },
+      duration: "240000000", events: "unavailable", tags: [] },
   };
   const play = vi.fn();
   const playSingle = vi.fn();
@@ -331,7 +332,7 @@ it("suggests played champions locally and applies only explicit choices", async 
     summoner_spells: [], keystone_id: null, items: [], participants: [],
     saved: false, incomplete: false, video_size_bytes: 1, video_available: true, league_result: null,
   }));
-  const dispose = render(() => <LibraryScreen tab="games" games={games} clips={[]} clipTagToken={origin().token}
+  const dispose = render(() => <LibraryScreen tab="games" games={games} clips={[]} tagToken={origin().token}
     ddragon={{ state: "offline", version: null, asset_base_url: "http://assets.test", item_count: 0, champion_count: 0, cache_directory: "", error: null }}
     actionable snapshotOrigin={{ ...origin() }} busyId={null} onHistoryQuery={onQuery}
     onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
@@ -383,13 +384,15 @@ it("suggests played champions locally and applies only explicit choices", async 
   expect(document.activeElement).toBe(ranked);
   expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ queue: "ranked_5s" }));
 
-  vi.mocked(readClipTagSuggestions).mockResolvedValue(["Montage"]);
+  vi.mocked(tagChoices).mockResolvedValue([customTag("Montage")]);
+  button("My events").click();
+  checkbox("My pentakill").click();
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ personal_moments: ["pentakill"] }));
   button("Tags").click();
   await vi.advanceTimersByTimeAsync(1);
-  expect(readClipTagSuggestions).toHaveBeenLastCalledWith("a", "");
-  checkbox("My pentakill").click();
+  expect(tagChoices).toHaveBeenLastCalledWith("a", "");
   checkbox("Montage").click();
-  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ personal_moments: ["pentakill"], clip_tags: ["Montage"] }));
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ personal_moments: ["pentakill"], tags: [customTag("Montage").id] }));
   button("Filters").click();
   const form = host.querySelector("form")!;
   const player = form.querySelector("input")!;

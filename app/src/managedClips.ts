@@ -4,8 +4,16 @@ import type { ClipDraft, ClipExportPreset } from "./types";
 
 export type Attribution = "you" | "ally" | "enemy" | "unknown";
 export type Availability = "available" | "partial" | "unavailable";
-export type HighlightKind = "double_kill" | "triple_kill" | "quadra_kill" | "pentakill"
-  | "first_blood" | "dragon_steal" | "baron_steal" | "herald_steal";
+export const MAX_TAG_FILTERS = 40;
+export const MAX_MATCH_TAGS = MAX_TAG_FILTERS + 5; // Up to five event-derived tags alongside manual assignments.
+/** A stable, user-visible library tag.  IDs, rather than labels, are the query/write contract. */
+export type Tag = { id: string; label: string; tier: number | null; builtin: boolean };
+export type ClipTagUpdate = { id: string; tags: Tag[] };
+export function replaceTagDefinition(tags: Tag[], replacement: Tag): Tag[] {
+  const index = tags.findIndex(tag => tag.id === replacement.id);
+  if (index < 0 || tags[index].label === replacement.label) return tags;
+  return tags.map((tag, position) => position === index ? replacement : tag);
+}
 export type ClipGame = {
   match_group: string | null; played_at: string | null; part_recorded_at: string | null;
   champion: string | null; account: string | null; queue_id: number | null; mode: string | null;
@@ -16,10 +24,10 @@ export type ClipGame = {
   duration_seconds?: number;
 };
 export type ClipHeader = {
-  version: 2; id: string; source_timestamp: string;
+  version: 3; id: string; source_timestamp: string;
   range: { media_id: string; start_frame: string; end_frame_exclusive: string };
   game: ClipGame; exported_at: number; preset: ClipExportPreset; duration: string;
-  events: Availability; predefined_tags: HighlightKind[]; custom_tags: string[];
+  events: Availability; tags: Tag[];
 };
 export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string; game_clock?: string };
 export type GroupCursor = [number, string];
@@ -35,7 +43,7 @@ export type ClipQuery = {
   match_group?: string;
   after?: GroupCursor; group_key?: string; clip_after?: ClipCursor; include_game_clock?: boolean;
 };
-export type ClipGridCard = Pick<ClipHeader, "id" | "duration" | "custom_tags" | "predefined_tags"> & {
+export type ClipGridCard = Pick<ClipHeader, "id" | "duration" | "tags"> & {
   title: string; champion: string | null; thumbnail_url: string;
 };
 export type ClipGridCursor = [number, string];
@@ -44,9 +52,9 @@ export type ClipPlayback = { clip: ClipCard; file_size_bytes: number };
 export type ClipDetail = { events: {
   availability: Availability; events: Array<{ replay_tick: string; event: { name?: string }; attribution: Attribution; actor: string | null }>;
 } };
-export type DraftSummary = { token: string; title: string; availability: Availability; detected_tags: HighlightKind[] };
+export type DraftSummary = { token: string; title: string; availability: Availability; detected_tags: Tag[] };
 export type ClipEdit = { kind: "rename"; title: string } |
-  { kind: "tags"; custom_tags: string[]; predefined_tags: HighlightKind[] } | { kind: "delete" } | { kind: "reveal" };
+  { kind: "delete" } | { kind: "reveal" };
 
 export const usesManagedClips = () => isTauri();
 export const reconcileClips = (snapshotToken: string) => invoke<boolean>("reconcile_clips", { snapshotToken });
@@ -62,18 +70,22 @@ export const readClipDetail = (snapshotToken: string, clipId: string) =>
   invoke<ClipDetail>("clip_detail", { snapshotToken, clipId });
 export const editManagedClip = (snapshotToken: string, clipId: string, edit: ClipEdit) =>
   invoke<void>("edit_managed_clip", { snapshotToken, clipId, edit });
-export const readClipTagSuggestions = (snapshotToken: string, prefix: string) =>
-  invoke<string[]>("clip_tag_suggestions", { snapshotToken, prefix });
+export const editClipTags = (snapshotToken: string, clipId: string, tags: Tag[]) =>
+  invoke<Tag[]>("edit_clip_tags", { snapshotToken, clipId, tags });
+export const tagChoices = (snapshotToken: string, prefix: string) =>
+  invoke<Tag[]>("tag_choices", { snapshotToken, prefix });
+export const createTag = (snapshotToken: string, label: string) =>
+  invoke<Tag>("create_tag", { snapshotToken, label });
+export const renameTag = (snapshotToken: string, tagId: string, label: string) =>
+  invoke<Tag>("rename_tag", { snapshotToken, tagId, label });
+export const editMatchTags = (snapshotToken: string, matchGroup: string, previous: string[], tags: string[]) =>
+  invoke<Tag[]>("edit_match_tags", { snapshotToken, matchGroup, previous, tags });
 export const prepareClipDraft = (snapshotToken: string, draft: ClipDraft) =>
   invoke<DraftSummary>("prepare_clip_draft", { snapshotToken, request: {
     game_timestamp: draft.gameTimestamp, media_id: draft.mediaId,
     start_frame: draft.startFrame.toString(), end_frame_exclusive: draft.endFrameExclusive.toString(),
   } });
 
-export const clipLabels: Record<HighlightKind, string> = {
-  double_kill: "Double Kill", triple_kill: "Triple Kill", quadra_kill: "Quadra Kill", pentakill: "Pentakill",
-  first_blood: "First Blood", dragon_steal: "Dragon Steal", baron_steal: "Baron Steal", herald_steal: "Herald Steal",
-};
 export function clipTitleError(title: string): string | undefined {
   if (!title || title.length > 120 || /[<>:"/\\|?*\p{Cc}]|\.$|\.mp4$/iu.test(title))
     return "Enter a title of up to 120 characters without a file extension or Windows filename characters.";

@@ -1,7 +1,7 @@
 import { batch, createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { libraryError } from "./libraryController";
-import { readClipGridPage, type ClipFilters, type ClipGridCard, type ClipGridCursor } from "./managedClips";
+import { readClipGridPage, replaceTagDefinition, type ClipFilters, type ClipGridCard, type ClipGridCursor, type ClipTagUpdate, type Tag } from "./managedClips";
 
 type GridSource = { root: string | null; token: string; ready: boolean; query: ClipFilters };
 type Operation = "refresh" | "append";
@@ -82,5 +82,28 @@ export function createClipGrid(source: Accessor<GridSource>) {
   }));
   onCleanup(() => { generation++; });
 
-  return { state, current, append: () => load("append"), retry: () => load(state.failure?.operation ?? "refresh") };
+  const refreshTagResults = () => {
+    if (!current()) return;
+    // A tag-dependent query may lose or gain the item. Re-seek only the
+    // loaded range, keeping stable card identities until the result is ready.
+    generation++;
+    setState({ busy: false, failure: undefined });
+    void load("refresh");
+  };
+  const tagsEdited = ({ id, tags }: ClipTagUpdate) => {
+    const index = state.clips.findIndex(clip => clip.id === id);
+    const { query } = source();
+    if (index >= 0) setState("clips", index, "tags", tags);
+    if (query.search || query.tags?.length || state.busy) refreshTagResults();
+  };
+  const tagRenamed = (tag: Tag) => {
+    batch(() => {
+      for (const [index, clip] of state.clips.entries()) {
+        const tags = replaceTagDefinition(clip.tags, tag);
+        if (tags !== clip.tags) setState("clips", index, "tags", tags);
+      }
+    });
+    if (source().query.search || state.busy) refreshTagResults();
+  };
+  return { state, current, tagsEdited, tagRenamed, append: () => load("append"), retry: () => load(state.failure?.operation ?? "refresh") };
 }

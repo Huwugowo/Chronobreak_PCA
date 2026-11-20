@@ -1,6 +1,6 @@
 //! Durable metadata for one exported MP4.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use crate::clip_export::ClipExportPreset;
 use crate::directory_guard::{DirectoryGuard, open_regular, reject_reparse};
 use crate::playback_file::{FileFacts, file_facts};
+use crate::tags::{TagDefinition, event_tag, normalize_assignments};
 
 pub(crate) const HEADER: &str = "clip.json";
 pub(crate) const EVENTS: &str = "events.json";
@@ -22,8 +23,7 @@ pub(crate) const HEADER_LIMIT: u64 = 64 * 1024;
 pub(crate) const EVENTS_LIMIT: u64 = 2 * 1024 * 1024;
 pub(crate) const MAX_EVENTS: usize = 8_192;
 const MAX_TITLE_UNITS: usize = 120;
-const MAX_TAGS: usize = 32;
-pub(crate) const VERSION: u8 = 2;
+pub(crate) const VERSION: u8 = 3;
 
 pub(crate) type Inventory = HashMap<ClipId, ClipDescriptor>;
 
@@ -223,41 +223,6 @@ pub(crate) enum Attribution {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum HighlightKind {
-    DoubleKill,
-    TripleKill,
-    QuadraKill,
-    Pentakill,
-    FirstBlood,
-    DragonSteal,
-    BaronSteal,
-    HeraldSteal,
-}
-
-impl HighlightKind {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::DoubleKill => "Double Kill",
-            Self::TripleKill => "Triple Kill",
-            Self::QuadraKill => "Quadra Kill",
-            Self::Pentakill => "Pentakill",
-            Self::FirstBlood => "First Blood",
-            Self::DragonSteal => "Dragon Steal",
-            Self::BaronSteal => "Baron Steal",
-            Self::HeraldSteal => "Herald Steal",
-        }
-    }
-}
-
-pub(crate) fn normalize_predefined_tags(
-    tags: impl IntoIterator<Item = HighlightKind>,
-) -> Vec<HighlightKind> {
-    let mut seen = HashSet::new();
-    tags.into_iter().filter(|tag| seen.insert(*tag)).collect()
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EventAvailability {
@@ -275,26 +240,6 @@ pub(crate) struct ClipEvent {
     pub actor: Option<String>,
 }
 
-impl ClipEvent {
-    fn highlight_kind(&self) -> Option<HighlightKind> {
-        use HighlightKind::*;
-        Some(match self.event.name.as_deref()? {
-            "Multikill" => match self.event.kill_streak? {
-                2 => DoubleKill,
-                3 => TripleKill,
-                4 => QuadraKill,
-                5 => Pentakill,
-                _ => return None,
-            },
-            "FirstBlood" => FirstBlood,
-            "DragonKill" if self.event.stolen == Some(true) => DragonSteal,
-            "BaronKill" if self.event.stolen == Some(true) => BaronSteal,
-            "HeraldKill" if self.event.stolen == Some(true) => HeraldSteal,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ClipEvents {
@@ -310,13 +255,27 @@ impl ClipEvents {
         }
     }
 
-    pub(crate) fn detected_tags(&self) -> Vec<HighlightKind> {
-        normalize_predefined_tags(
+    /// These are suggestions from observed events, never an implicit saved assignment.
+    pub(crate) fn detected_tags(&self) -> Vec<TagDefinition> {
+        let mut seen = std::collections::HashSet::new();
+        normalize_assignments(
             self.events
                 .iter()
                 .filter(|event| event.attribution == Attribution::You)
-                .filter_map(ClipEvent::highlight_kind),
+                .filter_map(|event| {
+                    event_tag(
+                        event.event.name.as_deref()?,
+                        event
+                            .event
+                            .kill_streak
+                            .and_then(|tier| u32::try_from(tier).ok()),
+                        event.event.stolen,
+                    )
+                })
+                .filter(|tag| seen.insert(tag.id.clone()))
+                .collect(),
         )
+        .unwrap_or_default()
     }
 }
 
@@ -332,8 +291,7 @@ pub(crate) struct ClipHeader {
     pub preset: ClipExportPreset,
     pub duration: ReplayTick,
     pub events: EventAvailability,
-    pub predefined_tags: Vec<HighlightKind>,
-    pub custom_tags: Vec<String>,
+    pub tags: Vec<TagDefinition>,
 }
 
 impl ClipHeader {
@@ -357,9 +315,7 @@ impl ClipHeader {
                     && value
                         .bytes()
                         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            }) && normalize_predefined_tags(self.predefined_tags.iter().copied())
-                == self.predefined_tags
-                && normalize_tags(&self.custom_tags)? == self.custom_tags
+            }) && normalize_assignments(self.tags.clone())? == self.tags
                 && self
                     .game
                     .final_kda
@@ -424,24 +380,7 @@ pub(crate) fn title_from_leaf(leaf: &str) -> Option<&str> {
     Some(title)
 }
 
-pub(crate) fn normalize_tags(tags: &[String]) -> Result<Vec<String>> {
-    ensure!(tags.len() <= MAX_TAGS, "too many custom tags");
-    let mut seen = HashSet::with_capacity(tags.len());
-    let mut normalized = Vec::with_capacity(tags.len());
-    for tag in tags {
-        let tag = tag.trim();
-        ensure!(
-            !tag.is_empty() && tag.chars().count() <= 40 && !tag.chars().any(char::is_control),
-            "custom tags must contain 1 to 40 printable characters"
-        );
-        if seen.insert(tag.to_lowercase()) {
-            normalized.push(tag.to_owned());
-        }
-    }
-    Ok(normalized)
-}
-
-fn read_json<T: DeserializeOwned>(
+pub(crate) fn read_json<T: DeserializeOwned>(
     path: &Path,
     limit: u64,
     expected: Option<&FileFacts>,
@@ -481,7 +420,6 @@ pub(crate) fn write_new_json(path: &Path, value: &impl Serialize, limit: u64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chronobreak_replay_time::FrameBoundary;
 
     #[test]
     fn clip_titles_are_single_windows_filename_stems() {
@@ -501,45 +439,6 @@ mod tests {
             "x.mp4",
         ] {
             assert!(media_leaf(invalid).is_err(), "{invalid}");
-        }
-    }
-
-    #[test]
-    fn custom_tags_are_case_insensitive_with_first_display_spelling() {
-        assert_eq!(
-            normalize_tags(&[" Nice escape ".into(), "nice ESCAPE".into(), "Baron".into()])
-                .unwrap(),
-            ["Nice escape", "Baron"]
-        );
-    }
-
-    #[test]
-    fn saves_predefined_tags_without_an_event_file() {
-        let mut header = ClipHeader {
-            version: VERSION,
-            id: ClipId::new(),
-            range: ClipRange::new(
-                MediaId::new_v4(),
-                FrameBoundary::new(0).unwrap(),
-                FrameBoundary::new(30).unwrap(),
-                FrameBoundary::new(30).unwrap(),
-            )
-            .unwrap(),
-            source_timestamp: "100".into(),
-            game: ClipGame::default(),
-            exported_at: 10,
-            preset: ClipExportPreset::Horizontal,
-            duration: ReplayTick::new(48_000_000).unwrap(),
-            events: EventAvailability::Unavailable,
-            predefined_tags: Vec::new(),
-            custom_tags: vec!["River fight".into()],
-        };
-        for selection in [vec![HighlightKind::BaronSteal], Vec::new()] {
-            header.predefined_tags = selection.clone();
-            let restored: ClipHeader =
-                serde_json::from_slice(&serde_json::to_vec(&header).unwrap()).unwrap();
-            restored.validate(&restored.id).unwrap();
-            assert_eq!(restored.predefined_tags, selection);
         }
     }
 }

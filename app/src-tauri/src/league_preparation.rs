@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -37,6 +37,7 @@ struct Background {
     next_attempt: Instant,
     next_rescan: Instant,
     clips_changed: bool,
+    clip_ids: BTreeSet<crate::clip_bundle::ClipId>,
 }
 impl Background {
     fn new(root: PathBuf, cache: PathBuf) -> Self {
@@ -50,6 +51,7 @@ impl Background {
             next_attempt: Instant::now(),
             next_rescan: Instant::now() + Duration::from_secs(300),
             clips_changed: false,
+            clip_ids: BTreeSet::new(),
         }
     }
     async fn tick(&mut self, stop: &Arc<AtomicBool>) -> Result<Vec<String>> {
@@ -62,6 +64,11 @@ impl Background {
             changes.merge(watch.take());
         }
         self.clips_changed |= changes.clips;
+        self.clip_ids.append(&mut changes.clip_ids);
+        if self.clips_changed || self.clip_ids.len() > changes::CLIP_HINT_LIMIT {
+            self.clips_changed = true;
+            self.clip_ids.clear();
+        }
         // Native notifications can overflow or be unavailable on network storage.
         // A rare authoritative rescan also recovers missed external edits.
         let rescan_due = now >= self.next_rescan;
@@ -134,24 +141,33 @@ pub(crate) fn start(app: tauri::AppHandle) -> Owner {
                 if background.root != state.roots.output_directory() {
                     continue;
                 }
-                if (background.state.catalog_changed || background.clips_changed)
-                    && let Some((root, snapshot)) =
+                if (background.state.catalog_changed
+                    || background.clips_changed
+                    || !background.clip_ids.is_empty())
+                    && let Some((root, snapshot, headers)) =
                         state.library.selected_snapshot(&background.root)
                 {
                     let games_changed = std::mem::take(&mut background.state.catalog_changed)
                         && (background.state.approved.as_ref() != Some(&root)
                             || background.state.games.as_ref() != Some(&snapshot.games));
-                    let clips_changed =
-                        if std::mem::take(&mut background.clips_changed) && !games_changed {
-                            let accepted = Arc::clone(&snapshot);
-                            tokio::task::spawn_blocking(move || {
-                                library::clip_inventory_changed(&root, &accepted)
-                            })
-                            .await
-                            .is_ok_and(|result| result.unwrap_or(true))
-                        } else {
-                            false
-                        };
+                    let full = std::mem::take(&mut background.clips_changed);
+                    let clip_ids = std::mem::take(&mut background.clip_ids);
+                    let clips_changed = if (full || !clip_ids.is_empty()) && !games_changed {
+                        let accepted = Arc::clone(&snapshot);
+                        tokio::task::spawn_blocking(move || {
+                            if full {
+                                library::clip_discovery_changed(&root, &accepted, &headers)
+                            } else {
+                                library::managed_clip_hints_changed(
+                                    &root, &accepted, &headers, clip_ids,
+                                )
+                            }
+                        })
+                        .await
+                        .is_ok_and(|result| result.unwrap_or(true))
+                    } else {
+                        false
+                    };
                     if games_changed || clips_changed {
                         let _ = app.emit("library-catalog-changed", &snapshot.token);
                     }

@@ -15,10 +15,11 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::process::Command;
 
-use crate::clip_bundle::{self, ClipEvents, ClipHeader, ClipId, HighlightKind};
+use crate::clip_bundle::{self, ClipEvents, ClipHeader, ClipId};
 use crate::export_process::{self, Cancellation, Interrupted, Limits};
 use crate::export_staging::{Batch, Destination, Lease, RecoveryMode};
 use crate::playback_file::ApprovedRoot;
+use crate::tags::{TagDefinition, normalize_assignments};
 use crate::{library, music};
 
 #[cfg(test)]
@@ -82,8 +83,7 @@ pub struct ClipExportRequest {
 pub(crate) struct ExportMetadata {
     pub draft_token: Option<String>,
     pub title: Option<String>,
-    pub custom_tags: Vec<String>,
-    pub predefined_tags: Vec<HighlightKind>,
+    pub tags: Vec<TagDefinition>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -339,16 +339,13 @@ pub async fn export(
         .and_then(|metadata| metadata.title.clone())
         .or_else(|| draft.as_ref().map(|draft| draft.title.clone()))
         .unwrap_or_else(|| default_title(&authority.game, timing.start_tick));
-    let custom_tags = metadata.map_or_else(
+    // Suggestions only become durable assignments when the editor sends them back.
+    let tags = metadata.map_or_else(
         || Ok(Vec::new()),
-        |metadata| clip_bundle::normalize_tags(&metadata.custom_tags),
+        |metadata| normalize_assignments(metadata.tags.clone()),
     )?;
     let unavailable = ClipEvents::unavailable();
     let events = draft.as_ref().map_or(&unavailable, |draft| &draft.events);
-    let predefined_tags = metadata.map_or_else(
-        || events.detected_tags(),
-        |metadata| clip_bundle::normalize_predefined_tags(metadata.predefined_tags.iter().copied()),
-    );
     let mut destinations = Vec::with_capacity(total_outputs);
     let mut final_paths = Vec::with_capacity(total_outputs);
     for &preset in &request.presets {
@@ -405,8 +402,7 @@ pub async fn export(
             preset,
             duration: ReplayTick::new(diagnostics.validation.video_replay_end)?,
             events: events.availability,
-            predefined_tags: predefined_tags.clone(),
-            custom_tags: custom_tags.clone(),
+            tags: tags.clone(),
         };
         header.validate(&paths.clip_id)?;
         clip_bundle::write_new_json(

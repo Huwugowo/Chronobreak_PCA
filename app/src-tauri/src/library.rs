@@ -128,9 +128,20 @@ impl StorageUsage {
 }
 
 /// Compare the clip collection after a watcher hint without rescanning games.
+#[cfg(test)]
 pub(crate) fn clip_inventory_changed(
     root: &crate::playback_file::ApprovedRoot,
     snapshot: &LibrarySnapshot,
+) -> Result<bool> {
+    clip_discovery_changed(root, snapshot, &ClipHeaderUpdates::new())
+}
+
+pub(crate) type ClipHeaderUpdates = HashMap<ClipId, crate::playback_file::FileFacts>;
+
+pub(crate) fn clip_discovery_changed(
+    root: &crate::playback_file::ApprovedRoot,
+    snapshot: &LibrarySnapshot,
+    headers: &ClipHeaderUpdates,
 ) -> Result<bool> {
     let _guard = crate::directory_guard::guard_root(root)?;
     let accepted: HashMap<_, _> = snapshot
@@ -165,9 +176,53 @@ pub(crate) fn clip_inventory_changed(
     usage.clips_count_from(&managed);
     Ok(changed
         || matched != accepted.len()
-        || &managed != snapshot.managed_clips.as_ref()
+        || managed.len() != snapshot.managed_clips.len()
+        || managed
+            .into_iter()
+            .any(|(id, clip)| !same_clip(snapshot, headers, &id, Some(clip)))
         || usage.clip_count != snapshot.usage.clip_count
         || usage.clips_bytes != snapshot.usage.clips_bytes)
+}
+
+pub(crate) fn managed_clip_hints_changed(
+    root: &crate::playback_file::ApprovedRoot,
+    snapshot: &LibrarySnapshot,
+    headers: &ClipHeaderUpdates,
+    ids: impl IntoIterator<Item = ClipId>,
+) -> Result<bool> {
+    let guard = crate::directory_guard::guard_root(root)?;
+    let collection = guard.optional_child("clips")?;
+    for id in ids {
+        let observed = collection
+            .as_ref()
+            .and_then(|folder| ClipDescriptor::inspect(folder, id.clone()).ok());
+        if !same_clip(snapshot, headers, &id, observed) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn same_clip(
+    snapshot: &LibrarySnapshot,
+    headers: &ClipHeaderUpdates,
+    id: &ClipId,
+    observed: Option<ClipDescriptor>,
+) -> bool {
+    let expected = snapshot.managed_clips.get(id);
+    match (expected, observed) {
+        (Some(expected), Some(mut observed)) => {
+            if let Some(header) = headers.get(id) {
+                if header != &observed.header {
+                    return false;
+                }
+                observed.header = expected.header.clone();
+            }
+            expected == &observed
+        }
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

@@ -23,10 +23,12 @@ pub(crate) mod clips;
 mod coverage;
 mod history_summary;
 mod import;
+mod match_tags;
 mod overlay;
 mod query;
 mod replay;
 pub(crate) mod reset;
+mod tag_catalog;
 pub(crate) use authored::AuthoredPage;
 pub(crate) use overlay::{OverlayPage, OverlayQuery};
 pub(crate) use replay::{ReplayWindow, ReplayWindowQuery};
@@ -37,7 +39,7 @@ pub(crate) use query::{
     EventWindow, HistoryPage, HistoryQuery, RosterAt, ScopeQuery, SourceScope, WindowQuery,
 };
 
-const VERSION: i64 = 9;
+const VERSION: i64 = 10;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 // Journal batches are streamed and checked individually. Group their SQL writes
@@ -226,6 +228,7 @@ impl Index {
 
     fn reconcile_catalog(&mut self, games: &[GameSummary], token: &str) -> Result<()> {
         self.refresh_authored(self.root_path()?.as_path())?;
+        self.refresh_tags_from_root(&self.root_path()?)?;
         if self.require_catalog(token).is_ok() {
             return Ok(());
         }
@@ -276,6 +279,7 @@ impl Index {
                 }
             }
         }
+        match_tags::refresh_dirty(&tx)?;
         tx.execute("UPDATE cache_identity SET catalog_token=?1", [token])?;
         tx.commit()?;
         Ok(())
@@ -463,6 +467,7 @@ impl Index {
             params![media.as_str(), timeline_json, stamp],
         )?;
         Self::refresh_history_summary(&tx, &media)?;
+        match_tags::refresh_dirty(&tx)?;
         tx.commit()?;
         Ok(RecordingSource {
             directory,
@@ -564,7 +569,10 @@ impl Index {
     pub(crate) fn preparation_failed(&mut self, root: &Path, game: &GameSummary) -> Result<()> {
         let media = game.media_id.as_ref().context("preparation media")?;
         let stamp = source_stamp(&root.join("games").join(&game.timestamp))?;
-        self.db.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1",params![media.as_str(),stamp])?;
+        let tx = self.db.transaction()?;
+        tx.execute("UPDATE recordings SET telemetry_status='unavailable',source_stamp=?2 WHERE media_id=?1",params![media.as_str(),stamp])?;
+        match_tags::refresh_dirty(&tx)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -596,6 +604,11 @@ impl Index {
             )?;
         }
         db.execute("UPDATE recordings SET source_stamp=NULL,journal_header=NULL,source_identity=NULL,position_json=NULL,checkpoint_json=NULL,telemetry_status='pending',tail_bytes=0 WHERE media_id=?1", [media.as_str()])?;
+        db.execute(
+            "DELETE FROM match_tag_observed WHERE media_id=?1",
+            [media.as_str()],
+        )?;
+        match_tags::refresh_dirty(db)?;
         Ok(())
     }
 }

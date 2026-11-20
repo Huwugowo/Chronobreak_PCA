@@ -89,7 +89,7 @@ export type ClipExportRequest = {
   music: ClipMusicSource;
   game_audio_volume: number;
   music_volume: number;
-  metadata?: { draft_token: string | null; title: string | null; custom_tags: string[]; predefined_tags: import("./managedClips").HighlightKind[] };
+  metadata?: { draft_token: string | null; title: string | null; tags: import("./managedClips").Tag[] };
 };
 
 export type ClipExportProgress = {

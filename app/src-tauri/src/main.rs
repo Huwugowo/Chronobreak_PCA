@@ -3,6 +3,13 @@
 
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|a| a == "--migrate-clip-tags") {
+        if let Err(error) = league_replay_app_lib::migrate_clip_tags_headless(&args) {
+            eprintln!("Chronobreak clip tag migration: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if args.first().is_some_and(|a| a == "--prepare-library") {
         if let Err(error) = league_replay_app_lib::prepare_library_headless(&args) {
             eprintln!("Chronobreak preparation: {error}");

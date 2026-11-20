@@ -1,16 +1,20 @@
 //! Notifications are bounded wake-up hints; preparation rereads authoritative files.
+use crate::clip_bundle::ClipId;
 use notify::{Event, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, Mutex},
 };
 
+pub(super) const CLIP_HINT_LIMIT: usize = 256;
+
 #[derive(Clone, Default)]
 pub(super) struct Changes {
     pub rescan: bool,
-    // Clip hints can invalidate the library snapshot without waking League preparation.
+    // Unscoped clip hints can invalidate the library snapshot without waking League preparation.
     pub clips: bool,
+    pub clip_ids: BTreeSet<ClipId>,
     // true also discovers a newly published bundle; telemetry alone does not.
     pub bundles: BTreeMap<String, bool>,
 }
@@ -26,12 +30,20 @@ impl Changes {
     }
     pub fn merge(&mut self, other: Self) {
         let clips = self.clips || other.clips;
+        let mut clip_ids = std::mem::take(&mut self.clip_ids);
+        clip_ids.extend(other.clip_ids);
+        let clips = clips || clip_ids.len() > CLIP_HINT_LIMIT;
+        if clips {
+            clip_ids.clear();
+        }
         if self.rescan || other.rescan {
             *self = Self::all();
             self.clips = clips;
+            self.clip_ids = clip_ids;
             return;
         }
         self.clips = clips;
+        self.clip_ids = clip_ids;
         for (bundle, discover) in other.bundles {
             *self.bundles.entry(bundle).or_default() |= discover;
         }
@@ -51,13 +63,19 @@ impl Changes {
         for path in &event.paths {
             if let Ok(relative) = path.strip_prefix(root.join("clips")) {
                 let mut parts = relative.iter();
-                self.clips |= parts.next().is_none_or(|part| {
-                    part.to_str().is_some_and(|leaf| {
-                        leaf.ends_with(".mp4")
-                            || leaf.ends_with(".jpg")
-                            || crate::clip_bundle::ClipId::parse(leaf).is_ok()
-                    })
-                });
+                let leaf = parts.next().and_then(|part| part.to_str());
+                if let Some(id) = leaf.and_then(|leaf| ClipId::parse(leaf).ok()) {
+                    if !self.clips {
+                        self.clip_ids.insert(id);
+                        if self.clip_ids.len() > CLIP_HINT_LIMIT {
+                            self.clips = true;
+                            self.clip_ids.clear();
+                        }
+                    }
+                } else if leaf.is_none_or(|leaf| leaf.ends_with(".mp4") || leaf.ends_with(".jpg")) {
+                    self.clips = true;
+                    self.clip_ids.clear();
+                }
                 continue;
             }
             if self.rescan {
