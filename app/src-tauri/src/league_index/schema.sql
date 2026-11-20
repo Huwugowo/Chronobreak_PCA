@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS event_actors(
 CREATE INDEX IF NOT EXISTS event_actor_predicate ON event_actors(media_id,run_id,epoch,participant_id,role,sequence,revision_ordinal);
 -- Derived from verified, local-player event observations. This is deliberately
 -- source-scoped: the match-level effective set below is rebuilt from every
--- ready checked part plus durable match overrides.
+-- ready checked part and the match's durable manual assignments.
 CREATE TABLE IF NOT EXISTS match_tag_observed(
   media_id TEXT NOT NULL REFERENCES recordings ON DELETE CASCADE,
   tag_id TEXT NOT NULL,
@@ -130,18 +130,15 @@ BEGIN
   INSERT OR IGNORE INTO match_tag_dirty SELECT NEW.match_group
     WHERE NEW.match_group IS NOT NULL AND NEW.facts_current=1 AND NEW.telemetry_status='ready';
 END;
--- Overrides are user-authored intent, keyed by the account-scoped match group.
--- They intentionally do not reference a recording so they survive source
--- re-indexing and replacement parts.
-CREATE TABLE IF NOT EXISTS match_tag_overrides(
+-- Manual assignments belong to the account-scoped match group and survive
+-- source re-indexing and replacement parts.
+CREATE TABLE IF NOT EXISTS match_tag_manual(
   match_group TEXT NOT NULL, tag_id TEXT NOT NULL,
-  added INTEGER NOT NULL CHECK(added IN (0,1)),
-  suppressed INTEGER NOT NULL CHECK(suppressed IN (0,1)),
   PRIMARY KEY(match_group,tag_id)
-);
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS match_tag_effective(
-  match_group TEXT NOT NULL, tag_id TEXT NOT NULL,
-  PRIMARY KEY(match_group,tag_id)
+  match_group TEXT NOT NULL, tag_id TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('detected','manual')),
+  PRIMARY KEY(match_group,tag_id,source)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS match_tag_effective_tag ON match_tag_effective(tag_id,match_group);
 CREATE TABLE IF NOT EXISTS tag_catalog_state(

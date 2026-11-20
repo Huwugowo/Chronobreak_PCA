@@ -4,7 +4,7 @@ import { batch, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { readClipGridChampions, readClipGridPage, tagChoices, type ClipFilters, type ClipGridCard, type ClipGridPage,
   type ClipTagUpdate, type Tag } from "../managedClips";
-import { customTag, pentakill } from "../tagFixtures";
+import { assigned, customTag, pentakill } from "../tagFixtures";
 import { ManagedClips } from "./ManagedClips";
 import styles from "./ManagedClips.module.css";
 
@@ -60,7 +60,8 @@ function mount() {
 it("appends cursor pages in server order and keeps the existing images mounted", async () => {
   const tagged: ClipGridCard = {
     ...fixture("newer"),
-    tags: [pentakill, ...["ranked", "outplay", "final fight"].map(customTag)],
+    tags: [assigned(pentakill, "detected"), assigned({ id: "builtin:baron_steal", label: "Baron Steal", builtin: true, tier: null }),
+      ...["outplay", "final fight"].map(label => assigned(customTag(label)))],
   };
   const page: ClipGridPage = { clips: [tagged, fixture("middle")], next: [100, "middle"] };
   vi.mocked(readClipGridPage).mockResolvedValueOnce(page)
@@ -75,9 +76,9 @@ it("appends cursor pages in server order and keeps the existing images mounted",
   expect(first.querySelector("em")?.textContent).toBe("0:05");
   const tags = first.querySelector(`.${styles.clipTags}`)!;
   expect([...tags.children].map(tag => [tag.textContent, tag.className])).toEqual([
-    ["Pentakill", styles.highlightBadge],
-    ["ranked", styles.customBadge],
-    ["+2", styles.customBadge],
+    ["Pentakill", styles.detectedBadge],
+    ["Baron Steal", styles.manualBadge],
+    ["+2", styles.manualBadge],
   ]);
   const descriptions = (card: HTMLElement) => card.getAttribute("aria-describedby")!
     .split(" ").map(id => document.getElementById(id));
@@ -105,7 +106,7 @@ it("appends cursor pages in server order and keeps the existing images mounted",
 it("keeps loaded pages through a catalog error and rejects a late continuation from the old catalog", async () => {
   const first = fixture("first");
   const second = fixture("second");
-  const replacement = { ...second, title: "Renamed clip", tags: [customTag("Highlights")] };
+  const replacement = { ...second, title: "Renamed clip", tags: [assigned(customTag("Highlights"))] };
   let complete!: (page: ClipGridPage) => void;
   vi.mocked(readClipGridPage)
     .mockResolvedValueOnce({ clips: [first], next: [4, first.id] })
@@ -137,7 +138,7 @@ it("keeps loaded pages through a catalog error and rejects a late continuation f
   await vi.waitFor(() => expect(secondButton.getAttribute("aria-label")).toBe("Play Renamed clip"));
   expect(cards()).toEqual([firstButton, secondButton]);
   expect(secondButton.querySelector("img")).toBe(image);
-  expect(secondButton.querySelector(`.${styles.customBadge}`)?.textContent).toBe("Highlights");
+  expect(secondButton.querySelector(`.${styles.manualBadge}`)?.textContent).toBe("Highlights");
   expect(secondButton.getAttribute("aria-describedby")).toContain("grid-clip-second-tags");
   expect(button("More clips").getAttribute("aria-disabled")).toBe("false");
   expect(readClipGridPage).toHaveBeenNthCalledWith(4, "new", {}, null);
@@ -152,7 +153,7 @@ it("patches an unfiltered tag edit without reading the loaded pages or disturbin
   await vi.waitFor(() => expect(cards()).toHaveLength(1));
   const card = cards()[0];
   const image = card.querySelector("img");
-  editTags({ id: clip.id, tags: [customTag("New label")] });
+  editTags({ id: clip.id, tags: [assigned(customTag("New label"))] });
   expect(card.textContent).toContain("New label");
   expect(cards()[0]).toBe(card);
   expect(card.querySelector("img")).toBe(image);
@@ -162,12 +163,12 @@ it("patches an unfiltered tag edit without reading the loaded pages or disturbin
   expect(readClipGridPage).toHaveBeenLastCalledWith("snapshot", {}, [10, clip.id]);
 });
 
-it("renames a selected tag without rerunning the exact-ID filter or remounting cards", async () => {
+it("patches tag edits that preserve the exact-ID filter without rereading pages or remounting cards", async () => {
   const tag = customTag("River fight");
-  const clip = { ...fixture("first"), tags: [tag] };
+  const clip = { ...fixture("first"), tags: [assigned(tag)] };
   vi.mocked(tagChoices).mockResolvedValue([tag]);
   vi.mocked(readClipGridPage).mockResolvedValue({ clips: [clip], next: null });
-  const { host, cards, button, renameTag } = mount();
+  const { host, cards, button, renameTag, editTags } = mount();
   await vi.waitFor(() => expect(cards()).toHaveLength(1));
   const card = cards()[0];
   const image = card.querySelector("img");
@@ -180,6 +181,8 @@ it("renames a selected tag without rerunning the exact-ID filter or remounting c
   renameTag({ ...tag, label: "River play" });
   expect(card.textContent).toContain("River play");
   expect(host.querySelector('[aria-label="Remove River play"]')).not.toBeNull();
+  editTags({ id: clip.id, tags: [assigned({ ...tag, label: "River play" }), assigned(customTag("Great timing"))] });
+  expect(card.textContent).toContain("Great timing");
   expect(cards()[0]).toBe(card);
   expect(card.querySelector("img")).toBe(image);
   expect(readClipGridPage).toHaveBeenCalledTimes(2);
@@ -206,6 +209,30 @@ it("debounces search and match date and discards superseded pages", async () => 
   expect(readClipGridPage).toHaveBeenLastCalledWith("snapshot", { search: "tower", from: "2026-07-01" }, null);
 });
 
+it("keeps a tag edit when a pending filter page contains older metadata", async () => {
+  const clip = fixture("first");
+  const tags = [assigned(customTag("River fight"))];
+  let complete!: (page: ClipGridPage) => void;
+  vi.mocked(readClipGridPage)
+    .mockResolvedValueOnce({ clips: [clip], next: null })
+    .mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }))
+    .mockResolvedValueOnce({ clips: [{ ...clip, tags }], next: null });
+  const { cards, input, editTags } = mount();
+  await vi.waitFor(() => expect(cards()).toHaveLength(1));
+  const card = cards()[0];
+  const thumbnail = card.querySelector("img");
+  input('[aria-label="Search clips"]', "first");
+  await vi.waitFor(() => expect(readClipGridPage).toHaveBeenCalledTimes(2));
+
+  editTags({ id: clip.id, tags });
+  complete({ clips: [clip], next: null });
+  await vi.waitFor(() => expect(card.getAttribute("aria-disabled")).toBe("false"));
+  expect(readClipGridPage).toHaveBeenCalledTimes(3);
+  expect(card.textContent).toContain("River fight");
+  expect(cards()[0]).toBe(card);
+  expect(card.querySelector("img")).toBe(thumbnail);
+});
+
 it("combines queue, champion, exact tags and advanced filters and preserves matching cards", async () => {
   const kept = fixture("kept");
   vi.mocked(readClipGridPage).mockResolvedValue({ clips: [kept], next: null });
@@ -218,8 +245,14 @@ it("combines queue, champion, exact tags and advanced filters and preserves matc
   expect(readClipGridChampions).not.toHaveBeenCalled();
   expect(tagChoices).not.toHaveBeenCalled();
 
-  button("Ranked").click();
-  expect(button("Ranked").getAttribute("aria-pressed")).toBe("true");
+  const ranked = button("Ranked");
+  ranked.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  expect(document.activeElement).toBe(button("Ranked Solo/Duo"));
+  expect([...document.getElementById(ranked.getAttribute("aria-controls")!)!.querySelectorAll("button")].map(choice => choice.textContent))
+    .toEqual(["Ranked Solo/Duo", "Ranked Flex", "Ranked 5s"]);
+  button("Ranked Solo/Duo").click();
+  expect(ranked.getAttribute("data-active")).toBe("true");
+  expect(document.activeElement).toBe(ranked);
   const champion = host.querySelector<HTMLInputElement>('[role="combobox"]')!;
   champion.focus();
   input('[role="combobox"]', "kaisa");
@@ -244,7 +277,7 @@ it("combines queue, champion, exact tags and advanced filters and preserves matc
   button("Filters").click();
   expect(tags.getAttribute("aria-expanded")).toBe("false");
   const [date, result] = host.querySelectorAll("select");
-  date.value = "Last 7 days";
+  date.value = "week";
   date.dispatchEvent(new Event("change", { bubbles: true }));
   result.value = "loss";
   result.dispatchEvent(new Event("change", { bubbles: true }));
@@ -252,7 +285,7 @@ it("combines queue, champion, exact tags and advanced filters and preserves matc
   expect(document.activeElement).toBe(button("Filters"));
   expect(host.querySelector('[aria-label="Remove Last 7 days"]')).not.toBeNull();
   await vi.waitFor(() => expect(readClipGridPage).toHaveBeenLastCalledWith("snapshot", expect.objectContaining({
-    queue: "ranked", champions: ["Kai'Sa"], tags: [pentakill.id, customTag("River fight").id], from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    queue: "ranked_solo_duo", champions: ["Kai'Sa"], tags: [pentakill.id, customTag("River fight").id], from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     to: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), outcome: "loss",
   }), null));
   expect(cards()[0]).toBe(card);

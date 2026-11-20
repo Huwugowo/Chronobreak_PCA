@@ -86,7 +86,9 @@ fn convert(mut value: Value, store: &mut Store) -> Result<ClipHeader> {
     let mut assignments = Vec::new();
     for kind in predefined {
         let id = TagId::parse(&format!("builtin:{kind}"))?;
-        assignments.push(tags::builtin_definition(&id).context("unknown predefined tag")?);
+        assignments.push(crate::tags::TagAssignment::manual(
+            tags::builtin_definition(&id).context("unknown predefined tag")?,
+        ));
     }
     for label in custom {
         let label = tags::clean_label(&label)?;
@@ -102,12 +104,12 @@ fn convert(mut value: Value, store: &mut Store) -> Result<ClipHeader> {
                 tag
             }
         };
-        assignments.push(tag);
+        assignments.push(crate::tags::TagAssignment::manual(tag));
     }
     fields.insert("version".into(), VERSION.into());
     // V2 allowed separate limits. Apply the unified limit to unique assignments.
     let mut seen = std::collections::HashSet::new();
-    assignments.retain(|tag| seen.insert(tag.id.clone()));
+    assignments.retain(|tag| seen.insert(tag.definition.id.clone()));
     fields.insert(
         "tags".into(),
         serde_json::to_value(tags::normalize_assignments(assignments)?)?,
@@ -195,7 +197,7 @@ mod tests {
         assert!(
             page.clips
                 .iter()
-                .all(|clip| clip.tags.len() == 2 && clip.tags[0].tier == Some(5))
+                .all(|clip| clip.tags.len() == 2 && clip.tags[0].definition.tier == Some(5))
         );
 
         let approved = ApprovedRoot::new(detached.path()).unwrap();
@@ -204,7 +206,9 @@ mod tests {
         let mut clip = ClipDescriptor::inspect(&collection, headers[0].0.clone()).unwrap();
         let _directory = checked_directory(&clip, false).unwrap();
         let mut header = clip.read_header().unwrap();
-        header.tags.retain(|assigned| assigned.id != tag.id);
+        header
+            .tags
+            .retain(|assigned| assigned.definition.id != tag.id);
         write_clip_header(&mut clip, &header).unwrap();
         index.reproject_clip(&clip).unwrap();
         assert!(index.clip_ready(&snapshot.managed_clip_stamp));

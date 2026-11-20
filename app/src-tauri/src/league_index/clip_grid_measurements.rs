@@ -1,7 +1,7 @@
 use super::{
-    ClipGridFilter, ClipGridOutcome, ClipGridQuery, ClipGridQueue, GRID_PAGE_SIZE, SCHEMA,
-    grid_page_sql,
+    ClipGridFilter, ClipGridOutcome, ClipGridQuery, GRID_PAGE_SIZE, SCHEMA, grid_page_sql,
 };
+use crate::league_index::query::HistoryQueue;
 use crate::tags::TagId;
 use rusqlite::{Connection, StatementStatus, ToSql, params, params_from_iter};
 use std::time::Instant;
@@ -167,7 +167,7 @@ fn representative_clip_grid_queries() {
                 champions: vec!["Ahri".into()],
                 from: Some("2026-10-01".into()),
                 to: Some("2026-10-01".into()),
-                queue: Some(ClipGridQueue::Ranked),
+                queue: Some(HistoryQueue::RankedSoloDuo),
                 outcome: Some(ClipGridOutcome::Win),
                 ..Default::default()
             },

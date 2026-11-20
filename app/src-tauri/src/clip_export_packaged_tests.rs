@@ -335,6 +335,7 @@ async fn silent_source_packaged_export_matrix() {
                     root: &ApprovedRoot::new(library.path()).unwrap(),
                     recovery_mode: RecoveryMode::Normal,
                     draft: None,
+                    index_cache: library.path(),
                 },
                 &music_directory,
                 tools.ffmpeg(),
@@ -412,6 +413,7 @@ async fn silent_source_packaged_export_matrix() {
                 root: &ApprovedRoot::new(library.path()).unwrap(),
                 recovery_mode: RecoveryMode::Normal,
                 draft: None,
+                index_cache: library.path(),
             },
             &music_directory,
             tools.ffmpeg(),
@@ -447,12 +449,14 @@ async fn silent_source_packaged_export_matrix() {
     });
     let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
     let handle = tokio::runtime::Handle::current();
+    let index_cache = library.path().to_owned();
     let waiter = tokio::spawn(export_process::run_owned(move |cancellation| {
         let result = handle.block_on(export(
             ExportDestination {
                 root: &ApprovedRoot::new(&root).unwrap(),
                 recovery_mode: RecoveryMode::Normal,
                 draft: None,
+                index_cache: &index_cache,
             },
             &music_directory,
             &ffmpeg,

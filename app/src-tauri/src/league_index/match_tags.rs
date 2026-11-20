@@ -1,7 +1,7 @@
 //! Match tags are a small derived projection over verified local event facts.
-//! User-authored additions and suppressions live separately and are applied at
-//! query time, so re-importing a source can never erase them.
+//! Manual tags are projected independently so re-importing a source preserves them.
 use super::*;
+use std::collections::{HashMap, HashSet};
 
 pub(super) fn refresh_recording(db: &Connection, media: &MediaId) -> Result<()> {
     db.execute(
@@ -23,16 +23,16 @@ pub(super) fn refresh_recording(db: &Connection, media: &MediaId) -> Result<()> 
                     WHERE other.media_id=a.media_id AND other.sequence=a.sequence
                       AND other.revision_ordinal=a.revision_ordinal
                       AND other.role=a.role AND other.ordinal<>a.ordinal)
-                AND e.kind IN ('Multikill','FirstBlood','DragonKill','BaronKill','HeraldKill')",
+                AND a.role='killer'
+                AND e.kind IN ('Multikill','DragonKill','BaronKill','HeraldKill')",
         )?;
         let mut rows = statement.query([media.as_str()])?;
         let mut result = std::collections::HashSet::new();
         while let Some(row) = rows.next()? {
             let kind: String = row.get(0)?;
-            let Some(role) = crate::tags::event_role(&kind) else {
-                continue;
-            };
-            if name(&role)? != row.get::<_, String>(3)? {
+            if name(&chronobreak_league_data::observation::events::ActorRole::Killer)?
+                != row.get::<_, String>(3)?
+            {
                 continue;
             }
             let streak = optional_unsigned(row, 1)?.and_then(|value| u32::try_from(value).ok());
@@ -89,96 +89,117 @@ pub(super) fn refresh_group(db: &Connection, match_group: &str) -> Result<()> {
     while let Some(row) = rows.next()? {
         detected.push(crate::tags::TagId::parse(&row.get::<_, String>(0)?)?);
     }
-    let mut overrides = crate::tags::MatchOverrides::default();
+    let mut manual = crate::tags::ManualMatchTags::default();
     let mut override_statement = db.prepare_cached(
-        "SELECT tag_id,added,suppressed FROM match_tag_overrides WHERE match_group=?1 ORDER BY tag_id",
+        "SELECT tag_id FROM match_tag_manual WHERE match_group=?1 ORDER BY tag_id",
     )?;
     let mut rows = override_statement.query([match_group])?;
     while let Some(row) = rows.next()? {
         let id = crate::tags::TagId::parse(&row.get::<_, String>(0)?)?;
-        if row.get(1)? {
-            overrides.added.push(id.clone());
-        }
-        if row.get(2)? {
-            overrides.suppressed.push(id);
-        }
+        manual.ids.push(id);
     }
-    overrides.validate()?;
+    manual.validate()?;
     db.execute(
         "DELETE FROM match_tag_effective WHERE match_group=?1",
         [match_group],
     )?;
-    let mut insert =
-        db.prepare_cached("INSERT INTO match_tag_effective(match_group,tag_id) VALUES (?1,?2)")?;
-    for id in crate::tags::effective_ids(detected, &overrides) {
-        insert.execute(params![match_group, id.as_str()])?;
+    let mut insert = db.prepare_cached(
+        "INSERT INTO match_tag_effective(match_group,tag_id,source) VALUES (?1,?2,?3)",
+    )?;
+    for (id, source) in crate::tags::effective_assignments(detected, &manual) {
+        insert.execute(params![
+            match_group,
+            id.as_str(),
+            serde_json::to_value(source)?.as_str()
+        ])?;
     }
     Ok(())
 }
 
 impl Index {
+    pub(crate) fn effective_match_tags_for_groups(
+        &self,
+        groups: impl IntoIterator<Item = String>,
+    ) -> Result<HashMap<String, Vec<crate::tags::TagAssignment>>> {
+        let groups: Vec<_> = groups
+            .into_iter()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        if groups.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let encoded = serde_json::to_string(&groups)?;
+        let mut statement = self.db.prepare_cached(
+            "SELECT match_group,tag_id,source FROM match_tag_effective
+             WHERE match_group IN (SELECT value FROM json_each(?1)) ORDER BY match_group,source,tag_id",
+        )?;
+        let mut rows = statement.query([encoded])?;
+        let mut records = Vec::new();
+        let mut ids = HashSet::new();
+        while let Some(row) = rows.next()? {
+            let group: String = row.get(0)?;
+            let id = crate::tags::TagId::parse(&row.get::<_, String>(1)?)?;
+            let source = serde_json::from_value(serde_json::Value::String(row.get(2)?))?;
+            ids.insert(id.clone());
+            records.push((group, id, source));
+        }
+        let definitions: HashMap<_, _> = self
+            .tag_definitions(ids.into_iter().collect())?
+            .into_iter()
+            .map(|tag| (tag.id.clone(), tag))
+            .collect();
+        let mut result: HashMap<String, Vec<crate::tags::TagAssignment>> = HashMap::new();
+        for (group, id, source) in records {
+            let definition = definitions.get(&id).cloned().context("tag unavailable")?;
+            result
+                .entry(group)
+                .or_default()
+                .push(crate::tags::TagAssignment { definition, source });
+        }
+        Ok(result)
+    }
+
     pub(crate) fn effective_match_tags(
         &self,
         match_group: &str,
-    ) -> Result<Vec<crate::tags::TagDefinition>> {
-        let mut statement = self.db.prepare_cached(
-            "SELECT tag_id FROM match_tag_effective WHERE match_group=?1 ORDER BY tag_id",
-        )?;
-        let mut rows = statement.query([match_group])?;
-        let mut ids = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(crate::tags::TagId::parse(&row.get::<_, String>(0)?)?);
-        }
-        self.tag_definitions(ids)
+    ) -> Result<Vec<crate::tags::TagAssignment>> {
+        Ok(self
+            .effective_match_tags_for_groups([match_group.to_owned()])?
+            .remove(match_group)
+            .unwrap_or_default())
     }
 
-    pub(crate) fn clear_match_overrides(db: &Connection) -> Result<()> {
-        let mut query = db.prepare("SELECT DISTINCT match_group FROM match_tag_overrides")?;
+    pub(crate) fn clear_manual_match_tags(db: &Connection) -> Result<()> {
+        let mut query = db.prepare("SELECT DISTINCT match_group FROM match_tag_manual")?;
         let groups = query
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        db.execute("DELETE FROM match_tag_overrides", [])?;
+        db.execute("DELETE FROM match_tag_manual", [])?;
         for group in groups {
             refresh_group(db, &group)?;
         }
         Ok(())
     }
-
-    pub(super) fn match_tag_definitions(
-        &self,
-        match_group: &Option<String>,
-    ) -> Result<Vec<crate::tags::TagDefinition>> {
-        let Some(match_group) = match_group else {
-            return Ok(Vec::new());
-        };
-        self.effective_match_tags(match_group)
-    }
 }
 
 impl Index {
-    /// Replace one match's authored override set inside the caller's durable
-    /// store/index transaction. Observed evidence is intentionally untouched.
-    pub(crate) fn replace_match_overrides(
+    /// Project one match's manual assignments within the caller's transaction.
+    pub(crate) fn replace_manual_match_tags(
         db: &Connection,
         match_group: &str,
-        overrides: &crate::tags::MatchOverrides,
+        manual: &crate::tags::ManualMatchTags,
     ) -> Result<()> {
-        overrides.validate()?;
-        ensure!(!match_group.is_empty(), "match tag override group");
+        manual.validate()?;
+        ensure!(!match_group.is_empty(), "manual tag group");
         db.execute(
-            "DELETE FROM match_tag_overrides WHERE match_group=?1",
+            "DELETE FROM match_tag_manual WHERE match_group=?1",
             [match_group],
         )?;
-        let mut insert = db.prepare_cached(
-            "INSERT INTO match_tag_overrides(match_group,tag_id,added,suppressed)
-             VALUES (?1,?2,?3,?4) ON CONFLICT(match_group,tag_id)
-             DO UPDATE SET added=added OR excluded.added,suppressed=suppressed OR excluded.suppressed",
-        )?;
-        for id in &overrides.added {
-            insert.execute(params![match_group, id.as_str(), true, false])?;
-        }
-        for id in &overrides.suppressed {
-            insert.execute(params![match_group, id.as_str(), false, true])?;
+        let mut insert =
+            db.prepare_cached("INSERT INTO match_tag_manual(match_group,tag_id) VALUES (?1,?2)")?;
+        for id in &manual.ids {
+            insert.execute(params![match_group, id.as_str()])?;
         }
         refresh_group(db, match_group)?;
         Ok(())

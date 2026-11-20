@@ -7,7 +7,7 @@ use crate::league_index::{
 };
 use crate::library;
 use crate::library_coordinator::Selection;
-use crate::tags::TagDefinition;
+use crate::tags::TagAssignment;
 use anyhow::{Context, Result, ensure};
 use chronobreak_replay_time::{
     ClipRange, FrameBoundary, MediaId, RoundingMode, frame_boundary_to_replay_tick,
@@ -62,7 +62,7 @@ pub(crate) struct DraftSummary {
     token: String,
     title: String,
     availability: EventAvailability,
-    detected_tags: Vec<TagDefinition>,
+    detected_tags: Vec<TagAssignment>,
 }
 
 #[tauri::command]

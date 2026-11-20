@@ -92,8 +92,11 @@ impl Index {
                         unsigned(row, 2)?,
                         &event.actors,
                     )?;
-                    let role = crate::tags::event_role(event.name.as_deref().unwrap_or_default())
-                        .unwrap_or(obs::events::ActorRole::Killer);
+                    let role = if event.name.as_deref() == Some("FirstBlood") {
+                        obs::events::ActorRole::Recipient
+                    } else {
+                        obs::events::ActorRole::Killer
+                    };
                     let actor = event
                         .actors
                         .as_ref()
@@ -210,7 +213,7 @@ mod tests {
             events
                 .detected_tags()
                 .iter()
-                .map(|tag| tag.id.as_str())
+                .map(|tag| tag.definition.id.as_str())
                 .collect::<Vec<_>>(),
             ["builtin:quadra_kill", "builtin:dragon_steal"]
         );

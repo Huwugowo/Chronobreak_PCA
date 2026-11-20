@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockOverlayPage, mockReplayWindow } from "./dev/mockReplay";
 import { decodeGameSummary, decodeLeagueMatch, decodeMappedReplayTick, loadGames, useMockApi } from "./api";
 import { decodeLeagueResult, resultEvidence, type LeagueResult, type ResultEvidence } from "./leagueResult";
-import { MAX_MATCH_TAGS, type Tag } from "./managedClips";
+import { MAX_MATCH_TAGS, type TagAssignment } from "./managedClips";
 import { parseMediaId, parseReplayTick, type MediaId, type ReplayTick } from "./replayTime";
 import type { GameSummary, LeagueMatch } from "./types";
 import { array, decodeActors, decodeEvidence, decodeSource, exact, gameTick, integer, issues, nullableInteger, object, sameSource, text,
@@ -34,7 +34,7 @@ export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_
 export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavailable"; kills: number | null; deaths: number | null; assists: number | null;
   items: Array<number | null> | null; summoner_spells: Array<string | null> | null; keystone_id: number | null; secondary_style: number | null; creep_score: number | null; duration_seconds: number | null;
   evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
-export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; tags?: Tag[]; clip_count?: number };
+export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; tags?: TagAssignment[]; clip_count?: number };
 export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
 export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number; history_ready?: boolean };
 type Position = { end_offset: number; last_sequence: number; checksum: number[] };
@@ -132,10 +132,11 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
       items: s.items === null ? null : array(s.items, 32).map(nullableInteger), evidence, final_evidence: s.final_evidence as ResultEvidence | null,
       game_tick: s.game_tick === null ? null : gameTick(s.game_tick) };
     return { media_id: media, game, stats, index_status: status(row.index_status),
-      ...(hasTags ? { tags: array(row.tags, MAX_MATCH_TAGS).map(value => {
-        const tag = exact(value, ["id", "label", "tier", "builtin"]);
+      ...(hasTags ? { tags: array(row.tags, MAX_MATCH_TAGS).map((value): TagAssignment => {
+        const tag = exact(value, ["id", "label", "tier", "builtin", "source"]);
         if (typeof tag.builtin !== "boolean") throw new Error("history tag builtin");
-        return { id: text(tag.id), label: text(tag.label), tier: tag.tier === null ? null : integer(tag.tier), builtin: tag.builtin };
+        if (tag.source !== "detected" && tag.source !== "manual") throw new Error("history tag source");
+        return { id: text(tag.id), label: text(tag.label), tier: tag.tier === null ? null : integer(tag.tier), builtin: tag.builtin, source: tag.source };
       }) } : {}),
       ...(hasClipCount ? { clip_count: integer(row.clip_count) } : {}) };
   });

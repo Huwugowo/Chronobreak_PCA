@@ -3,9 +3,9 @@ import { createClipGrid } from "../clipGrid";
 import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
-import { clipDurationMs, clipTitleError, readClipDetail, readClipPage, replaceTagDefinition, type ClipCard,
+import { clipDurationMs, clipTitleError, detectedTagAssignments, manualTagDefinitions, readClipDetail, readClipPage, replaceTagDefinition, type ClipCard,
   type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery,
-  type ClipTagUpdate, type GroupCursor, type Tag } from "../managedClips";
+  type ClipTagUpdate, type GroupCursor, type Tag, type TagAssignment } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
@@ -185,7 +185,7 @@ export function ClipGroups(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [retry, setRetry] = createSignal(0);
-  const updateTags = (forClip: (clip: ClipCard) => Tag[]) => {
+  const updateTags = (forClip: (clip: ClipCard) => TagAssignment[]) => {
     setGroups(previous => previous.map(group => ({ ...group, clips: group.clips.map(clip => {
       const tags = forClip(clip);
       return tags === clip.header.tags ? clip : { ...clip, header: { ...clip.header, tags } };
@@ -365,7 +365,7 @@ export function ManagedClipPlayer(props: {
   const [deleting, setDeleting] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [title, setTitle] = createSignal(props.clip.title);
-  const [tags, setTags] = createSignal(props.clip.header.tags);
+  const [tags, setTags] = createSignal<Tag[]>([]);
   const [detail, setDetail] = createSignal<Awaited<ReturnType<typeof readClipDetail>>>();
   const [detailError, setDetailError] = createSignal(false);
   const [reading, setReading] = createSignal(false);
@@ -434,7 +434,7 @@ export function ManagedClipPlayer(props: {
               onClick={props.onSource}>{props.sourceAvailable ? "Open source replay" : "Source replay unavailable"}</button></Show>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => setEditing("title")}>Rename</button>
             <button class={controls.control} type="button" disabled={busy()}
-              onClick={() => { setTags(props.clip.header.tags); setEditing("tags"); }}>Edit tags</button>
+              onClick={() => { setTags(manualTagDefinitions(props.clip.header.tags)); setEditing("tags"); }}>Edit tags</button>
             <button class={controls.control} type="button" disabled={busy()} onClick={() => void submit({ kind: "reveal" })}>Show in folder</button>
             <button ref={deleteButton} class={controls.control} type="button" disabled={busy()} onClick={() => setDeleting(true)}>Delete clip</button>
           </div>
@@ -451,7 +451,8 @@ export function ManagedClipPlayer(props: {
             </form>
           </Show>
           <Show when={editing() === "tags"}>
-            <TagEditor token={props.token} tags={tags()} onTagsChange={setTags} disabled={busy()} onTagRenamed={props.onTagRenamed} />
+            <TagEditor token={props.token} tags={tags()} detected={detectedTagAssignments(props.clip.header.tags)}
+              onTagsChange={setTags} disabled={busy()} onTagRenamed={props.onTagRenamed} />
             <div class={styles.actions}>
               <button class={controls.control} type="button" disabled={busy()}
                 onClick={() => void submitTags()}>Save tags</button>

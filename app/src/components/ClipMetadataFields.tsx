@@ -1,19 +1,20 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { createTag, renameTag, tagChoices, type Tag } from "../managedClips";
+import { createTag, renameTag, tagChoices, visibleTagAssignments, type Tag, type TagAssignment } from "../managedClips";
 import controls from "../ui/controls.module.css";
 import { FilterCheckbox } from "./FilterControls";
 import styles from "./ManagedClips.module.css";
 
-export function TagBadges(props: { tags: Tag[]; class?: string; limit?: number; id?: string }) {
-  const limit = () => props.limit ?? props.tags.length;
-  const remaining = () => props.tags.length - limit();
-  return <Show when={props.tags.length}>
+export function TagBadges(props: { tags: TagAssignment[]; class?: string; limit?: number; id?: string }) {
+  const tags = createMemo(() => visibleTagAssignments(props.tags));
+  const limit = () => props.limit ?? tags().length;
+  const remaining = () => tags().length - limit();
+  return <Show when={tags().length}>
     <span id={props.id} classList={{ [styles.clipTags]: true, [props.class ?? ""]: !!props.class }}>
-      <For each={props.tags.slice(0, limit())}>
-        {tag => <span class={tag.builtin ? styles.highlightBadge : styles.customBadge}>{tag.label}</span>}
+      <For each={tags().slice(0, limit())}>
+        {tag => <span class={tag.source === "detected" ? styles.detectedBadge : styles.manualBadge}>{tag.label}</span>}
       </For>
       <Show when={remaining() > 0}>
-        <span class={styles.customBadge} title={`${remaining()} more tags`}>+{remaining()}</span>
+        <span class={styles.manualBadge} title={`${remaining()} more tags`}>+{remaining()}</span>
       </Show>
     </span>
   </Show>;
@@ -21,7 +22,7 @@ export function TagBadges(props: { tags: Tag[]; class?: string; limit?: number; 
 
 export function TagEditor(props: {
   token: string; tags: Tag[]; onTagsChange: (tags: Tag[]) => void;
-  disabled?: boolean; onTagRenamed?: (tag: Tag) => void;
+  detected: TagAssignment[]; disabled?: boolean; onTagRenamed?: (tag: Tag) => void;
 }) {
   const [text, setText] = createSignal("");
   const [choices, setChoices] = createSignal<Tag[]>([]);
@@ -30,6 +31,7 @@ export function TagEditor(props: {
   const [renaming, setRenaming] = createSignal<Tag>();
   const [newName, setNewName] = createSignal("");
   const selected = createMemo(() => new Set(props.tags.map(tag => tag.id)));
+  const detected = createMemo(() => new Set(props.detected.map(tag => tag.id)));
   createEffect(() => {
     if (!props.token) return;
     const prefix = text().trim();
@@ -42,7 +44,8 @@ export function TagEditor(props: {
   });
   const options = createMemo(() => {
     const all = new Map<string, Tag>();
-    for (const tag of [...choices(), ...props.tags]) all.set(tag.id, tag);
+    for (const tag of choices()) if (!detected().has(tag.id)) all.set(tag.id, tag);
+    for (const tag of props.tags) all.set(tag.id, tag);
     return [...all.values()];
   });
   const toggle = (tag: Tag, checked: boolean) => props.onTagsChange(checked
@@ -51,6 +54,10 @@ export function TagEditor(props: {
   const create = async () => {
     const label = text().trim();
     if (!label || props.disabled || writing()) return;
+    if (props.detected.some(tag => tag.label.localeCompare(label, undefined, { sensitivity: "accent" }) === 0)) {
+      setText("");
+      return;
+    }
     const existing = options().find(tag => tag.label.localeCompare(label, undefined, { sensitivity: "accent" }) === 0);
     setWriting(true);
     try {
@@ -77,6 +84,7 @@ export function TagEditor(props: {
   return <fieldset class={styles.tagFieldset} disabled={props.disabled || writing()}>
     <legend>Tags</legend>
     <div class={styles.tagEditor}>
+      <TagBadges tags={props.detected} />
       <div class={styles.tagInput}>
         <label>Find or create a tag
           <input value={text()} maxLength={40}

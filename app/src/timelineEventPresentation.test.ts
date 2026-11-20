@@ -181,7 +181,7 @@ describe("timeline event presentation", () => {
         killer: "Ally Mid",
         victim: "Enemy Mid",
       }),
-      event("FirstBlood", {
+      event("ChampionKill", {
         killer: "Ally Jungle",
         victim: "Enemy Jungle",
       }),

@@ -955,7 +955,7 @@ fn simplified_history_uses_checked_queue_roster_and_outcome() {
 
 #[test]
 fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
-    use crate::tags::{MatchOverrides, TagId};
+    use crate::tags::{ManualMatchTags, TagId};
     let f = Fixture::new(1);
     let mut index = f.index();
     f.ready(&mut index);
@@ -1029,31 +1029,34 @@ fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
     assert!(!matches(&[PersonalMoment::Pentakill]));
     refresh_tags();
     assert!(query_tags(&quadra).is_empty());
-    let mut overrides = MatchOverrides::default();
-    overrides.apply(vec![], vec![penta.clone()]).unwrap();
-    Index::replace_match_overrides(&index.db, group, &overrides).unwrap();
-    assert_eq!(query_tags(&quadra)[0].tags[0].id, penta);
+    let mut manual = ManualMatchTags::default();
+    manual.replace(vec![penta.clone()]).unwrap();
+    Index::replace_manual_match_tags(&index.db, group, &manual).unwrap();
+    assert_eq!(query_tags(&quadra)[0].tags[0].definition.id, penta);
     assert!(!matches(&[PersonalMoment::Pentakill]));
-    Index::replace_match_overrides(&index.db, group, &MatchOverrides::default()).unwrap();
+    Index::replace_manual_match_tags(&index.db, group, &ManualMatchTags::default()).unwrap();
     event(1005, "Multikill", None, Some(5), 0);
     actor(1005, local, "resolved", 0, 0);
     assert!(matches(&[PersonalMoment::Pentakill]));
     assert!(!matches(&[PersonalMoment::QuadraKill]));
     refresh_tags();
-    assert_eq!(query_tags(&quadra)[0].tags[0].id, penta);
-    let mut overrides = MatchOverrides::default();
-    overrides
-        .apply(vec![penta.clone()], vec![double.clone()])
-        .unwrap();
-    Index::replace_match_overrides(&index.db, group, &overrides).unwrap();
+    assert_eq!(query_tags(&quadra)[0].tags[0].definition.id, penta);
+    let mut manual = ManualMatchTags::default();
+    manual.replace(vec![double.clone()]).unwrap();
+    Index::replace_manual_match_tags(&index.db, group, &manual).unwrap();
     refresh_tags();
-    assert!(query_tags(&quadra).is_empty());
-    assert_eq!(query_tags(&double)[0].tags[0].id, double);
+    assert!(!query_tags(&quadra).is_empty());
+    assert!(
+        query_tags(&double)[0]
+            .tags
+            .iter()
+            .any(|tag| tag.definition.id == double)
+    );
     assert!(matches(&[PersonalMoment::Pentakill]));
-    overrides.apply(vec![double.clone()], vec![]).unwrap();
-    Index::replace_match_overrides(&index.db, group, &overrides).unwrap();
+    manual.replace(vec![]).unwrap();
+    Index::replace_manual_match_tags(&index.db, group, &manual).unwrap();
     refresh_tags();
-    assert!(query_tags(&double).is_empty());
+    assert!(!query_tags(&double).is_empty());
     event(1006, "BaronKill", Some(false), None, 0);
     actor(1006, local, "resolved", 0, 0);
     assert!(!matches(&[
@@ -1067,7 +1070,7 @@ fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
         PersonalMoment::Pentakill
     ]));
     assert!(!matches(&[PersonalMoment::DragonSteal]));
-    Index::replace_match_overrides(&index.db, group, &MatchOverrides::default()).unwrap();
+    Index::replace_manual_match_tags(&index.db, group, &ManualMatchTags::default()).unwrap();
     refresh_tags();
     assert_eq!(query_tags(&quadra).len(), 1);
     index

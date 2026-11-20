@@ -39,7 +39,7 @@ pub(crate) use query::{
     EventWindow, HistoryPage, HistoryQuery, RosterAt, ScopeQuery, SourceScope, WindowQuery,
 };
 
-const VERSION: i64 = 10;
+const VERSION: i64 = 11;
 const JOURNAL: &str = "league_observations.jsonl";
 const MAX_JOURNAL: u64 = 4 * 1024 * 1024 * 1024;
 // Journal batches are streamed and checked individually. Group their SQL writes

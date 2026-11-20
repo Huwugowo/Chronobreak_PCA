@@ -163,7 +163,6 @@ export const timelineEventPresentation = (
 
   switch (event.event_type) {
     case "ChampionKill":
-    case "FirstBlood":
       return localRole === "victim"
         ? presentation(
             event,

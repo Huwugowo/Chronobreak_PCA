@@ -7,7 +7,7 @@ import managedClipStyles from "./ManagedClips.module.css";
 import type { DdragonStatus, GameSummary } from "../types";
 import type { HistoryState } from "../historyController";
 import { readClipPage, tagChoices } from "../managedClips";
-import { customTag } from "../tagFixtures";
+import { assigned, customTag, pentakill } from "../tagFixtures";
 import type { ClipCard, ClipCursor } from "../managedClips";
 
 vi.mock("../managedClips", async original => ({ ...await original<typeof import("../managedClips")>(),
@@ -164,7 +164,7 @@ it("shows a safe operational warning without semantic filters and clears it afte
   } finally { dispose(); }
 });
 
-it("renders Games from the core snapshot when Data Dragon enrichment fails", () => {
+it("renders Games from the core snapshot when Data Dragon enrichment fails", async () => {
   const game: GameSummary = {
     media_id: "9c82b929-7c85-4c27-a6d0-4f4e1d8e3311" as GameSummary["media_id"],
     timestamp: "100",
@@ -202,7 +202,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   const [assets, setAssets] = createSignal(ddragon);
   const [games, setGames] = createSignal([game]);
   const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,initializing:false,error:null,indexIssue:null,laterPage:false});
-  const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn();
+  const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn(), editTags = vi.fn().mockResolvedValue(true);
   const dispose = render(() => <LibraryScreen
     tab="games"
     games={games()}
@@ -212,6 +212,8 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
     actionable={actionable()}
     busyId={null}
     snapshotOrigin={origin}
+    tagToken={origin.token}
+    onEditMatchTags={editTags}
     onOpenGame={opened}
     onToggleSaved={saved}
     onDeleteGame={deleted}
@@ -246,7 +248,19 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", () 
   queues.find(button => button.textContent === "All")!.click();
   setHistory(settled);
   const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],keystone_id:9923,secondary_style:8000,summoner_spells:["4","6"],creep_score:136,duration_seconds:985,evidence:null,final_evidence:null,game_tick:null};
-  setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
+  const montage = customTag("Montage");
+  const tags = [assigned(pentakill, "detected"), assigned(montage)];
+  vi.mocked(tagChoices).mockResolvedValue([pentakill, montage]);
+  setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,tags,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
+  const tagButton = (text: string) => [...host.querySelectorAll("button")].find(button => button.textContent === text)!;
+  tagButton("Edit tags").click();
+  const editor = host.querySelector('fieldset:has([aria-label="Tag options"])')!;
+  expect(editor.querySelector('[class*="detectedBadge"]')?.textContent).toBe("Pentakill");
+  expect([...editor.querySelectorAll('label')].map(label => label.textContent)).not.toContain("Pentakill");
+  [...editor.querySelectorAll('label')].find(label => label.textContent === "Montage")!.querySelector("input")!.click();
+  tagButton("Save tags").click();
+  expect(editTags).toHaveBeenCalledExactlyOnceWith(game.match_group, []);
+  await vi.waitFor(() => expect(editor.isConnected).toBe(false));
   expect(host.textContent).not.toContain("Final EOG"); expect(host.textContent).not.toContain("PERFECT KDA");
   expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS 1368.3 / min");
   setAssets({...ddragon,state:"ready",asset_base_url:"http://assets.test/ddragon/16.20.1"});
@@ -411,6 +425,20 @@ it("suggests played champions locally and applies only explicit choices", async 
   apply();
   expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
     player_riot_id: "Name#TAG", outcome: "win", recorded_from: expect.any(Number), recorded_before: expect.any(Number),
+  }));
+  button("Filters").click();
+  const recorded = form.querySelector("select")!;
+  recorded.value = "custom";
+  recorded.dispatchEvent(new Event("change", { bubbles: true }));
+  const days = form.querySelectorAll<HTMLInputElement>('input[type="date"]');
+  days.forEach((day, index) => {
+    day.value = index === 0 ? "2026-07-02" : "2026-07-05";
+    day.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  apply();
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({
+    recorded_from: new Date(2026, 6, 2).getTime() / 1000,
+    recorded_before: new Date(2026, 6, 6).getTime() / 1000,
   }));
   host.querySelector<HTMLButtonElement>('[aria-label="Favorites only"]')!.click();
   expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ saved_only: true }));

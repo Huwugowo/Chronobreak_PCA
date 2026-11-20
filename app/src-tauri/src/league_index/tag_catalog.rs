@@ -1,7 +1,7 @@
 //! Rebuildable vocabulary projection, including definitions carried by detached clips.
 use super::*;
 use crate::tag_store::{self, LoadedStore};
-use crate::tags::{self, MatchOverrides, TagDefinition, TagId};
+use crate::tags::{self, ManualMatchTags, TagAssignment, TagDefinition, TagId};
 
 const SUGGESTION_LIMIT: usize = 24;
 
@@ -53,9 +53,9 @@ impl Index {
         for tag in source.store.definitions.values() {
             upsert_definition(&tx, tag)?;
         }
-        Self::clear_match_overrides(&tx)?;
-        for (key, overrides) in &source.store.matches {
-            Self::replace_match_overrides(&tx, key, overrides)?;
+        Self::clear_manual_match_tags(&tx)?;
+        for (key, manual) in &source.store.matches {
+            Self::replace_manual_match_tags(&tx, key, manual)?;
         }
         set_tag_stamp(&tx, &source.stamp)?;
         tx.commit()?;
@@ -66,22 +66,33 @@ impl Index {
         &mut self,
         stamp: &str,
         definitions: &[TagDefinition],
-        subject: Option<(&str, &MatchOverrides)>,
+        subject: Option<(&str, &ManualMatchTags)>,
     ) -> Result<()> {
         let tx = self.db.transaction()?;
         for definition in definitions {
             upsert_definition(&tx, definition)?;
         }
-        if let Some((key, overrides)) = subject {
-            Self::replace_match_overrides(&tx, key, overrides)?;
+        if let Some((key, manual)) = subject {
+            Self::replace_manual_match_tags(&tx, key, manual)?;
         }
         set_tag_stamp(&tx, stamp)?;
         tx.commit()?;
         Ok(())
     }
 
-    pub(crate) fn resolve_tags(&self, tags: Vec<TagDefinition>) -> Result<Vec<TagDefinition>> {
-        self.resolve_tag_ids(tags.into_iter().map(|tag| (tag.id.clone(), Some(tag))))
+    pub(crate) fn resolve_tags(&self, tags: Vec<TagAssignment>) -> Result<Vec<TagAssignment>> {
+        let definitions = self.resolve_tag_ids(
+            tags.iter()
+                .map(|tag| (tag.definition.id.clone(), Some(tag.definition.clone()))),
+        )?;
+        Ok(tags
+            .into_iter()
+            .zip(definitions)
+            .map(|(assignment, definition)| TagAssignment {
+                definition,
+                source: assignment.source,
+            })
+            .collect())
     }
 
     pub(crate) fn tag_definitions(&self, ids: Vec<TagId>) -> Result<Vec<TagDefinition>> {

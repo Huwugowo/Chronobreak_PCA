@@ -154,9 +154,8 @@ pub(crate) async fn edit_match_tags(
     state: State<'_, AppState>,
     snapshot_token: String,
     match_group: String,
-    previous: Vec<TagId>,
     tags: Vec<TagId>,
-) -> Result<Vec<TagDefinition>, String> {
+) -> Result<Vec<crate::tags::TagAssignment>, String> {
     write(
         &state,
         &snapshot_token,
@@ -174,12 +173,12 @@ pub(crate) async fn edit_match_tags(
                 .get(&match_group)
                 .cloned()
                 .unwrap_or_default();
-            let mut overrides = original.clone();
-            overrides.apply(previous, tags)?;
-            overrides.validate()?;
+            let mut manual = original.clone();
+            manual.replace(tags)?;
+            manual.validate()?;
             let mut definitions = Vec::new();
             for tag in selected {
-                if overrides.added.contains(&tag.id)
+                if manual.ids.contains(&tag.id)
                     && !tag.builtin
                     && !loaded.store.definitions.contains_key(&tag.id)
                 {
@@ -187,22 +186,18 @@ pub(crate) async fn edit_match_tags(
                     definitions.push(tag);
                 }
             }
-            if overrides != original || !definitions.is_empty() {
-                if overrides == Default::default() {
+            if manual != original || !definitions.is_empty() {
+                if manual == Default::default() {
                     loaded.store.matches.remove(&match_group);
                 } else {
                     loaded
                         .store
                         .matches
-                        .insert(match_group.clone(), overrides.clone());
+                        .insert(match_group.clone(), manual.clone());
                 }
                 check()?;
                 let stamp = loaded.store.publish(owner)?;
-                index.update_tag_projection(
-                    &stamp,
-                    &definitions,
-                    Some((&match_group, &overrides)),
-                )?;
+                index.update_tag_projection(&stamp, &definitions, Some((&match_group, &manual)))?;
             }
             index.effective_match_tags(&match_group)
         },
@@ -216,7 +211,7 @@ pub(crate) async fn edit_clip_tags(
     snapshot_token: String,
     clip_id: ClipId,
     tags: Vec<TagDefinition>,
-) -> Result<Vec<TagDefinition>, String> {
+) -> Result<Vec<crate::tags::TagAssignment>, String> {
     let library = state.library.clone();
     let roots = Arc::clone(&state.roots);
     let token = snapshot_token.clone();
@@ -238,20 +233,36 @@ pub(crate) async fn edit_clip_tags(
             );
             let _folder = checked_directory(&clip, false)?;
             let mut header = clip.read_header()?;
-            let tags = tags::normalize_assignments(tags)?;
-            let selected =
-                index.tag_definitions(tags.iter().map(|tag| tag.id.clone()).collect())?;
+            let tags = tags::normalize_assignments(
+                tags.into_iter()
+                    .map(crate::tags::TagAssignment::manual)
+                    .collect(),
+            )?;
+            let selected = index
+                .tag_definitions(tags.iter().map(|tag| tag.definition.id.clone()).collect())?;
             ensure!(selected.len() == tags.len(), "tag unavailable");
             // Keep portable labels current whenever this clip's header is edited.
-            let selected = tags::normalize_assignments(selected)?;
-            if header.tags != selected {
-                header.tags = selected.clone();
+            let selected = tags::normalize_assignments(
+                selected
+                    .into_iter()
+                    .map(crate::tags::TagAssignment::manual)
+                    .collect(),
+            )?;
+            let detected = header
+                .tags
+                .iter()
+                .filter(|tag| tag.source == crate::tags::TagAssignmentSource::Detected)
+                .cloned();
+            let assignments =
+                tags::normalize_assignments(detected.chain(selected.clone()).collect())?;
+            if header.tags != assignments {
+                header.tags = assignments.clone();
                 check()?;
                 write_clip_header(&mut clip, &header)?;
                 index.reproject_clip(&clip)?;
                 library.publish_clip_header(&token, &clip)?;
             }
-            Ok(selected)
+            Ok(assignments)
         },
     )
     .await

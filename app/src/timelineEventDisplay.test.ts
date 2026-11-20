@@ -55,17 +55,18 @@ const event = (
 });
 
 describe("timeline display events", () => {
-  it("attaches recipient-only First Blood and resolved Multikill without matching display strings", () => {
+  it("attaches a resolved Multikill while leaving First Blood in the factual stream", () => {
     const kill = event("ChampionKill", 10, { actors: { killer: resolved(1), victim: resolved(2) } });
     const firstBlood = event("FirstBlood", 10, { actors: { recipient: resolved(1) } });
     const multikill = event("Multikill", 11, { actors: { killer: resolved(1) }, kill_streak: 2 });
     const display = timelineDisplayEvents([firstBlood, kill, multikill]);
     expect(display).toHaveLength(1);
-    expect(display[0].badges).toEqual(["First Blood"]);
+    expect(display[0].badges).toEqual([]);
     expect(display[0].multiplier).toBe(2);
+    expect(firstBlood.event_type).toBe("FirstBlood");
     expect(kill).not.toHaveProperty("badges");
   });
-  it("collapses FirstBlood into its matching ChampionKill", () => {
+  it("leaves a matching ChampionKill marker unadorned", () => {
     const firstBlood = event(
       "FirstBlood",
       100,
@@ -98,7 +99,7 @@ describe("timeline display events", () => {
     expect(display[0].source).toBe(
       championKill,
     );
-    expect(display[0].badges).toEqual(["First Blood"]);
+    expect(display[0].badges).toEqual([]);
   });
 
   it("does not invent a kill marker for standalone FirstBlood", () => {

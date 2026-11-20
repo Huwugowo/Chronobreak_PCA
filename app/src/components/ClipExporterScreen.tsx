@@ -168,14 +168,11 @@ function ClipExporterScreen(props: Props) {
     const draft = props.draft;
     let live = true;
     setMetadataDraft(null);
-    setTags([]);
     setLoadingMetadata(true);
     const timer = window.setTimeout(() => {
       void props.readReplay(current => prepareClipDraft(current, draft)).then(value => {
         if (!live || token !== props.snapshotToken) return;
         setMetadataDraft(value);
-        // Detected tags are preselected once for this draft. Subsequent user changes win.
-        setTags(value.detected_tags);
       }, () => {}).finally(() => { if (live) setLoadingMetadata(false); });
     }, 100);
     onCleanup(() => { live = false; window.clearTimeout(timer); });
@@ -784,8 +781,9 @@ function ClipExporterScreen(props: Props) {
                   <Show when={titleError()} fallback={<For each={outputTitles()}>{name => <small>{name}.mp4</small>}</For>}>
                     {error => <small role="alert">{error()}</small>}
                   </Show>
-                  <TagEditor token={props.snapshotToken} tags={tags()} onTagsChange={setTags} disabled={exporting()} />
-                  <Show when={loadingMetadata()}><small role="status">Checking this range for detected tags…</small></Show>
+                  <TagEditor token={props.snapshotToken} tags={tags()} detected={metadataDraft()?.detected_tags ?? []}
+                    onTagsChange={setTags} disabled={exporting()} />
+                  <Show when={loadingMetadata()}><small role="status">Preparing clip details…</small></Show>
                 </section>
               </Show>
               <section>

@@ -95,7 +95,7 @@ export const defaultClipRange = (
 ): ClipRange => {
   let preRollTicks = (8 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
   let postRollTicks = (5 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
-  if (anchorEvent?.event_type === "ChampionKill" || anchorEvent?.event_type === "FirstBlood") {
+  if (anchorEvent?.event_type === "ChampionKill") {
     if (anchorEvent.assisters.length > 0) {
       preRollTicks = (15 * REPLAY_TICKS_PER_SECOND) as ReplayTick;
       postRollTicks = (8 * REPLAY_TICKS_PER_SECOND) as ReplayTick;

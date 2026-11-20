@@ -487,8 +487,7 @@ function PlaybackSurface(props: Props & { descriptor: ReplayDescriptor; opening?
 
   const activateClip = () => {
     const kills = events().filter(
-      (candidate) =>
-        candidate.event_type === "ChampionKill" || candidate.event_type === "FirstBlood",
+      (candidate) => candidate.event_type === "ChampionKill",
     );
     const nearest = nearestIndexAt(kills, replayPosition());
     const anchorEvent =

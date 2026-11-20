@@ -28,12 +28,6 @@ const compatibleOptionalValue = (
   right === null ||
   left === right;
 
-const isKillEvent = (
-  event: ViewerEvent,
-): boolean =>
-  event.event_type === "ChampionKill" ||
-  event.event_type === "FirstBlood";
-
 const duplicatesTurretKill = <
   T extends MappedTimelineEvent,
 >(
@@ -65,7 +59,7 @@ const nearestPreviousKill = <
     | undefined;
 
   for (const candidate of displayEvents) {
-    if (!isKillEvent(candidate.source)) continue;
+    if (candidate.source.event_type !== "ChampionKill") continue;
     if (!predicate(candidate.source)) continue;
     if (candidate.replay_tick > metaEvent.replay_tick) {
       continue;
@@ -132,16 +126,6 @@ export const timelineDisplayEvents = <
       }));
 
   for (const metaEvent of ordered) {
-    if (metaEvent.event_type === "FirstBlood") {
-      const matches = result.filter(candidate =>
-        candidate.source.event_type === "ChampionKill" &&
-        candidate.replay_tick === metaEvent.replay_tick &&
-        (sameActor(candidate.source, "killer", metaEvent, "killer") ||
-          sameActor(candidate.source, "killer", metaEvent, "recipient")) &&
-        (!metaEvent.actors?.victim?.length || sameActor(candidate.source, "victim", metaEvent, "victim")));
-      if (matches.length === 1) matches[0].badges.push("First Blood");
-      continue;
-    }
     if (metaEvent.event_type === "Multikill") {
       const multiplier =
         metaEvent.kill_streak ?? 0;

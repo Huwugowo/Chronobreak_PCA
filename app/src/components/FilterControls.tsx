@@ -1,5 +1,8 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, splitProps, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, splitProps, type JSX } from "solid-js";
 import styles from "./FilterControls.module.css";
+import type { HistoryQueue } from "../leagueIndex";
+import { queueLabels } from "../matchQueues";
+import { CheckIcon } from "../ui/icons";
 
 export { styles as filterControlStyles };
 
@@ -12,9 +15,102 @@ export const datePresets = {
 
 const searchKey = (value: string) => value.normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
-export function FilterTabButton(props: { active: boolean; children: JSX.Element } & JSX.ButtonHTMLAttributes<HTMLButtonElement>) {
+function FilterTabButton(props: { active: boolean; children: JSX.Element } & JSX.ButtonHTMLAttributes<HTMLButtonElement>) {
   const [local, buttonProps] = splitProps(props, ["active", "class", "children"]);
   return <button type="button" {...buttonProps} class={`${styles.tab} ${local.class ?? ""}`} data-active={local.active}>{local.children}</button>;
+}
+
+type FilterQueueOption = {
+  label: string;
+  value?: HistoryQueue;
+  children?: readonly HistoryQueue[];
+};
+
+const queueOptions: readonly FilterQueueOption[] = [
+  { label: "All" },
+  { label: "Ranked", children: ["ranked_solo_duo", "ranked_flex", "ranked_5s"] },
+  { label: "ARAM", children: ["aram_mayhem", "aram", "aram_mayhem_classic"] },
+  { label: "Arena", value: "arena" },
+  { label: "Other", children: ["other", "normal_draft", "swiftplay", "urf"] },
+];
+
+export function FilterQueueTabs(props: {
+  value: HistoryQueue | null;
+  onChange: (value: HistoryQueue | null) => void;
+  onOpen?: () => void;
+  onExpandedChange?: (expanded: boolean) => void;
+}) {
+  const id = createUniqueId();
+  const [open, setOpen] = createSignal<string>();
+  const [pinned, setPinned] = createSignal(false);
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let root!: HTMLElement;
+  const close = () => { clearTimeout(closeTimer); setOpen(undefined); setPinned(false); props.onExpandedChange?.(false); };
+  const dismissOutside = (event: Event) => {
+    if (open() && event.target instanceof Node && !root.contains(event.target)) close();
+  };
+  document.addEventListener("pointerdown", dismissOutside);
+  document.addEventListener("focusin", dismissOutside);
+  onCleanup(() => {
+    clearTimeout(closeTimer);
+    document.removeEventListener("pointerdown", dismissOutside);
+    document.removeEventListener("focusin", dismissOutside);
+  });
+  const select = (value: HistoryQueue | null, restore?: HTMLButtonElement) => {
+    props.onChange(value);
+    close();
+    restore?.focus();
+  };
+  const active = (option: FilterQueueOption) => option.children
+    ? props.value !== null && option.children.includes(props.value)
+    : (option.value ?? null) === props.value;
+  const expand = (name: string, pin: boolean) => {
+    clearTimeout(closeTimer);
+    props.onOpen?.();
+    setOpen(name);
+    setPinned(pin);
+    props.onExpandedChange?.(true);
+  };
+  return <nav ref={root} class={styles.queues} aria-label="Match queue" onKeyDown={event => {
+    if (event.key === "Escape" && open()) {
+      event.preventDefault();
+      const trigger = root.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+      close();
+      trigger?.focus();
+    }
+  }}>
+    <For each={queueOptions}>{option => {
+      const popupId = `${id}-${option.label.toLowerCase()}`;
+      const expanded = () => open() === option.label;
+      let trigger!: HTMLButtonElement;
+      if (!option.children) return <FilterTabButton class={styles.queue} active={active(option)} aria-pressed={active(option)}
+        onClick={() => select(option.value ?? null)}>{option.label}</FilterTabButton>;
+      return <div class={styles.anchor} onPointerEnter={event => {
+        if (event.pointerType === "mouse" && !(pinned() && root.querySelector(`.${styles.queuePanel}:focus-within`))) {
+          expand(option.label, false);
+        }
+      }} onPointerLeave={event => {
+        if (event.pointerType !== "mouse" || pinned()) return;
+        closeTimer = setTimeout(() => { if (expanded() && !pinned()) close(); }, 150);
+      }}>
+        <FilterTabButton ref={trigger!} class={styles.queue} active={active(option)} aria-expanded={expanded()} aria-controls={popupId}
+          onClick={() => { if (expanded() && pinned()) close(); else expand(option.label, true); }}
+          onKeyDown={event => {
+            if (event.key !== "ArrowDown") return;
+            event.preventDefault();
+            expand(option.label, true);
+            document.getElementById(popupId)?.querySelector("button")?.focus();
+          }}>
+          {option.label}<i class={styles.chevron} aria-hidden="true" />
+        </FilterTabButton>
+        <div class={`${styles.panel} ${styles.queuePanel}`} id={popupId} hidden={!expanded()}>
+          <For each={option.children}>{choice => <button type="button" aria-pressed={props.value === choice} onClick={() => select(choice, trigger)}>
+            {queueLabels[choice]}<Show when={props.value === choice}><CheckIcon size={15} /></Show>
+          </button>}</For>
+        </div>
+      </div>;
+    }}</For>
+  </nav>;
 }
 
 export function FilterChip(props: {

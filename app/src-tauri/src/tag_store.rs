@@ -1,4 +1,4 @@
-//! Durable library vocabulary and sparse match overrides.
+//! Durable library vocabulary and manual match assignments.
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
@@ -13,7 +13,7 @@ use crate::{
     directory_guard::open_regular,
     library_mutation::LibraryMutation,
     playback_file::file_facts,
-    tags::{self, MatchOverrides, TagDefinition, TagId},
+    tags::{self, ManualMatchTags, TagDefinition, TagId},
 };
 
 const FILE: &str = "league_tags.json";
@@ -26,7 +26,7 @@ pub(crate) struct Store {
     version: u8,
     pub revision: u64,
     pub definitions: BTreeMap<TagId, TagDefinition>,
-    pub matches: BTreeMap<String, MatchOverrides>,
+    pub matches: BTreeMap<String, ManualMatchTags>,
 }
 
 impl Default for Store {
@@ -59,7 +59,7 @@ impl Store {
             entry.validate()?;
             ensure!(
                 entry
-                    .added
+                    .ids
                     .iter()
                     .all(|id| id.is_builtin() || self.definitions.contains_key(id)),
                 "unknown match tag definition"
@@ -162,7 +162,7 @@ mod tests {
     use crate::playback_file::ApprovedRoot;
 
     #[test]
-    fn revisions_preserve_definitions_and_suppression_across_reopen() {
+    fn revisions_preserve_definitions_and_manual_assignments_across_reopen() {
         let root = tempfile::tempdir().unwrap();
         let approved = ApprovedRoot::new(root.path()).unwrap();
         let owner = LibraryMutation::acquire(root.path(), &approved).unwrap();
@@ -170,20 +170,26 @@ mod tests {
         let tag = TagDefinition::custom("Clutch").unwrap();
         loaded.store.insert_definition(tag.clone()).unwrap();
         let match_group = "a".repeat(64);
-        let penta = TagId::parse("builtin:pentakill").unwrap();
-        let mut overrides = MatchOverrides::default();
-        overrides
-            .apply(vec![penta.clone()], vec![tag.id.clone()])
-            .unwrap();
-        loaded.store.matches.insert(match_group.clone(), overrides);
+        let mut manual = ManualMatchTags::default();
+        manual.replace(vec![tag.id.clone()]).unwrap();
+        loaded.store.matches.insert(match_group.clone(), manual);
         let stamp = loaded.store.publish(&owner).unwrap();
         let reopened = load(owner.root_path()).unwrap();
         assert_eq!(reopened.stamp, stamp);
         assert_eq!(reopened.store.revision, 1);
         assert_eq!(reopened.store.definitions.get(&tag.id), Some(&tag));
         assert_eq!(
-            tags::effective_ids([penta], &reopened.store.matches[&match_group]),
-            [tag.id]
+            tags::effective_assignments(
+                [TagId::parse("builtin:pentakill").unwrap()],
+                &reopened.store.matches[&match_group]
+            ),
+            vec![
+                (
+                    TagId::parse("builtin:pentakill").unwrap(),
+                    tags::TagAssignmentSource::Detected
+                ),
+                (tag.id, tags::TagAssignmentSource::Manual),
+            ]
         );
     }
 }

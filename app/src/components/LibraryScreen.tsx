@@ -5,7 +5,7 @@ import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHi
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
 import type { HistoryQuery, HistoryStats } from "../leagueIndex";
 import type { HistoryState } from "../historyController";
-import type { ClipCard, ClipTagUpdate, Tag } from "../managedClips";
+import { detectedTagAssignments, manualTagDefinitions, type ClipCard, type ClipTagUpdate, type Tag } from "../managedClips";
 import { TagBadges, TagEditor } from "./ClipMetadataFields";
 import { ClipGroups } from "./ManagedClips";
 import { recordBenchmarkSearchInput, recordBenchmarkSearchSchedule } from "../benchmarkSearch";
@@ -42,7 +42,7 @@ type Props = {
   snapshotOrigin: LibraryOrigin | null;
   history?: HistoryState;
   tagToken?: string;
-  onEditMatchTags?: (group: string, previous: Tag[], selected: Tag[]) => Promise<boolean>;
+  onEditMatchTags?: (group: string, selected: Tag[]) => Promise<boolean>;
   onTagRenamed?: (tag: Tag) => void;
   renamedTag?: Tag;
   clipTagUpdate?: ClipTagUpdate;
@@ -139,7 +139,7 @@ function GamesLibrary(props: Props) {
   const [textPending, setTextPending] = createSignal(false);
   const [expandedMatch, setExpandedMatch] = createSignal<string | null>(null);
   const [expandedClips, setExpandedClips] = createSignal<string | null>(null);
-  const [tagEdit, setTagEdit] = createSignal<{ group: string; previous: Tag[] }>();
+  const [tagEdit, setTagEdit] = createSignal<string>();
   const [draftTags, setDraftTags] = createSignal<Tag[]>([]);
   const [savingTags, setSavingTags] = createSignal(false);
   const saveTags = async () => {
@@ -147,7 +147,7 @@ function GamesLibrary(props: Props) {
     if (!edit || savingTags() || !props.onEditMatchTags) return;
     setSavingTags(true);
     try {
-      if (await props.onEditMatchTags(edit.group, edit.previous, draftTags())) setTagEdit(undefined);
+      if (await props.onEditMatchTags(edit, draftTags())) setTagEdit(undefined);
     } finally { setSavingTags(false); }
   };
   createEffect(on(() => props.snapshotOrigin?.root, () => setTagEdit(undefined), { defer: true }));
@@ -231,7 +231,7 @@ function GamesLibrary(props: Props) {
       const matches = rows.map(row => partsFor(row.game).find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
       return matches;
     }
-    if (semanticQuery() || filters().tags.length || filters().date) return [];
+    if (semanticQuery() || filters().tags.length || filters().date || filters().from || filters().to) return [];
     return fallbackCards().filter(basicMatch).slice(0, 50);
     function basicMatch(game: GameSummary) {
       const matchesSearch =
@@ -610,19 +610,18 @@ function GamesLibrary(props: Props) {
                       <TagBadges tags={matchTags()} />
                       <Show when={rowFor(game()) && props.onEditMatchTags && props.tagToken}>
                         <button class={controlStyles.control} type="button" disabled={mutationsBlocked() || savingTags()}
-                          aria-expanded={tagEdit()?.group === group} aria-controls={`match-tags-${group}`}
+                          aria-expanded={tagEdit() === group} aria-controls={`match-tags-${group}`}
                           onClick={() => {
-                            if (tagEdit()?.group === group) { setTagEdit(undefined); return; }
-                            const previous = matchTags();
-                            setDraftTags(previous);
-                            setTagEdit({ group, previous });
+                            if (tagEdit() === group) { setTagEdit(undefined); return; }
+                            setDraftTags(manualTagDefinitions(matchTags()));
+                            setTagEdit(group);
                           }}>Edit tags</button>
                       </Show>
                     </div>
                   </Show>
-                  <Show when={tagEdit()?.group === group && props.tagToken}>
+                  <Show when={tagEdit() === group && props.tagToken}>
                     <div class={matchStyles.matchTagEditor} id={`match-tags-${group}`}>
-                      <TagEditor token={props.tagToken!} tags={draftTags()} onTagsChange={setDraftTags}
+                      <TagEditor token={props.tagToken!} tags={draftTags()} detected={detectedTagAssignments(matchTags())} onTagsChange={setDraftTags}
                         disabled={savingTags()} onTagRenamed={props.onTagRenamed} />
                       <button type="button" class={controlStyles.control} disabled={savingTags()} onClick={() => void saveTags()}>Save tags</button>
                       <button type="button" class={controlStyles.control} disabled={savingTags()} onClick={() => setTagEdit(undefined)}>Cancel</button>

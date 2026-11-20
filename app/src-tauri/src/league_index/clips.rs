@@ -2,7 +2,7 @@
 use super::*;
 use crate::clip_bundle::{ClipDescriptor, ClipGame, ClipHeader, ClipId};
 use crate::library::LibrarySnapshot;
-use crate::tags::{TagDefinition, TagId, implied_ids};
+use crate::tags::{TagAssignment, TagId, implied_ids};
 use chronobreak_replay_time::{
     MediaTimelineV2, ReplayTick, RoundingMode, frame_boundary_to_replay_tick,
 };
@@ -82,21 +82,12 @@ pub(crate) struct ClipGridQuery {
     pub search: Option<String>,
     #[serde(default)]
     pub champions: Vec<String>,
-    pub queue: Option<ClipGridQueue>,
+    pub queue: Option<crate::league_index::query::HistoryQueue>,
     pub outcome: Option<ClipGridOutcome>,
     pub from: Option<String>,
     pub to: Option<String>,
     #[serde(default)]
     pub tags: Vec<TagId>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ClipGridQueue {
-    Ranked,
-    Aram,
-    Arena,
-    Other,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -147,7 +138,7 @@ pub(crate) struct ClipGridCard {
     pub champion: Option<String>,
     pub duration: ReplayTick,
     pub thumbnail_url: String,
-    pub tags: Vec<TagDefinition>,
+    pub tags: Vec<TagAssignment>,
 }
 
 pub(crate) type ClipGridCursor = (i64, ClipId);
@@ -724,8 +715,8 @@ fn project_clip(db: &Connection, clip: &ClipDescriptor, stamp: &str) -> Result<(
     let tag_labels = header
         .tags
         .iter()
-        .filter(|tag| tag.builtin)
-        .map(|tag| tag.label.as_str())
+        .filter(|tag| tag.definition.builtin)
+        .map(|tag| tag.definition.label.as_str())
         .collect::<Vec<_>>();
     let search = format!(
         "{}\n{}\n{champion}\n{mode}\n{queue}\n{outcome}\n{day}\n{}\n{kda}",
@@ -753,19 +744,19 @@ fn project_clip(db: &Connection, clip: &ClipDescriptor, stamp: &str) -> Result<(
         ],
     )?;
     let mut insert = db.prepare_cached("INSERT INTO clip_tag_projection VALUES(?1,?2,?3,?4)")?;
-    for tag in header.tags.iter().filter(|tag| !tag.builtin) {
+    for tag in header.tags.iter().filter(|tag| !tag.definition.builtin) {
         insert.execute(params![
             clip.id.as_str(),
-            tag.id.as_str(),
-            tag.label,
-            tag.label.to_lowercase(),
+            tag.definition.id.as_str(),
+            tag.definition.label,
+            tag.definition.label.to_lowercase(),
         ])?;
     }
     let mut grid_insert =
         db.prepare_cached("INSERT OR IGNORE INTO clip_grid_tag_projection VALUES(?1,?2,?3)")?;
     let created = sql_u64(header.exported_at)?;
     for tag in &header.tags {
-        for tag_id in implied_ids(&tag.id) {
+        for tag_id in implied_ids(&tag.definition.id) {
             grid_insert.execute(params![tag_id.as_str(), created, clip.id.as_str()])?;
         }
     }
@@ -829,14 +820,14 @@ impl ClipGridFilter {
         let (queue, queue_predicate) = match query.queue {
             None => (None, String::new()),
             Some(queue) => {
-                let ids = grid_queue_ids(queue);
-                let predicate = if matches!(queue, ClipGridQueue::Other) {
+                let (in_queues, other_queues) = queue.bindings()?;
+                let predicate = if other_queues.is_some() {
                     " AND p.queue<>'' AND p.queue NOT GLOB '*[^0-9]*'
                       AND p.queue NOT IN (SELECT CAST(value AS TEXT) FROM json_each(?5))"
                 } else {
                     " AND p.queue IN (SELECT CAST(value AS TEXT) FROM json_each(?5))"
                 };
-                (Some(serde_json::to_string(&ids)?), predicate.into())
+                (in_queues.or(other_queues), predicate.into())
             }
         };
         let outcome = query.outcome.map(|outcome| match outcome {
@@ -896,35 +887,74 @@ impl ClipGridFilter {
     }
 }
 
-fn grid_queue_ids(queue: ClipGridQueue) -> Vec<u32> {
-    use crate::league_index::query::HistoryQueue;
-    let queues: &[HistoryQueue] = match queue {
-        ClipGridQueue::Ranked => &[
-            HistoryQueue::RankedSoloDuo,
-            HistoryQueue::RankedFlex,
-            HistoryQueue::Ranked5s,
-        ],
-        ClipGridQueue::Aram => &[
-            HistoryQueue::AramMayhem,
-            HistoryQueue::Aram,
-            HistoryQueue::AramMayhemClassic,
-        ],
-        ClipGridQueue::Arena => &[HistoryQueue::Arena],
-        // Match History's Other bucket intentionally excludes only its featured queues.
-        ClipGridQueue::Other => &HistoryQueue::FEATURED,
-    };
-    queues
-        .iter()
-        .flat_map(|queue| queue.ids())
-        .copied()
-        .collect()
-}
-
 fn grid_day(value: &str) -> Result<String> {
     let timestamp = format!("{value}T00:00:00Z");
     OffsetDateTime::parse(&timestamp, &Rfc3339).context("invalid clip date")?;
     ensure!(value.len() == 10, "invalid clip date");
     Ok(value.to_owned())
+}
+
+#[cfg(test)]
+mod queue_filter_tests {
+    use super::*;
+    use crate::league_index::query::HistoryQueue;
+    use rusqlite::{Connection, params};
+
+    fn matching_queues(db: &Connection, queue: HistoryQueue) -> Vec<String> {
+        let filter = ClipGridFilter::new(&ClipGridQuery {
+            queue: Some(queue),
+            ..Default::default()
+        })
+        .unwrap();
+        let sql = format!(
+            "SELECT p.queue FROM clip_projection p WHERE p.header IS NOT NULL {} ORDER BY CAST(p.queue AS INTEGER)",
+            filter.predicate
+        );
+        db.prepare(&sql)
+            .unwrap()
+            .query_map(rusqlite::params_from_iter(filter.args().take(6)), |row| {
+                row.get(0)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn clip_grid_queue_filters_use_each_history_queue_membership() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(SCHEMA).unwrap();
+        for queue in [
+            "4", "420", "440", "42", "710", "2400", "65", "100", "450", "2450", "3280", "1700",
+            "1710", "1740", "1750", "14", "400", "480", "76", "1900", "900", "", "CLASSIC",
+        ] {
+            db.execute(
+                "INSERT INTO clip_projection(id,stamp,group_key,played,part,frame,champion,day,queue,outcome,search,header)
+                 VALUES (?1,'fixture',?1,0,0,0,'','',?2,'unknown','','{}')",
+                params![format!("clip-{queue}"), queue],
+            )
+            .unwrap();
+        }
+        let cases: &[(HistoryQueue, &[&str])] = &[
+            (HistoryQueue::RankedSoloDuo, &["4", "420"]),
+            (HistoryQueue::RankedFlex, &["440"]),
+            (HistoryQueue::Ranked5s, &["42", "710"]),
+            (HistoryQueue::AramMayhem, &["2400"]),
+            (HistoryQueue::Aram, &["65", "100", "450"]),
+            (HistoryQueue::AramMayhemClassic, &["2450", "3280"]),
+            (HistoryQueue::Arena, &["1700", "1710", "1740", "1750"]),
+            (HistoryQueue::NormalDraft, &["14", "400"]),
+            (HistoryQueue::Swiftplay, &["480"]),
+            (HistoryQueue::Urf, &["76", "1900"]),
+            (
+                HistoryQueue::Other,
+                &["14", "76", "400", "480", "900", "1900"],
+            ),
+        ];
+        for &(queue, expected) in cases {
+            assert_eq!(matching_queues(&db, queue), expected, "{queue:?}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1032,6 +1062,7 @@ mod tests {
                     } else {
                         evasion.clone()
                     }))
+                    .map(crate::tags::TagAssignment::manual)
                     .collect(),
             };
             write_clip_fixture(root.path(), title, &header);
@@ -1369,6 +1400,7 @@ mod tests {
                 .chain((position % 5 != 0).then(|| {
                     builtin_definition(&TagId::parse("builtin:pentakill").unwrap()).unwrap()
                 }))
+                .map(crate::tags::TagAssignment::manual)
                 .collect();
             write_clip_fixture(root.path(), &format!("Clip {position}"), &header);
             expected.push((
@@ -1441,7 +1473,7 @@ mod tests {
         );
         let exact_tag_query = ClipGridQuery {
             champions: vec!["syndra".into()],
-            queue: Some(ClipGridQueue::Ranked),
+            queue: Some(crate::league_index::query::HistoryQueue::RankedSoloDuo),
             outcome: Some(ClipGridOutcome::Win),
             tags: vec![
                 TagId::parse("builtin:pentakill").unwrap(),
@@ -1465,7 +1497,7 @@ mod tests {
         assert!(exact_tags.clips.iter().all(|clip| {
             clip.tags
                 .iter()
-                .any(|tag| tag.id.as_str() == "builtin:pentakill")
+                .any(|tag| tag.definition.id.as_str() == "builtin:pentakill")
         }));
         let implied_quadra_query = ClipGridQuery {
             // A Pentakill carries the lower multikill IDs in the seek projection.

@@ -14,7 +14,7 @@ import type { CatalogPage, ImportProgress } from "./leagueIndex";
 import { editClipTags, editManagedClip, readClipDetail, readClipGridPage, readClipPage, readClipPlayback, tagChoices, reconcileClips,
   type ClipCard, type ClipGridCard, type ClipPage, type ClipPlayback } from "./managedClips";
 
-import { customTag, pentakill } from "./tagFixtures";
+import { assigned, customTag, pentakill } from "./tagFixtures";
 
 const harness = vi.hoisted(() => ({ root: "A", revision: 0,
   viewer: null as ComponentProps<typeof ViewerScreen> | null,
@@ -241,7 +241,7 @@ it.each([false, true])("opens a grid clip in place with saved context and access
     champion: "Ahri", outcome: "win", queue_id: 420, played_at: "2026-07-03T12:00:00Z",
     final_kda: [7, 0, 3], summoner_spells: ["4", "14"], final_items: [1001], duration_seconds: 1_503,
   });
-  clip.header.tags = ["one", "two", "three"].map(customTag);
+  clip.header.tags = ["one", "two", "three"].map(label => assigned(customTag(label)));
   const card = gridCard(clip);
   vi.mocked(readClipGridPage).mockResolvedValueOnce({ clips: [card], next: null });
   vi.mocked(readClipPlayback).mockResolvedValueOnce({ clip, file_size_bytes: 3_500_000 });
@@ -343,7 +343,7 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   harness.renderManagedGrid = true;
   const clip = makeClip();
   harness.clip = clip;
-  clip.header.tags = [pentakill, customTag("Keep")];
+  clip.header.tags = [assigned(pentakill), assigned(customTag("Keep"))];
   const edited = gridCard(clip);
   const first = { ...edited, id: "first", title: "Keep first", thumbnail_url: "http://fixture/first.jpg" };
   const replacement = { ...first, id: "replacement", title: "Keep next" };

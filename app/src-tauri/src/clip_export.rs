@@ -19,7 +19,7 @@ use crate::clip_bundle::{self, ClipEvents, ClipHeader, ClipId};
 use crate::export_process::{self, Cancellation, Interrupted, Limits};
 use crate::export_staging::{Batch, Destination, Lease, RecoveryMode};
 use crate::playback_file::ApprovedRoot;
-use crate::tags::{TagDefinition, normalize_assignments};
+use crate::tags::{TagAssignment, TagDefinition, normalize_assignments};
 use crate::{library, music};
 
 #[cfg(test)]
@@ -261,6 +261,7 @@ pub(crate) struct ExportDestination<'a> {
     pub root: &'a ApprovedRoot,
     pub recovery_mode: RecoveryMode,
     pub draft: Option<std::sync::Arc<crate::clip_commands::PreparedClip>>,
+    pub index_cache: &'a Path,
 }
 
 pub async fn export(
@@ -276,6 +277,7 @@ pub async fn export(
         root,
         recovery_mode,
         draft,
+        index_cache,
     } = destination;
     cancellation.check()?;
     validate_request(&request)?;
@@ -339,13 +341,56 @@ pub async fn export(
         .and_then(|metadata| metadata.title.clone())
         .or_else(|| draft.as_ref().map(|draft| draft.title.clone()))
         .unwrap_or_else(|| default_title(&authority.game, timing.start_tick));
-    // Suggestions only become durable assignments when the editor sends them back.
-    let tags = metadata.map_or_else(
+    // Only caller-authored tags are editable. Verified event assignments are
+    // re-derived from the exact saved range, even when no preview was opened.
+    let manual_tags = metadata.map_or_else(
         || Ok(Vec::new()),
-        |metadata| normalize_assignments(metadata.tags.clone()),
+        |metadata| {
+            normalize_assignments(
+                metadata
+                    .tags
+                    .iter()
+                    .cloned()
+                    .map(TagAssignment::manual)
+                    .collect(),
+            )
+        },
     )?;
-    let unavailable = ClipEvents::unavailable();
-    let events = draft.as_ref().map_or(&unavailable, |draft| &draft.events);
+    let events = draft
+        .as_ref()
+        .filter(|draft| {
+            draft.events.availability != crate::clip_bundle::EventAvailability::Unavailable
+        })
+        .map(|draft| draft.events.clone())
+        .unwrap_or_else(|| {
+            (|| -> Result<_> {
+                let index = crate::league_index::Index::reader(index_cache, root.path())?;
+                let stamp = crate::league_index::source_stamp(game_directory)?;
+                index.require_source_stamp(
+                    &request.game_timestamp,
+                    &authority.media_timeline.media_id,
+                    &stamp,
+                )?;
+                index.clip_events(
+                    &authority.media_timeline,
+                    timing.start_tick,
+                    frame_boundary_to_replay_tick(
+                        request.end_frame_exclusive,
+                        authority.media_timeline.video.frame_rate,
+                        RoundingMode::Exact,
+                    )?,
+                    &|| cancellation.check(),
+                )
+            })()
+            .unwrap_or_else(|_| ClipEvents::unavailable())
+        });
+    let tags = normalize_assignments(
+        events
+            .detected_tags()
+            .into_iter()
+            .chain(manual_tags)
+            .collect(),
+    )?;
     let mut destinations = Vec::with_capacity(total_outputs);
     let mut final_paths = Vec::with_capacity(total_outputs);
     for &preset in &request.presets {
@@ -412,7 +457,7 @@ pub async fn export(
         )?;
         clip_bundle::write_new_json(
             &batch.staged(output_index, clip_bundle::EVENTS),
-            events,
+            &events,
             clip_bundle::EVENTS_LIMIT,
         )?;
         staged.push((preset, paths, diagnostics, file_size_bytes));

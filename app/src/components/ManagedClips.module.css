@@ -131,7 +131,8 @@
 }
 
 .tagOption { cursor: pointer; }
-.tagOption:has(input:checked) { color: var(--brand-yellow); border-color: var(--brand-yellow); }
+.tagOption input { accent-color: var(--text-secondary); }
+.tagOption:has(input:checked) { border-color: var(--line-strong); }
 .tagOption:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
 .clipTags {
@@ -152,12 +153,12 @@
   text-transform: uppercase;
 }
 
-.highlightBadge {
+.detectedBadge {
   color: var(--brand-yellow);
   background: var(--selected-surface);
 }
 
-.customBadge {
+.manualBadge {
   color: var(--text-secondary);
   background: var(--surface-raised);
 }

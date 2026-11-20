@@ -87,10 +87,10 @@ it("keeps replay navigation and plain section labels and previews filenames with
   } finally { dispose(); }
 });
 
-it("edits neutral predefined tags and exports the unified metadata", async () => {
+it("keeps manual selections made before detected badges arrive and only submits manual tags", async () => {
   const builtins = [
     ["double_kill", "Double Kill", 2], ["triple_kill", "Triple Kill", 3], ["quadra_kill", "Quadra Kill", 4],
-    ["pentakill", "Pentakill", 5], ["first_blood", "First Blood", null], ["dragon_steal", "Dragon Steal", null],
+    ["pentakill", "Pentakill", 5], ["dragon_steal", "Dragon Steal", null],
     ["baron_steal", "Baron Steal", null], ["herald_steal", "Herald Steal", null],
   ] as const;
   const tags = builtins.map(([key, label, tier]) => ({ id: `builtin:${key}`, label, tier, builtin: true }));
@@ -103,9 +103,8 @@ it("edits neutral predefined tags and exports the unified metadata", async () =>
   });
   vi.mocked(loadBuiltInMusic).mockResolvedValue([]);
   vi.spyOn(managedClips, "usesManagedClips").mockReturnValue(true);
-  vi.spyOn(managedClips, "prepareClipDraft").mockResolvedValue({
-    token: "test-draft", title: "Ahri clip", availability: "available", detected_tags: [tags[3]],
-  });
+  let finishDetection!: (draft: managedClips.DraftSummary) => void;
+  vi.spyOn(managedClips, "prepareClipDraft").mockReturnValue(new Promise(resolve => { finishDetection = resolve; }));
   vi.mocked(exportClip).mockResolvedValue({ outputs: [], elapsed_ms: 1 } as never);
   const host = document.createElement("div");
   document.body.append(host);
@@ -114,19 +113,22 @@ it("edits neutral predefined tags and exports the unified metadata", async () =>
     outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }}
     onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work => work("test-snapshot")} />, host);
   try {
-    await vi.waitFor(() => expect([...host.querySelectorAll("fieldset label")]
-      .find(label => label.textContent?.includes("Pentakill"))!.querySelector("input")!.checked).toBe(true));
     await vi.waitFor(() => expect(host.textContent).toContain("Herald Steal"));
-    const labels = [...host.querySelectorAll("fieldset label")];
-    expect(labels.map(label => label.textContent?.trim())).toEqual(expect.arrayContaining([
-      "Double Kill", "Triple Kill", "Quadra Kill", "Pentakill", "First Blood", "Dragon Steal", "Baron Steal", "Herald Steal",
-    ]));
-    labels.find(label => label.textContent?.includes("Double Kill"))!.querySelector("input")!.click();
-    const custom = labels.find(label => label.textContent?.trim() === "Find or create a tag")!.querySelector("input")!;
+    const inputFor = (name: string) => [...host.querySelectorAll("fieldset label")]
+      .find(label => label.textContent?.trim() === name)?.querySelector("input");
+    expect(inputFor("First Blood")).toBeUndefined();
+    inputFor("Double Kill")!.click();
+    const custom = inputFor("Find or create a tag")!;
     custom.value = "Ranked";
     custom.dispatchEvent(new Event("input", { bubbles: true }));
     [...host.querySelectorAll("button")].find(button => button.textContent === "Add tag")!.click();
-    await vi.waitFor(() => expect(host.textContent).toContain("Ranked"));
+    await vi.waitFor(() => expect(inputFor("Ranked")?.checked).toBe(true));
+    finishDetection({ token: "test-draft", title: "Ahri clip", availability: "available",
+      detected_tags: [{ ...tags[3], source: "detected" }] });
+    await vi.waitFor(() => expect(host.querySelector('[class*="detectedBadge"]')?.textContent).toBe("Pentakill"));
+    expect(inputFor("Pentakill")).toBeUndefined();
+    expect(inputFor("Double Kill")?.checked).toBe(true);
+    expect(inputFor("Ranked")?.checked).toBe(true);
     [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT 1 MP4"))!.click();
     await vi.waitFor(() => expect(exportClip).toHaveBeenCalledOnce());
     expect(vi.mocked(exportClip).mock.calls[0][0].metadata).toEqual({

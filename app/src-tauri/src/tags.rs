@@ -2,11 +2,11 @@
 use std::{collections::HashSet, fmt};
 
 use anyhow::{Result, ensure};
-use chronobreak_league_data::observation::events::ActorRole;
 use chronobreak_replay_time::MediaId;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 pub(crate) const MAX_ASSIGNMENTS: usize = 40;
+pub(crate) const MAX_DETECTED_ASSIGNMENTS: usize = 4;
 pub(crate) const MAX_LABEL: usize = 40;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -33,14 +33,6 @@ impl TagId {
     fn tier(&self) -> Option<u8> {
         builtin(self.as_str()).and_then(|tag| tag.tier)
     }
-
-    fn suppression_key(&self) -> Self {
-        if self.tier().is_some() {
-            MULTIKILLS[0].id()
-        } else {
-            self.clone()
-        }
-    }
 }
 
 impl fmt::Display for TagId {
@@ -63,6 +55,57 @@ pub(crate) struct TagDefinition {
     pub label: String,
     pub tier: Option<u8>,
     pub builtin: bool,
+}
+
+/// A tag as assigned to a match or clip. Definitions are shared vocabulary;
+/// provenance belongs to the assignment and is never inferred from its id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TagAssignmentSource {
+    Detected,
+    Manual,
+}
+
+impl Default for TagAssignmentSource {
+    fn default() -> Self {
+        // Headers written before assignment provenance existed were always
+        // editor selections, so preserve them as authored data.
+        Self::Manual
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TagAssignment {
+    #[serde(flatten)]
+    pub definition: TagDefinition,
+    #[serde(default)]
+    pub source: TagAssignmentSource,
+}
+
+impl TagAssignment {
+    pub(crate) fn manual(definition: TagDefinition) -> Self {
+        Self {
+            definition,
+            source: TagAssignmentSource::Manual,
+        }
+    }
+
+    pub(crate) fn detected(definition: TagDefinition) -> Self {
+        Self {
+            definition,
+            source: TagAssignmentSource::Detected,
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.definition.validate()?;
+        ensure!(
+            self.source != TagAssignmentSource::Detected || self.definition.builtin,
+            "detected tags must be built in"
+        );
+        Ok(())
+    }
 }
 
 impl TagDefinition {
@@ -123,11 +166,10 @@ const MULTIKILLS: [Builtin; 4] = [
     Builtin::new("quadra_kill", "Quadra Kill", Some(4)),
     Builtin::new("pentakill", "Pentakill", Some(5)),
 ];
-const FIRST_BLOOD: Builtin = Builtin::new("first_blood", "First Blood", None);
 const DRAGON_STEAL: Builtin = Builtin::new("dragon_steal", "Dragon Steal", None);
 const BARON_STEAL: Builtin = Builtin::new("baron_steal", "Baron Steal", None);
 const HERALD_STEAL: Builtin = Builtin::new("herald_steal", "Herald Steal", None);
-const OTHER_BUILTINS: [Builtin; 4] = [FIRST_BLOOD, DRAGON_STEAL, BARON_STEAL, HERALD_STEAL];
+const OTHER_BUILTINS: [Builtin; 3] = [DRAGON_STEAL, BARON_STEAL, HERALD_STEAL];
 
 fn builtin_entries() -> impl Iterator<Item = Builtin> {
     MULTIKILLS.into_iter().chain(OTHER_BUILTINS)
@@ -139,7 +181,9 @@ fn builtin(id: &str) -> Option<Builtin> {
 }
 
 pub(crate) fn builtin_definition(id: &TagId) -> Option<TagDefinition> {
-    builtin(id.as_str()).map(Builtin::definition)
+    builtin_entries()
+        .find(|entry| entry.id() == *id)
+        .map(Builtin::definition)
 }
 
 pub(crate) fn builtin_definitions() -> impl Iterator<Item = TagDefinition> {
@@ -161,14 +205,6 @@ pub(crate) fn label_key(label: &str) -> String {
     label.trim().to_lowercase()
 }
 
-pub(crate) fn event_role(kind: &str) -> Option<ActorRole> {
-    match kind {
-        "FirstBlood" => Some(ActorRole::Recipient),
-        "Multikill" | "DragonKill" | "BaronKill" | "HeraldKill" => Some(ActorRole::Killer),
-        _ => None,
-    }
-}
-
 pub(crate) fn event_tag(
     kind: &str,
     tier: Option<u32>,
@@ -179,7 +215,6 @@ pub(crate) fn event_tag(
             .iter()
             .copied()
             .find(|tag| tag.tier.map(u32::from) == tier)?,
-        "FirstBlood" => FIRST_BLOOD,
         "DragonKill" if stolen == Some(true) => DRAGON_STEAL,
         "BaronKill" if stolen == Some(true) => BARON_STEAL,
         "HeraldKill" if stolen == Some(true) => HERALD_STEAL,
@@ -221,82 +256,108 @@ fn canonical_ids(ids: impl IntoIterator<Item = TagId>) -> Vec<TagId> {
     ids
 }
 
-pub(crate) fn normalize_assignments(mut tags: Vec<TagDefinition>) -> Result<Vec<TagDefinition>> {
-    ensure!(tags.len() <= MAX_ASSIGNMENTS, "too many tags");
+pub(crate) fn normalize_assignments(mut tags: Vec<TagAssignment>) -> Result<Vec<TagAssignment>> {
+    ensure!(
+        tags.iter()
+            .filter(|tag| tag.source == TagAssignmentSource::Manual)
+            .count()
+            <= MAX_ASSIGNMENTS,
+        "too many manual tags"
+    );
     for tag in &tags {
         tag.validate()?;
     }
-    let actual: HashSet<_> = canonical_ids(tags.iter().map(|tag| tag.id.clone()))
-        .into_iter()
-        .collect();
+    let detected: HashSet<_> = canonical_ids(
+        tags.iter()
+            .filter(|tag| tag.source == TagAssignmentSource::Detected)
+            .map(|tag| tag.definition.id.clone()),
+    )
+    .into_iter()
+    .collect();
+    let manual: HashSet<_> = canonical_ids(
+        tags.iter()
+            .filter(|tag| tag.source == TagAssignmentSource::Manual)
+            .map(|tag| tag.definition.id.clone()),
+    )
+    .into_iter()
+    .collect();
     let mut seen = HashSet::new();
-    tags.retain(|tag| actual.contains(&tag.id) && seen.insert(tag.id.clone()));
+    tags.retain(|tag| {
+        let accepted = match tag.source {
+            TagAssignmentSource::Detected => detected.contains(&tag.definition.id),
+            TagAssignmentSource::Manual => manual.contains(&tag.definition.id),
+        };
+        accepted && seen.insert((tag.source, tag.definition.id.clone()))
+    });
+    ensure!(
+        tags.iter()
+            .filter(|tag| tag.source == TagAssignmentSource::Detected)
+            .count()
+            <= MAX_DETECTED_ASSIGNMENTS,
+        "too many detected tags"
+    );
     Ok(tags)
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MatchOverrides {
-    pub added: Vec<TagId>,
-    pub suppressed: Vec<TagId>,
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ManualMatchTags {
+    #[serde(rename = "added")]
+    pub ids: Vec<TagId>,
 }
 
-impl MatchOverrides {
+impl<'de> Deserialize<'de> for ManualMatchTags {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct StoredMatchTags {
+            added: Vec<String>,
+            #[serde(default, rename = "suppressed")]
+            _retired: Option<de::IgnoredAny>,
+        }
+
+        let stored = StoredMatchTags::deserialize(deserializer)?;
+        let ids = stored
+            .added
+            .iter()
+            .filter(|id| id.as_str() != "builtin:first_blood")
+            .map(|id| TagId::parse(id).map_err(de::Error::custom))
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(Self { ids })
+    }
+}
+
+impl ManualMatchTags {
     pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
-            self.added.len() <= MAX_ASSIGNMENTS
-                && canonical_ids(self.added.iter().cloned()) == self.added
-                && self.suppressed.len() <= OTHER_BUILTINS.len() + 1
-                && self
-                    .suppressed
-                    .iter()
-                    .all(|id| id.is_builtin() && *id == id.suppression_key())
-                && self.suppressed.windows(2).all(|pair| pair[0] < pair[1]),
-            "invalid match tag overrides"
+            self.ids.len() <= MAX_ASSIGNMENTS
+                && canonical_ids(self.ids.iter().cloned()) == self.ids,
+            "invalid manual match tags"
         );
         Ok(())
     }
 
-    pub(crate) fn apply(&mut self, previous: Vec<TagId>, selected: Vec<TagId>) -> Result<()> {
-        ensure!(
-            previous.len() <= MAX_ASSIGNMENTS + OTHER_BUILTINS.len() + 1
-                && selected.len() <= MAX_ASSIGNMENTS + OTHER_BUILTINS.len() + 1,
-            "too many match tags"
-        );
-        let previous = canonical_ids(previous);
-        let selected = canonical_ids(selected);
-        for removed in previous.iter().filter(|id| !selected.contains(id)) {
-            self.added.retain(|id| id != removed);
-            if removed.is_builtin() {
-                self.suppressed.push(removed.suppression_key());
-            }
-        }
-        for added in selected.into_iter().filter(|id| !previous.contains(id)) {
-            if added.tier().is_some() {
-                self.added.retain(|id| id.tier().is_none());
-                self.suppressed.push(added.suppression_key());
-            }
-            if !self.added.contains(&added) {
-                self.added.push(added);
-            }
-        }
-        self.suppressed.sort_unstable();
-        self.suppressed.dedup();
+    pub(crate) fn replace(&mut self, selected: Vec<TagId>) -> Result<()> {
+        ensure!(selected.len() <= MAX_ASSIGNMENTS, "too many match tags");
+        self.ids = canonical_ids(selected);
         self.validate()
     }
 }
 
-pub(crate) fn effective_ids(
+pub(crate) fn effective_assignments(
     detected: impl IntoIterator<Item = TagId>,
-    overrides: &MatchOverrides,
-) -> Vec<TagId> {
-    canonical_ids(
-        overrides.added.iter().cloned().chain(
-            detected
-                .into_iter()
-                .filter(|id| !overrides.suppressed.contains(&id.suppression_key())),
-        ),
-    )
+    manual: &ManualMatchTags,
+) -> Vec<(TagId, TagAssignmentSource)> {
+    canonical_ids(detected)
+        .into_iter()
+        .map(|id| (id, TagAssignmentSource::Detected))
+        .chain(
+            manual
+                .ids
+                .iter()
+                .cloned()
+                .map(|id| (id, TagAssignmentSource::Manual)),
+        )
+        .collect()
 }
 
 #[cfg(test)]
@@ -316,37 +377,78 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            normalize_assignments(vec![quadra, penta.clone()]).unwrap(),
-            [penta]
+            normalize_assignments(vec![
+                TagAssignment::manual(quadra),
+                TagAssignment::manual(penta.clone())
+            ])
+            .unwrap(),
+            [TagAssignment::manual(penta)]
         );
     }
 
     #[test]
-    fn a_downgrade_and_removal_override_future_evidence() {
+    fn flattened_assignment_round_trips_with_strict_fields() {
+        let assignment = TagAssignment::detected(MULTIKILLS[3].definition());
+        let json = serde_json::to_value(&assignment).unwrap();
+        assert_eq!(json["source"], "detected");
+        assert_eq!(
+            serde_json::from_value::<TagAssignment>(json).unwrap(),
+            assignment
+        );
+        assert!(
+            serde_json::from_value::<TagAssignment>(serde_json::json!({
+                "id": "builtin:pentakill", "label": "Pentakill", "tier": 5,
+                "builtin": true, "source": "detected", "unexpected": true
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn development_store_keeps_manual_tags_and_retires_first_blood_and_dismissals() {
+        let tags: ManualMatchTags = serde_json::from_value(serde_json::json!({
+            "added": ["builtin:first_blood", "builtin:pentakill"],
+            "suppressed": ["builtin:first_blood", "builtin:baron_steal"]
+        }))
+        .unwrap();
+        tags.validate().unwrap();
+        assert_eq!(tags.ids, [MULTIKILLS[3].id()]);
+        assert_eq!(
+            serde_json::to_value(tags).unwrap(),
+            serde_json::json!({
+                "added": ["builtin:pentakill"]
+            })
+        );
+    }
+
+    #[test]
+    fn manual_assignments_never_suppress_future_evidence() {
         let penta = MULTIKILLS[3].id();
         let triple = MULTIKILLS[1].id();
         let quadra = MULTIKILLS[2].id();
-        let mut edits = MatchOverrides::default();
-        assert_eq!(effective_ids([penta.clone()], &edits), [penta.clone()]);
-        edits
-            .apply(vec![penta.clone()], vec![triple.clone()])
-            .unwrap();
-        let mut edits: MatchOverrides =
-            serde_json::from_slice(&serde_json::to_vec(&edits).unwrap()).unwrap();
+        let mut edits = ManualMatchTags::default();
+        edits.replace(vec![triple.clone()]).unwrap();
         assert_eq!(
-            effective_ids([penta, quadra.clone()], &edits),
-            [triple.clone()]
+            effective_assignments([penta.clone(), quadra], &edits),
+            vec![
+                (penta, TagAssignmentSource::Detected),
+                (triple, TagAssignmentSource::Manual),
+            ]
         );
-        edits.apply(vec![triple], vec![]).unwrap();
-        assert!(effective_ids([quadra], &edits).is_empty());
     }
 
     #[test]
     fn unrelated_late_events_remain_visible_when_saving_open_edit() {
         let dragon = DRAGON_STEAL.id();
         let baron = BARON_STEAL.id();
-        let mut edits = MatchOverrides::default();
-        edits.apply(vec![dragon.clone()], vec![]).unwrap();
-        assert_eq!(effective_ids([dragon, baron.clone()], &edits), [baron]);
+        let mut edits = ManualMatchTags::default();
+        edits.replace(vec![]).unwrap();
+        assert_eq!(
+            effective_assignments([dragon.clone(), baron.clone()], &edits),
+            vec![
+                (dragon, TagAssignmentSource::Detected),
+                (baron, TagAssignmentSource::Detected),
+            ]
+        );
     }
 }

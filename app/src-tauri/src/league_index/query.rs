@@ -268,7 +268,7 @@ impl HistoryQueue {
         }
     }
 
-    fn bindings(self) -> Result<(Option<String>, Option<String>)> {
+    pub(crate) fn bindings(self) -> Result<(Option<String>, Option<String>)> {
         if matches!(self, Self::Other) {
             let featured: Vec<_> = Self::FEATURED.into_iter().flat_map(Self::ids).collect();
             Ok((None, Some(serde_json::to_string(&featured)?)))
@@ -361,7 +361,7 @@ pub(crate) struct HistoryRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_count: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<crate::tags::TagDefinition>,
+    pub tags: Vec<crate::tags::TagAssignment>,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct HistoryPage {
@@ -799,7 +799,6 @@ impl Index {
         let mut next = None;
         let mut last_cursor = None;
         let mut input_bytes = 0;
-        let mut output_bytes = 0;
         while let Some(row) = rows.next()? {
             if output.len() == usize::from(query.limit) {
                 next = last_cursor;
@@ -831,7 +830,6 @@ impl Index {
             } else {
                 Vec::new()
             };
-            let tags = self.match_tag_definitions(&game.match_group)?;
             let item = HistoryRow {
                 media_id: media,
                 game,
@@ -842,18 +840,33 @@ impl Index {
                     "pending".into()
                 },
                 clip_count: None,
-                tags,
+                tags: Vec::new(),
             };
-            output_bytes += serde_json::to_vec(&item)?.len();
-            ensure!(
-                output_bytes <= MAX_RESPONSE_BYTES,
-                "history response capacity"
-            );
             last_cursor = Some(HistoryCursor {
                 recorded_at: row.get(5)?,
                 media_id: MediaId::parse(&row.get::<_, String>(6)?)?,
             });
             output.push(item);
+        }
+        let tags = self.effective_match_tags_for_groups(
+            output
+                .iter()
+                .filter_map(|item| item.game.match_group.clone()),
+        )?;
+        let mut output_bytes = 0;
+        for item in &mut output {
+            item.tags = item
+                .game
+                .match_group
+                .as_ref()
+                .and_then(|group| tags.get(group))
+                .cloned()
+                .unwrap_or_default();
+            output_bytes += serde_json::to_vec(item)?.len();
+            ensure!(
+                output_bytes <= MAX_RESPONSE_BYTES,
+                "history response capacity"
+            );
         }
         use super::history_summary::*;
         let mut mask = BASE_UNKNOWN | SOURCE_UNCHECKED;

@@ -83,7 +83,7 @@ export function createClipGrid(source: Accessor<GridSource>) {
   onCleanup(() => { generation++; });
 
   const refreshTagResults = () => {
-    if (!current()) return;
+    if (!source().ready) return;
     // A tag-dependent query may lose or gain the item. Re-seek only the
     // loaded range, keeping stable card identities until the result is ready.
     generation++;
@@ -93,8 +93,16 @@ export function createClipGrid(source: Accessor<GridSource>) {
   const tagsEdited = ({ id, tags }: ClipTagUpdate) => {
     const index = state.clips.findIndex(clip => clip.id === id);
     const { query } = source();
+    const previous = state.clips[index]?.tags;
+    // A currently visible clip still passes an exact filter when it retains
+    // every requested ID. Otherwise tier implications may change membership.
+    const exactMayChange = query.tags?.some(id =>
+      !previous?.some(tag => tag.id === id) || !tags.some(tag => tag.id === id));
+    const labelsMayChange = query.search && (!previous ||
+      previous.some(tag => !tags.some(updated => updated.label === tag.label)) ||
+      tags.some(tag => !previous.some(old => old.label === tag.label)));
     if (index >= 0) setState("clips", index, "tags", tags);
-    if (query.search || query.tags?.length || state.busy) refreshTagResults();
+    if (exactMayChange || labelsMayChange || state.busy) refreshTagResults();
   };
   const tagRenamed = (tag: Tag) => {
     batch(() => {

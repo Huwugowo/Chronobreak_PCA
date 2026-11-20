@@ -510,7 +510,7 @@ fn representative_match_tag_queries() {
     assert!(
         page.rows
             .iter()
-            .all(|row| row.tags.iter().any(|tag| tag.tier == Some(5)))
+            .all(|row| row.tags.iter().any(|tag| tag.definition.tier == Some(5)))
     );
     let cases = [
         ("unfiltered", query(&[]), 50),

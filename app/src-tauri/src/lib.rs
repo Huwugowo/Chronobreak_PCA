@@ -402,6 +402,7 @@ async fn export_clip(
         .admit_export(&state.roots, &snapshot_token, &request.game_timestamp)
         .map_err(command_error)?;
     let output_root = completion.capture.root.clone();
+    let index_cache = state.league_index_cache.clone();
     let draft = request
         .metadata
         .as_ref()
@@ -443,6 +444,7 @@ async fn export_clip(
                 root: &output_root,
                 recovery_mode,
                 draft,
+                index_cache: &index_cache,
             },
             &music_directory,
             &ffmpeg,

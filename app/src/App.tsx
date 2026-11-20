@@ -59,7 +59,7 @@ import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
 import { editClipTags, editManagedClip, editMatchTags, readClipPage, readClipPlayback, reconcileClips, replaceTagDefinition, sourcePosition, usesManagedClips,
-  type ClipCard, type ClipEdit, type ClipFilters, type ClipGridCard, type Tag } from "./managedClips";
+  type ClipCard, type ClipEdit, type ClipFilters, type ClipGridCard, type ClipTagUpdate, type Tag } from "./managedClips";
 import styles from "./App.module.css";
 import controls from "./ui/controls.module.css";
 
@@ -137,7 +137,7 @@ function App() {
   const managed = usesManagedClips();
   const [clipFilters, setClipFilters] = createSignal<ClipFilters>({});
   const [renamedTag, setRenamedTag] = createSignal<Tag>();
-  const [clipTagUpdate, setClipTagUpdate] = createSignal<{ id: string; tags: Tag[] }>();
+  const [clipTagUpdate, setClipTagUpdate] = createSignal<ClipTagUpdate>();
   createEffect(on(() => libraryState().root, () => {
     setRenamedTag(undefined);
     setClipTagUpdate(undefined);
@@ -312,11 +312,11 @@ function App() {
     if (result.error) showError(result.error);
     return false;
   };
-  const applyMatchTags = async (group: string, previous: Tag[], tags: Tag[]) => {
+  const applyMatchTags = async (group: string, tags: Tag[]) => {
     const origin = controller.origin();
     if (!origin) return false;
     const result = await controller.mutate(origin, group, () => controller.writeIndex(origin, "tags", token =>
-      editMatchTags(token, group, previous.map(tag => tag.id), tags.map(tag => tag.id))), "metadata");
+      editMatchTags(token, group, tags.map(tag => tag.id))), "metadata");
     if (!result.admitted) {
       if (result.error) showError(result.error);
       return false;

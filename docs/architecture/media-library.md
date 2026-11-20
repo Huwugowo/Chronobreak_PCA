@@ -376,19 +376,24 @@ Each exported MP4 has a UUID folder under `clips/`. The MP4 stem is the editable
 title. The folder also contains `thumbnail.jpg`, the bounded `clip.json` header
 and the separately bounded `events.json`. The header retains game context,
 the exact source media ID and half-open frame interval, the validated output
-duration, and confirmed tag assignments. The event file contains mapped factual
-observations for all actors and is opened for explicit clip detail. Export
-preselects tags from verified recording-player events. Users can select any
-tag before exporting or edit the saved assignments later. Playback, match
-context and saved tags survive deletion of the source recording.
+duration, and detected and manual tag assignments. The event file contains
+mapped factual observations for all actors and is opened for explicit clip
+detail. Export derives detected tags from verified recording-player events
+within the exported frame range. Edits replace only manual assignments.
+Playback, match context, and saved tags survive deletion of the source recording.
 
 Games and clips use the same tag vocabulary and stable IDs. Both display only
 the highest assigned multikill tier. A lower-tier tag filter also matches
-higher tiers. Match History's My events filter queries observed evidence
-directly. Match tags default to tags inferred from current checked parts of the
-recording. Manual additions, replacements and suppressions in the root's
-`league_tags.json` override that default. The same file owns the library's
-custom names. SQLite projects effective tags and exact membership for search.
+higher tiers. Equal achievements use the detected badge when both sources
+assign the same tag. Match History's My events filter queries observed evidence
+directly. Detected match tags come from current checked parts of the recording.
+The root's `league_tags.json` owns manual match assignments and the library's
+custom names. SQLite projects both sources and exact membership for search.
+First Blood remains in the factual stream.
+
+Clips and Match History render the same filter controls and queue choices.
+Each tab adapts those choices to its own indexed query. Clip results stay in
+creation order and use the clip's saved match date for date filters.
 
 Each clip carries its assigned custom IDs and labels in `clip.json`. If the
 library vocabulary is absent, the clip index recovers those definitions from

@@ -8,13 +8,18 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 use chronobreak_league_data::{MAX_COUNTER, Outcome, ResultFile, observation::Event};
 use chronobreak_replay_time::{ClipRange, MediaId, ReplayTick};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Serialize,
+    de::{DeserializeOwned, Deserializer},
+};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::clip_export::ClipExportPreset;
 use crate::directory_guard::{DirectoryGuard, open_regular, reject_reparse};
 use crate::playback_file::{FileFacts, file_facts};
-use crate::tags::{TagDefinition, event_tag, normalize_assignments};
+use crate::tags::{
+    TagAssignment, TagAssignmentSource, TagDefinition, TagId, event_tag, normalize_assignments,
+};
 
 pub(crate) const HEADER: &str = "clip.json";
 pub(crate) const EVENTS: &str = "events.json";
@@ -255,8 +260,8 @@ impl ClipEvents {
         }
     }
 
-    /// These are suggestions from observed events, never an implicit saved assignment.
-    pub(crate) fn detected_tags(&self) -> Vec<TagDefinition> {
+    /// Detected assignments from verified local-player facts in this range.
+    pub(crate) fn detected_tags(&self) -> Vec<TagAssignment> {
         let mut seen = std::collections::HashSet::new();
         normalize_assignments(
             self.events
@@ -272,7 +277,8 @@ impl ClipEvents {
                         event.event.stolen,
                     )
                 })
-                .filter(|tag| seen.insert(tag.id.clone()))
+                .map(TagAssignment::detected)
+                .filter(|tag| seen.insert(tag.definition.id.clone()))
                 .collect(),
         )
         .unwrap_or_default()
@@ -291,7 +297,39 @@ pub(crate) struct ClipHeader {
     pub preset: ClipExportPreset,
     pub duration: ReplayTick,
     pub events: EventAvailability,
-    pub tags: Vec<TagDefinition>,
+    #[serde(deserialize_with = "deserialize_tags")]
+    pub tags: Vec<TagAssignment>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTagAssignment {
+    id: String,
+    label: String,
+    tier: Option<u8>,
+    builtin: bool,
+    #[serde(default)]
+    source: TagAssignmentSource,
+}
+
+fn deserialize_tags<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<TagAssignment>, D::Error> {
+    let raw = Vec::<RawTagAssignment>::deserialize(deserializer)?;
+    raw.into_iter()
+        .filter(|tag| tag.id != "builtin:first_blood")
+        .map(|tag| {
+            Ok(TagAssignment {
+                definition: TagDefinition {
+                    id: TagId::parse(&tag.id).map_err(serde::de::Error::custom)?,
+                    label: tag.label,
+                    tier: tag.tier,
+                    builtin: tag.builtin,
+                },
+                source: tag.source,
+            })
+        })
+        .collect()
 }
 
 impl ClipHeader {
@@ -440,5 +478,22 @@ mod tests {
         ] {
             assert!(media_leaf(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn retired_first_blood_assignment_is_dropped_before_active_tag_validation() {
+        #[derive(Deserialize)]
+        struct HeaderTags {
+            #[serde(deserialize_with = "deserialize_tags")]
+            tags: Vec<TagAssignment>,
+        }
+        let parsed: HeaderTags = serde_json::from_value(serde_json::json!({
+            "tags": [{
+                "id": "builtin:first_blood", "label": "First Blood",
+                "tier": null, "builtin": true
+            }]
+        }))
+        .unwrap();
+        assert!(parsed.tags.is_empty());
     }
 }
