@@ -43,3 +43,11 @@ export const formatTimestampDate = (timestamp: string): string => {
   const seconds = Number(timestamp);
   return Number.isFinite(seconds) ? formatDate(new Date(seconds * 1_000).toISOString()) : "Unknown";
 };
+
+export function localDayBounds(from?: string, to?: string) {
+  const midnight = (date: string, offset: number) => {
+    const [year, month, day] = date.split("-").map(Number);
+    return new Date(year, month - 1, day + offset).getTime() / 1000;
+  };
+  return { from: from ? midnight(from, 0) : undefined, before: to ? midnight(to, 1) : undefined };
+}

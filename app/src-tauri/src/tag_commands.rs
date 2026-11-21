@@ -167,6 +167,7 @@ pub(crate) async fn edit_match_tags(
             index.refresh_tag_store(&loaded)?;
             let selected = index.tag_definitions(tags.clone())?;
             ensure!(selected.len() == tags.len(), "tag unavailable");
+            let current = index.effective_match_tags(&match_group)?;
             let original = loaded
                 .store
                 .matches
@@ -175,6 +176,11 @@ pub(crate) async fn edit_match_tags(
                 .unwrap_or_default();
             let mut manual = original.clone();
             manual.replace(tags)?;
+            manual.ids.retain(|id| {
+                !current.iter().any(|tag| {
+                    tag.source == tags::TagAssignmentSource::Detected && tag.definition.id == *id
+                })
+            });
             manual.validate()?;
             let mut definitions = Vec::new();
             for tag in selected {
@@ -198,8 +204,9 @@ pub(crate) async fn edit_match_tags(
                 check()?;
                 let stamp = loaded.store.publish(owner)?;
                 index.update_tag_projection(&stamp, &definitions, Some((&match_group, &manual)))?;
+                return index.effective_match_tags(&match_group);
             }
-            index.effective_match_tags(&match_group)
+            Ok(current)
         },
     )
     .await

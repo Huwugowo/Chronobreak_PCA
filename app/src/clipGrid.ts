@@ -6,6 +6,18 @@ import { readClipGridPage, replaceTagDefinition, type ClipFilters, type ClipGrid
 type GridSource = { root: string | null; token: string; ready: boolean; query: ClipFilters };
 type Operation = "refresh" | "append";
 
+const multikillTiers = new Map([
+  ["builtin:double_kill", 2], ["builtin:triple_kill", 3],
+  ["builtin:quadra_kill", 4], ["builtin:pentakill", 5],
+]);
+
+function matchesTagFilters(tags: ClipGridCard["tags"], filters: string[]) {
+  return filters.every(id => {
+    const tier = multikillTiers.get(id);
+    return tags.some(tag => tag.id === id || (tier !== undefined && tag.tier !== null && tag.tier >= tier));
+  });
+}
+
 export function createClipGrid(source: Accessor<GridSource>) {
   const [state, setState] = createStore({
     clips: [] as ClipGridCard[], next: null as ClipGridCursor | null,
@@ -94,15 +106,16 @@ export function createClipGrid(source: Accessor<GridSource>) {
     const index = state.clips.findIndex(clip => clip.id === id);
     const { query } = source();
     const previous = state.clips[index]?.tags;
-    // A currently visible clip still passes an exact filter when it retains
-    // every requested ID. Otherwise tier implications may change membership.
-    const exactMayChange = query.tags?.some(id =>
-      !previous?.some(tag => tag.id === id) || !tags.some(tag => tag.id === id));
+    let tagMembershipChanged = false;
+    if (query.tags?.length) {
+      const matchedBefore = previous ? matchesTagFilters(previous, query.tags) : false;
+      tagMembershipChanged = matchedBefore !== matchesTagFilters(tags, query.tags);
+    }
     const labelsMayChange = query.search && (!previous ||
       previous.some(tag => !tags.some(updated => updated.label === tag.label)) ||
       tags.some(tag => !previous.some(old => old.label === tag.label)));
     if (index >= 0) setState("clips", index, "tags", tags);
-    if (exactMayChange || labelsMayChange || state.busy) refreshTagResults();
+    if (tagMembershipChanged || labelsMayChange || state.busy) refreshTagResults();
   };
   const tagRenamed = (tag: Tag) => {
     batch(() => {

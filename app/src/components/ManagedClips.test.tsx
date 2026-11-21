@@ -189,6 +189,42 @@ it("patches tag edits that preserve the exact-ID filter without rereading pages 
   expect(tagChoices).toHaveBeenCalledOnce();
 });
 
+it("only rereads tag-filtered pages when a multikill edit changes membership", async () => {
+  const quadra = { ...pentakill, id: "builtin:quadra_kill", label: "Quadra Kill", tier: 4 };
+  const triple = { ...pentakill, id: "builtin:triple_kill", label: "Triple Kill", tier: 3 };
+  const clip = { ...fixture("edited"), tags: [assigned(pentakill)] };
+  const other = { ...fixture("kept"), tags: [assigned(quadra, "detected")] };
+  vi.mocked(tagChoices).mockResolvedValue([quadra]);
+  vi.mocked(readClipGridPage)
+    .mockResolvedValueOnce({ clips: [clip, other], next: null })
+    .mockResolvedValueOnce({ clips: [clip, other], next: [8, other.id] })
+    .mockResolvedValueOnce({ clips: [other], next: null });
+  const { host, cards, button, editTags } = mount();
+  await vi.waitFor(() => expect(cards()).toHaveLength(2));
+  const [edited, kept] = cards();
+  const editedImage = edited.querySelector("img");
+  const keptImage = kept.querySelector("img");
+  button("Tags").click();
+  await vi.waitFor(() => expect(host.querySelector('input[type="checkbox"]')).not.toBeNull());
+  host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  button("Tags").click();
+  await vi.waitFor(() => expect(button("More clips").getAttribute("aria-disabled")).toBe("false"));
+
+  editTags({ id: clip.id, tags: [assigned(quadra)] });
+  expect(edited.textContent).toContain("Quadra Kill");
+  expect(cards()).toEqual([edited, kept]);
+  expect(edited.querySelector("img")).toBe(editedImage);
+  expect(button("More clips").getAttribute("aria-disabled")).toBe("false");
+  await Promise.resolve();
+  expect(readClipGridPage).toHaveBeenCalledTimes(2);
+
+  editTags({ id: clip.id, tags: [assigned(triple)] });
+  await vi.waitFor(() => expect(cards()).toEqual([kept]));
+  expect(kept.querySelector("img")).toBe(keptImage);
+  expect(readClipGridPage).toHaveBeenCalledTimes(3);
+  expect(readClipGridPage).toHaveBeenLastCalledWith("snapshot", { tags: [quadra.id] }, null);
+});
+
 it("debounces search and match date and discards superseded pages", async () => {
   let complete!: (page: ClipGridPage) => void;
   vi.mocked(readClipGridPage).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }))

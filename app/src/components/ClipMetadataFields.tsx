@@ -30,8 +30,12 @@ export function TagEditor(props: {
   const [writing, setWriting] = createSignal(false);
   const [renaming, setRenaming] = createSignal<Tag>();
   const [newName, setNewName] = createSignal("");
-  const selected = createMemo(() => new Set(props.tags.map(tag => tag.id)));
   const detected = createMemo(() => new Set(props.detected.map(tag => tag.id)));
+  const manualTags = createMemo(() => props.tags.filter(tag => !detected().has(tag.id)));
+  const selected = createMemo(() => new Set(manualTags().map(tag => tag.id)));
+  createEffect(() => {
+    if (manualTags().length !== props.tags.length) props.onTagsChange(manualTags());
+  });
   createEffect(() => {
     if (!props.token) return;
     const prefix = text().trim();
@@ -45,12 +49,15 @@ export function TagEditor(props: {
   const options = createMemo(() => {
     const all = new Map<string, Tag>();
     for (const tag of choices()) if (!detected().has(tag.id)) all.set(tag.id, tag);
-    for (const tag of props.tags) all.set(tag.id, tag);
+    for (const tag of manualTags()) all.set(tag.id, tag);
     return [...all.values()];
   });
-  const toggle = (tag: Tag, checked: boolean) => props.onTagsChange(checked
-    ? [...props.tags.filter(current => tag.tier === null || current.tier === null), tag]
-    : props.tags.filter(current => current.id !== tag.id));
+  const toggle = (tag: Tag, checked: boolean) => {
+    if (detected().has(tag.id)) return;
+    props.onTagsChange(checked
+      ? [...manualTags().filter(current => tag.tier === null || current.tier === null), tag]
+      : manualTags().filter(current => current.id !== tag.id));
+  };
   const create = async () => {
     const label = text().trim();
     if (!label || props.disabled || writing()) return;
@@ -74,7 +81,7 @@ export function TagEditor(props: {
     setWriting(true);
     try {
       const updated = await renameTag(props.token, tag.id, label);
-      props.onTagsChange(props.tags.map(current => current.id === tag.id ? updated : current));
+      props.onTagsChange(manualTags().map(current => current.id === tag.id ? updated : current));
       setChoices(tags => tags.map(current => current.id === tag.id ? updated : current));
       props.onTagRenamed?.(updated);
       setRenaming(undefined);

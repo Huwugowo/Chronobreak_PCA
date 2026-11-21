@@ -276,7 +276,9 @@ pub(crate) fn normalize_assignments(mut tags: Vec<TagAssignment>) -> Result<Vec<
     .collect();
     let manual: HashSet<_> = canonical_ids(
         tags.iter()
-            .filter(|tag| tag.source == TagAssignmentSource::Manual)
+            .filter(|tag| {
+                tag.source == TagAssignmentSource::Manual && !detected.contains(&tag.definition.id)
+            })
             .map(|tag| tag.definition.id.clone()),
     )
     .into_iter()
@@ -347,13 +349,16 @@ pub(crate) fn effective_assignments(
     detected: impl IntoIterator<Item = TagId>,
     manual: &ManualMatchTags,
 ) -> Vec<(TagId, TagAssignmentSource)> {
-    canonical_ids(detected)
-        .into_iter()
+    let detected = canonical_ids(detected);
+    detected
+        .iter()
+        .cloned()
         .map(|id| (id, TagAssignmentSource::Detected))
         .chain(
             manual
                 .ids
                 .iter()
+                .filter(|id| !detected.contains(id))
                 .cloned()
                 .map(|id| (id, TagAssignmentSource::Manual)),
         )
@@ -383,6 +388,41 @@ mod tests {
             ])
             .unwrap(),
             [TagAssignment::manual(penta)]
+        );
+    }
+
+    #[test]
+    fn exact_detected_assignments_take_precedence_over_manual_duplicates() {
+        let penta = MULTIKILLS[3].definition();
+        let triple = MULTIKILLS[1].definition();
+        let dragon = DRAGON_STEAL.definition();
+        assert_eq!(
+            normalize_assignments(vec![
+                TagAssignment::manual(penta.clone()),
+                TagAssignment::manual(triple.clone()),
+                TagAssignment::manual(dragon.clone()),
+                TagAssignment::detected(penta.clone()),
+                TagAssignment::detected(dragon.clone()),
+            ])
+            .unwrap(),
+            [
+                TagAssignment::manual(triple.clone()),
+                TagAssignment::detected(penta.clone()),
+                TagAssignment::detected(dragon.clone()),
+            ]
+        );
+
+        let mut manual = ManualMatchTags::default();
+        manual
+            .replace(vec![dragon.id.clone(), triple.id.clone()])
+            .unwrap();
+        assert_eq!(
+            effective_assignments([penta.id.clone(), dragon.id.clone()], &manual),
+            [
+                (penta.id, TagAssignmentSource::Detected),
+                (dragon.id, TagAssignmentSource::Detected),
+                (triple.id, TagAssignmentSource::Manual),
+            ]
         );
     }
 

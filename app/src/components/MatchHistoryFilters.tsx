@@ -1,3 +1,4 @@
+import { localDayBounds } from "../format";
 import type { HistoryQuery } from "../leagueIndex";
 import type { Tag } from "../managedClips";
 import LibraryFilters, { emptyAdvanced, filterDays, type HistoryOptions, type SharedFilters } from "./LibraryFilters";
@@ -18,13 +19,10 @@ export function historyQueryForFilters(filters: HistoryFilters, now = new Date()
   if (filters.player) query.player_riot_id = filters.player;
   if (filters.result) query.outcome = filters.result;
 
-  const localMidnight = (date: string, dayOffset = 0) => {
-    const [year, month, day] = date.split("-").map(Number);
-    return new Date(year, month - 1, day + dayOffset).getTime() / 1000;
-  };
-  const { from, to } = filterDays(filters, now);
-  if (from) query.recorded_from = localMidnight(from);
-  if (to) query.recorded_before = localMidnight(to, 1);
+  const days = filterDays(filters, now);
+  const { from, before } = localDayBounds(days.from, days.to);
+  if (from !== undefined) query.recorded_from = from;
+  if (before !== undefined) query.recorded_before = before;
   return query;
 }
 

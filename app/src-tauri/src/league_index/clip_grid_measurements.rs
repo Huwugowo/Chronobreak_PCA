@@ -16,7 +16,8 @@ fn populate(db: &Connection, count: i64) {
         "WITH RECURSIVE clips(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM clips WHERE n<?1)
          INSERT INTO clip_projection
          SELECT printf('grid-%08d',n),'fixture',printf('match-%08d',n/3),printf('match-%08d',n/3),
-                n*160, n*160, n*900,
+                unixepoch(CASE WHEN n<=?1/5 THEN '2026-10-01' ELSE '2026-11-01' END),
+                n*160, n*900,
                 CASE WHEN n%21=0 THEN 'ahri' ELSE 'lux' END,
                 CASE WHEN n<=?1/5 THEN '2026-10-01' ELSE '2026-11-01' END,
                 CASE WHEN n%3=0 THEN '420' ELSE '400' END,
@@ -165,8 +166,8 @@ fn representative_clip_grid_queries() {
             "Older match filters",
             ClipGridQuery {
                 champions: vec!["Ahri".into()],
-                from: Some("2026-10-01".into()),
-                to: Some("2026-10-01".into()),
+                played_from: super::date_value(Some("2026-10-01T00:00:00Z")),
+                played_before: super::date_value(Some("2026-10-02T00:00:00Z")),
                 queue: Some(HistoryQueue::RankedSoloDuo),
                 outcome: Some(ClipGridOutcome::Win),
                 ..Default::default()

@@ -84,8 +84,8 @@ pub(crate) struct ClipGridQuery {
     pub champions: Vec<String>,
     pub queue: Option<crate::league_index::query::HistoryQueue>,
     pub outcome: Option<ClipGridOutcome>,
-    pub from: Option<String>,
-    pub to: Option<String>,
+    pub played_from: Option<i64>,
+    pub played_before: Option<i64>,
     #[serde(default)]
     pub tags: Vec<TagId>,
 }
@@ -766,8 +766,8 @@ fn project_clip(db: &Connection, clip: &ClipDescriptor, stamp: &str) -> Result<(
 struct ClipGridFilter {
     search: String,
     champions: Option<String>,
-    from: Option<String>,
-    to: Option<String>,
+    played_from: Option<i64>,
+    played_before: Option<i64>,
     queue: Option<String>,
     outcome: Option<String>,
     tags: Option<String>,
@@ -801,14 +801,15 @@ impl ClipGridFilter {
                 .all(|champion| champion.chars().count() <= 128),
             "invalid clip champion"
         );
-        let from = query.from.as_deref().map(grid_day).transpose()?;
-        let to = query.to.as_deref().map(grid_day).transpose()?;
-        ensure!(
-            from.as_ref()
-                .zip(to.as_ref())
-                .is_none_or(|(from, to)| from <= to),
-            "invalid clip date range"
-        );
+        for bound in [query.played_from, query.played_before]
+            .into_iter()
+            .flatten()
+        {
+            OffsetDateTime::from_unix_timestamp(bound).context("invalid clip date bound")?;
+        }
+        if let (Some(from), Some(before)) = (query.played_from, query.played_before) {
+            ensure!(from < before, "invalid clip date range");
+        }
         ensure!(query.tags.len() <= 40, "too many clip tags");
         let mut seen_tags = HashSet::new();
         let tag_ids = query
@@ -845,8 +846,8 @@ impl ClipGridFilter {
         let mut predicate = format!(
             " {search_predicate}
                AND (?2 IS NULL OR p.champion IN (SELECT value FROM json_each(?2)))
-               AND (?3 IS NULL OR p.day>=?3 AND p.day<>'')
-               AND (?4 IS NULL OR p.day<=?4 AND p.day<>'')
+               AND (?3 IS NULL OR p.played>=?3 AND p.day<>'')
+               AND (?4 IS NULL OR p.played<?4 AND p.day<>'')
                {queue_predicate}
                AND (?6 IS NULL OR p.outcome=?6)"
         );
@@ -861,8 +862,8 @@ impl ClipGridFilter {
             champions: (!champions.is_empty())
                 .then(|| serde_json::to_string(&champions))
                 .transpose()?,
-            from,
-            to,
+            played_from: query.played_from,
+            played_before: query.played_before,
             queue,
             outcome,
             tags: (!tag_ids.is_empty())
@@ -877,21 +878,14 @@ impl ClipGridFilter {
         [
             &self.search as &dyn rusqlite::ToSql,
             &self.champions,
-            &self.from,
-            &self.to,
+            &self.played_from,
+            &self.played_before,
             &self.queue,
             &self.outcome,
             &self.tags,
         ]
         .into_iter()
     }
-}
-
-fn grid_day(value: &str) -> Result<String> {
-    let timestamp = format!("{value}T00:00:00Z");
-    OffsetDateTime::parse(&timestamp, &Rfc3339).context("invalid clip date")?;
-    ensure!(value.len() == 10, "invalid clip date");
-    Ok(value.to_owned())
 }
 
 #[cfg(test)]
@@ -1342,6 +1336,80 @@ mod tests {
     }
 
     #[test]
+    fn clip_grid_filters_local_match_days_by_instant_and_excludes_missing_dates() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let mut matching = Vec::new();
+        for (position, (played_at, part_recorded_at, included)) in [
+            (Some("2026-07-01T21:59:59Z"), None, false),
+            (Some("2026-07-01T22:00:00Z"), None, true),
+            (None, Some("2026-07-03T00:59:59+03:00"), true),
+            (Some("2026-07-02T22:00:00Z"), None, false),
+            (None, None, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let start = FrameBoundary::new(0).unwrap();
+            let end = FrameBoundary::new(300).unwrap();
+            let header = ClipHeader {
+                version: clip_bundle::VERSION,
+                id: ClipId::new(),
+                range: ClipRange::new(MediaId::new_v4(), start, end, end).unwrap(),
+                source_timestamp: "100".into(),
+                game: ClipGame {
+                    played_at: played_at.map(str::to_owned),
+                    part_recorded_at: part_recorded_at.map(str::to_owned),
+                    ..Default::default()
+                },
+                exported_at: position as u64 + 1,
+                preset: ClipExportPreset::Horizontal,
+                duration: ReplayTick::new(240_000_000).unwrap(),
+                events: EventAvailability::Unavailable,
+                tags: vec![],
+            };
+            write_clip_fixture(root.path(), &format!("Clip {position}"), &header);
+            if included {
+                matching.push(header.id);
+            }
+        }
+        let snapshot =
+            library::build_library_snapshot(root.path(), "", "grid".into(), || Ok(())).unwrap();
+        let mut index = Index::open(cache.path(), root.path()).unwrap();
+        while !index.reconcile_clips(&snapshot, &|| Ok(())).unwrap() {}
+
+        let query = ClipGridQuery {
+            // July 2 in UTC+02:00 starts on July 1 in UTC.
+            played_from: date_value(Some("2026-07-02T00:00:00+02:00")),
+            played_before: date_value(Some("2026-07-03T00:00:00+02:00")),
+            ..Default::default()
+        };
+        let page = index
+            .clip_grid_page(&snapshot, &query, None, "http://fixture", "generation")
+            .unwrap();
+        matching.reverse();
+        assert_eq!(
+            page.clips
+                .into_iter()
+                .map(|clip| clip.id)
+                .collect::<Vec<_>>(),
+            matching
+        );
+        let upper_only = ClipGridQuery {
+            played_from: None,
+            ..query
+        };
+        assert_eq!(
+            index
+                .clip_grid_page(&snapshot, &upper_only, None, "http://fixture", "generation")
+                .unwrap()
+                .clips
+                .len(),
+            3
+        );
+    }
+
+    #[test]
     fn clip_grid_seeks_by_creation_time_and_id_independently_of_match_date() {
         let root = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
@@ -1452,8 +1520,8 @@ mod tests {
             expected.iter().map(|entry| &entry.1).collect::<Vec<_>>(),
         );
         let filtered_query = ClipGridQuery {
-            from: Some("2026-07-03".into()),
-            to: Some("2026-07-03".into()),
+            played_from: date_value(Some("2026-07-03T00:00:00Z")),
+            played_before: date_value(Some("2026-07-04T00:00:00Z")),
             search: Some("BARON STEAL".into()),
             tags: vec![TagId::parse("builtin:baron_steal").unwrap()],
             ..Default::default()

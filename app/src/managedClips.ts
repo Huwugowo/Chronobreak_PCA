@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { localDayBounds } from "./format";
 import { parseFrameBoundary, parseMediaId, parseReplayTick } from "./replayTime";
 import type { ClipDraft, ClipExportPreset } from "./types";
 
@@ -74,8 +75,12 @@ export const usesManagedClips = () => isTauri();
 export const reconcileClips = (snapshotToken: string) => invoke<boolean>("reconcile_clips", { snapshotToken });
 export const readClipPage = (snapshotToken: string, query: ClipQuery) =>
   invoke<ClipPage>("clip_page", { snapshotToken, query });
-export const readClipGridPage = (snapshotToken: string, query: ClipFilters, after: ClipGridCursor | null) =>
-  invoke<ClipGridPage>("clip_grid_page", { snapshotToken, query, after });
+export const readClipGridPage = (snapshotToken: string, { from, to, ...query }: ClipFilters, after: ClipGridCursor | null) => {
+  const bounds = localDayBounds(from, to);
+  return invoke<ClipGridPage>("clip_grid_page", {
+    snapshotToken, after, query: { ...query, played_from: bounds.from, played_before: bounds.before },
+  });
+};
 export const readClipGridChampions = (snapshotToken: string) =>
   invoke<string[]>("clip_grid_champions", { snapshotToken });
 export const readClipPlayback = (snapshotToken: string, clipId: string) =>

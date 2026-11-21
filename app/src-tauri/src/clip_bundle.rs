@@ -316,7 +316,8 @@ fn deserialize_tags<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Vec<TagAssignment>, D::Error> {
     let raw = Vec::<RawTagAssignment>::deserialize(deserializer)?;
-    raw.into_iter()
+    let mut tags = raw
+        .into_iter()
         .filter(|tag| tag.id != "builtin:first_blood")
         .map(|tag| {
             Ok(TagAssignment {
@@ -329,7 +330,17 @@ fn deserialize_tags<'de, D: Deserializer<'de>>(
                 source: tag.source,
             })
         })
-        .collect()
+        .collect::<std::result::Result<Vec<_>, D::Error>>()?;
+    // Older clips could store both sources for the same definition.
+    let detected = tags
+        .iter()
+        .filter(|tag| tag.source == TagAssignmentSource::Detected)
+        .map(|tag| tag.definition.clone())
+        .collect::<Vec<_>>();
+    tags.retain(|tag| {
+        tag.source == TagAssignmentSource::Detected || !detected.contains(&tag.definition)
+    });
+    Ok(tags)
 }
 
 impl ClipHeader {
@@ -481,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_first_blood_assignment_is_dropped_before_active_tag_validation() {
+    fn header_reads_remove_retired_tags_and_redundant_manual_assignments() {
         #[derive(Deserialize)]
         struct HeaderTags {
             #[serde(deserialize_with = "deserialize_tags")]
@@ -491,9 +502,20 @@ mod tests {
             "tags": [{
                 "id": "builtin:first_blood", "label": "First Blood",
                 "tier": null, "builtin": true
+            }, {
+                "id": "builtin:pentakill", "label": "Pentakill",
+                "tier": 5, "builtin": true, "source": "manual"
+            }, {
+                "id": "builtin:pentakill", "label": "Pentakill",
+                "tier": 5, "builtin": true, "source": "detected"
             }]
         }))
         .unwrap();
-        assert!(parsed.tags.is_empty());
+        assert_eq!(
+            parsed.tags,
+            [TagAssignment::detected(
+                event_tag("Multikill", Some(5), None).unwrap()
+            )],
+        );
     }
 }

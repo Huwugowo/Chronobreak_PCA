@@ -87,7 +87,7 @@ it("keeps replay navigation and plain section labels and previews filenames with
   } finally { dispose(); }
 });
 
-it("keeps manual selections made before detected badges arrive and only submits manual tags", async () => {
+it("removes a manual selection when that tag is detected and keeps independent selections", async () => {
   const builtins = [
     ["double_kill", "Double Kill", 2], ["triple_kill", "Triple Kill", 3], ["quadra_kill", "Quadra Kill", 4],
     ["pentakill", "Pentakill", 5], ["dragon_steal", "Dragon Steal", null],
@@ -118,15 +118,19 @@ it("keeps manual selections made before detected badges arrive and only submits 
       .find(label => label.textContent?.trim() === name)?.querySelector("input");
     expect(inputFor("First Blood")).toBeUndefined();
     inputFor("Double Kill")!.click();
+    inputFor("Dragon Steal")!.click();
+    expect(inputFor("Dragon Steal")?.checked).toBe(true);
     const custom = inputFor("Find or create a tag")!;
     custom.value = "Ranked";
     custom.dispatchEvent(new Event("input", { bubbles: true }));
     [...host.querySelectorAll("button")].find(button => button.textContent === "Add tag")!.click();
     await vi.waitFor(() => expect(inputFor("Ranked")?.checked).toBe(true));
     finishDetection({ token: "test-draft", title: "Ahri clip", availability: "available",
-      detected_tags: [{ ...tags[3], source: "detected" }] });
-    await vi.waitFor(() => expect(host.querySelector('[class*="detectedBadge"]')?.textContent).toBe("Pentakill"));
+      detected_tags: [tags[3], tags[4]].map(tag => ({ ...tag, source: "detected" })) });
+    await vi.waitFor(() => expect([...host.querySelectorAll('[class*="detectedBadge"]')].map(badge => badge.textContent))
+      .toEqual(["Pentakill", "Dragon Steal"]));
     expect(inputFor("Pentakill")).toBeUndefined();
+    expect(inputFor("Dragon Steal")).toBeUndefined();
     expect(inputFor("Double Kill")?.checked).toBe(true);
     expect(inputFor("Ranked")?.checked).toBe(true);
     [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT 1 MP4"))!.click();
