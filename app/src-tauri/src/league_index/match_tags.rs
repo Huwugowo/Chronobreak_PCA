@@ -1,7 +1,6 @@
 //! Match tags are a small derived projection over verified local event facts.
-//! Manual tags are projected independently so re-importing a source preserves them.
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub(super) fn refresh_recording(db: &Connection, media: &MediaId) -> Result<()> {
     db.execute(
@@ -79,129 +78,53 @@ pub(super) fn refresh_group(db: &Connection, match_group: &str) -> Result<()> {
         "DELETE FROM match_tag_dirty WHERE match_group=?1",
         [match_group],
     )?;
-    let mut detected = Vec::new();
-    let mut detected_statement = db.prepare_cached(
-        "SELECT DISTINCT o.tag_id FROM match_tag_observed o
-         JOIN recordings r ON r.media_id=o.media_id
-         WHERE r.match_group=?1 AND r.facts_current=1 AND r.telemetry_status='ready'",
-    )?;
-    let mut rows = detected_statement.query([match_group])?;
-    while let Some(row) = rows.next()? {
-        detected.push(crate::tags::TagId::parse(&row.get::<_, String>(0)?)?);
-    }
-    let mut manual = crate::tags::ManualMatchTags::default();
-    let mut override_statement = db.prepare_cached(
-        "SELECT tag_id FROM match_tag_manual WHERE match_group=?1 ORDER BY tag_id",
-    )?;
-    let mut rows = override_statement.query([match_group])?;
-    while let Some(row) = rows.next()? {
-        let id = crate::tags::TagId::parse(&row.get::<_, String>(0)?)?;
-        manual.ids.push(id);
-    }
-    manual.validate()?;
     db.execute(
         "DELETE FROM match_tag_effective WHERE match_group=?1",
         [match_group],
     )?;
-    let mut insert = db.prepare_cached(
-        "INSERT INTO match_tag_effective(match_group,tag_id,source) VALUES (?1,?2,?3)",
+    db.execute(
+        "INSERT INTO match_tag_effective(match_group,tag_id,source)
+         SELECT DISTINCT r.match_group,o.tag_id,'detected' FROM match_tag_observed o
+         JOIN recordings r ON r.media_id=o.media_id
+         WHERE r.match_group=?1 AND r.facts_current=1 AND r.telemetry_status='ready'",
+        [match_group],
     )?;
-    for (id, source) in crate::tags::effective_assignments(detected, &manual) {
-        insert.execute(params![
-            match_group,
-            id.as_str(),
-            serde_json::to_value(source)?.as_str()
-        ])?;
-    }
     Ok(())
 }
 
 impl Index {
-    pub(crate) fn effective_match_tags_for_groups(
+    pub(super) fn best_match_events<'a>(
         &self,
-        groups: impl IntoIterator<Item = String>,
-    ) -> Result<HashMap<String, Vec<crate::tags::TagAssignment>>> {
-        let groups: Vec<_> = groups
-            .into_iter()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
+        groups: impl Iterator<Item = &'a str>,
+    ) -> Result<HashMap<String, crate::tags::TagAssignment>> {
+        use crate::tags::{self, TagAssignment, TagId};
+
+        let groups: Vec<_> = groups.collect();
         if groups.is_empty() {
             return Ok(HashMap::new());
         }
         let encoded = serde_json::to_string(&groups)?;
         let mut statement = self.db.prepare_cached(
-            "SELECT match_group,tag_id,source FROM match_tag_effective
-             WHERE match_group IN (SELECT value FROM json_each(?1)) ORDER BY match_group,source,tag_id",
+            "SELECT match_group,tag_id FROM match_tag_effective
+             WHERE match_group IN (SELECT value FROM json_each(?1)) AND source='detected'",
         )?;
         let mut rows = statement.query([encoded])?;
-        let mut records = Vec::new();
-        let mut ids = HashSet::new();
+        let mut best = HashMap::new();
         while let Some(row) = rows.next()? {
             let group: String = row.get(0)?;
-            let id = crate::tags::TagId::parse(&row.get::<_, String>(1)?)?;
-            let source = serde_json::from_value(serde_json::Value::String(row.get(2)?))?;
-            ids.insert(id.clone());
-            records.push((group, id, source));
-        }
-        let definitions: HashMap<_, _> = self
-            .tag_definitions(ids.into_iter().collect())?
-            .into_iter()
-            .map(|tag| (tag.id.clone(), tag))
-            .collect();
-        let mut result: HashMap<String, Vec<crate::tags::TagAssignment>> = HashMap::new();
-        for (group, id, source) in records {
-            let definition = definitions.get(&id).cloned().context("tag unavailable")?;
-            result
+            let id = TagId::parse(&row.get::<_, String>(1)?)?;
+            let (priority, definition) =
+                tags::ranked_match_event(&id).context("invalid detected match event")?;
+            let event = best
                 .entry(group)
-                .or_default()
-                .push(crate::tags::TagAssignment { definition, source });
+                .or_insert_with(|| (priority, TagAssignment::detected(definition.clone())));
+            if priority < event.0 {
+                *event = (priority, TagAssignment::detected(definition));
+            }
         }
-        Ok(result)
-    }
-
-    pub(crate) fn effective_match_tags(
-        &self,
-        match_group: &str,
-    ) -> Result<Vec<crate::tags::TagAssignment>> {
-        Ok(self
-            .effective_match_tags_for_groups([match_group.to_owned()])?
-            .remove(match_group)
-            .unwrap_or_default())
-    }
-
-    pub(crate) fn clear_manual_match_tags(db: &Connection) -> Result<()> {
-        let mut query = db.prepare("SELECT DISTINCT match_group FROM match_tag_manual")?;
-        let groups = query
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        db.execute("DELETE FROM match_tag_manual", [])?;
-        for group in groups {
-            refresh_group(db, &group)?;
-        }
-        Ok(())
-    }
-}
-
-impl Index {
-    /// Project one match's manual assignments within the caller's transaction.
-    pub(crate) fn replace_manual_match_tags(
-        db: &Connection,
-        match_group: &str,
-        manual: &crate::tags::ManualMatchTags,
-    ) -> Result<()> {
-        manual.validate()?;
-        ensure!(!match_group.is_empty(), "manual tag group");
-        db.execute(
-            "DELETE FROM match_tag_manual WHERE match_group=?1",
-            [match_group],
-        )?;
-        let mut insert =
-            db.prepare_cached("INSERT INTO match_tag_manual(match_group,tag_id) VALUES (?1,?2)")?;
-        for id in &manual.ids {
-            insert.execute(params![match_group, id.as_str()])?;
-        }
-        refresh_group(db, match_group)?;
-        Ok(())
+        Ok(best
+            .into_iter()
+            .map(|(group, (_, tag))| (group, tag))
+            .collect())
     }
 }

@@ -1,20 +1,24 @@
 # QB-LIB-001 execution checkpoint
 
 Feature: `QB-LIB-001`
-ExecPlan: `docs/exec-plans/qb-lib-001-match-history-search.md`
-Updated: 2026-11-19
+ExecPlan: `docs/exec-plans/qb-lib-001-library-filters-v3.md`
+Updated: 2026-11-21
 
 ## Current milestone
 
-Milestone 3, full verification and the populated desktop walk-through.
+The v3 layout and Favorites follow-up is verified. QB-LIB-001 is complete.
 
 ## Active unit
 
-None. The search performance follow-up and its automated verification are complete.
+None.
 
 ## Completed
 
-Implemented the queue row, local played-champion picker, Favorites star, personal/custom Tags, secondary Filters form and clear behavior. The native query combines the selected criteria before keyset pagination. Added regression coverage for scope/revision attribution, grouped champion matching, queue taxonomy, custom tags, and refresh after an empty pending tag result. Updated both durable architecture sections.
+The v3 pass gives the standalone Clips grid and both toolbars the same section width. The History star immediately applies Favorites and the Filters form owns player, date, and result. The Clips grid automatically retries a busy native read up to twice before offering manual retry, and stops issuing reads for a superseded request.
+
+The v2 native query exclusively uses detected tags and returns the highest-priority badge. Removed manual match mutation and the separate personal-moment query. Both tabs use the same single-input toolbar. The card badge appears beside KDA.
+
+The earlier design introduced the queue row, local played-champion picker, Favorites, the Tags and Filters menus, and clear behavior. The native query combines the selected criteria before keyset pagination. Added regression coverage for scope/revision attribution, grouped champion matching, queue taxonomy, and refresh after an empty pending tag result. Updated both durable architecture sections.
 
 Polished the toolbar with flat, underlined queue tabs, a 224 px champion field, and left-aligned 36 px controls. Search, Tags and Filters use Remix icons. The champion list opens on focus or click with up to six unselected champions. The controls use the demo's surface and border colors with the app's yellow for selected states and one focus border around the search field. Both Windows build profiles now use the graphical subsystem for desktop startup.
 
@@ -30,9 +34,23 @@ None.
 
 ## Remaining
 
-Run the populated desktop walkthrough.
+None.
 
 ## Verification
+
+The v3 run passed all 640 frontend tests, TypeScript, the Vite production build, and the Windows release desktop build. The focused regression reproduced the manual retry prompt from a native `busy` response before the fix. Isolated frontend tests verified that temporary contention recovers automatically, repeated contention reaches the manual retry limit, and a replaced catalog stops further reads against the old token.
+
+The Windows release walkthrough measured exact left-edge alignment between the first decoded thumbnail and Clips search at 1200 and 1440 px. The History-only Favorites star applied and cleared without horizontal card movement and remained selected after replay return. The fixture clip opened and advanced video playback on the first click in a fresh session. Tag filtering and Clips title, tag and champion search also passed. Screenshots and report are under `build/verification/qb-lib-001-v3`. Canonical validation and `git diff --check` passed.
+
+The following verification records the v2 design and the unchanged native query.
+
+2026-11-21: The complete all-target/all-feature Tauri test run passed 240 tests with 14 ignored, including event priority and legacy manual-cache coverage. App Rust formatting and strict all-target/all-feature Clippy passed. All 638 frontend tests, TypeScript, the Vite production build, and the debug and release Windows desktop builds passed. Canonical validation passed for 138 items and 36 plan/checkpoint pairs.
+
+Both updated release fixtures used 10,000 matches and 80 warm samples per case. The final Tauri command run reached 9.4 ms p95 for browsing, 21.1 ms for the combined queue/champion/player/tag query, 15.2 ms for three Pentakill matches and 12.6 ms for an empty Herald Steal query. The standalone SQL fixture reached 21.5 ms p95 for combined tier and exact tag predicates. Both combined queries met the 50 ms target. Logs are under `build/verification/qb-lib-001-v2`.
+
+The isolated Windows walkthrough passed with two copied recordings and a fixture clip. At 1200 and 1440 px, History and Clips had identical measured search, Tags and Filters control bounds. The recorded player's Pentakill was the only badge on the matching card and appeared to the right of left-aligned KDA. Ranked, ARAM and Other stayed open across their hover gaps. History also passed keyboard and pointer champion selection, lower-tier and combined event filtering, Favorites without horizontal card movement, player/date/result filters, and replay return with filters restored. The single Clips input matched title, custom tag and champion, produced an empty result for a missing term, and accepted keyboard champion selection. The clip's tag editor remained available and the fixture's legacy History assignments were unchanged on disk. The screenshots and completed desktop report are under `build/verification/qb-lib-001-v2`.
+
+The following verification records the earlier design.
 
 The final native suite passed 216 tests with 11 explicitly ignored. Frontend passed 618 tests, TypeScript checking and production Vite build. Strict Tauri Clippy, Rust formatting, and the canonical roadmap validator passed. The release SQL fixture exercised 10,000 matches with 80 warm samples. p95 was 10.0 ms for browsing 50 rows and 16.8 ms for the 50-row combined queue, champion, player, personal moment, and custom tag query, below the provisional 50 ms history target. The optimized plan seeks events by both kind and media identity. These are local query measurements.
 
@@ -65,6 +83,8 @@ The production Tauri rebuild passed and was staged at `build/release/chronobreak
 
 ## Deviations
 
+The user replaced the old personal-moment and manual/linked History tag design and requested toolbar parity with Clips. The v3 ExecPlan supersedes v2 for section alignment and the History-only Favorites shortcut.
+
 The first benchmark measured the combined path at 1.19 s p95. Starting from the exact match group before seeking events and clips removed that bottleneck. The desktop executable built successfully. WebView2 could not write to the first scratch profile. A fresh isolated profile opened successfully with two matches. The approved walkthrough did not finish because the user stopped computer control before it could run.
 
 The initial Tauri run after the console fix failed `invalid_ownership_foreign_entries_and_locked_files_are_retained` on the retained-count assertion. That check passed in isolation and in the full rerun.
@@ -73,14 +93,14 @@ The initial mock-dispatch harness build lacked the Windows Common Controls manif
 
 ## Decisions
 
-Custom tags come from linked managed clips. The accepted queue taxonomy uses numeric queue facts. Unconfirmed outcomes remain unknown.
+History now uses only detected event tags. The accepted queue taxonomy uses numeric queue facts. Unconfirmed outcomes remain unknown.
 
 The performance follow-up adds a derived coverage projection to the existing v8 cache. Its first writer backfills from recording rows in one transaction. Existing read transactions can finish using their original schema and counts. The query prunes absent players and exact multikill candidates before card lookup, then applies the existing representative and actor checks.
 
 ## Blockers
 
-The feature stays in progress pending the required desktop walkthrough with the updated frontend.
+None.
 
 ## Next action
 
-Run the approved walkthrough against a fresh desktop build and the populated isolated fixture under `build/match-history-live-a396ffcf`.
+No remaining implementation or verification work for QB-LIB-001.

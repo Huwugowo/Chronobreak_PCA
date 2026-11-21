@@ -58,7 +58,7 @@ import { HistoryController } from "./historyController";
 import { observeBenchmarkHistory } from "./benchmarkSearch";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex } from "./leagueIndex";
 import { reconcileSavedOverlay, isSaveCompletionCurrent, type SavedOverlay } from "./savedOverlay";
-import { editClipTags, editManagedClip, editMatchTags, readClipPage, readClipPlayback, reconcileClips, replaceTagDefinition, sourcePosition, usesManagedClips,
+import { editClipTags, editManagedClip, readClipPage, readClipPlayback, reconcileClips, replaceTagDefinition, sourcePosition, usesManagedClips,
   type ClipCard, type ClipEdit, type ClipFilters, type ClipGridCard, type ClipTagUpdate, type Tag } from "./managedClips";
 import styles from "./App.module.css";
 import controls from "./ui/controls.module.css";
@@ -312,21 +312,8 @@ function App() {
     if (result.error) showError(result.error);
     return false;
   };
-  const applyMatchTags = async (group: string, tags: Tag[]) => {
-    const origin = controller.origin();
-    if (!origin) return false;
-    const result = await controller.mutate(origin, group, () => controller.writeIndex(origin, "tags", token =>
-      editMatchTags(token, group, tags.map(tag => tag.id))), "metadata");
-    if (!result.admitted) {
-      if (result.error) showError(result.error);
-      return false;
-    }
-    history.tagsEdited(group, result.value);
-    return true;
-  };
   const onTagRenamed = (tag: Tag) => {
     setRenamedTag(tag);
-    history.tagRenamed(tag);
     setManagedSelection(selected => selected ? { ...selected,
       clip: { ...selected.clip, header: { ...selected.clip.header,
         tags: replaceTagDefinition(selected.clip.header.tags, tag),
@@ -797,8 +784,6 @@ function App() {
               games={games() ?? []}
               history={historyState()}
               tagToken={managed && libraryActionable() ? acceptedSnapshot()?.token : undefined}
-              onEditMatchTags={managed ? applyMatchTags : undefined}
-              onTagRenamed={onTagRenamed}
               renamedTag={renamedTag()}
               clipTagUpdate={clipTagUpdate()}
               onHistoryQuery={(query, actionId) => history.setQuery(query, actionId)}

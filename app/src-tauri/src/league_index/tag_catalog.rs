@@ -1,19 +1,11 @@
 //! Rebuildable vocabulary projection, including definitions carried by detached clips.
 use super::*;
 use crate::tag_store::{self, LoadedStore};
-use crate::tags::{self, ManualMatchTags, TagAssignment, TagDefinition, TagId};
+use crate::tags::{self, TagAssignment, TagDefinition, TagId};
 
 const SUGGESTION_LIMIT: usize = 24;
 
 impl Index {
-    pub(crate) fn match_exists(&self, key: &str) -> Result<bool> {
-        Ok(self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM recordings WHERE match_group=?1)",
-            [key],
-            |row| row.get(0),
-        )?)
-    }
-
     fn has_tag_table(&self, table: &str) -> Result<bool> {
         Ok(self.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
@@ -53,10 +45,6 @@ impl Index {
         for tag in source.store.definitions.values() {
             upsert_definition(&tx, tag)?;
         }
-        Self::clear_manual_match_tags(&tx)?;
-        for (key, manual) in &source.store.matches {
-            Self::replace_manual_match_tags(&tx, key, manual)?;
-        }
         set_tag_stamp(&tx, &source.stamp)?;
         tx.commit()?;
         Ok(())
@@ -66,14 +54,10 @@ impl Index {
         &mut self,
         stamp: &str,
         definitions: &[TagDefinition],
-        subject: Option<(&str, &ManualMatchTags)>,
     ) -> Result<()> {
         let tx = self.db.transaction()?;
         for definition in definitions {
             upsert_definition(&tx, definition)?;
-        }
-        if let Some((key, manual)) = subject {
-            Self::replace_manual_match_tags(&tx, key, manual)?;
         }
         set_tag_stamp(&tx, stamp)?;
         tx.commit()?;

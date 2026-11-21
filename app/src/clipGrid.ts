@@ -32,6 +32,19 @@ export function createClipGrid(source: Accessor<GridSource>) {
     const { ready, token } = source();
     return ready && state.token === token;
   });
+
+  const readPage = async (request: number, token: string, query: ClipFilters, cursor: ClipGridCursor | null) => {
+    for (let retries = 0; request === generation; retries++) {
+      try {
+        return await readClipGridPage(token, query, cursor);
+      } catch (error) {
+        // The native index has a fixed number of concurrent read slots.
+        if (retries === 2 || !error || typeof error !== "object" || !("code" in error) || error.code !== "busy") throw error;
+        await new Promise<void>(resolve => window.setTimeout(resolve, 150));
+      }
+    }
+  };
+
   const load = (operation: Operation) => {
     const { ready, token, query } = source();
     const append = operation === "append";
@@ -48,8 +61,8 @@ export function createClipGrid(source: Accessor<GridSource>) {
         const clips: ClipGridCard[] = [];
         let cursor = start;
         for (let i = 0; i < pages; i++) {
-          const page = await readClipGridPage(token, query, cursor);
-          if (request !== generation) return;
+          const page = await readPage(request, token, query, cursor);
+          if (!page || request !== generation) return;
           clips.push(...page.clips);
           cursor = page.next;
           if (!cursor) break;

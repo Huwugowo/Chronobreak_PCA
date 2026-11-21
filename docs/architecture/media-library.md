@@ -259,7 +259,7 @@ that catalog before filtering or paging. Match facts come from the
 newest checked final result when available, then the newest checked recorded
 facts. Specific queues use numeric IDs, and player presence uses a full Riot ID
 from the checked roster. Played-champion filters accept any selected champion
-on any part. Each selected personal moment requires a resolved local killer
+on any part. Each selected History event tag requires a resolved local killer
 in the exact event scope and revision on a ready part. Multikills use the
 recorded streak, and objective steals require an explicit stolen flag. Favorites
 include groups with any saved part. Date bounds and keyset cursors use the newest
@@ -382,18 +382,21 @@ detail. Export derives detected tags from verified recording-player events
 within the exported frame range. Edits replace only manual assignments.
 Playback, match context, and saved tags survive deletion of the source recording.
 
-Games and clips use the same tag vocabulary and stable IDs. Both display only
-the highest assigned multikill tier. A lower-tier tag filter also matches
-higher tiers. Equal achievements use the detected badge when both sources
-assign the same tag. Match History's My events filter queries observed evidence
-directly. Detected match tags come from current checked parts of the recording.
-The root's `league_tags.json` owns manual match assignments and the library's
-custom names. SQLite projects both sources and exact membership for search.
-First Blood remains in the factual stream.
+Match History uses the built-in event vocabulary, projected only from checked
+recording parts with a resolved local killer. Its Tags filter requires all
+selected events. A lower-tier multikill filter also matches higher tiers. Each
+card displays its highest multikill beside the KDA, or its highest-priority steal
+in Baron, Herald, Dragon order. First Blood remains in the factual stream.
+The `league_tags.json` file owns custom clip names and round-trips legacy match
+assignments. History reads detected rows exclusively, including from older
+caches. Clip tags use the same built-in IDs and can also include custom tags.
 
-Clips and Match History render the same filter controls and queue choices.
-Each tab adapts those choices to its own indexed query. Clip results stay in
-creation order and use the clip's saved match date for date filters.
+Clips and Match History share a queue row and a single search, Tags and Filters
+row. The Clips grid aligns with that row. Match History adds a Favorites star.
+History search suggests played champions. Clips search matches titles,
+tags and champions and offers champion suggestions in the same field. Each tab
+sends its filters to its own indexed query. Clip results stay in creation order
+and use the clip's saved match date for date filters.
 
 Each clip carries its assigned custom IDs and labels in `clip.json`. If the
 library vocabulary is absent, the clip index recovers those definitions from
@@ -450,6 +453,8 @@ Match-date filters use the saved played date independently of that ordering.
 The grid seeks through exact tag IDs in creation order and requires each
 selected tag or an assigned higher tier. Text search uses the current tag labels.
 Grid queries return titles, champions, clip durations, tags and thumbnail URLs.
+The grid retries a busy index reader up to twice per page while the same request
+is current. Other failures and continued contention surface a manual retry.
 Opening a clip reads its header and size and may supplement the saved context
 from the account-scoped match, using the same checked recording-part priority
 as History. A recorded roster can supply summoner spells. Final KDA, items and

@@ -108,7 +108,7 @@ pub(crate) async fn create_tag(
         loaded.store.insert_definition(tag.clone())?;
         check()?;
         let stamp = loaded.store.publish(owner)?;
-        index.update_tag_projection(&stamp, std::slice::from_ref(&tag), None)?;
+        index.update_tag_projection(&stamp, std::slice::from_ref(&tag))?;
         Ok(tag)
     })
     .await
@@ -143,72 +143,9 @@ pub(crate) async fn rename_tag(
         loaded.store.insert_definition(tag.clone())?;
         check()?;
         let stamp = loaded.store.publish(owner)?;
-        index.update_tag_projection(&stamp, std::slice::from_ref(&tag), None)?;
+        index.update_tag_projection(&stamp, std::slice::from_ref(&tag))?;
         Ok(tag)
     })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn edit_match_tags(
-    state: State<'_, AppState>,
-    snapshot_token: String,
-    match_group: String,
-    tags: Vec<TagId>,
-) -> Result<Vec<crate::tags::TagAssignment>, String> {
-    write(
-        &state,
-        &snapshot_token,
-        move |index, owner, snapshot, check| {
-            tag_store::validate_match_group(&match_group)?;
-            index.require_catalog(&snapshot.catalog_key)?;
-            ensure!(index.match_exists(&match_group)?, "match unavailable");
-            let mut loaded = tag_store::load(owner.root_path())?;
-            index.refresh_tag_store(&loaded)?;
-            let selected = index.tag_definitions(tags.clone())?;
-            ensure!(selected.len() == tags.len(), "tag unavailable");
-            let current = index.effective_match_tags(&match_group)?;
-            let original = loaded
-                .store
-                .matches
-                .get(&match_group)
-                .cloned()
-                .unwrap_or_default();
-            let mut manual = original.clone();
-            manual.replace(tags)?;
-            manual.ids.retain(|id| {
-                !current.iter().any(|tag| {
-                    tag.source == tags::TagAssignmentSource::Detected && tag.definition.id == *id
-                })
-            });
-            manual.validate()?;
-            let mut definitions = Vec::new();
-            for tag in selected {
-                if manual.ids.contains(&tag.id)
-                    && !tag.builtin
-                    && !loaded.store.definitions.contains_key(&tag.id)
-                {
-                    loaded.store.insert_definition(tag.clone())?;
-                    definitions.push(tag);
-                }
-            }
-            if manual != original || !definitions.is_empty() {
-                if manual == Default::default() {
-                    loaded.store.matches.remove(&match_group);
-                } else {
-                    loaded
-                        .store
-                        .matches
-                        .insert(match_group.clone(), manual.clone());
-                }
-                check()?;
-                let stamp = loaded.store.publish(owner)?;
-                index.update_tag_projection(&stamp, &definitions, Some((&match_group, &manual)))?;
-                return index.effective_match_tags(&match_group);
-            }
-            Ok(current)
-        },
-    )
     .await
 }
 

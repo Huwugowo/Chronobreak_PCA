@@ -2161,10 +2161,10 @@
       "id": "QB-LIB-001",
       "kind": "feature",
       "name": "Searchable Match History",
-      "description": "Find recorded matches with a queue row, played-champion suggestions, favorites, personal moments, linked clip tags, and optional player, date, and result filters.",
+      "description": "Find recorded matches with the shared library toolbar, played champions, detected local event tags, and a Match History Favorites shortcut.",
       "priority": "P1",
       "area": "library-search",
-      "status": "in-progress",
+      "status": "done",
       "parent_id": "EPIC-LIBRARY",
       "dependencies": [
         "QB-DATA-001",
@@ -2173,19 +2173,22 @@
         "QB-LIB-034"
       ],
       "evidence": [
-        "2026-11-19: Across two paired 10,000-match Tauri command runs, browse p95 fell from 23.6–31.9 ms to 9.4–11.7 ms, and rare or empty moment and player queries fell from 192.1–307.4 ms to 6.0–10.2 ms. The 619 frontend and 231 Tauri tests passed. The isolated desktop walkthrough remains pending."
+        "The Windows release walkthrough verified thumbnail alignment at 1200 and 1440 px, the History-only Favorites star, replay return, and first-click clip playback. All 640 frontend tests passed, including automatic recovery from busy clip reads. The unchanged native suite passed 240 tests and the combined query reached 21.1 ms p95 on the 10,000-match fixture."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-lib-001-match-history-search.md",
+        "plan": "docs/exec-plans/qb-lib-001-library-filters-v3.md",
         "progress": "docs/execution/qb-lib-001.md"
       },
       "acceptance_criteria": [
         "Match History has a dedicated All, Ranked, ARAM, Arena and Other queue row, with the approved ranked/ARAM variants, an Other catch-all, and menus available by hover, click and keyboard. Queue menus match the Filters popup gap and stay open when the pointer crosses it.",
         "The primary search opens on focus with local played-champion names and portraits and narrows suggestions from the first character. Typing only updates suggestions. Selected champions are removable chips and match any selected champion across the full library.",
-        "A star-only Favorites control, one Tags dropdown for the recording player's supported moments and linked custom clip tags, and a secondary player/date/result form compose with queue and champion filters. All selected tags must apply to the match. Clear all resets every filter.",
+        "Match History and Clips share one row with one search field, Tags and Filters. Match History also has a one-click Favorites star between Tags and Filters. Clips uses its field for title, tag and champion search and champion suggestions. The first thumbnail aligns with the left edge of search.",
+        "The sole Tags menu in History filters by all selected detected event tags for the recorded player, including higher multikill tiers. Favorites applies immediately and composes with player, date, result, queue and champion filters. Clear all resets every filter.",
+        "Match History shows one read-only detected local event badge to the right of left-aligned KDA. It prioritizes the highest multikill, then Baron, Herald and Dragon steals. Manual match tags and match tag editors are absent.",
         "Toggling filters keeps match cards in the same horizontal position when results start or stop needing a vertical scrollbar.",
-        "Matches use persisted checked facts before pagination, preserve one card per account-scoped match and the existing playback, clip, favorite and replay-return behavior, and surface unavailable optional data without fabricating matches or outcomes."
+        "Matches use persisted checked facts before pagination, preserve one card per account-scoped match and the existing playback, clip, favorite and replay-return behavior, and surface unavailable optional data without fabricating matches or outcomes.",
+        "A briefly busy clip grid read recovers automatically, and a persistent read failure remains actionable."
       ],
       "verification": [
         {
@@ -2199,7 +2202,7 @@
           "command": null
         }
       ],
-      "notes": "The approved toolbar scopes champions to the recording player and moments to the local participant. Enemy champions and arbitrary game-wide event search are deferred. Custom tag search reuses linked managed clip tags. Existing unconfirmed results remain unknown.",
+      "notes": "The 2026-11-21 product correction replaced the separate My events filter and manual or linked clip tags in History. History uses checked local events. Clips retains its editable tag vocabulary. Legacy authored match assignments are retained on disk. Existing unconfirmed results remain unknown.",
       "user_value": 4.5,
       "differentiation": 5,
       "difficulty": 4,

@@ -2,7 +2,6 @@ import type { LibraryOrigin } from "./libraryController";
 import { libraryError } from "./libraryController";
 import type { CatalogPage, HistoryPage, HistoryQuery, ImportProgress } from "./leagueIndex";
 import type { GameSummary } from "./types";
-import { replaceTagDefinition, type Tag, type TagAssignment } from "./managedClips";
 
 // Per-recording limitations permit continued imports; a failed operation ends
 // initialization until a fresh accepted context. Keep its diagnostic private.
@@ -109,24 +108,6 @@ export class HistoryController {
     }
     this.context.revision++;
     this.refreshQuery();
-  }
-  tagsEdited(group: string, tags: TagAssignment[]) {
-    const page = this.state.page;
-    if (page) {
-      this.publish({ page: { ...page, rows: page.rows.map(row => row.game.match_group === group
-        ? { ...row, tags } : row) } });
-    }
-    if (this.query.tags?.length || this.queryPending || this.state.loading) this.prepared();
-  }
-  tagRenamed(tag: Tag) {
-    const page = this.state.page;
-    if (page) {
-      this.publish({ page: { ...page, rows: page.rows.map(row => {
-        const tags = row.tags && replaceTagDefinition(row.tags, tag);
-        return tags === row.tags ? row : { ...row, tags };
-      }) } });
-    }
-    if (this.queryPending || this.state.loading) this.prepared();
   }
   setQuery(query: HistoryQuery, actionId?: string) {
     this.query = { ...query, after: null, limit: 50 };

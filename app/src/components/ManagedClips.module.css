@@ -185,10 +185,6 @@
   .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@container (min-width: 1320px) {
-  .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-
 .grid .gridOpen { border-radius: var(--radius-surface); }
 .grid .gridArtwork { border-radius: 8px; background-color: var(--surface-panel); }
 .gridOpen:hover .gridTitle { color: var(--text-primary); text-decoration: underline; }

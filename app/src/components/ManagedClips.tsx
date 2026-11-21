@@ -342,7 +342,7 @@ export function ManagedClips(props: {
       JSON.stringify(previous) === JSON.stringify(next) ? previous : next), 180);
     onCleanup(() => window.clearTimeout(timer));
   });
-  return <section class={styles.panel} aria-label="Clips library">
+  return <section class={`${styles.panel} ${libraryStyles.contentRail}`} aria-label="Clips library">
     <ClipsFilters library={props.root} filters={props.filters} onChange={props.onFilters} token={props.ready ? props.token : undefined}
       renamedTag={props.renamedTag}
       championPortrait={name => ddragonAsset(props.ddragon, "champion", name)} onOpenFolder={props.onOpenFolder} />

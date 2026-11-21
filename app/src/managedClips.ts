@@ -6,7 +6,6 @@ import type { ClipDraft, ClipExportPreset } from "./types";
 export type Attribution = "you" | "ally" | "enemy" | "unknown";
 export type Availability = "available" | "partial" | "unavailable";
 export const MAX_TAG_FILTERS = 40;
-export const MAX_MATCH_TAGS = MAX_TAG_FILTERS + 4; // One multikill and up to three objective steals alongside manual assignments.
 /** A stable, user-visible library tag.  IDs, rather than labels, are the query/write contract. */
 export type Tag = { id: string; label: string; tier: number | null; builtin: boolean };
 export type TagAssignment = Tag & { source: "detected" | "manual" };
@@ -97,8 +96,6 @@ export const createTag = (snapshotToken: string, label: string) =>
   invoke<Tag>("create_tag", { snapshotToken, label });
 export const renameTag = (snapshotToken: string, tagId: string, label: string) =>
   invoke<Tag>("rename_tag", { snapshotToken, tagId, label });
-export const editMatchTags = (snapshotToken: string, matchGroup: string, tags: string[]) =>
-  invoke<TagAssignment[]>("edit_match_tags", { snapshotToken, matchGroup, tags });
 export const prepareClipDraft = (snapshotToken: string, draft: ClipDraft) =>
   invoke<DraftSummary>("prepare_clip_draft", { snapshotToken, request: {
     game_timestamp: draft.gameTimestamp, media_id: draft.mediaId,

@@ -1,9 +1,3 @@
-.matchHistory {
-  /* The desktop minimum leaves room for this rail, shell padding and scrollbar. */
-  width: 1120px;
-  margin-inline: auto;
-}
-
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -322,16 +316,29 @@
   gap: var(--space-2);
 }
 
+.kdaRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  width: 180px;
+  max-width: 100%;
+}
+
 .kda {
   display: grid;
-  width: 180px;
   min-width: 0;
-  justify-items: center;
+  justify-items: start;
   gap: 2px;
-  text-align: center;
+  text-align: left;
+}
+
+.eventBadge {
+  white-space: nowrap;
 }
 
 .kda strong {
+  max-width: 100%;
   overflow: hidden;
   color: var(--text-primary);
   font-size: 16px;
@@ -687,16 +694,4 @@
 .matchItem[data-outcome="remake"],
 .matchItem[data-outcome="terminated"] {
   --match-accent: var(--accent-neutral);
-}
-.matchTags,
-.matchTagEditor {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px 10px;
-}
-
-.matchTagEditor > fieldset {
-  flex-basis: 100%;
 }

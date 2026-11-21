@@ -50,13 +50,14 @@ export default function ClipsFilters(props: {
     queue: props.filters.queue ?? null,
     champions: props.filters.champions ?? [],
     tags: props.filters.tags ?? [],
+    search: props.filters.search,
     result: props.filters.outcome ?? "",
   }));
   const update = (patch: Partial<SharedFilters>) => {
     const next = { ...shared(), ...patch };
     const { from, to } = "date" in patch ? filterDays(next) : props.filters;
     props.onChange({
-      search: props.filters.search,
+      search: next.search || undefined,
       queue: next.queue ?? undefined,
       champions: next.champions.length ? next.champions : undefined,
       tags: next.tags.length ? next.tags : undefined,
@@ -73,8 +74,6 @@ export default function ClipsFilters(props: {
     championError={championsError() ? "Couldn’t load champions." : null}
     onChampionRetry={() => retryChampions(value => value + 1)}
     tagToken={props.token} renamedTag={props.renamedTag} clips={{
-      search: props.filters.search ?? "",
-      onSearch: search => props.onChange({ ...props.filters, search: search || undefined }),
       onOpenFolder: props.onOpenFolder,
     }} />;
 }

@@ -5,7 +5,7 @@ import App from "./App";
 import { loadDdragonStatus, loadStorageUsage, refreshLibrary, setGameSaved } from "./api";
 import { indexCatalog, indexRecording, queryHistory, resetLeagueIndex, type HistoryPage } from "./leagueIndex";
 import { tagChoices, reconcileClips } from "./managedClips";
-import { customTag } from "./tagFixtures";
+import { pentakill } from "./tagFixtures";
 import { onLibraryCatalogChanged, onPreparedData } from "./preparedData";
 import type { GameSummary, LibrarySnapshot } from "./types";
 
@@ -14,7 +14,7 @@ vi.mock("./benchmark", async original => ({ ...await original<typeof import("./b
 vi.mock("./preparedData", () => ({ onLibraryCatalogChanged: vi.fn(() => () => {}), onPreparedData: vi.fn(() => () => {}) }));
 vi.mock("./managedClips", async original => ({ ...await original<typeof import("./managedClips")>(),
   usesManagedClips: () => harness.managed, reconcileClips: vi.fn(async () => true),
-  tagChoices: vi.fn(async () => [{ id: "test:Montage", label: "Montage", tier: null, builtin: false }]),
+  tagChoices: vi.fn(async () => [pentakill]),
 }));
 vi.mock("./api", async original => ({ ...await original<typeof import("./api")>(),
   loadStorageUsage: vi.fn(), refreshLibrary: vi.fn(), setGameSaved: vi.fn(),
@@ -196,7 +196,7 @@ it("keeps populated History cards, filters and images through a favorite and rep
       record.oldValue?.includes("—") || Array.from(record.removedNodes).some(node => node.textContent?.includes("—")))).toBe(false);
   } finally { observer.disconnect(); }
 });
-it("queries assigned match tags while clip indexing is still pending", async () => {
+it("queries detected match tags while clip indexing is still pending", async () => {
   harness.managed = true;
   const clipReady = deferred<boolean>();
   const readyPage: HistoryPage = {
@@ -216,16 +216,16 @@ it("queries assigned match tags while clip indexing is still pending", async () 
   await vi.waitFor(() => expect(reconcileClips).toHaveBeenCalledOnce());
   [...host.querySelectorAll("button")].find(button => button.textContent === "Tags")!.click();
   await vi.waitFor(() => expect(tagChoices).toHaveBeenCalledWith("a", ""));
-  const montage = [...host.querySelectorAll("fieldset label")].find(label => label.textContent === "Montage")!;
-  montage.querySelector("input")!.click();
+  const event = [...host.querySelectorAll("fieldset label")].find(label => label.textContent === "Pentakill")!;
+  event.querySelector("input")!.click();
   await vi.waitFor(() => expect(queryHistory).toHaveBeenCalledTimes(2));
   star().click();
-  await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [customTag("Montage").id] })));
+  await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [pentakill.id] })));
   expect(host.querySelector("article")).not.toBeNull();
   clipReady.resolve(true);
   await vi.waitFor(() => expect(host.querySelector("article")).not.toBeNull());
   expect(queryHistory).toHaveBeenCalledTimes(3);
-  expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [customTag("Montage").id] }));
+  expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [pentakill.id] }));
 });
 it("refreshes only the affected data when library notifications arrive during replay", async () => {
   const { host, click } = await mount();

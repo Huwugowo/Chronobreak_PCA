@@ -130,12 +130,7 @@ BEGIN
   INSERT OR IGNORE INTO match_tag_dirty SELECT NEW.match_group
     WHERE NEW.match_group IS NOT NULL AND NEW.facts_current=1 AND NEW.telemetry_status='ready';
 END;
--- Manual assignments belong to the account-scoped match group and survive
--- source re-indexing and replacement parts.
-CREATE TABLE IF NOT EXISTS match_tag_manual(
-  match_group TEXT NOT NULL, tag_id TEXT NOT NULL,
-  PRIMARY KEY(match_group,tag_id)
-) WITHOUT ROWID;
+-- The source column distinguishes detected rows from legacy cached assignments.
 CREATE TABLE IF NOT EXISTS match_tag_effective(
   match_group TEXT NOT NULL, tag_id TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('detected','manual')),
   PRIMARY KEY(match_group,tag_id,source)

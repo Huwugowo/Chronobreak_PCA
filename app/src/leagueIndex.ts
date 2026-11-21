@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockOverlayPage, mockReplayWindow } from "./dev/mockReplay";
 import { decodeGameSummary, decodeLeagueMatch, decodeMappedReplayTick, loadGames, useMockApi } from "./api";
 import { decodeLeagueResult, resultEvidence, type LeagueResult, type ResultEvidence } from "./leagueResult";
-import { MAX_MATCH_TAGS, type TagAssignment } from "./managedClips";
+import type { TagAssignment } from "./managedClips";
 import { parseMediaId, parseReplayTick, type MediaId, type ReplayTick } from "./replayTime";
 import type { GameSummary, LeagueMatch } from "./types";
 import { array, decodeActors, decodeEvidence, decodeSource, exact, gameTick, integer, issues, nullableInteger, object, sameSource, text,
@@ -24,17 +24,16 @@ const mockIdentity = (media: MediaId) => {
 export type HistoryCursor = { recorded_at: string; media_id: MediaId };
 export type HistoryQueue = "ranked_solo_duo" | "ranked_flex" | "ranked_5s" | "aram_mayhem" | "aram"
   | "aram_mayhem_classic" | "arena" | "other" | "normal_draft" | "swiftplay" | "urf";
-export type PersonalMoment = "quadra_kill" | "pentakill" | "baron_steal" | "dragon_steal";
 export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_id?: number | null; outcome?: "win" | "loss" | "unknown" | null;
   champion?: string | null; mode?: string | null; saved_only?: boolean | null; search?: string | null;
   participant_riot_id?: string | null; event_kind?: string | null; stolen?: boolean | null;
   minimum_kill_streak?: number | null; role?: ActorRole | null;
   queue?: HistoryQueue; played_champions?: string[]; player_riot_id?: string; recorded_from?: number;
-  recorded_before?: number; personal_moments?: PersonalMoment[]; tags?: string[] };
+  recorded_before?: number; tags?: string[] };
 export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavailable"; kills: number | null; deaths: number | null; assists: number | null;
   items: Array<number | null> | null; summoner_spells: Array<string | null> | null; keystone_id: number | null; secondary_style: number | null; creep_score: number | null; duration_seconds: number | null;
   evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
-export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; tags?: TagAssignment[]; clip_count?: number };
+export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; event_tag?: TagAssignment; clip_count?: number };
 export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
 export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number; history_ready?: boolean };
 type Position = { end_offset: number; last_sequence: number; checksum: number[] };
@@ -115,8 +114,8 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
   const r = exact(value, keys);
   const rows = array(r.rows, 50).map(value => {
     const keys = ["media_id", "game", "stats", "index_status"];
-    const hasTags = Object.prototype.hasOwnProperty.call(object(value), "tags");
-    if (hasTags) keys.push("tags");
+    const hasEventTag = Object.prototype.hasOwnProperty.call(object(value), "event_tag");
+    if (hasEventTag) keys.push("event_tag");
     const hasClipCount = Object.prototype.hasOwnProperty.call(object(value), "clip_count");
     if (hasClipCount) keys.push("clip_count");
     const row = exact(value, keys, "history.row");
@@ -131,13 +130,14 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
       summoner_spells: s.summoner_spells === null ? null : array(s.summoner_spells, 2).map(v => v === null ? null : text(v)),
       items: s.items === null ? null : array(s.items, 32).map(nullableInteger), evidence, final_evidence: s.final_evidence as ResultEvidence | null,
       game_tick: s.game_tick === null ? null : gameTick(s.game_tick) };
+    let eventTag: TagAssignment | undefined;
+    if (hasEventTag) {
+      const tag = exact(row.event_tag, ["id", "label", "tier", "builtin", "source"]);
+      if (tag.builtin !== true || tag.source !== "detected") throw new Error("history event tag");
+      eventTag = { id: text(tag.id), label: text(tag.label), tier: tag.tier === null ? null : integer(tag.tier), builtin: true, source: "detected" };
+    }
     return { media_id: media, game, stats, index_status: status(row.index_status),
-      ...(hasTags ? { tags: array(row.tags, MAX_MATCH_TAGS).map((value): TagAssignment => {
-        const tag = exact(value, ["id", "label", "tier", "builtin", "source"]);
-        if (typeof tag.builtin !== "boolean") throw new Error("history tag builtin");
-        if (tag.source !== "detected" && tag.source !== "manual") throw new Error("history tag source");
-        return { id: text(tag.id), label: text(tag.label), tier: tag.tier === null ? null : integer(tag.tier), builtin: tag.builtin, source: tag.source };
-      }) } : {}),
+      ...(eventTag ? { event_tag: eventTag } : {}),
       ...(hasClipCount ? { clip_count: integer(row.clip_count) } : {}) };
   });
   let next: HistoryCursor | null = null; if (r.next !== null) { const c = exact(r.next, ["recorded_at", "media_id"]); next = { recorded_at: text(c.recorded_at, 64), media_id: parseMediaId(c.media_id) }; }
@@ -233,7 +233,7 @@ export async function queryHistory(token: string, query: HistoryQuery): Promise<
       if (query.outcome && game.league_result?.outcome !== query.outcome) return false;
       return !query.player_riot_id || game.participants.some(player => player.summoner_name.toLowerCase() === query.player_riot_id!.toLowerCase());
     });
-    const unsupportedSemantic = !!(query.queue || query.queue_id != null || query.participant_riot_id || query.event_kind || query.stolen != null || query.minimum_kill_streak != null || query.role || query.personal_moments?.length || query.tags?.length);
+    const unsupportedSemantic = !!(query.queue || query.queue_id != null || query.participant_riot_id || query.event_kind || query.stolen != null || query.minimum_kill_streak != null || query.role || query.tags?.length);
     if (unsupportedSemantic) games = [];
     games.sort((a, b) => b.recorded_at.localeCompare(a.recorded_at) || a.media_id!.localeCompare(b.media_id!));
     if (query.after) games = games.filter(game => game.recorded_at < query.after!.recorded_at || (game.recorded_at === query.after!.recorded_at && game.media_id! > query.after!.media_id));

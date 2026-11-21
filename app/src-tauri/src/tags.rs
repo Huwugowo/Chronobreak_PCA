@@ -59,19 +59,13 @@ pub(crate) struct TagDefinition {
 
 /// A tag as assigned to a match or clip. Definitions are shared vocabulary;
 /// provenance belongs to the assignment and is never inferred from its id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TagAssignmentSource {
     Detected,
+    // Earlier headers lacked provenance and carried authored selections.
+    #[default]
     Manual,
-}
-
-impl Default for TagAssignmentSource {
-    fn default() -> Self {
-        // Headers written before assignment provenance existed were always
-        // editor selections, so preserve them as authored data.
-        Self::Manual
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +182,17 @@ pub(crate) fn builtin_definition(id: &TagId) -> Option<TagDefinition> {
 
 pub(crate) fn builtin_definitions() -> impl Iterator<Item = TagDefinition> {
     builtin_entries().map(Builtin::definition)
+}
+
+pub(crate) fn ranked_match_event(id: &TagId) -> Option<(usize, TagDefinition)> {
+    let key = id.as_str().strip_prefix("builtin:")?;
+    MULTIKILLS
+        .into_iter()
+        .rev()
+        .chain([BARON_STEAL, HERALD_STEAL, DRAGON_STEAL])
+        .enumerate()
+        .find(|(_, tag)| tag.key == key)
+        .map(|(priority, tag)| (priority, tag.definition()))
 }
 
 pub(crate) fn clean_label(label: &str) -> Result<&str> {
@@ -337,32 +342,6 @@ impl ManualMatchTags {
         );
         Ok(())
     }
-
-    pub(crate) fn replace(&mut self, selected: Vec<TagId>) -> Result<()> {
-        ensure!(selected.len() <= MAX_ASSIGNMENTS, "too many match tags");
-        self.ids = canonical_ids(selected);
-        self.validate()
-    }
-}
-
-pub(crate) fn effective_assignments(
-    detected: impl IntoIterator<Item = TagId>,
-    manual: &ManualMatchTags,
-) -> Vec<(TagId, TagAssignmentSource)> {
-    let detected = canonical_ids(detected);
-    detected
-        .iter()
-        .cloned()
-        .map(|id| (id, TagAssignmentSource::Detected))
-        .chain(
-            manual
-                .ids
-                .iter()
-                .filter(|id| !detected.contains(id))
-                .cloned()
-                .map(|id| (id, TagAssignmentSource::Manual)),
-        )
-        .collect()
 }
 
 #[cfg(test)]
@@ -411,19 +390,6 @@ mod tests {
                 TagAssignment::detected(dragon.clone()),
             ]
         );
-
-        let mut manual = ManualMatchTags::default();
-        manual
-            .replace(vec![dragon.id.clone(), triple.id.clone()])
-            .unwrap();
-        assert_eq!(
-            effective_assignments([penta.id.clone(), dragon.id.clone()], &manual),
-            [
-                (penta.id, TagAssignmentSource::Detected),
-                (dragon.id, TagAssignmentSource::Detected),
-                (triple.id, TagAssignmentSource::Manual),
-            ]
-        );
     }
 
     #[test]
@@ -458,37 +424,6 @@ mod tests {
             serde_json::json!({
                 "added": ["builtin:pentakill"]
             })
-        );
-    }
-
-    #[test]
-    fn manual_assignments_never_suppress_future_evidence() {
-        let penta = MULTIKILLS[3].id();
-        let triple = MULTIKILLS[1].id();
-        let quadra = MULTIKILLS[2].id();
-        let mut edits = ManualMatchTags::default();
-        edits.replace(vec![triple.clone()]).unwrap();
-        assert_eq!(
-            effective_assignments([penta.clone(), quadra], &edits),
-            vec![
-                (penta, TagAssignmentSource::Detected),
-                (triple, TagAssignmentSource::Manual),
-            ]
-        );
-    }
-
-    #[test]
-    fn unrelated_late_events_remain_visible_when_saving_open_edit() {
-        let dragon = DRAGON_STEAL.id();
-        let baron = BARON_STEAL.id();
-        let mut edits = ManualMatchTags::default();
-        edits.replace(vec![]).unwrap();
-        assert_eq!(
-            effective_assignments([dragon.clone(), baron.clone()], &edits),
-            vec![
-                (dragon, TagAssignmentSource::Detected),
-                (baron, TagAssignmentSource::Detected),
-            ]
         );
     }
 }

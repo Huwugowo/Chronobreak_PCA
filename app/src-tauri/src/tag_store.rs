@@ -1,4 +1,4 @@
-//! Durable library vocabulary and manual match assignments.
+//! Durable clip vocabulary with compatibility for legacy match assignments.
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
@@ -26,7 +26,7 @@ pub(crate) struct Store {
     version: u8,
     pub revision: u64,
     pub definitions: BTreeMap<TagId, TagDefinition>,
-    pub matches: BTreeMap<String, ManualMatchTags>,
+    matches: BTreeMap<String, ManualMatchTags>,
 }
 
 impl Default for Store {
@@ -170,26 +170,17 @@ mod tests {
         let tag = TagDefinition::custom("Clutch").unwrap();
         loaded.store.insert_definition(tag.clone()).unwrap();
         let match_group = "a".repeat(64);
-        let mut manual = ManualMatchTags::default();
-        manual.replace(vec![tag.id.clone()]).unwrap();
-        loaded.store.matches.insert(match_group.clone(), manual);
+        loaded.store.matches.insert(
+            match_group.clone(),
+            ManualMatchTags {
+                ids: vec![tag.id.clone()],
+            },
+        );
         let stamp = loaded.store.publish(&owner).unwrap();
         let reopened = load(owner.root_path()).unwrap();
         assert_eq!(reopened.stamp, stamp);
         assert_eq!(reopened.store.revision, 1);
         assert_eq!(reopened.store.definitions.get(&tag.id), Some(&tag));
-        assert_eq!(
-            tags::effective_assignments(
-                [TagId::parse("builtin:pentakill").unwrap()],
-                &reopened.store.matches[&match_group]
-            ),
-            vec![
-                (
-                    TagId::parse("builtin:pentakill").unwrap(),
-                    tags::TagAssignmentSource::Detected
-                ),
-                (tag.id, tags::TagAssignmentSource::Manual),
-            ]
-        );
+        assert_eq!(reopened.store.matches[&match_group].ids, [tag.id]);
     }
 }

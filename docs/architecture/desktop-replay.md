@@ -116,9 +116,10 @@ exporter's source changes or its preview is disposed.
 
 ## Library and viewer flow
 
-The Match History queue row, champion selections, Favorites star and Tags menu
-submit committed criteria. Player, recording date and result apply together
-from the Filters form. Champion suggestions use the accepted playable snapshot
+The Match History queue row, champion selections and detected event Tags menu
+submit committed criteria. The History toolbar's Favorites star applies immediately.
+Player, recording date and result apply together from the Filters form.
+Champion suggestions use the accepted playable snapshot
 in memory. The picker opens on focus with up to six unselected portraits and
 names, and narrows the list as the user types. Typing never schedules a History
 query in normal use. The synthetic replay benchmark retains its original 180 ms

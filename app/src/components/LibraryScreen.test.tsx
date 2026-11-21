@@ -202,7 +202,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", asy
   const [assets, setAssets] = createSignal(ddragon);
   const [games, setGames] = createSignal([game]);
   const [history,setHistory]=createSignal<HistoryState>({page:null,loading:false,indexing:false,initializing:false,error:null,indexIssue:null,laterPage:false});
-  const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn(), editTags = vi.fn().mockResolvedValue(true);
+  const opened = vi.fn(), saved = vi.fn(), deleted = vi.fn();
   const dispose = render(() => <LibraryScreen
     tab="games"
     games={games()}
@@ -213,7 +213,6 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", asy
     busyId={null}
     snapshotOrigin={origin}
     tagToken={origin.token}
-    onEditMatchTags={editTags}
     onOpenGame={opened}
     onToggleSaved={saved}
     onDeleteGame={deleted}
@@ -248,19 +247,13 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", asy
   queues.find(button => button.textContent === "All")!.click();
   setHistory(settled);
   const stats={source:"final_eog" as const,kills:6,deaths:null,assists:9,items:[0,null],keystone_id:9923,secondary_style:8000,summoner_spells:["4","6"],creep_score:136,duration_seconds:985,evidence:null,final_evidence:null,game_tick:null};
-  const montage = customTag("Montage");
-  const tags = [assigned(pentakill, "detected"), assigned(montage)];
-  vi.mocked(tagChoices).mockResolvedValue([pentakill, montage]);
-  setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,tags,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
-  const tagButton = (text: string) => [...host.querySelectorAll("button")].find(button => button.textContent === text)!;
-  tagButton("Edit tags").click();
-  const editor = host.querySelector('fieldset:has([aria-label="Tag options"])')!;
-  expect(editor.querySelector('[class*="detectedBadge"]')?.textContent).toBe("Pentakill");
-  expect([...editor.querySelectorAll('label')].map(label => label.textContent)).not.toContain("Pentakill");
-  [...editor.querySelectorAll('label')].find(label => label.textContent === "Montage")!.querySelector("input")!.click();
-  tagButton("Save tags").click();
-  expect(editTags).toHaveBeenCalledExactlyOnceWith(game.match_group, []);
-  await vi.waitFor(() => expect(editor.isConnected).toBe(false));
+  const eventTag = assigned(pentakill, "detected");
+  setHistory({...history(),page:{rows:[{media_id:game.media_id!,game,stats,event_tag:eventTag,index_status:"ready"}],next:null,indexed_recordings:1,catalog_recordings:1,unknown_recordings:0}});
+  const badge = host.querySelector('[class*="detectedBadge"]')!;
+  expect(badge.textContent).toBe("Pentakill");
+  expect(badge.parentElement!.previousElementSibling?.textContent).toContain("6 /");
+  expect(host.querySelectorAll('[class*="detectedBadge"]')).toHaveLength(1);
+  expect([...host.querySelectorAll("button")].map(button => button.textContent)).not.toContain("Edit tags");
   expect(host.textContent).not.toContain("Final EOG"); expect(host.textContent).not.toContain("PERFECT KDA");
   expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS 1368.3 / min");
   setAssets({...ddragon,state:"ready",asset_base_url:"http://assets.test/ddragon/16.20.1"});
@@ -398,18 +391,18 @@ it("suggests played champions locally and applies only explicit choices", async 
   expect(document.activeElement).toBe(ranked);
   expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ queue: "ranked_5s" }));
 
-  vi.mocked(tagChoices).mockResolvedValue([customTag("Montage")]);
-  button("My events").click();
-  checkbox("My pentakill").click();
-  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ personal_moments: ["pentakill"] }));
+  vi.mocked(tagChoices).mockResolvedValue([pentakill, customTag("Montage")]);
+  expect(host.querySelectorAll('[role="combobox"]')).toHaveLength(1);
+  expect([...host.querySelectorAll("button")].map(button => button.textContent)).not.toContain("My events");
   button("Tags").click();
   await vi.advanceTimersByTimeAsync(1);
   expect(tagChoices).toHaveBeenLastCalledWith("a", "");
-  checkbox("Montage").click();
-  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ personal_moments: ["pentakill"], tags: [customTag("Montage").id] }));
+  expect([...host.querySelectorAll("fieldset label")].map(label => label.textContent)).not.toContain("Montage");
+  checkbox("Pentakill").click();
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [pentakill.id] }));
   button("Filters").click();
   const form = host.querySelector("form")!;
-  const player = form.querySelector("input")!;
+  const player = form.querySelector<HTMLInputElement>('input[placeholder="Name#TAG"]')!;
   const editPlayer = (value: string) => { player.value = value; player.dispatchEvent(new Event("input", { bubbles: true })); };
   const apply = () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   onQuery.mockClear();
@@ -440,8 +433,11 @@ it("suggests played champions locally and applies only explicit choices", async 
     recorded_from: new Date(2026, 6, 2).getTime() / 1000,
     recorded_before: new Date(2026, 6, 6).getTime() / 1000,
   }));
-  host.querySelector<HTMLButtonElement>('[aria-label="Favorites only"]')!.click();
-  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ saved_only: true }));
+  const favorites = host.querySelector<HTMLButtonElement>('[aria-label="Favorites only"]')!;
+  expect(favorites.getAttribute("aria-pressed")).toBe("false");
+  favorites.click();
+  expect(favorites.getAttribute("aria-pressed")).toBe("true");
+  expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ saved_only: true, outcome: "win" }));
   host.querySelector<HTMLButtonElement>('[aria-label="Remove Ahri"]')!.click();
   expect(onQuery).toHaveBeenLastCalledWith(expect.objectContaining({ played_champions: ["Kai'Sa"] }));
   onQuery.mockClear(); type("no current selection");
@@ -449,6 +445,7 @@ it("suggests played champions locally and applies only explicit choices", async 
   expect(onQuery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ played_champions: ["Kai'Sa"] }));
   button("Clear all").click();
   expect(onQuery).toHaveBeenLastCalledWith({ limit: 50 });
+  expect(favorites.getAttribute("aria-pressed")).toBe("false");
   expect(host.querySelector('[aria-label="Active filters"]')).toBeNull();
   expect(search.value).toBe("");
   dispose();

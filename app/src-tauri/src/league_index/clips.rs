@@ -474,7 +474,7 @@ impl Index {
             WHERE header IS NOT NULL AND (?1 IS NULL OR match_group=?1) GROUP BY group_key
             HAVING ?2 IS NULL OR recent<?2 OR (recent=?2 AND group_key>?3)
             ORDER BY recent DESC,group_key LIMIT ?4";
-        let mut statement = self.db.prepare(&groups_sql)?;
+        let mut statement = self.db.prepare(groups_sql)?;
         let after_time = query.after.as_ref().map(|(time, _)| *time);
         let after_key = query.after.as_ref().map(|(_, key)| key);
         let cap = (GROUPS + 1) as i64;
@@ -634,7 +634,7 @@ impl Index {
             WHERE header IS NOT NULL AND group_key=?1
             AND (?2 IS NULL OR (part,frame,id)>(?2,?3,?4))
             ORDER BY part,frame,id LIMIT ?5";
-        let mut statement = self.db.prepare_cached(&sql)?;
+        let mut statement = self.db.prepare_cached(sql)?;
         let part = after.map(|(part, _, _)| part);
         let frame = after.map(|(_, frame, _)| frame);
         let id = after.map(|(_, _, id)| id.as_str());

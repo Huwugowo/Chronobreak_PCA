@@ -161,10 +161,19 @@ export function ChampionAutocomplete(props: {
   onRetry?: () => void;
   label?: string;
   placeholder?: string;
+  maxLength?: number;
+  value?: string;
+  onValueChange?: (value: string) => void;
 }) {
   const id = createUniqueId();
   const optionsId = `${id}-champions`;
-  const [text, setText] = createSignal("");
+  const [draftText, setDraftText] = createSignal("");
+  const text = () => props.value ?? draftText();
+  const updateText = (value: string) => {
+    if (text() === value) return;
+    if (props.onValueChange) props.onValueChange(value);
+    else setDraftText(value);
+  };
   const [open, setOpen] = createSignal(false);
   const [activeOption, setActiveOption] = createSignal(-1);
   let input!: HTMLInputElement;
@@ -186,8 +195,14 @@ export function ChampionAutocomplete(props: {
   const show = () => { props.onOpen?.(); setOpen(true); };
   const close = () => { props.onClose?.(); setOpen(false); setActiveOption(-1); };
   createEffect(() => { if (props.dismiss) close(); });
-  createEffect(() => { props.reset; setText(""); setActiveOption(-1); });
-  const choose = (name: string) => { props.onSelect(name); setText(""); input.focus(); close(); };
+  createEffect(() => { props.reset; setDraftText(""); setActiveOption(-1); });
+  const choose = (name: string) => { props.onSelect(name); setDraftText(""); input.focus(); close(); };
+  const expanded = () => open() && (!props.onValueChange || suggestions().length > 0 || !!props.pending || !!props.error);
+  const onSearchInput = (value: string) => {
+    updateText(value);
+    show();
+    setActiveOption(-1);
+  };
   const optionId = (index: number) => `${optionsId}-${index}`;
   return <div ref={picker} class={`${styles.anchor} ${styles.championPicker}`} onFocusOut={event => {
     if (!(event.relatedTarget instanceof Node) || !picker.contains(event.relatedTarget)) close();
@@ -201,14 +216,14 @@ export function ChampionAutocomplete(props: {
     <label class={styles.searchBox}>
       <span class={styles.searchIcon} aria-hidden="true">{props.leadingIcon ?? "⌕"}</span>
       <input ref={element => { input = element; props.inputRef?.(element); }} type="search" role="combobox" aria-label={props.label ?? "Search played champions"} aria-autocomplete="list"
-        aria-expanded={open()} aria-controls={optionsId} aria-activedescendant={open() && suggestions()[activeOption()] ? optionId(activeOption()) : undefined}
-        placeholder={props.placeholder ?? "Search played champions…"} autocomplete="off" spellcheck={false} value={text()}
+        aria-expanded={expanded()} aria-controls={optionsId} aria-activedescendant={expanded() && suggestions()[activeOption()] ? optionId(activeOption()) : undefined}
+        placeholder={props.placeholder ?? "Search played champions…"} maxLength={props.maxLength}
+        autocomplete="off" spellcheck={false} value={text()}
         onFocus={show} onClick={show}
+        onCompositionEnd={event => onSearchInput(event.currentTarget.value)}
         onInput={event => {
           if (props.onBenchmarkInput?.(event)) return;
-          setText(event.currentTarget.value);
-          show();
-          setActiveOption(-1);
+          if (!event.isComposing) onSearchInput(event.currentTarget.value);
         }}
         onKeyDown={event => {
           if (event.isComposing) return;
@@ -219,13 +234,13 @@ export function ChampionAutocomplete(props: {
             show();
             setActiveOption(index => event.key === "ArrowDown" ? (index + 1) % choices.length
               : index <= 0 ? choices.length - 1 : index - 1);
-          } else if (event.key === "Enter" && open()) {
+          } else if (event.key === "Enter" && expanded() && (!props.onValueChange || activeOption() >= 0)) {
             event.preventDefault();
             choose(choices[activeOption()] ?? choices[0]);
           }
         }} />
     </label>
-    <div class={`${styles.panel} ${styles.suggestions}`} hidden={!open()}>
+    <div class={`${styles.panel} ${styles.suggestions}`} hidden={!expanded()}>
       <div role="listbox" aria-label={props.label ?? "Played champions"} id={optionsId}>
         <For each={suggestions()}>{(name, index) =>
           <button type="button" id={optionId(index())} role="option" tabIndex={-1} aria-selected={index() === activeOption()}

@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js";
-import type { HistoryQueue, PersonalMoment } from "../leagueIndex";
+import type { HistoryQueue } from "../leagueIndex";
 import { MAX_TAG_FILTERS, tagChoices, type Tag } from "../managedClips";
 import { queueLabels } from "../matchQueues";
 import { FilterIcon, SearchIcon, StarIcon, TagIcon } from "../ui/icons";
@@ -8,18 +8,14 @@ import {
   FilterQueueTabs, datePresets, filterControlStyles as styles,
 } from "./FilterControls";
 
-const momentLabels: Record<PersonalMoment, string> = {
-  pentakill: "My pentakill", quadra_kill: "My quadra kill",
-  baron_steal: "My Baron steal", dragon_steal: "My dragon steal",
-};
 const resultLabels = { win: "Victory", loss: "Defeat" };
 const dateOffsets = { today: [0, 0], yesterday: [-1, -1], week: [-6, 0], month: [-29, 0] };
 const presets = Object.keys(datePresets) as (keyof typeof datePresets)[];
 type DatePreset = keyof typeof datePresets;
 export type DateFilter = { date: DatePreset | ""; from: string; to: string };
 type Advanced = DateFilter & { result: keyof typeof resultLabels | "" };
-export type SharedFilters = Advanced & { queue: HistoryQueue | null; champions: string[]; tags: string[] };
-export type HistoryOptions = { player: string; moments: PersonalMoment[]; favorites: boolean };
+export type SharedFilters = Advanced & { queue: HistoryQueue | null; champions: string[]; tags: string[]; search?: string };
+export type HistoryOptions = { player: string; favorites: boolean };
 export const emptyAdvanced: Advanced = { date: "", from: "", to: "", result: "" };
 
 function calendarDay(now: Date, offset: number) {
@@ -48,7 +44,7 @@ const validPlayer = (value: string) => {
   return parts.length === 2 && parts.every(part => part !== "" && part === part.trim())
     && !/\p{Cc}/u.test(value) && new TextEncoder().encode(value).length <= 256;
 };
-type Popup = "Tags" | "My events" | "Filters";
+type Popup = "Tags" | "Filters";
 type ChampionProps = Parameters<typeof ChampionAutocomplete>[0];
 
 export default function LibraryFilters(props: {
@@ -66,15 +62,14 @@ export default function LibraryFilters(props: {
   tagToken?: string;
   renamedTag?: Tag;
   history?: HistoryOptions;
-  clips?: { search: string; onSearch: (value: string) => void; onOpenFolder: () => void };
+  clips?: { onOpenFolder: () => void };
 }) {
   const id = createUniqueId();
   let root!: HTMLDivElement;
   let championInput!: HTMLInputElement;
-  let searchInput: HTMLInputElement | undefined;
   const [popup, setPopup] = createSignal<Popup>();
   const [queueOpen, setQueueOpen] = createSignal(false);
-  const [draft, setDraft] = createSignal<Advanced & { player: string }>({ ...emptyAdvanced, player: "" });
+  const [draft, setDraft] = createSignal<Advanced & Pick<HistoryOptions, "player">>({ ...emptyAdvanced, player: "" });
   const [customDates, setCustomDates] = createSignal(false);
   const [playerError, setPlayerError] = createSignal(false);
   const [prefix, setPrefix] = createSignal("");
@@ -127,7 +122,7 @@ export default function LibraryFilters(props: {
     const timer = setTimeout(() => void tagChoices(token, term).then(
       options => {
         if (!live) return;
-        setChoices(options);
+        setChoices(props.history ? options.filter(tag => tag.builtin) : options);
         setTagLoading(false);
       },
       () => { if (live) { setTagFailed(true); setTagLoading(false); } },
@@ -150,8 +145,6 @@ export default function LibraryFilters(props: {
     if (props.filters.queue !== queue) props.onChange({ queue });
     close();
   };
-  const moments = () => props.history?.moments ?? [];
-  const changeMoment = (moment: PersonalMoment) => props.onChange({ moments: toggle(moments(), moment) });
   const activeDate = () => {
     const { date, from, to } = props.filters;
     if (date) return datePresets[date];
@@ -160,7 +153,7 @@ export default function LibraryFilters(props: {
   };
   const advancedActive = () => !!(activeDate() || props.filters.result || props.history?.player);
   const hasCriteria = () => advancedActive() || props.filters.queue || props.filters.champions.length
-    || props.filters.tags.length || moments().length || props.history?.favorites || props.clips?.search.trim();
+    || props.filters.tags.length || props.filters.search?.trim() || props.history?.favorites;
   const invalidRange = () => {
     const { from, to } = draft();
     return !!(from && to && from > to);
@@ -171,40 +164,26 @@ export default function LibraryFilters(props: {
   }}>
     <FilterQueueTabs value={props.filters.queue} onOpen={() => close()} onExpandedChange={setQueueOpen} onChange={chooseQueue} />
     <div class={styles.toolbar}>
-      <Show when={props.clips}>{clips =>
-        <label class={`${styles.searchBox} ${styles.clipSearch}`}>
-          <SearchIcon class={styles.searchIcon} size={16} />
-          <input ref={searchInput} type="search" aria-label="Search clips" maxLength={80} value={clips().search}
-            placeholder="Search clips by title, tag or champion…" onFocus={() => close()}
-            onCompositionEnd={event => clips().onSearch(event.currentTarget.value)}
-            onInput={event => { if (!event.isComposing) clips().onSearch(event.currentTarget.value); }} />
-        </label>
-      }</Show>
       <ChampionAutocomplete champions={props.champions} selected={props.filters.champions} championPortrait={props.championPortrait}
         dismiss={!!popup() || queueOpen()} reset={championReset()} inputRef={element => { championInput = element; }}
-        leadingIcon={<SearchIcon size={16} />} onSelect={name => props.onChange({ champions: [...props.filters.champions, name] })}
+        leadingIcon={<SearchIcon size={16} />}
+        label={props.clips ? "Search clips" : undefined}
+        placeholder={props.clips ? "Search clips by title, tag or champion…" : undefined}
+        maxLength={props.clips ? 80 : undefined}
+        value={props.clips ? props.filters.search ?? "" : undefined}
+        onValueChange={props.clips ? search => props.onChange({ search }) : undefined}
+        onSelect={name => props.onChange({
+          champions: [...props.filters.champions, name], ...(props.clips ? { search: "" } : {}),
+        })}
         onOpen={() => { close(); props.onChampionOpen?.(); }} onClose={props.onChampionClose}
         pending={props.championPending} error={props.championError} onRetry={props.onChampionRetry}
         onBenchmarkInput={props.onBenchmarkInput} />
-      <Show when={props.history}>
-        <div class={styles.anchor}>
-          <FilterDropdownTrigger chevron active={!!moments().length} aria-controls={popupId("My events")}
-            aria-expanded={popup() === "My events"} onClick={() => togglePopup("My events")}>My events</FilterDropdownTrigger>
-          <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("My events")} hidden={popup() !== "My events"}>
-            <fieldset><legend>My events</legend>
-              <For each={Object.keys(momentLabels) as PersonalMoment[]}>{moment =>
-                <FilterCheckbox label={momentLabels[moment]} checked={moments().includes(moment)} onChange={() => changeMoment(moment)} />
-              }</For>
-            </fieldset>
-          </div>
-        </div>
-      </Show>
       <div class={styles.anchor}>
         <FilterDropdownTrigger chevron active={!!props.filters.tags.length} aria-controls={popupId("Tags")}
           aria-expanded={popup() === "Tags"} onClick={() => togglePopup("Tags")}><TagIcon size={16} />Tags</FilterDropdownTrigger>
         <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("Tags")} hidden={popup() !== "Tags"}>
           <fieldset aria-label="Tags"><legend>Tags</legend>
-            <Show when={props.tagToken}>
+            <Show when={props.clips && props.tagToken}>
               <input class={styles.field} type="search" aria-label="Find tags" placeholder="Find tags…"
                 value={prefix()} maxLength={40} onInput={event => setPrefix(event.currentTarget.value)} />
             </Show>
@@ -276,23 +255,23 @@ export default function LibraryFilters(props: {
           </Show>
           <Show when={invalidRange()}><p id={`${id}-date-error`} role="alert">Choose an end date on or after the start date.</p></Show>
           <button type="submit" class={styles.apply} disabled={invalidRange()}>Apply filters</button>
+          <Show when={props.clips}>{clips =>
+            <button class={styles.smallAction} type="button" onClick={() => { close(true); clips().onOpenFolder(); }}>Open clips folder</button>
+          }</Show>
         </form>
       </div>
-      <Show when={props.clips}>{clips =>
-        <button class={`${styles.tool} ${styles.folder}`} type="button" onClick={clips().onOpenFolder}>Open clips folder</button>
-      }</Show>
     </div>
     <Show when={hasCriteria()}>
       <div class={styles.criteria} aria-label="Active filters">
-        <Show when={props.clips?.search.trim()}>{term =>
-          <FilterChip label={`Search: ${term()}`} onRemove={() => props.clips?.onSearch("")} />
+        <Show when={props.filters.search?.trim()}>{term =>
+          <FilterChip label={`Search: ${term()}`} onRemove={() => props.onChange({ search: "" })} />
         }</Show>
         <For each={props.filters.champions}>{name => <FilterChip label={name} champion={name} championPortrait={props.championPortrait}
           onRemove={() => props.onChange({ champions: toggle(props.filters.champions, name) })} />}</For>
-        <For each={moments()}>{moment => <FilterChip label={momentLabels[moment]} onRemove={() => changeMoment(moment)} />}</For>
         <For each={props.filters.tags}>{id => <FilterChip label={displayedTags().get(id) ?? id}
           onRemove={() => props.onChange({ tags: toggle(props.filters.tags, id) })} />}</For>
         <Show when={props.filters.queue}>{queue => <FilterChip label={queueLabels[queue()]} onRemove={() => chooseQueue(null)} />}</Show>
+        <Show when={props.history?.favorites}><FilterChip label="Favorites only" onRemove={() => props.onChange({ favorites: false })} /></Show>
         <Show when={props.history?.player}>{player => <FilterChip label={player()} onRemove={() => props.onChange({ player: "" })} />}</Show>
         <Show when={activeDate()}>{label =>
           <FilterChip label={label()} onRemove={() => props.onChange({ date: "", from: "", to: "" })} />}</Show>
@@ -301,7 +280,7 @@ export default function LibraryFilters(props: {
         <ClearFiltersButton onClear={() => {
           close(); setPrefix(""); resetChampion(value => value + 1);
           props.onClear();
-          (searchInput ?? championInput).focus();
+          championInput.focus();
         }} />
       </div>
     </Show>

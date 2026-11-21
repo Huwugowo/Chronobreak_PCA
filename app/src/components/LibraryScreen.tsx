@@ -5,8 +5,8 @@ import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHi
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
 import type { HistoryQuery, HistoryStats } from "../leagueIndex";
 import type { HistoryState } from "../historyController";
-import { detectedTagAssignments, manualTagDefinitions, type ClipCard, type ClipTagUpdate, type Tag } from "../managedClips";
-import { TagBadges, TagEditor } from "./ClipMetadataFields";
+import type { ClipCard, ClipTagUpdate, Tag } from "../managedClips";
+import { TagBadges } from "./ClipMetadataFields";
 import { ClipGroups } from "./ManagedClips";
 import { recordBenchmarkSearchInput, recordBenchmarkSearchSchedule } from "../benchmarkSearch";
 import type { DurationDisplay } from "../libraryController";
@@ -42,8 +42,6 @@ type Props = {
   snapshotOrigin: LibraryOrigin | null;
   history?: HistoryState;
   tagToken?: string;
-  onEditMatchTags?: (group: string, selected: Tag[]) => Promise<boolean>;
-  onTagRenamed?: (tag: Tag) => void;
   renamedTag?: Tag;
   clipTagUpdate?: ClipTagUpdate;
   onHistoryQuery?: (query: HistoryQuery, benchmarkActionId?: string) => void;
@@ -139,18 +137,6 @@ function GamesLibrary(props: Props) {
   const [textPending, setTextPending] = createSignal(false);
   const [expandedMatch, setExpandedMatch] = createSignal<string | null>(null);
   const [expandedClips, setExpandedClips] = createSignal<string | null>(null);
-  const [tagEdit, setTagEdit] = createSignal<string>();
-  const [draftTags, setDraftTags] = createSignal<Tag[]>([]);
-  const [savingTags, setSavingTags] = createSignal(false);
-  const saveTags = async () => {
-    const edit = tagEdit();
-    if (!edit || savingTags() || !props.onEditMatchTags) return;
-    setSavingTags(true);
-    try {
-      if (await props.onEditMatchTags(edit, draftTags())) setTagEdit(undefined);
-    } finally { setSavingTags(false); }
-  };
-  createEffect(on(() => props.snapshotOrigin?.root, () => setTagEdit(undefined), { defer: true }));
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchActionId: string | undefined;
   let scheduledSearchActionId: string | undefined;
@@ -184,7 +170,7 @@ function GamesLibrary(props: Props) {
   ));
   onCleanup(() => { clearTimeout(searchTimer); recordBenchmarkSearchSchedule("coalesced", scheduledSearchActionId); });
   const updating = () => textPending() || !!props.history?.loading;
-  const semanticQuery = () => !!(filters().queue || filters().player || filters().result || filters().moments.length);
+  const semanticQuery = () => !!(filters().queue || filters().player || filters().result || filters().tags.length);
   const filterActive = createMemo(() => Object.keys(historyQueryForFilters(filters())).length > 1);
   const matchStatus = () => {
     const history = props.history;
@@ -231,7 +217,7 @@ function GamesLibrary(props: Props) {
       const matches = rows.map(row => partsFor(row.game).find(game => game.media_id === row.media_id && game.timestamp === row.game.timestamp)).filter((game): game is GameSummary => !!game);
       return matches;
     }
-    if (semanticQuery() || filters().tags.length || filters().date || filters().from || filters().to) return [];
+    if (semanticQuery() || filters().date || filters().from || filters().to) return [];
     return fallbackCards().filter(basicMatch).slice(0, 50);
     function basicMatch(game: GameSummary) {
       const matchesSearch =
@@ -256,10 +242,10 @@ function GamesLibrary(props: Props) {
   const statsFor = (game: GameSummary) => rowFor(game)?.stats ?? unavailableStats;
 
   return (
-    <section class={matchStyles.matchHistory} aria-label="Match History">
+    <section class={styles.contentRail} aria-label="Match History">
       <MatchHistoryFilters filters={filters()} onChange={setFilters} champions={champions()}
         championPortrait={name => ddragonAsset(props.ddragon, "champion", name)}
-        tagToken={props.tagToken} renamedTag={props.renamedTag}
+        tagToken={props.tagToken}
         onBenchmarkInput={event => {
           if (event.isTrusted) return false;
           searchActionId = recordBenchmarkSearchInput(event.currentTarget);
@@ -299,7 +285,7 @@ function GamesLibrary(props: Props) {
                 const outcome = () => displayedOutcome(rowFor(game())?.game ?? game());
                 const health = () => replayHealth(game());
                 const stats = () => statsFor(game());
-                const matchTags = () => rowFor(game())?.tags ?? [];
+                const eventTag = () => rowFor(game())?.event_tag;
                 const participants = createMemo(() => rowFor(game())?.game.participants ?? game().participants, undefined, {
                   equals: (before, after) => before.length === after.length && before.every((player, index) => {
                     const next = after[index];
@@ -444,13 +430,16 @@ function GamesLibrary(props: Props) {
                         </span>
 
                         <span class={matchStyles.performance}>
-                          <span class={matchStyles.kda}>
-                            <strong>
-                              {stats().kills ?? "—"} <i>/</i>{" "}
-                              {stats().deaths ?? "—"} <i>/</i>{" "}
-                              {stats().assists ?? "—"}
-                            </strong>
-                            <em>{formatKdaRatio(stats())}</em>
+                          <span class={matchStyles.kdaRow}>
+                            <span class={matchStyles.kda}>
+                              <strong>
+                                {stats().kills ?? "—"} <i>/</i>{" "}
+                                {stats().deaths ?? "—"} <i>/</i>{" "}
+                                {stats().assists ?? "—"}
+                              </strong>
+                              <em>{formatKdaRatio(stats())}</em>
+                            </span>
+                            <Show when={eventTag()}>{tag => <TagBadges tags={[tag()]} class={matchStyles.eventBadge} />}</Show>
                           </span>
 
                           <span class={matchStyles.items} aria-hidden="true">
@@ -605,28 +594,6 @@ function GamesLibrary(props: Props) {
                        </Show>
                      </div>
                     </div>
-                  <Show when={matchTags().length || (rowFor(game()) && props.onEditMatchTags && props.tagToken)}>
-                    <div class={matchStyles.matchTags}>
-                      <TagBadges tags={matchTags()} />
-                      <Show when={rowFor(game()) && props.onEditMatchTags && props.tagToken}>
-                        <button class={controlStyles.control} type="button" disabled={mutationsBlocked() || savingTags()}
-                          aria-expanded={tagEdit() === group} aria-controls={`match-tags-${group}`}
-                          onClick={() => {
-                            if (tagEdit() === group) { setTagEdit(undefined); return; }
-                            setDraftTags(manualTagDefinitions(matchTags()));
-                            setTagEdit(group);
-                          }}>Edit tags</button>
-                      </Show>
-                    </div>
-                  </Show>
-                  <Show when={tagEdit() === group && props.tagToken}>
-                    <div class={matchStyles.matchTagEditor} id={`match-tags-${group}`}>
-                      <TagEditor token={props.tagToken!} tags={draftTags()} detected={detectedTagAssignments(matchTags())} onTagsChange={setDraftTags}
-                        disabled={savingTags()} onTagRenamed={props.onTagRenamed} />
-                      <button type="button" class={controlStyles.control} disabled={savingTags()} onClick={() => void saveTags()}>Save tags</button>
-                      <button type="button" class={controlStyles.control} disabled={savingTags()} onClick={() => setTagEdit(undefined)}>Cancel</button>
-                    </div>
-                  </Show>
                   <Show when={props.onOpenManagedClip && group && (clipCount() ?? 0) > 1}>
                     <section class={matchStyles.matchClipStrip} id={clipRegionId} aria-label="Clips from this match" hidden={!clipsExpanded()}>
                       <Show when={props.snapshotOrigin && clipsExpanded()}>

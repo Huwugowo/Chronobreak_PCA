@@ -954,8 +954,8 @@ fn simplified_history_uses_checked_queue_roster_and_outcome() {
 }
 
 #[test]
-fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
-    use crate::tags::{ManualMatchTags, TagId};
+fn history_uses_only_checked_local_events_and_shows_the_highest_priority() {
+    use crate::tags::TagId;
     let f = Fixture::new(1);
     let mut index = f.index();
     f.ready(&mut index);
@@ -969,20 +969,6 @@ fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
             |row| row.get(0),
         )
         .unwrap();
-    let matches = |moments: &[PersonalMoment]| {
-        !index
-            .history(
-                &HistoryQuery {
-                    limit: 1,
-                    personal_moments: moments.to_vec(),
-                    ..Default::default()
-                },
-                1,
-            )
-            .unwrap()
-            .rows
-            .is_empty()
-    };
     let event = |sequence, kind, stolen: Option<bool>, streak: Option<u8>, epoch| {
         index.db.execute(
             "INSERT INTO events(media_id,run_id,epoch,source_id,sequence,ordinal,kind,stolen,kill_streak,ingestion)
@@ -998,21 +984,27 @@ fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
         ).unwrap();
     };
     let group = f.summary.match_group.as_deref().unwrap();
-    let penta = TagId::parse("builtin:pentakill").unwrap();
-    let quadra = TagId::parse("builtin:quadra_kill").unwrap();
-    let double = TagId::parse("builtin:double_kill").unwrap();
-    let query_tags = |tag: &TagId| {
+    let query_tags = |names: &[&str]| {
         index
             .history(
                 &HistoryQuery {
                     limit: 1,
-                    tags: vec![tag.clone()],
+                    tags: names
+                        .iter()
+                        .map(|name| TagId::parse(&format!("builtin:{name}")).unwrap())
+                        .collect(),
                     ..Default::default()
                 },
                 1,
             )
             .unwrap()
             .rows
+    };
+    let badge = || {
+        query_tags(&[])[0]
+            .event_tag
+            .as_ref()
+            .map(|tag| tag.definition.label.clone())
     };
     let refresh_tags = || {
         super::match_tags::refresh_recording(&index.db, &f.source.media_id).unwrap();
@@ -1026,53 +1018,44 @@ fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
     actor(1003, local, "resolved", 0, 1);
     event(1004, "Multikill", None, Some(5), 0);
     actor(1004, local, "unknown", 0, 0);
-    assert!(!matches(&[PersonalMoment::Pentakill]));
     refresh_tags();
-    assert!(query_tags(&quadra).is_empty());
-    let mut manual = ManualMatchTags::default();
-    manual.replace(vec![penta.clone()]).unwrap();
-    Index::replace_manual_match_tags(&index.db, group, &manual).unwrap();
-    assert_eq!(query_tags(&quadra)[0].tags[0].definition.id, penta);
-    assert!(!matches(&[PersonalMoment::Pentakill]));
-    Index::replace_manual_match_tags(&index.db, group, &ManualMatchTags::default()).unwrap();
-    event(1005, "Multikill", None, Some(5), 0);
+    assert_eq!(badge(), None);
+    index
+        .db
+        .execute(
+            "INSERT INTO match_tag_effective VALUES (?1,'builtin:pentakill','manual')",
+            [group],
+        )
+        .unwrap();
+    assert!(query_tags(&["quadra_kill"]).is_empty());
+    assert_eq!(badge(), None);
+
+    event(1005, "BaronKill", Some(false), None, 0);
     actor(1005, local, "resolved", 0, 0);
-    assert!(matches(&[PersonalMoment::Pentakill]));
-    assert!(!matches(&[PersonalMoment::QuadraKill]));
-    refresh_tags();
-    assert_eq!(query_tags(&quadra)[0].tags[0].definition.id, penta);
-    let mut manual = ManualMatchTags::default();
-    manual.replace(vec![double.clone()]).unwrap();
-    Index::replace_manual_match_tags(&index.db, group, &manual).unwrap();
-    refresh_tags();
-    assert!(!query_tags(&quadra).is_empty());
-    assert!(
-        query_tags(&double)[0]
-            .tags
-            .iter()
-            .any(|tag| tag.definition.id == double)
-    );
-    assert!(matches(&[PersonalMoment::Pentakill]));
-    manual.replace(vec![]).unwrap();
-    Index::replace_manual_match_tags(&index.db, group, &manual).unwrap();
-    refresh_tags();
-    assert!(!query_tags(&double).is_empty());
-    event(1006, "BaronKill", Some(false), None, 0);
+    event(1006, "DragonKill", Some(true), None, 0);
     actor(1006, local, "resolved", 0, 0);
-    assert!(!matches(&[
-        PersonalMoment::BaronSteal,
-        PersonalMoment::Pentakill
-    ]));
-    event(1007, "BaronKill", Some(true), None, 0);
-    actor(1007, local, "resolved", 0, 0);
-    assert!(matches(&[
-        PersonalMoment::BaronSteal,
-        PersonalMoment::Pentakill
-    ]));
-    assert!(!matches(&[PersonalMoment::DragonSteal]));
-    Index::replace_manual_match_tags(&index.db, group, &ManualMatchTags::default()).unwrap();
     refresh_tags();
-    assert_eq!(query_tags(&quadra).len(), 1);
+    assert_eq!(badge().as_deref(), Some("Dragon Steal"));
+    assert!(query_tags(&["baron_steal"]).is_empty());
+
+    for (sequence, kind, stolen, streak, label) in [
+        (1007, "HeraldKill", Some(true), None, "Herald Steal"),
+        (1008, "BaronKill", Some(true), None, "Baron Steal"),
+        (1009, "Multikill", None, Some(2), "Double Kill"),
+        (1010, "Multikill", None, Some(4), "Quadra Kill"),
+        (1011, "Multikill", None, Some(5), "Pentakill"),
+    ] {
+        event(sequence, kind, stolen, streak, 0);
+        actor(sequence, local, "resolved", 0, 0);
+        refresh_tags();
+        assert_eq!(badge().as_deref(), Some(label));
+    }
+    let filtered = query_tags(&["quadra_kill", "herald_steal", "dragon_steal"]);
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(
+        filtered[0].event_tag.as_ref().unwrap().definition.label,
+        "Pentakill"
+    );
     index
         .db
         .execute(
@@ -1080,9 +1063,9 @@ fn personal_history_requires_the_resolved_local_killer_and_exact_event() {
             [media],
         )
         .unwrap();
-    assert!(!matches(&[PersonalMoment::BaronSteal]));
     super::match_tags::refresh_dirty(&index.db).unwrap();
-    assert!(query_tags(&quadra).is_empty());
+    assert!(query_tags(&["quadra_kill"]).is_empty());
+    assert_eq!(badge(), None);
 }
 
 #[test]

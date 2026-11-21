@@ -403,7 +403,7 @@ fn representative_local_sql_query_measurements() {
     index
         .db
         .execute(
-            "INSERT INTO match_tag_effective SELECT DISTINCT match_group,'builtin:pentakill'
+            "INSERT INTO match_tag_effective SELECT DISTINCT match_group,'builtin:pentakill','detected'
          FROM recordings WHERE match_group IS NOT NULL",
             [],
         )
@@ -413,7 +413,6 @@ fn representative_local_sql_query_measurements() {
         queue: Some(HistoryQueue::RankedSoloDuo),
         played_champions: vec![f.summary.champion.clone(), "Ahri".into()],
         player_riot_id: Some("Measure#NA".into()),
-        personal_moments: vec![PersonalMoment::DragonSteal],
         tags: vec![crate::tags::TagId::parse("builtin:quadra_kill").unwrap()],
         ..Default::default()
     };
@@ -489,9 +488,9 @@ fn representative_match_tag_queries() {
     index
         .db
         .execute_batch(
-            "INSERT INTO match_tag_effective SELECT match_group,'builtin:pentakill' FROM recordings
+            "INSERT INTO match_tag_effective SELECT match_group,'builtin:pentakill','detected' FROM recordings
          WHERE match_group IS NOT NULL AND rowid%5=0;
-         INSERT INTO match_tag_effective SELECT match_group,'builtin:baron_steal' FROM recordings
+         INSERT INTO match_tag_effective SELECT match_group,'builtin:baron_steal','detected' FROM recordings
          WHERE match_group IS NOT NULL AND rowid%43=0;
          ANALYZE;",
         )
@@ -507,11 +506,11 @@ fn representative_match_tag_queries() {
     let first = query(&["builtin:quadra_kill"]);
     let page = index.history(&first, CATALOG_ROWS).unwrap();
     assert_eq!(page.rows.len(), 50);
-    assert!(
-        page.rows
-            .iter()
-            .all(|row| row.tags.iter().any(|tag| tag.definition.tier == Some(5)))
-    );
+    assert!(page.rows.iter().all(|row| {
+        row.event_tag
+            .as_ref()
+            .is_some_and(|tag| tag.definition.tier == Some(5))
+    }));
     let cases = [
         ("unfiltered", query(&[]), 50),
         ("implied", first.clone(), 50),
@@ -573,7 +572,9 @@ fn representative_history_command_measurements() {
          INSERT INTO event_actors(media_id,run_id,epoch,sequence,revision_ordinal,role,ordinal,participant_id,status)
          SELECT e.media_id,e.run_id,e.epoch,e.sequence,e.ordinal,'killer',0,1,'resolved'
          FROM events e WHERE e.kind='Multikill' AND e.sequence=2;
-         INSERT INTO match_tag_effective SELECT DISTINCT match_group,'builtin:pentakill'
+         INSERT INTO match_tag_effective SELECT match_group,'builtin:pentakill','detected'
+         FROM recordings WHERE bundle BETWEEN 'm00000' AND 'm00002';
+         INSERT INTO match_tag_effective SELECT match_group,'builtin:dragon_steal','detected'
          FROM recordings WHERE match_group IS NOT NULL;"
     ).unwrap();
     let games = {
@@ -656,18 +657,18 @@ fn representative_history_command_measurements() {
             "combined",
             json!({
                 "limit": 50, "queue": "ranked_solo_duo", "played_champions": ["Syndra", "Ahri"],
-                "player_riot_id": "Measure#NA", "personal_moments": ["dragon_steal"], "tags": ["builtin:quadra_kill"]
+                "player_riot_id": "Measure#NA", "tags": ["builtin:dragon_steal"]
             }),
             50,
         ),
         (
             "rare-pentakill",
-            json!({ "limit": 50, "personal_moments": ["pentakill"] }),
+            json!({ "limit": 50, "tags": ["builtin:pentakill"] }),
             3,
         ),
         (
-            "absent-quadra",
-            json!({ "limit": 50, "personal_moments": ["quadra_kill"] }),
+            "absent-herald",
+            json!({ "limit": 50, "tags": ["builtin:herald_steal"] }),
             0,
         ),
         (

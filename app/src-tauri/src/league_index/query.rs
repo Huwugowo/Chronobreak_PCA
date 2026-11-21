@@ -6,10 +6,7 @@ pub(super) const MAX_WINDOW_ROWS: usize = 512;
 pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 // The newest member stands for its match in the date index. Card facts can
 // come from another member without changing the cursor or page membership.
-// Keep the personal-moment joins anchored to the match group so SQLite cannot
-// start from all events of the given kind for each candidate match.
-// Uncorrelated player and multikill checks prune candidates before card lookup.
-// The per-match predicates still establish scope and local attribution.
+// Uncorrelated player and tag checks prune candidates before card lookup.
 pub(super) const HISTORY_SQL: &str = "
     /* match tag candidates */
     SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved
@@ -30,12 +27,6 @@ pub(super) const HISTORY_SQL: &str = "
     AND (?19 IS NULL
         OR EXISTS(SELECT 1 FROM final_players f WHERE f.riot_id=?19 COLLATE NOCASE)
         OR EXISTS(SELECT 1 FROM participants p WHERE p.riot_id=?19 COLLATE NOCASE))
-    AND (?23 IS NULL OR g.match_group IN (
-        SELECT part.match_group FROM events e INDEXED BY events_kind
-        CROSS JOIN recordings part ON part.media_id=e.media_id
-        WHERE e.kind='Multikill' AND e.kill_streak=?23 AND e.ingestion NOT IN ('invalid','conflict')
-            AND part.match_group IS NOT NULL AND part.facts_current=1 AND part.telemetry_status='ready'
-    ))
     AND (?1 IS NULL OR g.recorded_at<?1 OR (g.recorded_at=?1 AND g.media_id>?2))
     AND g.media_id=(SELECT head.media_id FROM recordings head WHERE head.match_group=g.match_group
         ORDER BY head.recorded_at DESC,head.media_id LIMIT 1)
@@ -64,30 +55,17 @@ pub(super) const HISTORY_SQL: &str = "
             SELECT 1 FROM participants p WHERE p.media_id=r.media_id AND p.riot_id=?19 COLLATE NOCASE)))))
     AND (?20 IS NULL OR unixepoch(g.recorded_at)>=?20)
     AND (?21 IS NULL OR unixepoch(g.recorded_at)<?21)
-    AND (?22 IS NULL OR NOT EXISTS(
-        SELECT 1 FROM json_each(?22) moment WHERE NOT EXISTS(
-            SELECT 1 FROM recordings part
-            CROSS JOIN events e INDEXED BY events_kind ON e.media_id=part.media_id AND e.kind=json_extract(moment.value,'$.kind')
-            CROSS JOIN scopes s ON s.media_id=e.media_id AND s.run_id=e.run_id AND s.epoch=e.epoch
-            CROSS JOIN effective_event_actors a ON a.media_id=e.media_id AND a.run_id=e.run_id AND a.epoch=e.epoch
-                AND a.sequence=e.sequence AND a.revision_ordinal=e.ordinal
-                AND a.status='resolved' AND a.role='killer' AND a.participant_id=s.local_participant
-            WHERE part.match_group=g.match_group AND part.facts_current=1 AND part.telemetry_status='ready'
-                AND e.ingestion NOT IN ('invalid','conflict')
-                AND (json_extract(moment.value,'$.streak') IS NULL OR e.kill_streak=json_extract(moment.value,'$.streak'))
-                AND (json_extract(moment.value,'$.stolen') IS NULL OR e.stolen=1)
-        )
-    ))
     /* match tag predicates */
     ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12";
 // Resolve assignment filters before the date-ordered recording and match detail lookups.
 const HISTORY_MATCH_TAG_CANDIDATES: &str = "
     WITH tag_candidates AS MATERIALIZED (
-        SELECT candidate.match_group FROM json_each(json_extract(?24,'$[0]')) accepted
+        SELECT candidate.match_group FROM json_each(json_extract(?22,'$[0]')) accepted
         CROSS JOIN match_tag_effective candidate ON candidate.tag_id=accepted.value
-        WHERE NOT EXISTS(SELECT 1 FROM json_each(?24) tag WHERE tag.key>0 AND NOT EXISTS(
+        WHERE candidate.source='detected' AND NOT EXISTS(SELECT 1 FROM json_each(?22) tag WHERE tag.key>0 AND NOT EXISTS(
             SELECT 1 FROM json_each(tag.value) implied
             CROSS JOIN match_tag_effective t WHERE t.match_group=candidate.match_group AND t.tag_id=implied.value
+                AND t.source='detected'
         ))
     )";
 const HISTORY_MATCH_TAG_PREDICATE: &str = "
@@ -218,8 +196,6 @@ pub(crate) struct HistoryQuery {
     pub recorded_from: Option<i64>,
     pub recorded_before: Option<i64>,
     #[serde(default)]
-    pub personal_moments: Vec<PersonalMoment>,
-    #[serde(default)]
     pub tags: Vec<crate::tags::TagId>,
 }
 
@@ -278,38 +254,6 @@ impl HistoryQueue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PersonalMoment {
-    QuadraKill,
-    Pentakill,
-    BaronSteal,
-    DragonSteal,
-}
-
-#[derive(Serialize)]
-struct MomentPredicate {
-    kind: &'static str,
-    streak: Option<u8>,
-    stolen: Option<bool>,
-}
-
-impl From<PersonalMoment> for MomentPredicate {
-    fn from(moment: PersonalMoment) -> Self {
-        let (kind, streak, stolen) = match moment {
-            PersonalMoment::QuadraKill => ("Multikill", Some(4), None),
-            PersonalMoment::Pentakill => ("Multikill", Some(5), None),
-            PersonalMoment::BaronSteal => ("BaronKill", None, Some(true)),
-            PersonalMoment::DragonSteal => ("DragonKill", None, Some(true)),
-        };
-        Self {
-            kind,
-            streak,
-            stolen,
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StatsSource {
@@ -360,8 +304,8 @@ pub(crate) struct HistoryRow {
     pub index_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_count: Option<u64>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<crate::tags::TagAssignment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_tag: Option<crate::tags::TagAssignment>,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct HistoryPage {
@@ -671,10 +615,6 @@ impl Index {
             query.played_champions.len() <= 200,
             "history champion capacity"
         );
-        ensure!(
-            query.personal_moments.len() <= 4,
-            "history personal moment capacity"
-        );
         for text in [
             query.champion.as_deref(),
             query.mode.as_deref(),
@@ -716,19 +656,13 @@ impl Index {
             .transpose()?
             .unwrap_or_default();
         let champions = json_list(&query.played_champions)?;
-        let moments: Vec<_> = query
-            .personal_moments
-            .iter()
-            .copied()
-            .map(MomentPredicate::from)
-            .collect();
-        // One required streak is enough to restrict the candidate groups. The
-        // per-group predicates still check every moment and its local actor.
-        let required_streak = moments.iter().filter_map(|moment| moment.streak).max();
-        let moments = json_list(&moments)?;
         ensure!(
             query.tags.len() <= crate::tags::MAX_ASSIGNMENTS,
             "history tag capacity"
+        );
+        ensure!(
+            query.tags.iter().all(crate::tags::TagId::is_builtin),
+            "history event tags only"
         );
         let event_filter = query.event_kind.is_some()
             || query.stolen.is_some()
@@ -788,8 +722,6 @@ impl Index {
             &query.player_riot_id,
             &query.recorded_from,
             &query.recorded_before,
-            &moments,
-            &required_streak,
         ];
         if filter_tags {
             bindings.push(&tagged_keys);
@@ -840,7 +772,7 @@ impl Index {
                     "pending".into()
                 },
                 clip_count: None,
-                tags: Vec::new(),
+                event_tag: None,
             };
             last_cursor = Some(HistoryCursor {
                 recorded_at: row.get(5)?,
@@ -848,20 +780,18 @@ impl Index {
             });
             output.push(item);
         }
-        let tags = self.effective_match_tags_for_groups(
+        let mut tags = self.best_match_events(
             output
                 .iter()
-                .filter_map(|item| item.game.match_group.clone()),
+                .filter_map(|item| item.game.match_group.as_deref()),
         )?;
         let mut output_bytes = 0;
         for item in &mut output {
-            item.tags = item
+            item.event_tag = item
                 .game
                 .match_group
                 .as_ref()
-                .and_then(|group| tags.get(group))
-                .cloned()
-                .unwrap_or_default();
+                .and_then(|group| tags.remove(group));
             output_bytes += serde_json::to_vec(item)?.len();
             ensure!(
                 output_bytes <= MAX_RESPONSE_BYTES,
@@ -879,11 +809,11 @@ impl Index {
         if query.participant_riot_id.is_some()
             || query.player_riot_id.is_some()
             || query.role.is_some()
-            || !query.personal_moments.is_empty()
+            || filter_tags
         {
             mask |= ACTOR_UNKNOWN;
         }
-        if event_filter || !query.personal_moments.is_empty() {
+        if event_filter || filter_tags {
             mask |= EVENTS_UNKNOWN;
         }
         let (indexed, uncertain) = self.history_counts(mask)?;

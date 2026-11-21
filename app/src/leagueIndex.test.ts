@@ -45,6 +45,9 @@ it("decodes History rosters with unresolved, zero or positive clip counts", () =
     expect(() => decodeHistoryPage(page({ clip_count }))).toThrow();
   }
   expect(() => decodeHistoryPage(page({ clip_count: 0, extra: true }))).toThrow();
+  const event_tag = { id: "builtin:herald_steal", label: "Herald Steal", tier: null, builtin: true, source: "detected" };
+  expect(decodeHistoryPage(page({ event_tag })).rows[0].event_tag).toEqual(event_tag);
+  expect(() => decodeHistoryPage(page({ event_tag: { ...event_tag, source: "manual" } }))).toThrow("history event tag");
 });
 
 describe("bounded League replay boundary", () => {

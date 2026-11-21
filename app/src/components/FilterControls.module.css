@@ -37,6 +37,13 @@
 .tool:hover, .tool[aria-expanded="true"] {
   background: var(--filter-popup-surface, #211f2c);
 }
+.star {
+  inline-size: var(--filter-control-height);
+  padding: 0;
+}
+.star[data-active="true"] {
+  color: var(--brand-yellow);
+}
 .chevron {
   flex: none;
   inline-size: 6px;
@@ -99,7 +106,7 @@
   position: relative;
 }
 .championPicker {
-  inline-size: 224px;
+  inline-size: 280px;
   max-inline-size: 100%;
   min-inline-size: 0;
 }
@@ -247,21 +254,6 @@
   flex-wrap: wrap;
   justify-content: flex-start;
 }
-.clipSearch {
-  flex: 1 1 16rem;
-  min-inline-size: 0;
-  max-inline-size: 32rem;
-}
-.folder {
-  margin-inline-start: auto;
-}
-.star {
-  inline-size: var(--filter-control-height);
-  padding: 0;
-}
-.star[data-active="true"] {
-  color: var(--brand-yellow);
-}
 .queue {
   display: flex;
   min-block-size: 41px;
@@ -396,9 +388,6 @@
   }
 }
 @container (max-width: 470px) {
-  .clipSearch {
-    flex-basis: 100%;
-  }
   .queue {
     padding-inline: 8px;
   }

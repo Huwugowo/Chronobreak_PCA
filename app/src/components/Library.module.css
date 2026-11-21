@@ -3,6 +3,12 @@
   width: 100%;
 }
 
+.contentRail {
+  inline-size: 100%;
+  max-inline-size: 1120px;
+  margin-inline: auto;
+}
+
 .settingsPanel header p,
 .clipModal header p {
   margin: 0 0 var(--space-1);

@@ -11,7 +11,7 @@ import styles from "./ManagedClips.module.css";
 vi.mock("../managedClips", async original => ({
   ...await original<typeof import("../managedClips")>(),
   readClipGridPage: vi.fn(),
-  readClipGridChampions: vi.fn(),
+  readClipGridChampions: vi.fn(async (): Promise<string[]> => []),
   tagChoices: vi.fn(),
 }));
 
@@ -101,6 +101,33 @@ it("appends cursor pages in server order and keeps the existing images mounted",
   expect(first.querySelector('img[src$="newer.jpg"]')).toBe(image);
   first.click();
   expect(onOpen).toHaveBeenCalledWith(page.clips[0], first);
+});
+
+it("loads the first clip page automatically when the library's read slots were busy", async () => {
+  vi.mocked(readClipGridPage).mockRejectedValueOnce({ code: "busy" })
+    .mockResolvedValueOnce({ clips: [fixture("available")], next: null });
+  const { host, cards } = mount();
+  await vi.waitFor(() => expect(readClipGridPage).toHaveBeenCalledOnce());
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(host.textContent).toContain("Loading clips…");
+  await vi.waitFor(() => expect(cards().map(card => card.dataset.managedClip)).toEqual(["available"]));
+  expect(readClipGridPage).toHaveBeenCalledTimes(2);
+});
+
+it("limits automatic retries and cancels further reads from a superseded clip catalog", async () => {
+  vi.mocked(readClipGridPage).mockRejectedValue({ code: "busy" });
+  const { host, accept, cards, button } = mount();
+  await vi.waitFor(() => expect(button("Try again")).toBeDefined());
+  expect(readClipGridPage).toHaveBeenCalledTimes(3);
+
+  button("Try again").click();
+  await vi.waitFor(() => expect(readClipGridPage).toHaveBeenCalledTimes(4));
+  accept("replacement", true);
+  vi.mocked(readClipGridPage).mockResolvedValueOnce({ clips: [fixture("replacement")], next: null });
+  await vi.waitFor(() => expect(cards().map(card => card.dataset.managedClip)).toEqual(["replacement"]));
+  expect(readClipGridPage).toHaveBeenCalledTimes(5);
+  expect(readClipGridPage).toHaveBeenLastCalledWith("replacement", {}, null);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
 });
 
 it("keeps loaded pages through a catalog error and rejects a late continuation from the old catalog", async () => {
@@ -290,12 +317,18 @@ it("combines queue, champion, exact tags and advanced filters and preserves matc
   expect(ranked.getAttribute("data-active")).toBe("true");
   expect(document.activeElement).toBe(ranked);
   const champion = host.querySelector<HTMLInputElement>('[role="combobox"]')!;
+  expect(host.querySelectorAll('input[aria-label="Search clips"], input[aria-label="Search played champions"]')).toHaveLength(1);
+  expect(host.querySelector('[aria-label="Favorites only"]')).toBeNull();
+  expect(champion.getAttribute("aria-label")).toBe("Search clips");
+  expect(champion.maxLength).toBe(80);
   champion.focus();
   input('[role="combobox"]', "kaisa");
   const option = () => host.querySelector('[role="option"]');
   await vi.waitFor(() => expect(option()?.textContent).toBe("Kai'Sa"));
   expect(option()?.querySelector("img")?.src).toContain("champion/Kai'Sa");
+  champion.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   champion.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  expect(champion.value).toBe("");
   expect(readClipGridChampions).toHaveBeenCalledExactlyOnceWith("snapshot");
 
   const tags = button("Tags");
