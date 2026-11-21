@@ -81,9 +81,9 @@ async fn write<T: Send + 'static>(
             true,
             move |root, snapshot, check| {
                 let _permit = permit;
+                let mut index = Index::open_for_tag_write(&cache, root, check)?;
                 let owner = LibraryMutation::acquire(root, &ApprovedRoot::new(root)?)?;
                 check()?;
-                let mut index = Index::open(&cache, root)?;
                 edit(&mut index, &owner, snapshot, check)
             },
         )
@@ -98,20 +98,29 @@ pub(crate) async fn create_tag(
     label: String,
 ) -> Result<TagDefinition, String> {
     write(&state, &snapshot_token, move |index, owner, _, check| {
-        let label = tags::clean_label(&label)?;
-        let mut loaded = tag_store::load(owner.root_path())?;
-        index.refresh_tag_store(&loaded)?;
-        if let Some(existing) = index.exact_tag_label(label)? {
-            return Ok(existing);
-        }
-        let tag = TagDefinition::custom(label)?;
-        loaded.store.insert_definition(tag.clone())?;
-        check()?;
-        let stamp = loaded.store.publish(owner)?;
-        index.update_tag_projection(&stamp, std::slice::from_ref(&tag))?;
-        Ok(tag)
+        create_definition(index, owner, &label, check)
     })
     .await
+}
+
+fn create_definition(
+    index: &mut Index,
+    owner: &LibraryMutation,
+    label: &str,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<TagDefinition> {
+    let label = tags::clean_label(label)?;
+    let mut loaded = tag_store::load(owner.root_path())?;
+    index.refresh_tag_store(&loaded)?;
+    if let Some(existing) = index.exact_tag_label(label)? {
+        return Ok(existing);
+    }
+    let tag = TagDefinition::custom(label)?;
+    loaded.store.insert_definition(tag.clone())?;
+    check()?;
+    let stamp = loaded.store.publish(owner)?;
+    index.update_tag_projection(&stamp, std::slice::from_ref(&tag))?;
+    Ok(tag)
 }
 
 #[tauri::command]
@@ -233,4 +242,49 @@ pub(crate) fn write_clip_header(clip: &mut ClipDescriptor, header: &ClipHeader) 
         .map_err(|error| anyhow::anyhow!("clip metadata publication: {error}"))?;
     clip.header = file_facts(&open_regular(&path, false, false)?)?;
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::{sync::mpsc, thread, time::Duration};
+
+    #[test]
+    fn create_waits_for_preparation_and_publishes_a_searchable_definition() {
+        let library = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let approved = ApprovedRoot::new(library.path()).unwrap();
+        let root = approved.path();
+        let cache = cache.path();
+        let preparation = Index::open(cache, root).unwrap();
+        let (started, entering) = mpsc::channel();
+        let (finished, result) = mpsc::channel();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                started.send(()).unwrap();
+                let created = (|| {
+                    let mut index = Index::open_for_tag_write(cache, root, &|| Ok(()))?;
+                    let owner = LibraryMutation::acquire(root, &approved)?;
+                    create_definition(&mut index, &owner, "Zed outplay", &|| Ok(()))
+                })();
+                finished.send(created).unwrap();
+            });
+            let wait = entering.recv_timeout(Duration::from_secs(5));
+            let while_preparing = result.recv_timeout(Duration::from_millis(100));
+            drop(preparation);
+            wait.unwrap();
+            assert!(matches!(
+                while_preparing,
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            let tag = result
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap();
+            let stored = tag_store::load(root).unwrap();
+            assert_eq!(stored.store.definitions.get(&tag.id), Some(&tag));
+            let reader = Index::reader(cache, root).unwrap();
+            assert_eq!(reader.tag_choices("zed out").unwrap(), vec![tag]);
+        });
+    }
 }

@@ -5,7 +5,7 @@ import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "..
 import { libraryError } from "../libraryController";
 import { clipDurationMs, clipTitleError, detectedTagAssignments, manualTagDefinitions, readClipDetail, readClipPage, replaceTagDefinition, type ClipCard,
   type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery,
-  type ClipTagUpdate, type GroupCursor, type Tag, type TagAssignment } from "../managedClips";
+  type ClipTagUpdate, type GroupCursor, type Tag, type TagAssignment, type TagDefinitionWriter } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
 import { recordedGameClock } from "../replayProjection";
@@ -301,7 +301,7 @@ function ClipGrid(props: {
                 ddragon={props.ddragon} class={styles.gridChampion} />
               <span class={styles.gridText}>
                 <strong class={styles.gridTitle} title={clip.title}>{clip.title}</strong>
-                <TagBadges id={tagsId()} tags={clip.tags} limit={2} />
+                <TagBadges id={tagsId()} tags={clip.tags} />
               </span>
             </span>
           </button>
@@ -354,6 +354,7 @@ export function ManagedClips(props: {
 export function ManagedClipPlayer(props: {
   clip: ClipCard; token: string; onClose: () => void; onEdit: (edit: ClipEdit) => Promise<boolean>;
   onEditTags: (tags: Tag[]) => Promise<boolean>;
+  writeTag: TagDefinitionWriter;
   onTagRenamed?: (tag: Tag) => void;
   sourceAvailable?: boolean; onSource?: () => void; opener?: HTMLElement;
   library?: { fileSizeBytes: number; ddragon: DdragonStatus };
@@ -366,6 +367,7 @@ export function ManagedClipPlayer(props: {
   const [busy, setBusy] = createSignal(false);
   const [title, setTitle] = createSignal(props.clip.title);
   const [tags, setTags] = createSignal<Tag[]>([]);
+  const [writingTag, setWritingTag] = createSignal(false);
   const [detail, setDetail] = createSignal<Awaited<ReturnType<typeof readClipDetail>>>();
   const [detailError, setDetailError] = createSignal(false);
   const [reading, setReading] = createSignal(false);
@@ -396,7 +398,7 @@ export function ManagedClipPlayer(props: {
     } finally { setBusy(false); }
   };
   const submitTags = async () => {
-    if (busy()) return;
+    if (busy() || writingTag()) return;
     setBusy(true);
     try { if (await props.onEditTags(tags())) setEditing(null); }
     finally { setBusy(false); }
@@ -428,7 +430,7 @@ export function ManagedClipPlayer(props: {
             <h2 id="managed-clip-title">{props.clip.title}</h2>
             <p><span>{duration()}</span><span aria-hidden="true"> · </span><span>{formatBytes(library().fileSizeBytes)}</span></p>
           </div>}</Show>
-          <TagBadges tags={props.clip.header.tags} />
+          <Show when={editing() !== "tags"}><TagBadges tags={props.clip.header.tags} /></Show>
           <div class={styles.actions}>
             <Show when={props.onSource}><button class={controls.control} type="button" disabled={!props.sourceAvailable || busy()}
               onClick={props.onSource}>{props.sourceAvailable ? "Open source replay" : "Source replay unavailable"}</button></Show>
@@ -452,9 +454,9 @@ export function ManagedClipPlayer(props: {
           </Show>
           <Show when={editing() === "tags"}>
             <TagEditor token={props.token} tags={tags()} detected={detectedTagAssignments(props.clip.header.tags)}
-              onTagsChange={setTags} disabled={busy()} onTagRenamed={props.onTagRenamed} />
+              writeTag={props.writeTag} onTagsChange={setTags} disabled={busy()} onTagRenamed={props.onTagRenamed} onPendingChange={setWritingTag} />
             <div class={styles.actions}>
-              <button class={controls.control} type="button" disabled={busy()}
+              <button class={controls.control} type="button" disabled={busy() || writingTag()}
                 onClick={() => void submitTags()}>Save tags</button>
               <button class={controls.control} type="button" onClick={() => setEditing(null)}>Cancel</button>
             </div>

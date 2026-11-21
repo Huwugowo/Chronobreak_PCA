@@ -102,7 +102,28 @@ impl Index {
         Self::open_locked(cache, root, Some(writer))
     }
 
+    pub(crate) fn open_for_tag_write(
+        cache: &Path,
+        root: &Path,
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<Self> {
+        let writer = Self::writer_lock_file(cache, root)?;
+        // Hand off from the same cross-process writer used by background
+        // preparation. Revalidate the selection after waiting for ownership.
+        writer
+            .lock()
+            .context("cannot acquire the tag index writer")?;
+        check()?;
+        Self::open_locked(cache, root, Some(writer))
+    }
+
     pub(super) fn writer_lock(cache: &Path, root: &Path) -> Result<fs::File> {
+        let lock = Self::writer_lock_file(cache, root)?;
+        lock.try_lock().context("index preparation already owned")?;
+        Ok(lock)
+    }
+
+    fn writer_lock_file(cache: &Path, root: &Path) -> Result<fs::File> {
         fs::create_dir_all(cache)?;
         let path = cache_path(cache, root).with_extension("lock");
         let lock = fs::OpenOptions::new()
@@ -115,7 +136,6 @@ impl Index {
             lock.metadata()?.is_file() && !fs::symlink_metadata(&path)?.is_symlink(),
             "index lock type"
         );
-        lock.try_lock().context("index preparation already owned")?;
         Ok(lock)
     }
 

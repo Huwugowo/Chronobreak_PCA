@@ -6,13 +6,17 @@ Updated: 2026-11-21
 
 ## Current milestone
 
-The v3 layout and Favorites follow-up is verified. QB-LIB-001 is complete.
+The v3 layout and Favorites follow-up, K/D/A alignment, and highest-multikill presentation are verified.
 
 ## Active unit
 
 None.
 
 ## Completed
+
+History uses the shared searchable tag picker with built-in events. A card displays at most the local player's highest verified multikill. The index still filters by objective steals and lower tiers implied by higher kills.
+
+Match cards center the K/D/A above the items. The ratio and event badge share a centered second line, and the ratio stays centered by itself on an untagged card. Both variants reserve the same height.
 
 The v3 pass gives the standalone Clips grid and both toolbars the same section width. The History star immediately applies Favorites and the Filters form owns player, date, and result. The Clips grid automatically retries a busy native read up to twice before offering manual retry, and stops issuing reads for a superseded request.
 
@@ -37,6 +41,10 @@ None.
 None.
 
 ## Verification
+
+The current native fixture checks a steal-only match with no badge, every supported steal filter, the four verified local multikill tiers, and exclusion of unverified and authored events. The frontend covers keyboard selection through the shared History Tags control.
+
+The K/D/A refinement passed all 640 frontend tests, TypeScript, the Vite production build, and the Windows release build. The isolated desktop walkthrough confirmed the lower-row alignment and equal spacing on tagged and untagged cards at 1200 and 1440 px, as well as thumbnail alignment, filter interactions, replay return, and first-click clip playback. Screenshots and report are under `build/verification/qb-lib-001-kda`.
 
 The v3 run passed all 640 frontend tests, TypeScript, the Vite production build, and the Windows release desktop build. The focused regression reproduced the manual retry prompt from a native `busy` response before the fix. Isolated frontend tests verified that temporary contention recovers automatically, repeated contention reaches the manual retry limit, and a replaced catalog stops further reads against the old token.
 
@@ -82,6 +90,8 @@ An isolated Edge preview measured a 4 px gap for Filters and all three queue men
 The production Tauri rebuild passed and was staged at `build/release/chronobreak-match-history-20261119-134259`. The staged executable matched the rebuilt binary, declared the Windows GUI subsystem, and contained the updated stylesheet. The portable media runtime passed its verification.
 
 ## Deviations
+
+The user moved the card's event badge to the ratio line and restored centered K/D/A. The feature acceptance criterion records the new placement.
 
 The user replaced the old personal-moment and manual/linked History tag design and requested toolbar parity with Clips. The v3 ExecPlan supersedes v2 for section alignment and the History-only Favorites shortcut.
 

@@ -93,7 +93,7 @@ pub(super) fn refresh_group(db: &Connection, match_group: &str) -> Result<()> {
 }
 
 impl Index {
-    pub(super) fn best_match_events<'a>(
+    pub(super) fn best_match_multikills<'a>(
         &self,
         groups: impl Iterator<Item = &'a str>,
     ) -> Result<HashMap<String, crate::tags::TagAssignment>> {
@@ -113,13 +113,13 @@ impl Index {
         while let Some(row) = rows.next()? {
             let group: String = row.get(0)?;
             let id = TagId::parse(&row.get::<_, String>(1)?)?;
-            let (priority, definition) =
-                tags::ranked_match_event(&id).context("invalid detected match event")?;
-            let event = best
-                .entry(group)
-                .or_insert_with(|| (priority, TagAssignment::detected(definition.clone())));
-            if priority < event.0 {
-                *event = (priority, TagAssignment::detected(definition));
+            let definition =
+                tags::builtin_definition(&id).context("invalid detected match event")?;
+            let Some(tier) = definition.tier else {
+                continue;
+            };
+            if best.get(&group).is_none_or(|(current, _)| tier > *current) {
+                best.insert(group, (tier, TagAssignment::detected(definition)));
             }
         }
         Ok(best

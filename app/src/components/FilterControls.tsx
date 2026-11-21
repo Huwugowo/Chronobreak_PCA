@@ -137,13 +137,6 @@ export function FilterDropdownTrigger(props: { active?: boolean; chevron?: boole
   </button>;
 }
 
-export function FilterCheckbox(props: { label: string; labelClass?: string } & JSX.InputHTMLAttributes<HTMLInputElement>) {
-  const [local, inputProps] = splitProps(props, ["label", "labelClass"]);
-  return <label class={`${styles.checkbox} ${local.labelClass ?? ""}`}>
-    <input type="checkbox" {...inputProps} />{local.label}
-  </label>;
-}
-
 export function ChampionAutocomplete(props: {
   champions: readonly string[];
   selected: readonly string[];

@@ -2173,7 +2173,8 @@
         "QB-LIB-034"
       ],
       "evidence": [
-        "The Windows release walkthrough verified thumbnail alignment at 1200 and 1440 px, the History-only Favorites star, replay return, and first-click clip playback. All 640 frontend tests passed, including automatic recovery from busy clip reads. The unchanged native suite passed 240 tests and the combined query reached 21.1 ms p95 on the 10,000-match fixture."
+        "The Windows release walkthrough verified the centered K/D/A with and without an event badge, thumbnail alignment at 1200 and 1440 px, the History-only Favorites star, replay return, and first-click clip playback. The combined query reached 21.1 ms p95 on the 10,000-match fixture.",
+        "The current native suite passed 241 tests. The History fixture checks all three steal filters and the four verified local multikill tiers. A steal-only match has no card badge and still matches the corresponding steal filter."
       ],
       "execution": {
         "workflow": "planned",
@@ -2184,8 +2185,8 @@
         "Match History has a dedicated All, Ranked, ARAM, Arena and Other queue row, with the approved ranked/ARAM variants, an Other catch-all, and menus available by hover, click and keyboard. Queue menus match the Filters popup gap and stay open when the pointer crosses it.",
         "The primary search opens on focus with local played-champion names and portraits and narrows suggestions from the first character. Typing only updates suggestions. Selected champions are removable chips and match any selected champion across the full library.",
         "Match History and Clips share one row with one search field, Tags and Filters. Match History also has a one-click Favorites star between Tags and Filters. Clips uses its field for title, tag and champion search and champion suggestions. The first thumbnail aligns with the left edge of search.",
-        "The sole Tags menu in History filters by all selected detected event tags for the recorded player, including higher multikill tiers. Favorites applies immediately and composes with player, date, result, queue and champion filters. Clear all resets every filter.",
-        "Match History shows one read-only detected local event badge to the right of left-aligned KDA. It prioritizes the highest multikill, then Baron, Herald and Dragon steals. Manual match tags and match tag editors are absent.",
+        "The sole Tags menu in History filters by all selected verified events for the recorded player, including objective steals and multikill tiers implied by higher kills. Favorites applies immediately and composes with player, date, result, queue and champion filters. Clear all resets every filter.",
+        "Match History centers the K/D/A above a second line with the ratio and one read-only badge for the recorded player's highest verified multikill, in order from Pentakill to Double Kill. The ratio is centered on its own when there is no multikill badge. Manual match tags and match tag editors are absent.",
         "Toggling filters keeps match cards in the same horizontal position when results start or stop needing a vertical scrollbar.",
         "Matches use persisted checked facts before pagination, preserve one card per account-scoped match and the existing playback, clip, favorite and replay-return behavior, and surface unavailable optional data without fabricating matches or outcomes.",
         "A briefly busy clip grid read recovers automatically, and a persistent read failure remains actionable."
@@ -2225,7 +2226,8 @@
       ],
       "evidence": [
         "595 frontend tests and 210 native tests passed. Fixtures verified durable bundles, event bounds and search, safe rename and protected playback, and retention after source deletion and cache rebuild.",
-        "Packaged export and crash verification await the staged pinned FFmpeg runtime."
+        "All four packaged export tests passed with the staged runtime, including collision and crash recovery. The native tagging regression holds the preparation lock, then checks the persisted definition and indexed prefix lookup after the writer releases.",
+        "The isolated Windows export and edit walkthrough verified durable custom assignments, all saved card badges, prefix search beyond 24 initial suggestions, keyboard navigation, and an incremental save that preserved the clip card. All 640 frontend tests passed."
       ],
       "execution": {
         "workflow": "planned",
@@ -2235,7 +2237,8 @@
       "acceptance_criteria": [
         "Each new export retains stable identity, exact source range, and available champion, date, account, queue, result and final K/D/A through source deletion and cache rebuild.",
         "Only mapped committed events within the half-open range are retained, with the highest multikill per player. Multikills, First Blood and explicit objective steals are selectable highlights. Only local highlights start selected.",
-        "Titles match MP4 filenames and remain editable without re-encoding. Custom tags and selected highlights remain editable after export.",
+        "Titles match MP4 filenames and remain editable without re-encoding. Verified event assignments appear as read-only yellow badges. Manual assignments appear as grey badges and remain editable after export.",
+        "One searchable pill picker supports mouse selection, arrow keys, Enter and Escape in the Clips Tags filter and in clip creation and editing. Creating a new name inline selects it immediately. Export persists the assignment, shows the badge on its card, and makes the tag searchable in the filter and later editors through the existing index.",
         "Clips search matches titles, custom tags, saved game context and selected highlights, including multikill thresholds. Filtered clips group by game date and appear in game order.",
         "Owned publication, playback and mutations preserve source and unrelated bytes. Browsing and cold clip reconciliation preserve the existing History, storage and preparation performance boundaries."
       ],

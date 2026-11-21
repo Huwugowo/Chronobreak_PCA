@@ -205,23 +205,6 @@
   color: var(--text-primary);
   background: var(--filter-popup-hover, #2b2939);
 }
-.checkbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-block-size: 29px;
-  padding: 2px 7px;
-  border-radius: var(--radius-control);
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-.checkbox:hover {
-  background: var(--filter-popup-hover, #2b2939);
-}
-.checkbox input {
-  margin: 0;
-}
-
 .filters {
   --filter-control-height: 36px;
   --filter-popup-gap: 4px;
@@ -320,21 +303,6 @@
 .tagsPanel {
   max-block-size: min(440px, 60vh);
   overflow-y: auto;
-}
-.tagsPanel fieldset {
-  min-inline-size: 0;
-  padding: 0;
-  margin: 0;
-  border: 0;
-}
-.tagsPanel fieldset + fieldset {
-  margin-block-start: 10px;
-}
-.tagsPanel legend {
-  padding: 5px 7px;
-  color: var(--text-muted);
-  font-size: var(--type-meta-size);
-  font-weight: 600;
 }
 .advanced {
   display: grid;

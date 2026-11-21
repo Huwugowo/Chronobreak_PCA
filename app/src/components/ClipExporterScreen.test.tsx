@@ -53,7 +53,7 @@ it("keeps replay navigation and plain section labels and previews filenames with
   const onBack = vi.fn();
   const host = document.createElement("div");
   document.body.append(host);
-  const dispose = render(() => <ClipExporterScreen
+  const dispose = render(() => <ClipExporterScreen writeTag={work => work("test-snapshot")}
     admissionError={null} draft={draft} outputPath="output" snapshotToken="test-snapshot"
     snapshotOrigin={{ root: "output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }}
     onBack={onBack} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}}
@@ -87,7 +87,7 @@ it("keeps replay navigation and plain section labels and previews filenames with
   } finally { dispose(); }
 });
 
-it("removes a manual selection when that tag is detected and keeps independent selections", async () => {
+it("blocks export until a created tag is selected and keeps independent manual assignments", async () => {
   const builtins = [
     ["double_kill", "Double Kill", 2], ["triple_kill", "Triple Kill", 3], ["quadra_kill", "Quadra Kill", 4],
     ["pentakill", "Pentakill", 5], ["dragon_steal", "Dragon Steal", null],
@@ -96,7 +96,8 @@ it("removes a manual selection when that tag is detected and keeps independent s
   const tags = builtins.map(([key, label, tier]) => ({ id: `builtin:${key}`, label, tier, builtin: true }));
   const ranked = { id: "custom:11111111-2222-4333-8444-555555555555", label: "Ranked", builtin: false, tier: null };
   vi.spyOn(managedClips, "tagChoices").mockResolvedValue(tags);
-  vi.spyOn(managedClips, "createTag").mockResolvedValue(ranked);
+  let finishCreate!: (tag: managedClips.Tag) => void;
+  const createTag = vi.spyOn(managedClips, "createTag").mockReturnValue(new Promise(resolve => { finishCreate = resolve; }));
   vi.mocked(loadReplayDescriptor).mockResolvedValue({
     snapshot_token: "test-snapshot", game_timestamp: "1",
     media_timeline: descriptor.media_timeline, video_url: descriptor.video_url,
@@ -108,32 +109,47 @@ it("removes a manual selection when that tag is detected and keeps independent s
   vi.mocked(exportClip).mockResolvedValue({ outputs: [], elapsed_ms: 1 } as never);
   const host = document.createElement("div");
   document.body.append(host);
-  const dispose = render(() => <ClipExporterScreen admissionError={null}
+  const dispose = render(() => <ClipExporterScreen admissionError={null} writeTag={work => work("test-snapshot")}
     draft={{ gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId, startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
     outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }}
     onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work => work("test-snapshot")} />, host);
   try {
+    await vi.waitFor(() => expect(host.querySelector('[aria-label="Find tags"]')).not.toBeNull());
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Find tags"]')!;
+    input.focus();
     await vi.waitFor(() => expect(host.textContent).toContain("Herald Steal"));
-    const inputFor = (name: string) => [...host.querySelectorAll("fieldset label")]
-      .find(label => label.textContent?.trim() === name)?.querySelector("input");
-    expect(inputFor("First Blood")).toBeUndefined();
-    inputFor("Double Kill")!.click();
-    inputFor("Dragon Steal")!.click();
-    expect(inputFor("Dragon Steal")?.checked).toBe(true);
-    const custom = inputFor("Find or create a tag")!;
-    custom.value = "Ranked";
-    custom.dispatchEvent(new Event("input", { bubbles: true }));
-    [...host.querySelectorAll("button")].find(button => button.textContent === "Add tag")!.click();
-    await vi.waitFor(() => expect(inputFor("Ranked")?.checked).toBe(true));
+    const option = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Tag options"] [role="option"]')]
+      .find(button => button.textContent === name);
+    expect(option("First Blood")).toBeUndefined();
+    option("Double Kill")!.click();
+    option("Dragon Steal")!.click();
+    expect(option("Dragon Steal")?.getAttribute("aria-selected")).toBe("true");
     finishDetection({ token: "test-draft", title: "Ahri clip", availability: "available",
       detected_tags: [tags[3], tags[4]].map(tag => ({ ...tag, source: "detected" })) });
-    await vi.waitFor(() => expect([...host.querySelectorAll('[class*="detectedBadge"]')].map(badge => badge.textContent))
-      .toEqual(["Pentakill", "Dragon Steal"]));
-    expect(inputFor("Pentakill")).toBeUndefined();
-    expect(inputFor("Dragon Steal")).toBeUndefined();
-    expect(inputFor("Double Kill")?.checked).toBe(true);
-    expect(inputFor("Ranked")?.checked).toBe(true);
-    [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT 1 MP4"))!.click();
+    await vi.waitFor(() => expect([...host.querySelectorAll('[class*="detectedBadge"]')].map(badge => [badge.tagName, badge.textContent]))
+      .toEqual([["SPAN", "Pentakill"], ["SPAN", "Dragon Steal"]]));
+    expect(option("Pentakill")).toBeUndefined();
+    expect(option("Dragon Steal")).toBeUndefined();
+    expect(option("Double Kill")?.getAttribute("aria-selected")).toBe("true");
+    const exportButton = [...host.querySelectorAll("button")].find(button => button.textContent?.includes("EXPORT 1 MP4"))!;
+    await vi.waitFor(() => expect(exportButton.disabled).toBe(false));
+    input.value = "Ranked";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect(option("Create “Ranked”")).toBeDefined());
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(createTag).toHaveBeenCalledExactlyOnceWith("test-snapshot", "Ranked");
+    expect(exportButton.disabled).toBe(true);
+    exportButton.click();
+    expect(exportClip).not.toHaveBeenCalled();
+    finishCreate(ranked);
+    await vi.waitFor(() => expect(host.querySelector('[aria-label="Remove tag Ranked"]')).not.toBeNull());
+    expect(exportButton.disabled).toBe(false);
+    exportButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    exportButton.focus();
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    exportButton.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    exportButton.click();
+    expect(input.getAttribute("aria-expanded")).toBe("false");
     await vi.waitFor(() => expect(exportClip).toHaveBeenCalledOnce());
     expect(vi.mocked(exportClip).mock.calls[0][0].metadata).toEqual({
       draft_token: "test-draft", title: null, tags: [tags[0], ranked],
@@ -155,7 +171,7 @@ it("retries the same imported file after preparation fails and releases the succ
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   const host = document.createElement("div");
   document.body.append(host);
-  const dispose = render(() => <ClipExporterScreen admissionError={null}
+  const dispose = render(() => <ClipExporterScreen admissionError={null} writeTag={work => work("test-snapshot")}
     draft={{ gameTimestamp: "1", mediaId: descriptor.media_timeline.mediaId,
       startFrame: 0 as FrameBoundary, endFrameExclusive: 60 as FrameBoundary }}
     outputPath="C:\\output" snapshotToken="test-snapshot" snapshotOrigin={{ root: "C:\\output", rootEpoch: 1, request: 1, token: "test-snapshot", navigation: 1 }} onBack={() => {}} onExported={() => {}}
@@ -200,7 +216,7 @@ it("synchronizes the muted vertical baseline and releases it on preset changes a
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(2);
   const host = document.createElement("div"); document.body.append(host);
-  const dispose = render(() => <ClipExporterScreen admissionError={null}
+  const dispose = render(() => <ClipExporterScreen admissionError={null} writeTag={work => work("test-snapshot")}
     draft={{gameTimestamp:"1",mediaId:descriptor.media_timeline.mediaId,startFrame:60 as FrameBoundary,endFrameExclusive:300 as FrameBoundary}}
     outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{root:"output",rootEpoch:1,request:1,token:"test-snapshot",navigation:1}}
     onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work=>work("test-snapshot")} />,host);
@@ -248,7 +264,7 @@ it("replaces source bindings without retaining the previous media source", async
     media_timeline:descriptor.media_timeline,video_url:`http://127.0.0.1:123/games/${id}/video.mp4`}));
   const [id,setId]=createSignal("1");
   const host=document.createElement("div");document.body.append(host);
-  const dispose=render(() => <ClipExporterScreen admissionError={null}
+  const dispose=render(() => <ClipExporterScreen admissionError={null} writeTag={work => work("test-snapshot")}
     draft={{gameTimestamp:id(),mediaId:descriptor.media_timeline.mediaId,startFrame:0 as FrameBoundary,endFrameExclusive:60 as FrameBoundary}}
     outputPath="output" snapshotToken="test-snapshot" snapshotOrigin={{root:"output",rootEpoch:1,request:1,token:"test-snapshot",navigation:1}}
     onBack={() => {}} onExported={() => {}} onOpenClips={() => {}} onOpenFolder={() => {}} readReplay={work=>work("test-snapshot")} />,host);

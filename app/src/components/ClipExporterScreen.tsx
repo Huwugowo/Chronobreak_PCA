@@ -34,7 +34,7 @@ import {
   frameBoundaryToReplayTick,
 } from "../replayTime";
 import { clamp } from "../viewerUtils";
-import { clipTitleError, prepareClipDraft, usesManagedClips, type DraftSummary, type Tag } from "../managedClips";
+import { clipTitleError, prepareClipDraft, usesManagedClips, type DraftSummary, type Tag, type TagDefinitionWriter } from "../managedClips";
 import { TagEditor } from "./ClipMetadataFields";
 import BackButton from "../ui/BackButton";
 import { ArrowRightIcon, CheckIcon, PauseIcon, PlayIcon } from "../ui/icons";
@@ -52,6 +52,7 @@ type Props = {
   snapshotOrigin: LibraryOrigin;
   admissionError: string | null;
   readReplay: ReplayRead;
+  writeTag: TagDefinitionWriter;
   onOpenClips: () => void;
   onOpenFolder: () => void;
 };
@@ -137,6 +138,7 @@ function ClipExporterScreen(props: Props) {
     return (base ? clipTitleError(base) : undefined) ?? outputTitles().map(clipTitleError).find(Boolean);
   });
   const [tags, setTags] = createSignal<Tag[]>([]);
+  const [writingTag, setWritingTag] = createSignal(false);
   const [progress, setProgress] = createSignal<ClipExportProgress>({
     stage: "encoding",
     percent: 0,
@@ -505,7 +507,7 @@ function ClipExporterScreen(props: Props) {
   };
 
   const runExport = async () => {
-    if (exporting() || loadingMetadata() || titleError() || props.admissionError || probe.loading || !clipRange()) return;
+    if (exporting() || writingTag() || loadingMetadata() || titleError() || props.admissionError || probe.loading || !clipRange()) return;
     const exportOrigin = props.snapshotOrigin;
     const snapshotToken = props.snapshotToken;
     pausePreview();
@@ -782,7 +784,7 @@ function ClipExporterScreen(props: Props) {
                     {error => <small role="alert">{error()}</small>}
                   </Show>
                   <TagEditor token={props.snapshotToken} tags={tags()} detected={metadataDraft()?.detected_tags ?? []}
-                    onTagsChange={setTags} disabled={exporting()} />
+                    writeTag={props.writeTag} onTagsChange={setTags} disabled={exporting()} onPendingChange={setWritingTag} />
                   <Show when={loadingMetadata()}><small role="status">Preparing clip details…</small></Show>
                 </section>
               </Show>
@@ -908,7 +910,7 @@ function ClipExporterScreen(props: Props) {
                 <button
                   class={styles.exportButton}
                   type="button"
-                  disabled={exporting() || loadingMetadata() || !!titleError() || !!props.admissionError || probe.loading || !clipRange() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
+                  disabled={exporting() || writingTag() || loadingMetadata() || !!titleError() || !!props.admissionError || probe.loading || !clipRange() || (musicMode() === "file" && !importedPath()) || (musicMode() === "builtin" && !builtInFilename())}
                   onClick={() => void runExport()}
                 >
                   {exporting()

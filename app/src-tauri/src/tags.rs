@@ -184,17 +184,6 @@ pub(crate) fn builtin_definitions() -> impl Iterator<Item = TagDefinition> {
     builtin_entries().map(Builtin::definition)
 }
 
-pub(crate) fn ranked_match_event(id: &TagId) -> Option<(usize, TagDefinition)> {
-    let key = id.as_str().strip_prefix("builtin:")?;
-    MULTIKILLS
-        .into_iter()
-        .rev()
-        .chain([BARON_STEAL, HERALD_STEAL, DRAGON_STEAL])
-        .enumerate()
-        .find(|(_, tag)| tag.key == key)
-        .map(|(priority, tag)| (priority, tag.definition()))
-}
-
 pub(crate) fn clean_label(label: &str) -> Result<&str> {
     let label = label.trim();
     ensure!(

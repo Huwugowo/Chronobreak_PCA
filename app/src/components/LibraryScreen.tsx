@@ -430,16 +430,16 @@ function GamesLibrary(props: Props) {
                         </span>
 
                         <span class={matchStyles.performance}>
-                          <span class={matchStyles.kdaRow}>
-                            <span class={matchStyles.kda}>
-                              <strong>
-                                {stats().kills ?? "—"} <i>/</i>{" "}
-                                {stats().deaths ?? "—"} <i>/</i>{" "}
-                                {stats().assists ?? "—"}
-                              </strong>
+                          <span class={matchStyles.kda}>
+                            <strong>
+                              {stats().kills ?? "—"} <i>/</i>{" "}
+                              {stats().deaths ?? "—"} <i>/</i>{" "}
+                              {stats().assists ?? "—"}
+                            </strong>
+                            <span class={matchStyles.kdaDetails}>
                               <em>{formatKdaRatio(stats())}</em>
+                              <Show when={eventTag()}>{tag => <TagBadges tags={[tag()]} />}</Show>
                             </span>
-                            <Show when={eventTag()}>{tag => <TagBadges tags={[tag()]} class={matchStyles.eventBadge} />}</Show>
                           </span>
 
                           <span class={matchStyles.items} aria-hidden="true">

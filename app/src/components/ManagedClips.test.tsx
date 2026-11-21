@@ -60,7 +60,8 @@ function mount() {
 it("appends cursor pages in server order and keeps the existing images mounted", async () => {
   const tagged: ClipGridCard = {
     ...fixture("newer"),
-    tags: [assigned(pentakill, "detected"), assigned({ id: "builtin:baron_steal", label: "Baron Steal", builtin: true, tier: null }),
+    tags: [assigned(pentakill, "detected"), assigned({ id: "builtin:double_kill", label: "Double Kill", builtin: true, tier: 2 }),
+      assigned({ id: "builtin:baron_steal", label: "Baron Steal", builtin: true, tier: null }),
       ...["outplay", "final fight"].map(label => assigned(customTag(label)))],
   };
   const page: ClipGridPage = { clips: [tagged, fixture("middle")], next: [100, "middle"] };
@@ -77,8 +78,10 @@ it("appends cursor pages in server order and keeps the existing images mounted",
   const tags = first.querySelector(`.${styles.clipTags}`)!;
   expect([...tags.children].map(tag => [tag.textContent, tag.className])).toEqual([
     ["Pentakill", styles.detectedBadge],
+    ["Double Kill", styles.manualBadge],
     ["Baron Steal", styles.manualBadge],
-    ["+2", styles.manualBadge],
+    ["outplay", styles.manualBadge],
+    ["final fight", styles.manualBadge],
   ]);
   const descriptions = (card: HTMLElement) => card.getAttribute("aria-describedby")!
     .split(" ").map(id => document.getElementById(id));
@@ -200,8 +203,8 @@ it("patches tag edits that preserve the exact-ID filter without rereading pages 
   const card = cards()[0];
   const image = card.querySelector("img");
   button("Tags").click();
-  await vi.waitFor(() => expect(host.querySelector('input[type="checkbox"]')).not.toBeNull());
-  host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Tag options"] [role="option"]')).not.toBeNull());
+  host.querySelector<HTMLButtonElement>('[aria-label="Tag options"] [role="option"]')!.click();
   button("Tags").click();
   await vi.waitFor(() => expect(readClipGridPage).toHaveBeenLastCalledWith("snapshot", { tags: [tag.id] }, null));
   await vi.waitFor(() => expect(card.getAttribute("aria-disabled")).toBe("false"));
@@ -232,8 +235,8 @@ it("only rereads tag-filtered pages when a multikill edit changes membership", a
   const editedImage = edited.querySelector("img");
   const keptImage = kept.querySelector("img");
   button("Tags").click();
-  await vi.waitFor(() => expect(host.querySelector('input[type="checkbox"]')).not.toBeNull());
-  host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Tag options"] [role="option"]')).not.toBeNull());
+  host.querySelector<HTMLButtonElement>('[aria-label="Tag options"] [role="option"]')!.click();
   button("Tags").click();
   await vi.waitFor(() => expect(button("More clips").getAttribute("aria-disabled")).toBe("false"));
 
@@ -334,14 +337,30 @@ it("combines queue, champion, exact tags and advanced filters and preserves matc
   const tags = button("Tags");
   tags.click();
   const tagPanel = document.getElementById(tags.getAttribute("aria-controls")!)!;
-  const tag = (label: string) => [...tagPanel.querySelectorAll("label")]
-    .filter(element => element.textContent === label).map(element => element.querySelector("input")!);
-  await vi.waitFor(() => expect(tag("River fight")).toHaveLength(1));
-  expect(tag("Pentakill")).toHaveLength(1);
-  tag("Pentakill")[0].click();
-  tag("River fight")[0].click();
-  expect(tagChoices).toHaveBeenCalledExactlyOnceWith("snapshot", "");
+  const tag = (label: string) => [...tagPanel.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find(element => element.textContent === label);
+  await vi.waitFor(() => expect(tag("River fight")).toBeDefined());
+  expect(tag("Pentakill")).toBeDefined();
+  tag("Pentakill")!.click();
+  const tagSearch = tagPanel.querySelector<HTMLInputElement>('[aria-label="Find tags"]')!;
+  input('[aria-label="Find tags"]', "Riv");
+  await vi.waitFor(() => expect(tag("River fight")).toBeDefined());
+  expect(tag("Pentakill")).toBeUndefined();
+  expect(tagPanel.textContent).not.toContain("Create");
+  const key = (key: string) => tagSearch.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  key("ArrowUp");
+  expect(tagSearch.getAttribute("aria-activedescendant")).toBe(tag("River fight")!.id);
+  key("Enter");
+  expect(tag("River fight")?.getAttribute("aria-selected")).toBe("true");
+  expect(tagChoices).toHaveBeenNthCalledWith(1, "snapshot", "");
+  expect(tagChoices).toHaveBeenNthCalledWith(2, "snapshot", "Riv");
   expect(tagPanel.textContent).not.toMatch(/ally|enemy|actor/i);
+  key("Escape");
+  expect(tagSearch.getAttribute("aria-expanded")).toBe("false");
+  expect(tags.getAttribute("aria-expanded")).toBe("true");
+  key("Escape");
+  expect(tags.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(tags);
 
   button("Filters").click();
   expect(tags.getAttribute("aria-expanded")).toBe("false");

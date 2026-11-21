@@ -384,9 +384,9 @@ Playback, match context, and saved tags survive deletion of the source recording
 
 Match History uses the built-in event vocabulary, projected only from checked
 recording parts with a resolved local killer. Its Tags filter requires all
-selected events. A lower-tier multikill filter also matches higher tiers. Each
-card displays its highest multikill beside the KDA, or its highest-priority steal
-in Baron, Herald, Dragon order. First Blood remains in the factual stream.
+selected events, including objective steals. A lower-tier multikill filter also
+matches higher tiers. The card puts the highest verified local multikill
+beside the ratio below the centered K/D/A. First Blood remains in the factual stream.
 The `league_tags.json` file owns custom clip names and round-trips legacy match
 assignments. History reads detected rows exclusively, including from older
 caches. Clip tags use the same built-in IDs and can also include custom tags.
@@ -397,6 +397,14 @@ History search suggests played champions. Clips search matches titles,
 tags and champions and offers champion suggestions in the same field. Each tab
 sends its filters to its own indexed query. Clip results stay in creation order
 and use the clip's saved match date for date filters.
+
+The toolbar and clip metadata editors share a searchable tag picker. Typing
+looks up indexed prefixes beyond the initial suggestion list. Creating a name
+saves its definition and selects it in the current editor. Tag writes acquire
+the shared index writer and revalidate the selected library before publishing.
+Clip cards display every assignment in the saved clip header. Badge color
+follows the assignment's provenance, including for a manually selected
+built-in tag.
 
 Each clip carries its assigned custom IDs and labels in `clip.json`. If the
 library vocabulary is absent, the clip index recovers those definitions from

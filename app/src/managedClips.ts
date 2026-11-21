@@ -6,8 +6,10 @@ import type { ClipDraft, ClipExportPreset } from "./types";
 export type Attribution = "you" | "ally" | "enemy" | "unknown";
 export type Availability = "available" | "partial" | "unavailable";
 export const MAX_TAG_FILTERS = 40;
+export const MAX_MANUAL_TAGS = 40;
 /** A stable, user-visible library tag.  IDs, rather than labels, are the query/write contract. */
 export type Tag = { id: string; label: string; tier: number | null; builtin: boolean };
+export type TagDefinitionWriter = (write: (token: string) => Promise<Tag>) => Promise<Tag>;
 export type TagAssignment = Tag & { source: "detected" | "manual" };
 export type ClipTagUpdate = { id: string; tags: TagAssignment[] };
 export function replaceTagDefinition<T extends Tag>(tags: T[], replacement: Tag): T[] {
@@ -21,12 +23,10 @@ export const detectedTagAssignments = (tags: TagAssignment[]) => tags.filter(tag
 
 export function visibleTagAssignments(tags: TagAssignment[]): TagAssignment[] {
   const byId = new Map<string, TagAssignment>();
-  let bestTier = 0;
   for (const tag of tags) {
-    bestTier = Math.max(bestTier, tag.tier ?? 0);
     if (tag.source === "detected" || !byId.has(tag.id)) byId.set(tag.id, tag);
   }
-  return [...byId.values()].filter(tag => tag.tier === null || tag.tier === bestTier);
+  return [...byId.values()];
 }
 export type ClipGame = {
   match_group: string | null; played_at: string | null; part_recorded_at: string | null;

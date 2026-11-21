@@ -780,7 +780,7 @@ impl Index {
             });
             output.push(item);
         }
-        let mut tags = self.best_match_events(
+        let mut tags = self.best_match_multikills(
             output
                 .iter()
                 .filter_map(|item| item.game.match_group.as_deref()),

@@ -216,8 +216,10 @@ it("queries detected match tags while clip indexing is still pending", async () 
   await vi.waitFor(() => expect(reconcileClips).toHaveBeenCalledOnce());
   [...host.querySelectorAll("button")].find(button => button.textContent === "Tags")!.click();
   await vi.waitFor(() => expect(tagChoices).toHaveBeenCalledWith("a", ""));
-  const event = [...host.querySelectorAll("fieldset label")].find(label => label.textContent === "Pentakill")!;
-  event.querySelector("input")!.click();
+  const event = () => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Tag options"] [role="option"]')]
+    .find(option => option.textContent === "Pentakill");
+  await vi.waitFor(() => expect(event()).toBeDefined());
+  event()!.click();
   await vi.waitFor(() => expect(queryHistory).toHaveBeenCalledTimes(2));
   star().click();
   await vi.waitFor(() => expect(queryHistory).toHaveBeenLastCalledWith("b", expect.objectContaining({ tags: [pentakill.id] })));

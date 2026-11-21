@@ -370,9 +370,10 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   search.value = "keep";
   search.dispatchEvent(new Event("input", { bubbles: true }));
   button("Tags")!.click();
-  const tagPanel = host.querySelector('[aria-label="Tags"]')!;
-  await vi.waitFor(() => expect(tagPanel.textContent).toContain("Pentakill"));
-  [...tagPanel.querySelectorAll("label")].find(label => label.textContent === "Pentakill")!.querySelector("input")!.click();
+  const tagPanel = document.getElementById(button("Tags")!.getAttribute("aria-controls")!)!;
+  const pentakillOption = () => tagPanel.querySelector<HTMLButtonElement>('[role="option"]');
+  await vi.waitFor(() => expect(pentakillOption()?.textContent).toBe("Pentakill"));
+  pentakillOption()!.click();
   button("Tags")!.click();
   await vi.waitFor(() => expect(card(first.id)).not.toBeNull());
   button("More clips")!.click();
@@ -396,11 +397,10 @@ it.each(["rename", "tags", "delete"] as const)("reconciles %s edits without clea
   } else if (operation === "tags") {
     button("Edit tags")!.click();
     await vi.waitFor(() => expect(button("Save tags")?.disabled).toBe(false));
-    const option = (name: string) => [...host.querySelectorAll('[aria-label="Tag options"] label')]
-      .find(label => label.textContent?.trim() === name)!.querySelector("input")!;
-    expect(option("Pentakill").checked).toBe(true);
-    option("Keep").click();
-    option("Pentakill").click();
+    const assignedTag = (name: string) => host.querySelector<HTMLButtonElement>(`[aria-label="Remove tag ${name}"]`)!;
+    expect(assignedTag("Pentakill").getAttribute("aria-pressed")).toBe("true");
+    assignedTag("Keep").click();
+    assignedTag("Pentakill").click();
     expect(readClipDetail).not.toHaveBeenCalled();
     button("Save tags")!.click();
   } else {

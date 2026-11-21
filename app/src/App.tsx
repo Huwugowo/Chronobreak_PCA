@@ -729,6 +729,12 @@ function App() {
               snapshotToken={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin?.token ?? ""}
               snapshotOrigin={(navigation() as Extract<NavigationState, { screen: "clip-export" }>).snapshotOrigin!}
               admissionError={exportAdmissionError()}
+              writeTag={work => {
+                const current = navigation();
+                if (current.screen !== "clip-export" || !current.snapshotOrigin)
+                  return Promise.reject(new Error("Clip selection is unavailable"));
+                return controller.writeIndex(current.snapshotOrigin, "tags", work);
+              }}
               readReplay={work => {
                 const current = navigation() as Extract<NavigationState, { screen: "clip-export" }>;
                 if (!current.snapshotOrigin) return Promise.reject(new Error("Replay selection is unavailable"));
@@ -835,7 +841,7 @@ function App() {
       <Show when={activeClip()}>{(clip) => <ClipModal clip={clip()} onClose={() => controller.selectClip(null)} />}</Show>
       <Show when={managedSelection()}>{selected => <ManagedClipPlayer
         clip={selected().clip} token={selected().origin.token} opener={selected().button} onClose={closeManagedClip} onEdit={applyClipEdit} onEditTags={applyClipTags}
-        onTagRenamed={onTagRenamed}
+        writeTag={work => controller.writeIndex(selected().origin, "tags", work)} onTagRenamed={onTagRenamed}
         sourceAvailable={Boolean(availableSource(selected().clip))} onSource={openClipSource}
         library={selected().fileSizeBytes === undefined ? undefined : { fileSizeBytes: selected().fileSizeBytes!, ddragon: ddragon() ?? emptyDdragon }}
       />}</Show>

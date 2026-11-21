@@ -954,7 +954,7 @@ fn simplified_history_uses_checked_queue_roster_and_outcome() {
 }
 
 #[test]
-fn history_uses_only_checked_local_events_and_shows_the_highest_priority() {
+fn history_filters_checked_local_events_and_shows_only_the_highest_multikill() {
     use crate::tags::TagId;
     let f = Fixture::new(1);
     let mut index = f.index();
@@ -1035,15 +1035,26 @@ fn history_uses_only_checked_local_events_and_shows_the_highest_priority() {
     event(1006, "DragonKill", Some(true), None, 0);
     actor(1006, local, "resolved", 0, 0);
     refresh_tags();
-    assert_eq!(badge().as_deref(), Some("Dragon Steal"));
+    assert_eq!(badge(), None);
+    assert_eq!(query_tags(&["dragon_steal"]).len(), 1);
     assert!(query_tags(&["baron_steal"]).is_empty());
 
+    for (sequence, kind, tag) in [
+        (1007, "HeraldKill", "herald_steal"),
+        (1008, "BaronKill", "baron_steal"),
+    ] {
+        event(sequence, kind, Some(true), None, 0);
+        actor(sequence, local, "resolved", 0, 0);
+        refresh_tags();
+        assert_eq!(badge(), None);
+        assert_eq!(query_tags(&[tag]).len(), 1);
+    }
+
     for (sequence, kind, stolen, streak, label) in [
-        (1007, "HeraldKill", Some(true), None, "Herald Steal"),
-        (1008, "BaronKill", Some(true), None, "Baron Steal"),
         (1009, "Multikill", None, Some(2), "Double Kill"),
-        (1010, "Multikill", None, Some(4), "Quadra Kill"),
-        (1011, "Multikill", None, Some(5), "Pentakill"),
+        (1010, "Multikill", None, Some(3), "Triple Kill"),
+        (1011, "Multikill", None, Some(4), "Quadra Kill"),
+        (1012, "Multikill", None, Some(5), "Pentakill"),
     ] {
         event(sequence, kind, stolen, streak, 0);
         actor(sequence, local, "resolved", 0, 0);

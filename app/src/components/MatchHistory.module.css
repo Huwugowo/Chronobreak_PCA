@@ -316,25 +316,13 @@
   gap: var(--space-2);
 }
 
-.kdaRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  width: 180px;
-  max-width: 100%;
-}
-
 .kda {
   display: grid;
-  min-width: 0;
-  justify-items: start;
+  width: 180px;
+  max-width: 100%;
+  justify-items: center;
   gap: 2px;
-  text-align: left;
-}
-
-.eventBadge {
-  white-space: nowrap;
+  text-align: center;
 }
 
 .kda strong {
@@ -354,7 +342,17 @@
   font-weight: 400;
 }
 
-.kda em {
+.kdaDetails {
+  display: flex;
+  max-width: 100%;
+  min-height: calc(var(--type-meta-line) + var(--space-1));
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.kdaDetails em {
   color: var(--text-muted);
   font-size: var(--type-meta-size);
   font-style: normal;
