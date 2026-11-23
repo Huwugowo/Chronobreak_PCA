@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { batch, createSignal } from "solid-js";
+import { batch, createSignal, Show } from "solid-js";
 import { render } from "solid-js/web";
-import { readClipGridChampions, readClipGridPage, tagChoices, type ClipFilters, type ClipGridCard, type ClipGridPage,
+import { readClipGridChampions, readClipGridPage, replaceTagDefinition, tagChoices, type ClipFilters, type ClipGridCard, type ClipGridPage,
   type ClipTagUpdate, type Tag } from "../managedClips";
 import { assigned, customTag, pentakill } from "../tagFixtures";
 import { ManagedClips } from "./ManagedClips";
@@ -31,21 +31,26 @@ function mount() {
   const host = document.createElement("div");
   document.body.append(host);
   const [filters, setFilters] = createSignal<ClipFilters>({});
+  const [visible, setVisible] = createSignal(true);
   const [token, setToken] = createSignal("snapshot");
   const [ready, setReady] = createSignal(true);
   const [indexError, setIndexError] = createSignal<string | null>(null);
   const [tagUpdate, editTags] = createSignal<ClipTagUpdate>();
-  const [renamedTag, renameTag] = createSignal<Tag>();
+  const [renamedTag, setRenamedTag] = createSignal<Tag>();
   const onOpen = vi.fn();
-  dispose = render(() => <ManagedClips
+  dispose = render(() => <Show when={visible()}><ManagedClips
     root="fixture" token={token()} ready={ready()} indexError={indexError()} onRetry={() => {}}
     ddragon={{ state: "ready", asset_base_url: "https://fixture/assets", version: "1",
       champion_count: 1, item_count: 0, cache_directory: "", error: null }}
     filters={filters()} onFilters={setFilters} onOpen={onOpen} tagUpdate={tagUpdate()}
     renamedTag={renamedTag()} onOpenFolder={() => {}}
-  />, host);
+  /></Show>, host);
   return {
-    host, onOpen, setIndexError, editTags, renameTag,
+    host, onOpen, setIndexError, editTags, setVisible,
+    renameTag: (tag: Tag) => batch(() => {
+      setFilters(filters => ({ ...filters, tags: replaceTagDefinition(filters.tags ?? [], tag) }));
+      setRenamedTag(tag);
+    }),
     accept: (newToken: string, actionable: boolean) => batch(() => { setToken(newToken); setReady(actionable); }),
     cards: () => [...host.querySelectorAll<HTMLButtonElement>("[data-managed-clip]")],
     button: (label: string) => [...host.querySelectorAll("button")].find(button => button.textContent === label)!,
@@ -56,6 +61,30 @@ function mount() {
     },
   };
 }
+
+it("keeps a selected tag's label when Clips remounts without reloading tag definitions", async () => {
+  const tag = customTag("River fight");
+  vi.mocked(readClipGridPage).mockResolvedValue({ clips: [], next: null });
+  vi.mocked(tagChoices).mockResolvedValueOnce([]).mockResolvedValueOnce([tag]).mockResolvedValue([]);
+  const { host, button, input, setVisible } = mount();
+  button("Tags").click();
+  await vi.waitFor(() => expect(tagChoices).toHaveBeenCalledExactlyOnceWith("snapshot", ""));
+  input('[aria-label="Find tags"]', "Riv");
+  const option = () => host.querySelector<HTMLButtonElement>('[role="option"]');
+  await vi.waitFor(() => expect(option()?.textContent).toBe(tag.label));
+  option()!.click();
+  await vi.waitFor(() => expect(readClipGridPage).toHaveBeenLastCalledWith("snapshot", { tags: [tag.id] }, null));
+
+  setVisible(false);
+  expect(host.querySelector('[aria-label="Active filters"]')).toBeNull();
+  setVisible(true);
+  expect(host.querySelector('[aria-label="Remove River fight"]')).not.toBeNull();
+  expect(host.textContent).not.toContain(tag.id);
+  expect(tagChoices).toHaveBeenCalledTimes(2);
+  button("Tags").click();
+  expect(option()?.textContent).toBe(tag.label);
+  expect(option()?.getAttribute("aria-selected")).toBe("true");
+});
 
 it("appends cursor pages in server order and keeps the existing images mounted", async () => {
   const tagged: ClipGridCard = {

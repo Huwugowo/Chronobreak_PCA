@@ -2227,7 +2227,7 @@
       "evidence": [
         "595 frontend tests and 210 native tests passed. Fixtures verified durable bundles, event bounds and search, safe rename and protected playback, and retention after source deletion and cache rebuild.",
         "All four packaged export tests passed with the staged runtime, including collision and crash recovery. The native tagging regression holds the preparation lock, then checks the persisted definition and indexed prefix lookup after the writer releases.",
-        "The isolated Windows export and edit walkthrough verified durable custom assignments, all saved card badges, prefix search beyond 24 initial suggestions, keyboard navigation, and an incremental save that preserved the clip card. All 640 frontend tests passed."
+        "The isolated Windows export and edit walkthrough verified durable custom assignments, all saved card badges, prefix search beyond 24 initial suggestions, keyboard navigation, and an incremental save that preserved the clip card. The follow-up verified selected labels across tab remounts, stable Save and Export positions, and first-click submission with the picker open. All 642 frontend tests passed."
       ],
       "execution": {
         "workflow": "planned",
@@ -2239,6 +2239,7 @@
         "Only mapped committed events within the half-open range are retained, with the highest multikill per player. Multikills, First Blood and explicit objective steals are selectable highlights. Only local highlights start selected.",
         "Titles match MP4 filenames and remain editable without re-encoding. Verified event assignments appear as read-only yellow badges. Manual assignments appear as grey badges and remain editable after export.",
         "One searchable pill picker supports mouse selection, arrow keys, Enter and Escape in the Clips Tags filter and in clip creation and editing. Creating a new name inline selects it immediately. Export persists the assignment, shows the badge on its card, and makes the tag searchable in the filter and later editors through the existing index.",
+        "Selected clip filter chips keep their tag labels across tab switches and filter UI remounts. The picker overlays editor content so opening and closing it leaves the Save and Export buttons in place.",
         "Clips search matches titles, custom tags, saved game context and selected highlights, including multikill thresholds. Filtered clips group by game date and appear in game order.",
         "Owned publication, playback and mutations preserve source and unrelated bytes. Browsing and cold clip reconciliation preserve the existing History, storage and preparation performance boundaries."
       ],

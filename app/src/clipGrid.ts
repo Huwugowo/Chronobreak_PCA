@@ -1,9 +1,9 @@
 import { batch, createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { libraryError } from "./libraryController";
-import { readClipGridPage, replaceTagDefinition, type ClipFilters, type ClipGridCard, type ClipGridCursor, type ClipTagUpdate, type Tag } from "./managedClips";
+import { readClipGridPage, replaceTagDefinition, type ClipGridCard, type ClipGridCursor, type ClipGridQuery, type ClipTagUpdate, type Tag } from "./managedClips";
 
-type GridSource = { root: string | null; token: string; ready: boolean; query: ClipFilters };
+type GridSource = { root: string | null; token: string; ready: boolean; query: ClipGridQuery };
 type Operation = "refresh" | "append";
 
 const multikillTiers = new Map([
@@ -33,7 +33,7 @@ export function createClipGrid(source: Accessor<GridSource>) {
     return ready && state.token === token;
   });
 
-  const readPage = async (request: number, token: string, query: ClipFilters, cursor: ClipGridCursor | null) => {
+  const readPage = async (request: number, token: string, query: ClipGridQuery, cursor: ClipGridCursor | null) => {
     for (let retries = 0; request === generation; retries++) {
       try {
         return await readClipGridPage(token, query, cursor);

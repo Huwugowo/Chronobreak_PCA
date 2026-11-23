@@ -2,7 +2,7 @@
 
 Feature: `QB-LIB-002`
 ExecPlan: `docs/exec-plans/qb-lib-002-clip-metadata-and-search.md`
-Updated: 2026-11-21
+Updated: 2026-11-22
 
 ## Current milestone
 
@@ -18,6 +18,8 @@ The exporter publishes one complete versioned clip bundle per preset. It preview
 
 One searchable pill picker now handles filter selection and metadata edits. Creating a definition selects it in the active editor. The exporter waits for that write before submitting metadata. Tag mutations share the index writer with background recording preparation. Cards show all saved badges, with color and editability derived from the assignment's source.
 
+Selected tag definitions travel with the filter selection and supply labels immediately on remount. Indexed queries receive IDs. The shared suggestions dropdown floats above the editor field and below the toolbar field, with ordinary outside-press and focus dismissal.
+
 ## In flight
 
 None.
@@ -27,6 +29,8 @@ None.
 Compare prepared desktop first paint with matched baseline runs and complete the broader media workflow with generated recordings.
 
 ## Verification
+
+All 642 frontend tests and the Windows desktop release build passed after the picker follow-up. The isolated release walkthrough verified unchanged Save and Export bounds across open and close, first-click submission with suggestions open, label retention across Clips and Match History without a tag lookup, and a renamed chip with the same clip card. Evidence is in `build/verification/clip-tagging/follow-up-N3OT68/browser-report.json`.
 
 The Windows release build, Rust formatting, strict app Clippy, and the all-target all-feature native suite passed. The native suite passed 241 tests with 14 ignored, including a held-index regression that verifies the subsequent durable definition and indexed prefix lookup. All four targeted packaged export tests passed with the staged runtime, including fractional duration, silent source, collision isolation and crash recovery.
 

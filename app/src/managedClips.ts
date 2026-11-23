@@ -51,8 +51,9 @@ export type ClipPage = { groups: ClipGroup[]; next: GroupCursor | null };
 export type ClipQueue = import("./leagueIndex").HistoryQueue;
 export type ClipFilters = {
   search?: string; champions?: string[]; from?: string; to?: string; queue?: ClipQueue;
-  outcome?: "win" | "loss"; tags?: string[];
+  outcome?: "win" | "loss"; tags?: Tag[];
 };
+export type ClipGridQuery = Omit<ClipFilters, "tags"> & { tags?: string[] };
 export type ClipQuery = {
   match_group?: string;
   after?: GroupCursor; group_key?: string; clip_after?: ClipCursor; include_game_clock?: boolean;
@@ -74,7 +75,7 @@ export const usesManagedClips = () => isTauri();
 export const reconcileClips = (snapshotToken: string) => invoke<boolean>("reconcile_clips", { snapshotToken });
 export const readClipPage = (snapshotToken: string, query: ClipQuery) =>
   invoke<ClipPage>("clip_page", { snapshotToken, query });
-export const readClipGridPage = (snapshotToken: string, { from, to, ...query }: ClipFilters, after: ClipGridCursor | null) => {
+export const readClipGridPage = (snapshotToken: string, { from, to, ...query }: ClipGridQuery, after: ClipGridCursor | null) => {
   const bounds = localDayBounds(from, to);
   return invoke<ClipGridPage>("clip_grid_page", {
     snapshotToken, after, query: { ...query, played_from: bounds.from, played_before: bounds.before },

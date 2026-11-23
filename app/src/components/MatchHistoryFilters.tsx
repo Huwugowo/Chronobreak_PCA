@@ -12,7 +12,7 @@ export function historyQueryForFilters(filters: HistoryFilters, now = new Date()
   const query: HistoryQuery = { limit: 50 };
   if (filters.queue) query.queue = filters.queue;
   if (filters.champions.length) query.played_champions = filters.champions;
-  if (filters.tags.length) query.tags = filters.tags;
+  if (filters.tags.length) query.tags = filters.tags.map(tag => tag.id);
   if (filters.favorites) query.saved_only = true;
   if (filters.player) query.player_riot_id = filters.player;
   if (filters.result) query.outcome = filters.result;

@@ -29,25 +29,12 @@ export function TagPicker(props: {
   const [retry, setRetry] = createSignal(0);
   const [creating, setCreating] = createSignal(false);
   const [createFailed, setCreateFailed] = createSignal(false);
-  let outsidePress = false;
   const contains = (target: EventTarget | null) => target instanceof Node && picker.contains(target);
   const close = () => { setOpen(false); setIndex(-1); };
   onMount(() => {
-    const trackPress = (event: PointerEvent) => { outsidePress = !contains(event.target); };
-    const endPress = () => { outsidePress = false; };
-    const closeAfterClick = (event: MouseEvent) => { if (!contains(event.target)) close(); };
-    // Keep the in-flow suggestions in place until an outside click lands.
-    // Closing on pointer-induced blur can move the Save or Export button mid-click.
-    document.addEventListener("pointerdown", trackPress, true);
-    document.addEventListener("pointerup", endPress, true);
-    document.addEventListener("pointercancel", endPress, true);
-    document.addEventListener("click", closeAfterClick, true);
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", trackPress, true);
-      document.removeEventListener("pointerup", endPress, true);
-      document.removeEventListener("pointercancel", endPress, true);
-      document.removeEventListener("click", closeAfterClick, true);
-    });
+    const dismissOutside = (event: PointerEvent) => { if (!contains(event.target)) close(); };
+    document.addEventListener("pointerdown", dismissOutside, true);
+    onCleanup(() => document.removeEventListener("pointerdown", dismissOutside, true));
     if (props.autoFocus) input.focus({ preventScroll: true });
   });
 
@@ -100,7 +87,8 @@ export function TagPicker(props: {
     setCreateFailed(false);
     try {
       await props.onCreate(choice.creatable);
-      type("");
+      setText("");
+      setIndex(-1);
     } catch { setCreateFailed(true); }
     finally { setCreating(false); }
   };
@@ -116,7 +104,13 @@ export function TagPicker(props: {
   };
 
   return <div ref={picker} class={styles.tagPicker} onFocusOut={event => {
-    if (!outsidePress && !contains(event.relatedTarget)) close();
+    if (!contains(event.relatedTarget)) close();
+  }} onKeyDown={event => {
+    if (!event.isComposing && event.key === "Escape" && open()) {
+      event.preventDefault();
+      input.focus({ preventScroll: true });
+      close();
+    }
   }}>
     <input class={styles.tagSearch} ref={input} type="search" role="combobox" aria-label="Find tags"
       aria-autocomplete="list" aria-expanded={open()} aria-controls={list}
@@ -128,10 +122,7 @@ export function TagPicker(props: {
       onInput={event => { if (!event.isComposing) type(event.currentTarget.value); }}
       onKeyDown={event => {
         if (event.isComposing) return;
-        if (event.key === "Escape" && open()) {
-          event.preventDefault();
-          close();
-        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
           move(event.key === "ArrowDown" ? 1 : -1);
         } else if (event.key === "Enter") {
@@ -140,7 +131,7 @@ export function TagPicker(props: {
           if (open() && choice) void choose(choice);
         }
       }} />
-    <div hidden={!open()}>
+    <div class={styles.tagSuggestions} hidden={!open()}>
       <div class={styles.tagOptions} id={list} role="listbox" aria-label="Tag options" aria-multiselectable="true"
         aria-busy={status() === "loading" || creating()}>
         <For each={choices()}>{(choice, position) =>

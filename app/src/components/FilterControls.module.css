@@ -300,10 +300,6 @@
   inline-size: 260px;
   padding: 10px;
 }
-.tagsPanel {
-  max-block-size: min(440px, 60vh);
-  overflow-y: auto;
-}
 .advanced {
   display: grid;
   inline-size: 310px;

@@ -313,6 +313,11 @@ function App() {
     return false;
   };
   const onTagRenamed = (tag: Tag) => {
+    setClipFilters(filters => {
+      if (!filters.tags) return filters;
+      const tags = replaceTagDefinition(filters.tags, tag);
+      return tags === filters.tags ? filters : { ...filters, tags };
+    });
     setRenamedTag(tag);
     setManagedSelection(selected => selected ? { ...selected,
       clip: { ...selected.clip, header: { ...selected.clip.header,

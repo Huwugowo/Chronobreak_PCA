@@ -144,12 +144,11 @@ it("blocks export until a created tag is selected and keeps independent manual a
     finishCreate(ranked);
     await vi.waitFor(() => expect(host.querySelector('[aria-label="Remove tag Ranked"]')).not.toBeNull());
     expect(exportButton.disabled).toBe(false);
-    exportButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    exportButton.focus();
     expect(input.getAttribute("aria-expanded")).toBe("true");
-    exportButton.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
-    exportButton.click();
+    exportButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
     expect(input.getAttribute("aria-expanded")).toBe("false");
+    exportButton.focus();
+    exportButton.click();
     await vi.waitFor(() => expect(exportClip).toHaveBeenCalledOnce());
     expect(vi.mocked(exportClip).mock.calls[0][0].metadata).toEqual({
       draft_token: "test-draft", title: null, tags: [tags[0], ranked],

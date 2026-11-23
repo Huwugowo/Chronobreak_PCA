@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { readClipGridChampions, type ClipFilters, type Tag } from "../managedClips";
+import { readClipGridChampions, type ClipFilters } from "../managedClips";
 import LibraryFilters, { dateFilterForDays, filterDays, type SharedFilters } from "./LibraryFilters";
 
 export default function ClipsFilters(props: {
@@ -7,7 +7,6 @@ export default function ClipsFilters(props: {
   onChange: (filters: ClipFilters) => void;
   token?: string;
   library: string | null;
-  renamedTag?: Tag;
   championPortrait: (name: string) => string | null;
   onOpenFolder: () => void;
 }) {
@@ -73,7 +72,7 @@ export default function ClipsFilters(props: {
     championPending={championsLoading() || !props.token}
     championError={championsError() ? "Couldn’t load champions." : null}
     onChampionRetry={() => retryChampions(value => value + 1)}
-    tagToken={props.token} renamedTag={props.renamedTag} clips={{
+    tagToken={props.token} clips={{
       onOpenFolder: props.onOpenFolder,
     }} />;
 }

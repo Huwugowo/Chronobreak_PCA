@@ -4,7 +4,7 @@ import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
 import { clipDurationMs, clipTitleError, detectedTagAssignments, manualTagDefinitions, readClipDetail, readClipPage, replaceTagDefinition, type ClipCard,
-  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGroup, type ClipQuery,
+  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGridQuery, type ClipGroup, type ClipQuery,
   type ClipTagUpdate, type GroupCursor, type Tag, type TagAssignment, type TagDefinitionWriter } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
@@ -324,6 +324,10 @@ function ClipGrid(props: {
   </div>;
 }
 
+function gridQuery({ tags, search, ...filters }: ClipFilters): ClipGridQuery {
+  return { ...filters, search: search?.trim() || undefined, tags: tags?.map(tag => tag.id) };
+}
+
 export function ManagedClips(props: {
   root: string | null; token: string; ready: boolean; indexError: string | null; onRetry: () => void;
   ddragon: DdragonStatus;
@@ -332,19 +336,18 @@ export function ManagedClips(props: {
   tagUpdate?: ClipTagUpdate;
   renamedTag?: Tag;
 }) {
-  const [query, setQuery] = createSignal(props.filters);
+  const [query, setQuery] = createSignal(gridQuery(props.filters));
   const grid = createClipGrid(() => ({ root: props.root, token: props.token, ready: props.ready, query: query() }));
   createEffect(on(() => props.tagUpdate, update => { if (update) grid.tagsEdited(update); }, { defer: true }));
   createEffect(on(() => props.renamedTag, tag => { if (tag) grid.tagRenamed(tag); }, { defer: true }));
   createEffect(() => {
-    const next = { ...props.filters, search: props.filters.search?.trim() || undefined };
+    const next = gridQuery(props.filters);
     const timer = window.setTimeout(() => setQuery(previous =>
       JSON.stringify(previous) === JSON.stringify(next) ? previous : next), 180);
     onCleanup(() => window.clearTimeout(timer));
   });
   return <section class={`${styles.panel} ${libraryStyles.contentRail}`} aria-label="Clips library">
     <ClipsFilters library={props.root} filters={props.filters} onChange={props.onFilters} token={props.ready ? props.token : undefined}
-      renamedTag={props.renamedTag}
       championPortrait={name => ddragonAsset(props.ddragon, "champion", name)} onOpenFolder={props.onOpenFolder} />
     <ClipGrid model={grid} indexError={props.indexError} onRetryIndex={props.onRetry}
       onOpen={props.onOpen} openingId={props.openingId} ddragon={props.ddragon} />

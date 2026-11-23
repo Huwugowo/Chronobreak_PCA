@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createUniqueId, onCleanup } from "solid-js";
+import { For, Show, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js";
 import type { HistoryQueue } from "../leagueIndex";
 import { MAX_TAG_FILTERS, type Tag } from "../managedClips";
 import { queueLabels } from "../matchQueues";
@@ -15,7 +15,7 @@ const presets = Object.keys(datePresets) as (keyof typeof datePresets)[];
 type DatePreset = keyof typeof datePresets;
 export type DateFilter = { date: DatePreset | ""; from: string; to: string };
 type Advanced = DateFilter & { result: keyof typeof resultLabels | "" };
-export type SharedFilters = Advanced & { queue: HistoryQueue | null; champions: string[]; tags: string[]; search?: string };
+export type SharedFilters = Advanced & { queue: HistoryQueue | null; champions: string[]; tags: Tag[]; search?: string };
 export type HistoryOptions = { player: string; favorites: boolean };
 export const emptyAdvanced: Advanced = { date: "", from: "", to: "", result: "" };
 
@@ -61,7 +61,6 @@ export default function LibraryFilters(props: {
   onChampionRetry?: () => void;
   onBenchmarkInput?: ChampionProps["onBenchmarkInput"];
   tagToken?: string;
-  renamedTag?: Tag;
   history?: HistoryOptions;
   clips?: { onOpenFolder: () => void };
 }) {
@@ -73,8 +72,8 @@ export default function LibraryFilters(props: {
   const [draft, setDraft] = createSignal<Advanced & Pick<HistoryOptions, "player">>({ ...emptyAdvanced, player: "" });
   const [customDates, setCustomDates] = createSignal(false);
   const [playerError, setPlayerError] = createSignal(false);
-  const [chosenTags, setChosenTags] = createSignal<Record<string, Tag>>({});
   const [championReset, resetChampion] = createSignal(0);
+  const selectedTagIds = createMemo(() => props.filters.tags.map(tag => tag.id));
 
   const popupId = (name: Popup) => `${id}-${name.toLowerCase().replace(" ", "-")}`;
   const close = (restore = false) => {
@@ -102,10 +101,10 @@ export default function LibraryFilters(props: {
     document.removeEventListener("focusin", dismissOutside);
   });
 
-  const knownTag = (id: string) => props.renamedTag?.id === id ? props.renamedTag : chosenTags()[id];
+  const removeTag = (id: string) => props.onChange({ tags: props.filters.tags.filter(tag => tag.id !== id) });
   const toggleTag = (tag: Tag) => {
-    setChosenTags(tags => ({ ...tags, [tag.id]: tag }));
-    props.onChange({ tags: toggle(props.filters.tags, tag.id) });
+    if (selectedTagIds().includes(tag.id)) removeTag(tag.id);
+    else props.onChange({ tags: [...props.filters.tags, tag] });
   };
   const chooseQueue = (queue: HistoryQueue | null) => {
     if (props.filters.queue !== queue) props.onChange({ queue });
@@ -149,8 +148,7 @@ export default function LibraryFilters(props: {
           aria-expanded={popup() === "Tags"} onClick={() => togglePopup("Tags")}><TagIcon size={16} />Tags</FilterDropdownTrigger>
         <div class={`${styles.panel} ${styles.tagsPanel}`} id={popupId("Tags")} hidden={popup() !== "Tags"}>
           <Show when={popup() === "Tags"}>
-            <TagPicker token={props.tagToken} selected={props.filters.tags} onToggle={toggleTag}
-              known={props.filters.tags.map(knownTag).filter((tag): tag is Tag => !!tag)}
+            <TagPicker token={props.tagToken} selected={selectedTagIds()} onToggle={toggleTag} known={props.filters.tags}
               include={tag => !props.history || tag.builtin} canAdd={() => props.filters.tags.length < MAX_TAG_FILTERS} autoFocus />
           </Show>
         </div>
@@ -222,8 +220,7 @@ export default function LibraryFilters(props: {
         }</Show>
         <For each={props.filters.champions}>{name => <FilterChip label={name} champion={name} championPortrait={props.championPortrait}
           onRemove={() => props.onChange({ champions: toggle(props.filters.champions, name) })} />}</For>
-        <For each={props.filters.tags}>{id => <FilterChip label={knownTag(id)?.label ?? id}
-          onRemove={() => props.onChange({ tags: toggle(props.filters.tags, id) })} />}</For>
+        <For each={props.filters.tags}>{tag => <FilterChip label={tag.label} onRemove={() => removeTag(tag.id)} />}</For>
         <Show when={props.filters.queue}>{queue => <FilterChip label={queueLabels[queue()]} onRemove={() => chooseQueue(null)} />}</Show>
         <Show when={props.history?.favorites}><FilterChip label="Favorites only" onRemove={() => props.onChange({ favorites: false })} /></Show>
         <Show when={props.history?.player}>{player => <FilterChip label={player()} onRemove={() => props.onChange({ player: "" })} />}</Show>
