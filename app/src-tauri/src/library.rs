@@ -243,6 +243,8 @@ pub struct ReplayParticipant {
     pub summoner_name: String,
     pub champion: String,
     pub relation: EventRelation,
+    #[serde(default)]
+    pub is_local: bool,
 }
 
 /// Selected recording media authority, independent of semantic projections.

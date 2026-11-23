@@ -37,6 +37,9 @@ it("decodes History rosters with unresolved, zero or positive clip counts", () =
     catalog_recordings: 1, unknown_recordings: 0 });
 
   expect(decodeHistoryPage(page()).rows[0]).toMatchObject({ game: { participants }, stats: { kills: 7 } });
+  const withLocal = (is_local: unknown) => page({ game: { ...game, participants: [{ ...participants[0], is_local }] } });
+  expect(decodeHistoryPage(withLocal(true)).rows[0].game.participants[0].is_local).toBe(true);
+  expect(() => decodeHistoryPage(withLocal("true"))).toThrow();
   expect(decodeHistoryPage(page()).rows[0]).not.toHaveProperty("clip_count");
   for (const clip_count of [0, 2]) {
     expect(decodeHistoryPage(page({ clip_count })).rows[0]).toMatchObject({ clip_count, game: { participants } });

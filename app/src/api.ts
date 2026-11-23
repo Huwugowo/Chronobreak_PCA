@@ -405,8 +405,12 @@ const gameKeys = ["media_id", "match_group", "timestamp", "champion", "game_mode
 const decodeParticipants = (value: unknown, label: string): ReplayParticipant[] => {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
   return value.map((entry, index) => {
-    const participant = exactRecord(entry, ["summoner_name", "champion", "relation"], label + "[" + index + "]");
+    const keys = ["summoner_name", "champion", "relation"];
+    const hasLocal = entry != null && Object.prototype.hasOwnProperty.call(entry, "is_local");
+    if (hasLocal) keys.push("is_local");
+    const participant = exactRecord(entry, keys, label + "[" + index + "]");
     if (typeof participant.summoner_name !== "string" || typeof participant.champion !== "string" ||
+        (hasLocal && typeof participant.is_local !== "boolean") ||
         !["ally", "enemy", "neutral"].includes(participant.relation as string))
       throw new Error(label + "[" + index + "] is invalid");
     return participant as unknown as ReplayParticipant;

@@ -857,6 +857,26 @@ impl Index {
     ) -> Result<Vec<library::ReplayParticipant>> {
         if let Some(result) = result.filter(|r| r.teams.iter().any(|t| !t.players.is_empty())) {
             let local_team = result.local_player.as_ref().and_then(|p| p.team_id);
+            let roster = || result.teams.iter().flat_map(|team| &team.players);
+            let mut marked = roster().filter(|player| player.is_local);
+            let local_player = match (marked.next(), marked.next()) {
+                (Some(player), None) => Some(player),
+                (None, None) => result
+                    .local_player
+                    .as_ref()
+                    .and_then(|player| player.riot_id.as_deref())
+                    .filter(|name| name.contains('#'))
+                    .and_then(|name| {
+                        let mut matches = roster().filter(|player| {
+                            player
+                                .riot_id
+                                .as_deref()
+                                .is_some_and(|id| id.eq_ignore_ascii_case(name))
+                        });
+                        matches.next().filter(|_| matches.next().is_none())
+                    }),
+                _ => None,
+            };
             return Ok(result
                 .teams
                 .iter()
@@ -867,6 +887,7 @@ impl Index {
                             (a, b) => a.or(b),
                         };
                         library::ReplayParticipant {
+                            is_local: local_player.is_some_and(|local| std::ptr::eq(local, player)),
                             summoner_name: player
                                 .riot_id
                                 .clone()
@@ -912,13 +933,16 @@ impl Index {
             ensure!(players.len() < obs::MAX_ROSTER, "history roster capacity");
             players.push(serde_json::from_str(&row.get::<_, String>(0)?)?);
         }
-        let local_team = players
+        let mut marked = players
             .iter()
-            .find(|p| p.participant.map(|p| p.0) == local && local.is_some())
-            .and_then(|p| p.team.as_ref());
+            .filter(|player| local.is_some_and(|id| player.participant.is_some_and(|p| p.0 == id)));
+        let first_local = marked.next();
+        let local_team = first_local.and_then(|p| p.team.as_ref());
+        let local_player = first_local.filter(|_| marked.next().is_none());
         Ok(players
             .iter()
             .map(|player| library::ReplayParticipant {
+                is_local: local_player.is_some_and(|local| std::ptr::eq(local, player)),
                 summoner_name: player
                     .riot_id
                     .clone()

@@ -414,6 +414,7 @@ fn roster_age_and_latest_empty_roster_do_not_resurrect_players_or_stats() {
     ));
     assert_eq!(history.rows[0].stats.kills, None);
     assert_eq!(history.rows[0].game.participants.len(), 1);
+    assert!(history.rows[0].game.participants[0].is_local);
     assert!(history.rows[0].stats.creep_score.is_none());
     f.game_stats(201, 6_000_000, false);
     f.commit(
@@ -1678,10 +1679,13 @@ async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
     let f = Fixture::new(1);
     let mut result = library::tests::result_fixture(&f.source.media_id);
     let player = result.local_player.as_mut().unwrap();
+    player.riot_id = Some("Player#EUW".into());
     player.stats.minions = Some(127);
     player.stats.jungle_minions = Some(9);
     result.teams[0].players[0].riot_id = Some("Player#EUW".into());
     result.teams[0].players[0].champion_name = Some("Syndra".into());
+    result.teams[0].players[1].riot_id = Some("Player#NA1".into());
+    result.teams[0].players[1].champion_name = Some("Syndra".into());
     result.source_facts.local_player = Some(obs::FinalPlayer {
         game_id: Some(result.game_id.clone()),
         items: Some(vec![Some(3_085)]),
@@ -1717,6 +1721,8 @@ async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
         page.rows[0].game.participants[0].summoner_name,
         "Player#EUW"
     );
+    assert!(page.rows[0].game.participants[0].is_local);
+    assert!(!page.rows[0].game.participants[1].is_local);
     let mut expected = serde_json::to_value(&page.rows[0]).unwrap();
     let expected_stats = expected["stats"].clone();
     let expected_participants = expected["game"]["participants"].clone();

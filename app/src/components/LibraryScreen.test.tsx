@@ -342,19 +342,37 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", asy
   setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game,stats:{...stats,deaths:0},index_status:"ready"}]}});
   expect(details.textContent).toBe("PERFECT KDA");
   const roster = host.querySelector('[aria-label="Team rosters"]')!;
-  expect(roster.querySelector('[data-team="ally"]')?.textContent).toContain("Ally");
+  const rosterName = (team: "ally" | "enemy") => roster.querySelector(`[data-team="${team}"] [class*="rosterName"]`);
+  const highlightedNames = () => [...roster.querySelectorAll('[class*="recordingPlayer"]')].map(name => name.getAttribute("title"));
+  expect(rosterName("ally")?.textContent).toBe("Ally");
+  expect(rosterName("ally")?.getAttribute("title")).toBe("Ally");
   expect(roster.querySelector('[data-team="enemy"]')?.textContent).toContain("Enemy");
   expect(roster.textContent).not.toContain("Unknown team");
+  expect(highlightedNames()).toEqual([]);
   // The core snapshot is deliberately empty after the index migration. The
   // checked history row must remain the roster's source, independent of it.
-  const indexedGame = {...game,participants:[{summoner_name:"Indexed ally",champion:"Lux",relation:"ally" as const},{summoner_name:"Indexed enemy",champion:"Garen",relation:"enemy" as const}]};
+  const indexedGame = {
+    ...game,
+    participants: [
+      { summoner_name: "Indexed ally#EUW", champion: "Lux", relation: "ally" as const, is_local: true },
+      { summoner_name: "Indexed ally#NA1", champion: "Lux", relation: "ally" as const, is_local: false },
+      { summoner_name: "Indexed enemy with a long game name#NA1", champion: "Garen", relation: "enemy" as const },
+    ],
+  };
   setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,creep_score:0},index_status:"ready"}]}});
-  expect(roster.textContent).toContain("Indexed ally");
-  expect(roster.textContent).toContain("Indexed enemy");
+  expect(rosterName("ally")?.textContent).toBe("Indexed ally");
+  expect(rosterName("ally")?.getAttribute("title")).toBe("Indexed ally#EUW");
+  expect(rosterName("enemy")?.textContent).toBe("Indexed enemy with a long game name");
+  expect(rosterName("enemy")?.getAttribute("title")).toBe("Indexed enemy with a long game name#NA1");
+  expect(highlightedNames()).toEqual(["Indexed ally#EUW"]);
   const rosterNodes = [...roster.querySelectorAll("[class*=rosterPlayer]")];
   setHistory(JSON.parse(JSON.stringify(history())));
   expect([...roster.querySelectorAll("[class*=rosterPlayer]")]).toEqual(rosterNodes);
   expect(roster.querySelector("[class*=rosterPlayer]")).toBe(rosterNodes[0]);
+  const indexedRow = history().page!.rows[0];
+  const unmarkedGame = { ...indexedGame, participants: indexedGame.participants.map(player => ({ ...player, is_local: false })) };
+  setHistory({ ...history(), page: { ...history().page!, rows: [{ ...indexedRow, game: unmarkedGame }] } });
+  expect(highlightedNames()).toEqual([]);
   setHistory({ ...history(), loading: true, indexing: true });
   expect(roster.textContent).toContain("Indexed ally");
   expect(host.querySelector('[aria-label="Final creep score"]')?.textContent).toBe("CS 00.0 / min");

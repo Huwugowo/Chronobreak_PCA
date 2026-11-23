@@ -48,9 +48,12 @@ Core game summaries carry no inferred roster. Checked history rows add roster
 display data from validated final facts, or one complete indexed observation from
 a single source when final rosters are unavailable. Cards consume this history
 projection rather than the core snapshot's empty compatibility participant list.
-Exact recorded names are preserved; missing team knowledge stays neutral. No
-journal scan or additional file read occurs on a history page. Missing or invalid
-telemetry keeps healthy video and saved intent available.
+The projection marks the recorded player from validated final facts or the
+local participant of that observation's source. Cards use the marker to
+emphasize the player's name. Exact recorded names are preserved, and missing
+team knowledge stays neutral. History pages use the existing index without
+additional file reads. Missing or invalid telemetry keeps healthy video and
+saved intent available.
 History pages, search, filter choices and counts use playable recordings with
 validated League match identity. The app derives an opaque group key from the
 exact decimal game ID and local account PUUID. Every recording keeps its own

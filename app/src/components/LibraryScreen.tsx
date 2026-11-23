@@ -50,6 +50,7 @@ type Props = {
 };
 
 const itemSlots = Array.from({ length: 7 }, (_, slot) => slot);
+const rosterTeams = ["ally", "enemy"] as const;
 
 const unavailableStats: HistoryStats = { source: "unavailable", kills: null, deaths: null, assists: null, items: null, keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null };
 
@@ -311,7 +312,8 @@ function GamesLibrary(props: Props) {
                 const participants = createMemo(() => rowFor(game())?.game.participants ?? game().participants, undefined, {
                   equals: (before, after) => before.length === after.length && before.every((player, index) => {
                     const next = after[index];
-                    return player.summoner_name === next.summoner_name && player.champion === next.champion && player.relation === next.relation;
+                    return player.summoner_name === next.summoner_name && player.champion === next.champion &&
+                      player.relation === next.relation && player.is_local === next.is_local;
                   }),
                 });
                 const finalCs = () => stats().source === "final_eog" ? stats().creep_score : null;
@@ -497,63 +499,36 @@ function GamesLibrary(props: Props) {
                       </span>
 
                       <span class={matchStyles.teamRosters} aria-label="Team rosters">
-                        <span class={matchStyles.teamRoster} data-team="ally">
-                          <For each={participants().filter((participant) => participant.relation === "ally")}>
-                            {(participant) => (
-                              <span class={matchStyles.rosterPlayer}>
-                                <span class={matchStyles.rosterChampion} aria-hidden="true">
-                                  <Show when={ddragonAsset(
-                                    props.ddragon,
-                                    "champion",
-                                    participant.champion === "Unknown" ? null : participant.champion,
-                                  )}>
-                                    <img
-                                      src={ddragonAsset(
+                        <For each={rosterTeams}>
+                          {(team) => (
+                            <span class={matchStyles.teamRoster} data-team={team}>
+                              <For each={participants().filter((participant) => participant.relation === team)}>
+                                {(participant) => (
+                                  <span class={matchStyles.rosterPlayer}>
+                                    <span class={matchStyles.rosterChampion} aria-hidden="true">
+                                      <Show when={ddragonAsset(
                                         props.ddragon,
                                         "champion",
                                         participant.champion === "Unknown" ? null : participant.champion,
-                                      )!}
-                                      alt=""
-                                      loading="lazy"
-                                      decoding="async"
-                                      onError={hideFailedImage}
-                                    />
-                                  </Show>
-                                </span>
-                                <span>{participant.summoner_name}</span>
-                              </span>
-                            )}
-                          </For>
-                        </span>
-
-                        <span class={matchStyles.teamRoster} data-team="enemy">
-                          <For each={participants().filter((participant) => participant.relation === "enemy")}>
-                            {(participant) => (
-                              <span class={matchStyles.rosterPlayer}>
-                                <span class={matchStyles.rosterChampion} aria-hidden="true">
-                                  <Show when={ddragonAsset(
-                                    props.ddragon,
-                                    "champion",
-                                    participant.champion === "Unknown" ? null : participant.champion,
-                                  )}>
-                                    <img
-                                      src={ddragonAsset(
-                                        props.ddragon,
-                                        "champion",
-                                        participant.champion === "Unknown" ? null : participant.champion,
-                                      )!}
-                                      alt=""
-                                      loading="lazy"
-                                      decoding="async"
-                                      onError={hideFailedImage}
-                                    />
-                                  </Show>
-                                </span>
-                                <span>{participant.summoner_name}</span>
-                              </span>
-                            )}
-                          </For>
-                        </span>
+                                      )}>
+                                        {(src) => (
+                                          <img src={src()} alt="" loading="lazy" decoding="async" onError={hideFailedImage} />
+                                        )}
+                                      </Show>
+                                    </span>
+                                    <span
+                                      class={matchStyles.rosterName}
+                                      classList={{ [matchStyles.recordingPlayer]: participant.is_local === true }}
+                                      title={participant.summoner_name}
+                                    >
+                                      {participant.summoner_name.split("#", 1)[0] || participant.summoner_name}
+                                    </span>
+                                  </span>
+                                )}
+                              </For>
+                            </span>
+                          )}
+                        </For>
                       </span>
                       <span class={matchStyles.recordingMeta}>
                         <strong>{formatBytes(parts().reduce((sum, part) => sum + part.video_size_bytes, 0))}</strong>
