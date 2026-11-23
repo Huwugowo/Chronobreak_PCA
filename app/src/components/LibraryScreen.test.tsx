@@ -16,6 +16,76 @@ vi.mock("../managedClips", async original => ({ ...await original<typeof import(
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
+it("shows signed ranked LP beside the outcome without replacing a mounted card or its images", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const group = "c".repeat(64);
+  const game: GameSummary = {
+    timestamp: "100", media_id: "9c82b929-7c85-4c27-a6d0-000000000100" as GameSummary["media_id"],
+    match_group: group, champion: "Ahri", game_mode: "Ranked Solo",
+    recorded_at: "2026-11-22T12:00:00Z", duration_ms: 1_800_000,
+    kills: 7, deaths: 3, assists: 4, summoner_spells: [], keystone_id: null, items: [],
+    participants: [{ summoner_name: "Teammate#EUW", champion: "Lux", relation: "ally" }],
+    saved: false, incomplete: false, video_size_bytes: 1, video_available: true,
+    league_result: { outcome: "win", ended_early: false, partial: false },
+  };
+  const other = { ...game, timestamp: "101", media_id: "9c82b929-7c85-4c27-a6d0-000000000101" as GameSummary["media_id"] };
+  const [history, setHistory] = createSignal<HistoryState>({
+    loading: false, indexing: false, initializing: false, error: null, indexIssue: null, laterPage: false,
+    page: { rows: [], next: null, indexed_recordings: 1, catalog_recordings: 1, unknown_recordings: 0 },
+  });
+  const fixtures = [game, other];
+  const update = (part: GameSummary, delta?: number) => setHistory(previous => ({
+    ...previous,
+    page: { ...previous.page!, rows: [{
+      game: structuredClone(part), media_id: part.media_id!, index_status: "ready", ranked_lp_delta: delta,
+      stats: { source: "final_eog", kills: 7, deaths: 3, assists: 4, items: [1001], summoner_spells: ["4", "6"],
+        keystone_id: 9923, secondary_style: 8000, creep_score: 136, duration_seconds: 1800,
+        evidence: null, final_evidence: null, game_tick: null },
+    }] },
+  }));
+  update(game);
+  const dispose = render(() => <LibraryScreen tab="games" games={fixtures} clips={[]} history={history()}
+    ddragon={{ state: "ready", version: "16.20.1", asset_base_url: "http://assets.test",
+      item_count: 1, champion_count: 2, cache_directory: "", error: null }}
+    actionable={true} snapshotOrigin={{ root: "A", rootEpoch: 1, request: 1, token: "scan", navigation: 1 }}
+    busyId={null} onOpenGame={() => {}} onToggleSaved={() => {}} onDeleteGame={() => {}}
+    onOpenClip={() => {}} onDeleteClip={() => {}} onOpenClipsFolder={() => {}} />, host);
+  try {
+    const card = host.querySelector("article")!;
+    const button = card.querySelector("button")!;
+    const images = [...card.querySelectorAll("img")];
+    expect(images.length).toBeGreaterThan(4);
+    button.focus();
+    const observer = new MutationObserver(() => {});
+    observer.observe(card, { subtree: true, attributes: true, attributeFilter: ["src"] });
+    expect(card.querySelector("[data-sign]")).toBeNull();
+
+    update(game, 24);
+    const lp = card.querySelector("[data-sign]")!;
+    expect(lp.textContent).toBe("+ 24 LP");
+    expect(lp.previousElementSibling?.textContent).toBe("Victory");
+    expect(lp.getAttribute("data-sign")).toBe("1");
+    expect(host.querySelector("article")).toBe(card);
+    expect(document.activeElement).toBe(button);
+    expect([...card.querySelectorAll("img")].every((image, index) => image === images[index])).toBe(true);
+    expect(observer.takeRecords()).toEqual([]);
+    observer.disconnect();
+
+    update(other, 24);
+    expect(card.querySelector("[data-sign]")).toBe(lp);
+    update({ ...other, league_result: { outcome: "loss", ended_early: false, partial: false } }, -19);
+    expect(card.querySelector("[data-sign]")?.textContent).toBe("- 19 LP");
+    expect(card.querySelector("[data-sign]")?.previousElementSibling?.textContent).toBe("Defeat");
+    update(other, 0);
+    expect(card.querySelector("[data-sign]")?.textContent).toBe("0 LP");
+    update(other);
+    expect(card.querySelector("[data-sign]")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
 it("opens one chooser for all parts and loads the scoped clip strip only when expanded", async () => {
   const host = document.createElement("div"); document.body.append(host);
   const origin = { root: "A", rootEpoch: 1, request: 1, token: "scan", navigation: 1 };

@@ -6,6 +6,39 @@
   },
   "features": [
     {
+      "id": "QB-DATA-007",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Ranked LP in Match History",
+      "description": "Collect the recorded player's confirmed ranked LP change through the League client and display it beside the match outcome.",
+      "priority": "P1",
+      "area": "match-data",
+      "status": "in-progress",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-DATA-002", "QB-DATA-003", "QB-LIB-001", "QB-LIB-034"],
+      "execution": {
+        "workflow": "planned",
+        "plan": "docs/exec-plans/qb-data-007-ranked-lp-v2.md",
+        "progress": "docs/execution/qb-data-007.md"
+      },
+      "acceptance_criteria": [
+        "Use the recorder-owned current LP notification GET with at most four short post-game attempts per eligible match. Do no idle LP polling, historical requests, or LP work for non-ranked matches.",
+        "Validate the exact game ID, ranked queue, current account, and post-game notification cause. Reject stale, unrelated and contradictory data. Preserve the supplied signed integer delta, including zero, promotion, demotion and exceptional adjustments, without inference from rank or outcome.",
+        "Notifications received before or after publication associate safely. Durable pending and installed facts survive recorder restarts, duplicates do not rewrite a receipt, missing or stale facts leave LP absent, and acquisition failure never delays recording publication.",
+        "An LP-only update targets the affected recording without scanning the library or preparing replay data. Grouped recordings resolve LP independently of the representative recording. Ordinary opening and filtering reuse the existing indexed history query and perform no additional query-time reads for LP.",
+        "Show the signed LP beside Victory or Defeat only for confirmed ranked facts. Positive is blue, negative is red and confirmed zero is neutral. Preserve card, artwork and focus identity when a value arrives."
+      ],
+      "verification": [
+        {"type": "automated", "description": "Exercise realistic notification responses, exact association and guards, before and after publication, restart and duplicate handling, missing facts and bounded acquisition."},
+        {"type": "automated", "description": "Exercise source-to-history projection, old cache compatibility, target-only preparation and stable mounted UI. Run applicable automated baselines and canonical validation."},
+        {"type": "inspection", "description": "Check request and write budgets and inspect the existing history SQL path. Use short representative fixtures and record any unavailable real-client or interactive evidence."}
+      ],
+      "evidence": [
+        "2026-11-23: Implemented bounded post-game GET acquisition with exact game, ranked queue, account and reason validation. Recorder fixtures verified shared request reservations, restart and publication ordering, guarded receipt deduplication, and signed values.",
+        "2026-11-23: Grouped History tests verified representative independence, conflict suppression, indexed lookup, targeted projection and legacy cache compatibility. Mounted UI tests verified stable card, focus and artwork. All 304 recorder, 230 desktop Rust and 643 frontend tests passed, with opt-in Rust tests skipped. Real-client notification shape and timing remain unverified."
+      ]
+    },
+    {
       "id": "QB-CLIP-016",
       "kind": "feature",
       "stage": "ready",

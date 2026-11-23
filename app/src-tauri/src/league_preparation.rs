@@ -190,6 +190,34 @@ pub(crate) fn start(app: tauri::AppHandle) -> Owner {
     Owner(stop)
 }
 
+async fn prepare_ranked_lp(
+    root: &Path,
+    cache: &Path,
+    stop: &Arc<AtomicBool>,
+    state: &Preparation,
+    changes: &Changes,
+) -> Result<Vec<String>> {
+    if changes.ranked_lp.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = root.to_owned();
+    let cache = cache.to_owned();
+    let bundles = changes.ranked_lp.clone();
+    let previous = state.approved.clone();
+    let stop = Arc::clone(stop);
+    tokio::task::spawn_blocking(move || {
+        ensure!(!stop.load(Ordering::Acquire), "preparation stopped");
+        let approved = ApprovedRoot::new(&root)?;
+        ensure!(
+            previous.as_ref() == Some(&approved),
+            "preparation root changed"
+        );
+        let index = Index::open(&cache, approved.path())?;
+        index.refresh_ranked_lp(&approved, &bundles, false)
+    })
+    .await?
+}
+
 async fn prepare(
     root: &Path,
     cache: &Path,
@@ -213,8 +241,7 @@ async fn prepare(
         .map(|(bundle, _)| bundle.clone())
         .collect::<Vec<_>>();
     if !changes.rescan && targets.is_empty() {
-        // Active recordings are unpublished. Their live journal writes require no preparation.
-        return Ok(Vec::new());
+        return prepare_ranked_lp(root, cache, stop, state, changes).await;
     }
     let path = root.to_owned();
     let cancelled = Arc::clone(stop);
@@ -254,7 +281,7 @@ async fn prepare(
     .await??;
     let Some((approved, games, logical_root, full)) = discovery else {
         // A directory can exist long before either final file is published.
-        return Ok(Vec::new());
+        return prepare_ranked_lp(root, cache, stop, state, changes).await;
     };
     // Share the UI's approved identity for cache ownership and source reads.
     // Keep the configured path separately so alias retargeting still invalidates work.
@@ -263,12 +290,13 @@ async fn prepare(
     let mut changed = Vec::new();
     // Reconcile even an empty library. A fresh UI and the headless helper use
     // the same stable catalog identity, independent of UI admission tokens.
-    let current = {
+    let (current, projected_lp) = {
         let root = library_root.clone();
         let cache = cache.to_owned();
         let games = Arc::clone(&games);
         let completed = state.completed.clone();
         let targets = targets.clone();
+        let lp_targets = changes.ranked_lp.clone();
         let approved = approved.clone();
         let logical_root = logical_root.clone();
         tokio::task::spawn_blocking(move || {
@@ -278,6 +306,11 @@ async fn prepare(
             );
             let mut index = Index::open(&cache, root.as_path())?;
             index.reconcile(&games, "background")?;
+            let projected = if full || !lp_targets.is_empty() {
+                index.refresh_ranked_lp(&approved, &lp_targets, full)?
+            } else {
+                Vec::new()
+            };
             let mut pending = Vec::new();
             for game in games
                 .iter()
@@ -297,10 +330,11 @@ async fn prepare(
                     pending.push((game.clone(), directory, stamp));
                 }
             }
-            Ok::<_, anyhow::Error>(pending)
+            Ok::<_, anyhow::Error>((pending, projected))
         })
         .await??
     };
+    changed.extend(projected_lp);
     // Keep the previous catalog on writer contention so retries still see a
     // pending removal as a change.
     if state.approved.as_ref() != Some(&approved) {

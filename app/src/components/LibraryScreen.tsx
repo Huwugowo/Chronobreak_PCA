@@ -59,6 +59,19 @@ const formatKdaRatio = (stats: HistoryStats): string => {
   return `${((stats.kills + stats.assists) / stats.deaths).toFixed(2)}:1 KDA`;
 };
 
+function equalCardList<T>(before: readonly T[] | null, after: readonly T[] | null) {
+  return before === after || (before !== null && after !== null &&
+    before.length === after.length && before.every((value, index) => value === after[index]));
+}
+
+function equalCardStats(before: HistoryStats, after: HistoryStats) {
+  return before.source === after.source && before.kills === after.kills &&
+    before.deaths === after.deaths && before.assists === after.assists &&
+    before.creep_score === after.creep_score && before.duration_seconds === after.duration_seconds &&
+    before.keystone_id === after.keystone_id && before.secondary_style === after.secondary_style &&
+    equalCardList(before.items, after.items) && equalCardList(before.summoner_spells, after.summoner_spells);
+}
+
 const displayedOutcome = (game: GameSummary): PreviewMatchOutcome | "unknown" | null => {
   if (game.league_result) return game.league_result.outcome === "win" ? "victory" : game.league_result.outcome === "loss" ? "defeat" : "unknown";
   return previewMatchOutcomeFor(game.timestamp);
@@ -239,7 +252,6 @@ function GamesLibrary(props: Props) {
     const row = rowsByMedia().get(game.media_id);
     return row?.game.timestamp === game.timestamp ? row : undefined;
   };
-  const statsFor = (game: GameSummary) => rowFor(game)?.stats ?? unavailableStats;
 
   return (
     <section class={styles.contentRail} aria-label="Match History">
@@ -282,10 +294,20 @@ function GamesLibrary(props: Props) {
                 const clipsExpanded = () => expandedClips() === group;
                 const matchClipQuery = { match_group: group, include_game_clock: true };
                 const clipRegionId = `match-clips-${group}`;
-                const outcome = () => displayedOutcome(rowFor(game())?.game ?? game());
+                const row = createMemo(() => rowFor(game()));
+                const outcome = createMemo(() => displayedOutcome(row()?.game ?? game()));
                 const health = () => replayHealth(game());
-                const stats = () => statsFor(game());
-                const eventTag = () => rowFor(game())?.event_tag;
+                const stats = createMemo(() => row()?.stats ?? unavailableStats, undefined, { equals: equalCardStats });
+                const hasRow = createMemo(() => row() !== undefined);
+                const lp = createMemo(() => {
+                  const result = outcome();
+                  return result === "victory" || result === "defeat" ? row()?.ranked_lp_delta : undefined;
+                });
+                const lpText = createMemo(() => {
+                  const delta = lp() ?? 0;
+                  return delta === 0 ? "0" : `${delta > 0 ? "+" : "-"} ${Math.abs(delta)}`;
+                });
+                const eventTag = () => row()?.event_tag;
                 const participants = createMemo(() => rowFor(game())?.game.participants ?? game().participants, undefined, {
                   equals: (before, after) => before.length === after.length && before.every((player, index) => {
                     const next = after[index];
@@ -355,9 +377,16 @@ function GamesLibrary(props: Props) {
                             </Show>
                           }
                         >
-                          <strong class={matchStyles.outcome} data-outcome={outcome()!}>
-                            {outcomeLabel(outcome()!)}
-                          </strong>
+                          <span class={matchStyles.outcomeLine}>
+                            <strong class={matchStyles.outcome} data-outcome={outcome()!}>
+                              {outcomeLabel(outcome()!)}
+                            </strong>
+                            <Show when={lp() !== undefined}>
+                              <span class={matchStyles.rankedLp} data-sign={Math.sign(lp()!)} title={`${lpText()} LP`}>
+                                {lpText()}<span class={matchStyles.lpUnit}> LP</span>
+                              </span>
+                            </Show>
+                          </span>
                         </Show>
 
                         <span class={matchStyles.contextDuration}>
@@ -385,7 +414,7 @@ function GamesLibrary(props: Props) {
 
                           <span class={matchStyles.loadout}>
                             <span class={matchStyles.spells}>
-                              <For each={(stats().summoner_spells ?? (rowFor(game()) ? [null, null] : game().summoner_spells)).slice(0, 2)}>
+                              <For each={(stats().summoner_spells ?? (hasRow() ? [null, null] : game().summoner_spells)).slice(0, 2)}>
                                 {(spell) => (
                                   <span class={matchStyles.assetIcon} title={spell?.replace(/^Summoner/, "") ?? "Summoner spell unavailable"}>
                                     <Show when={ddragonAsset(props.ddragon, "spell", spell)}>

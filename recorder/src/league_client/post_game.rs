@@ -411,14 +411,23 @@ impl Handle {
             );
         }
     }
-    pub(crate) fn submit(&self, candidate: &ProvisionalCandidate, directory: DirectoryGuard) {
+    pub(crate) fn submit(
+        &self,
+        candidate: &ProvisionalCandidate,
+        directory: DirectoryGuard,
+        game_ended: bool,
+    ) {
         let Ok(closed_ms) = ledger::wall_ms() else {
             return;
         };
         if let Some(history) = &self.history
             && let Ok(locator) = directory.locator()
         {
-            history.submit(candidate.result_binding(), locator);
+            history.submit(
+                candidate.result_binding(),
+                locator,
+                game_ended.then_some(closed_ms),
+            );
         }
         self.send(Command::Submit(
             Box::new(candidate.result_binding()),
@@ -431,6 +440,9 @@ impl Handle {
         self.send(Command::Published(media));
     }
     pub(crate) fn cancel(&self, media: MediaId) {
+        if let Some(history) = &self.history {
+            history.cancel_lp(media.clone());
+        }
         self.send(Command::Cancel(media));
     }
 }

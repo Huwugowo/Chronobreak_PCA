@@ -26,6 +26,7 @@ mod import;
 mod match_tags;
 mod overlay;
 mod query;
+mod ranked_lp;
 mod replay;
 pub(crate) mod reset;
 mod tag_catalog;
@@ -49,6 +50,7 @@ const IMPORT_BATCHES: usize = 32;
 pub(crate) struct Index {
     db: Connection,
     history_coverage_ready: bool,
+    ranked_lp_ready: bool,
     _writer: Option<fs::File>,
 }
 
@@ -81,10 +83,10 @@ impl Index {
         )?;
         // All statements in this short-lived reader see one WAL snapshot.
         db.execute_batch("BEGIN DEFERRED")?;
-        let (cache_root, version, history_coverage_ready): (String, i64, bool) = db.query_row(
-            "SELECT root,version,EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='history_coverage_counts') FROM cache_identity",
+        let (cache_root, version, history_coverage_ready, ranked_lp_ready): (String, i64, bool, bool) = db.query_row(
+            "SELECT root,version,EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='history_coverage_counts'),EXISTS(SELECT 1 FROM sqlite_schema WHERE type='index' AND name='recordings_ranked_lp') FROM cache_identity",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
         ensure!(
             cache_root == root.to_str().context("index root encoding")? && version == VERSION,
@@ -93,6 +95,7 @@ impl Index {
         Ok(Self {
             db,
             history_coverage_ready,
+            ranked_lp_ready,
             _writer: None,
         })
     }
@@ -161,10 +164,11 @@ impl Index {
             PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=256; PRAGMA journal_size_limit=8388608;
             PRAGMA cache_size=-4096; PRAGMA temp_store=MEMORY;")?;
         let root = root.to_str().context("index root encoding")?;
-        let has_identity_table: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='cache_identity')",
+        let (has_identity_table, ranked_lp_ready): (bool, bool) = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='cache_identity'),
+                EXISTS(SELECT 1 FROM sqlite_schema WHERE type='index' AND name='recordings_ranked_lp')",
             [],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         let identity: Option<(String, i64)> = if has_identity_table {
             db.query_row("SELECT root,version FROM cache_identity", [], |r| {
@@ -191,9 +195,13 @@ impl Index {
         let mode: String = db.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
         ensure!(mode == "wal", "index requires WAL mode");
         Self::install_history_coverage(&mut db)?;
+        if !ranked_lp_ready {
+            Self::install_ranked_lp_projection(&mut db)?;
+        }
         Ok(Self {
             db,
             history_coverage_ready: true,
+            ranked_lp_ready: true,
             _writer: writer,
         })
     }
@@ -277,6 +285,7 @@ impl Index {
             let mut update = tx.prepare_cached("INSERT INTO recordings(bundle,media_id,recorded_at,champion,mode,saved,summary_json,outcome,match_group)
             VALUES (?1,?2,?3,?4,?5,?6,?7,'unknown',?8) ON CONFLICT(media_id) DO UPDATE SET
             recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,saved=excluded.saved,summary_json=excluded.summary_json,match_group=excluded.match_group,
+            ranked_lp_delta=CASE WHEN recordings.match_group IS excluded.match_group THEN recordings.ranked_lp_delta END,
             facts_current=CASE
               WHEN recordings.summary_json=excluded.summary_json THEN recordings.facts_current
               WHEN json_valid(recordings.summary_json) THEN
@@ -420,6 +429,16 @@ impl Index {
             "recording match identity changed since scan"
         );
         let result = crate::league_result::read(&directory, &media, candidate.as_ref());
+        let queue_id = result
+            .as_ref()
+            .and_then(|r| r.queue_id)
+            .or_else(|| candidate.as_ref().map(|c| u64::from(c.queue_id)));
+        let ranked_lp = candidate
+            .as_ref()
+            .filter(|candidate| Some(u64::from(candidate.queue_id)) == queue_id)
+            .and_then(|candidate| {
+                ranked_lp::receipt_delta(&directory, &media, &candidate.game_id, candidate.queue_id)
+            });
         // Readers see the checked projection as a unit. Only reconciliation
         // can invalidate a row before its replacement is ready to publish.
         let tx = self.db.transaction()?;
@@ -462,7 +481,7 @@ impl Index {
             ON CONFLICT(media_id) DO UPDATE SET recorded_at=excluded.recorded_at,champion=excluded.champion,mode=excluded.mode,
               queue_id=excluded.queue_id,map_id=excluded.map_id,outcome=excluded.outcome,game_id=excluded.game_id,summary_json=excluded.summary_json,result_json=excluded.result_json",
             params![media.as_str(),summary.timestamp,summary.recorded_at,summary.champion,summary.game_mode,summary.saved,
-                result.as_ref().and_then(|r| r.queue_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.queue_id))).map(sql_u64).transpose()?,
+                queue_id.map(sql_u64).transpose()?,
                 result.as_ref().and_then(|r| r.map_id).or_else(|| candidate.as_ref().map(|c| u64::from(c.map_id))).map(sql_u64).transpose()?,
                 result.as_ref().map(|r| name(&r.outcome)).transpose()?.unwrap_or_else(|| "unknown".into()),
                 candidate.as_ref().map(|c| c.game_id.as_str()),summary_json,result_json,summary.match_group])?;
@@ -483,8 +502,8 @@ impl Index {
             "history source changed during preparation"
         );
         tx.execute(
-            "UPDATE recordings SET timeline_json=?2,history_stamp=?3,facts_current=1 WHERE media_id=?1",
-            params![media.as_str(), timeline_json, stamp],
+            "UPDATE recordings SET timeline_json=?2,history_stamp=?3,facts_current=1,ranked_lp_delta=?4 WHERE media_id=?1",
+            params![media.as_str(), timeline_json, stamp, ranked_lp],
         )?;
         Self::refresh_history_summary(&tx, &media)?;
         match_tags::refresh_dirty(&tx)?;

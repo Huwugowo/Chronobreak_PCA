@@ -1,10 +1,12 @@
 //! Recoverable match-history acquisition. EOG remains an independent comparison source.
 use super::{
+    ranked_lp::{Acquisition, INSTALL_DELAYS_MS, completed_ranked_match, same_match},
     result::{Binding, Eog},
     sidecar::{DirectoryGuard, DirectoryLocator},
     transport::{self, Metrics, Transport},
 };
-use chronobreak_league_data::{Outcome, ResultFile};
+use chronobreak_league_data::{Outcome, RankedLp, ResultFile, ranked_lp_queue};
+use chronobreak_replay_time::MediaId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -285,25 +287,56 @@ struct Job {
     next_ms: i64,
     result: Option<ResultFile>,
     done: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lp: Option<LpJob>,
 }
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct LpJob {
+    acquisition: Acquisition,
+    install_attempts: usize,
+    next_install_ms: i64,
+    finished: bool,
+}
+
+enum Command {
+    Submit(Box<Job>),
+    CancelLp(MediaId),
+}
+
 #[derive(Clone)]
-pub(super) struct Handle(mpsc::Sender<Job>);
+pub(super) struct Handle(mpsc::Sender<Command>);
 impl Handle {
-    pub(super) fn submit(&self, binding: Binding, directory: DirectoryLocator) {
+    pub(super) fn submit(
+        &self,
+        binding: Binding,
+        directory: DirectoryLocator,
+        closed_ms: Option<i64>,
+    ) {
+        let lp = ranked_lp_queue(binding.queue_id).map(|_| {
+            let mut job = LpJob::default();
+            job.acquisition.closed_ms = closed_ms;
+            job
+        });
         if self
             .0
-            .try_send(Job {
+            .try_send(Command::Submit(Box::new(Job {
                 binding,
                 directory,
                 attempts: 0,
                 next_ms: 0,
                 result: None,
                 done: false,
-            })
+                lp,
+            })))
             .is_err()
         {
             tracing::warn!("history job queue unavailable");
         }
+    }
+
+    pub(super) fn cancel_lp(&self, media: MediaId) {
+        let _ = self.0.try_send(Command::CancelLp(media));
     }
 }
 pub(super) struct Coordinator {
@@ -334,25 +367,101 @@ impl Drop for Coordinator {
         self.stop.send_replace(true);
     }
 }
-fn admit(jobs: &mut Vec<Job>, job: Job) -> bool {
+fn handle(jobs: &mut Vec<Job>, command: Command) -> bool {
+    match command {
+        Command::Submit(job) => admit(jobs, *job),
+        Command::CancelLp(media) => {
+            if let Some(lp) = jobs
+                .iter_mut()
+                .find(|job| job.binding.media_id == media)
+                .and_then(|job| job.lp.as_mut())
+                && !lp.finished
+            {
+                lp.finished = true;
+                return true;
+            }
+            false
+        }
+    }
+}
+
+fn admit(jobs: &mut Vec<Job>, mut job: Job) -> bool {
     if jobs
         .iter()
         .any(|j| j.binding.media_id == job.binding.media_id)
     {
         return false;
     }
+    if let Some(lp) = &mut job.lp
+        && let Some(shared) = jobs
+            .iter()
+            .find(|part| same_match(&part.binding, &job.binding) && part.lp.is_some())
+            .and_then(|part| part.lp.as_ref())
+    {
+        let closed_ms = lp.acquisition.closed_ms;
+        lp.acquisition = shared.acquisition;
+        if lp.acquisition.closed_ms.is_none() && closed_ms.is_some() {
+            lp.acquisition.closed_ms = closed_ms;
+            share_acquisition(jobs, &job.binding, lp.acquisition);
+        }
+    }
     if jobs.len() == 24 {
         // Keep recent recovery useful even when old matches never become available.
         // Admission order is persisted, so overflow behaves the same after restart.
-        let oldest = jobs.iter().position(|j| j.done).unwrap_or_else(|| {
-            tracing::warn!("history pending overflow; evicting oldest job");
-            0
-        });
+        let oldest = jobs
+            .iter()
+            .position(|j| {
+                j.done
+                    && j.lp
+                        .as_ref()
+                        .is_none_or(|lp| lp.finished || lp.acquisition.delta.is_none())
+            })
+            .unwrap_or_else(|| {
+                tracing::warn!("history pending overflow; evicting oldest job");
+                0
+            });
         jobs.remove(oldest);
     }
     jobs.push(job);
     true
 }
+fn share_acquisition(jobs: &mut [Job], binding: &Binding, acquisition: Acquisition) {
+    for part in jobs {
+        if same_match(&part.binding, binding)
+            && let Some(lp) = &mut part.lp
+        {
+            lp.acquisition = acquisition;
+        }
+    }
+}
+
+async fn install_lp(job: &mut Job, now: i64) {
+    let Some(lp) = &mut job.lp else { return };
+    let Some(delta) = lp.acquisition.delta else {
+        return;
+    };
+    let locator = job.directory.clone();
+    let receipt = RankedLp {
+        schema_version: 1,
+        media_id: job.binding.media_id.clone(),
+        game_id: job.binding.game_id.clone(),
+        queue_id: job.binding.queue_id,
+        delta,
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        DirectoryGuard::recover(&locator)?.install_ranked_lp(&receipt)
+    })
+    .await;
+    if matches!(result, Ok(Ok(())) | Ok(Err("ranked_lp_existing"))) {
+        lp.finished = true;
+    } else if let Some(delay) = INSTALL_DELAYS_MS.get(lp.install_attempts) {
+        lp.install_attempts += 1;
+        lp.next_install_ms = now.saturating_add(*delay);
+    } else {
+        lp.finished = true;
+    }
+}
+
 fn wall() -> i64 {
     super::post_game_ledger::wall_ms().unwrap_or(0)
 }
@@ -362,7 +471,7 @@ async fn save(root: Arc<DirectoryGuard>, jobs: &[Job]) -> Result<(), &'static st
         .await
         .map_err(|_| "history_jobs_worker")?
 }
-async fn run(path: PathBuf, mut receive: mpsc::Receiver<Job>, mut stop: watch::Receiver<bool>) {
+async fn run(path: PathBuf, mut receive: mpsc::Receiver<Command>, mut stop: watch::Receiver<bool>) {
     let loaded = tokio::task::spawn_blocking(move || {
         use std::{
             fs::{File, OpenOptions},
@@ -433,7 +542,7 @@ async fn run(path: PathBuf, mut receive: mpsc::Receiver<Job>, mut stop: watch::R
     let mut dirty = false;
     loop {
         while let Ok(job) = receive.try_recv() {
-            dirty |= admit(&mut jobs, job);
+            dirty |= handle(&mut jobs, job);
         }
         if dirty {
             if save(Arc::clone(&root), &jobs).await.is_err() {
@@ -444,6 +553,54 @@ async fn run(path: PathBuf, mut receive: mpsc::Receiver<Job>, mut stop: watch::R
         }
         if *stop.borrow() {
             break;
+        }
+        let now = wall();
+        if let Some(i) = jobs.iter().position(|j| {
+            j.lp.as_ref().is_some_and(|lp| {
+                !lp.finished && lp.acquisition.delta.is_some() && lp.next_install_ms <= now
+            })
+        }) {
+            install_lp(&mut jobs[i], now).await;
+            dirty = true;
+            continue;
+        }
+        if let Some(i) = jobs.iter().position(|j| {
+            j.lp.as_ref()
+                .is_some_and(|lp| !lp.finished && lp.acquisition.due(now))
+        }) {
+            let binding = jobs[i].binding.clone();
+            let mut acquisition = jobs[i].lp.as_ref().expect("selected LP job").acquisition;
+            acquisition.reserve(now);
+            share_acquisition(&mut jobs, &binding, acquisition);
+            if save(Arc::clone(&root), &jobs).await.is_err() {
+                break;
+            }
+            let candidate = tokio::select! {
+                _ = stop.changed() => None,
+                candidate = async {
+                    let discovered = transport::discover().await.ok()?;
+                    let notification = transport.ranked_lp(&discovered, &mut metrics).await.ok()?;
+                    let delta = notification.confirm(&binding, || {
+                        jobs.iter().any(|part| same_match(&part.binding, &binding)
+                            && completed_ranked_match(&part.binding, part.result.as_ref()))
+                    })?;
+                    Some((discovered, delta))
+                } => candidate,
+            };
+            if let Some((discovered, delta)) = candidate {
+                // An unavailable account check leaves the remaining slots usable.
+                // The durable reservation above covers both requests in this slot.
+                let confirmed = tokio::select! {
+                    _ = stop.changed() => false,
+                    result = transport.confirms_account(discovered, &mut metrics, &binding.puuid) => result,
+                };
+                if confirmed {
+                    acquisition.delta = Some(delta);
+                    share_acquisition(&mut jobs, &binding, acquisition);
+                    dirty = true;
+                }
+            }
+            continue;
         }
         if let Some(i) = jobs.iter().position(|j| !j.done && j.next_ms <= wall()) {
             // Removed allocations cannot receive facts. Publication of an existing
@@ -513,7 +670,7 @@ async fn run(path: PathBuf, mut receive: mpsc::Receiver<Job>, mut stop: watch::R
             }
             continue;
         }
-        tokio::select! {_=stop.changed()=>{}, job=receive.recv()=>{if let Some(job)=job {dirty |= admit(&mut jobs,job);}else{break;}},_=tokio::time::sleep(Duration::from_secs(1))=>{}}
+        tokio::select! {_=stop.changed()=>{}, job=receive.recv()=>{if let Some(job)=job {dirty |= handle(&mut jobs,job);}else{break;}},_=tokio::time::sleep(Duration::from_secs(1))=>{}}
     }
 }
 
@@ -648,8 +805,106 @@ mod tests {
             next_ms: i64::MAX,
             result: None,
             done: false,
+            lp: None,
         }
     }
+    #[test]
+    fn ranked_parts_share_one_budget_and_one_confirmed_delta_across_restart() {
+        let mut first = job();
+        first.binding.queue_id = 420;
+        first.lp = Some(LpJob::default()); // recording split while the game still ran
+        let mut second = first.clone();
+        second.binding.media_id = MediaId::new_v4();
+        second.lp.as_mut().unwrap().acquisition.closed_ms = Some(1000);
+
+        let mut jobs = vec![first];
+        assert!(admit(&mut jobs, second));
+        let binding = jobs[1].binding.clone();
+        let mut acquisition = jobs[1].lp.as_ref().unwrap().acquisition;
+        assert!(acquisition.due(1000));
+        acquisition.reserve(1000);
+        share_acquisition(&mut jobs, &binding, acquisition);
+        let mut jobs: Vec<Job> =
+            serde_json::from_slice(&serde_json::to_vec(&jobs).unwrap()).unwrap();
+        assert!(
+            jobs.iter()
+                .all(|j| !j.lp.as_ref().unwrap().acquisition.due(1000))
+        );
+        acquisition.delta = Some(-26);
+        share_acquisition(&mut jobs, &binding, acquisition);
+        let mut late = jobs[1].clone();
+        late.binding.media_id = MediaId::new_v4();
+        late.lp = Some(LpJob::default());
+        assert!(admit(&mut jobs, late));
+        assert!(
+            jobs.iter()
+                .all(|j| j.lp.as_ref().unwrap().acquisition.delta == Some(-26))
+        );
+
+        let mut different_account = jobs[1].clone();
+        different_account.binding.media_id = MediaId::new_v4();
+        different_account.binding.puuid = "another-account".into();
+        different_account.lp = Some(LpJob::default());
+        assert!(admit(&mut jobs, different_account));
+        assert!(jobs[3].lp.as_ref().unwrap().acquisition.delta.is_none());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn ranked_receipt_waits_for_publication_and_survives_restart_without_rewrite() {
+        use chronobreak_league_data::RANKED_LP_FILE;
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("games/100");
+        std::fs::create_dir_all(&directory).unwrap();
+        let media = MediaId::new_v4();
+        let mut binding =
+            super::super::association::fixture_candidate(media.clone()).result_binding();
+        binding.queue_id = 420;
+        let locator = DirectoryGuard::capture(&directory, media.clone())
+            .unwrap()
+            .locator()
+            .unwrap();
+        let mut part = job();
+        part.directory = locator.clone();
+        part.binding = binding.clone();
+        part.done = true;
+        let mut lp = LpJob::default();
+        lp.acquisition.delta = Some(23);
+        part.lp = Some(lp);
+        install_lp(&mut part, wall()).await;
+        assert!(!directory.join(RANKED_LP_FILE).exists());
+        assert!(!part.lp.as_ref().unwrap().finished);
+
+        super::super::sidecar::tests::result_fixture(&directory, &media);
+        let provisional = directory.join("league_match.json");
+        let mut match_data: Value =
+            serde_json::from_slice(&std::fs::read(&provisional).unwrap()).unwrap();
+        match_data["queue_id"] = 420.into();
+        std::fs::write(provisional, serde_json::to_vec(&match_data).unwrap()).unwrap();
+        std::fs::write(
+            root.path().join("league_history_jobs.json"),
+            serde_json::to_vec(&vec![part]).unwrap(),
+        )
+        .unwrap();
+        let coordinator = Coordinator::start(root.path());
+        let path = directory.join(RANKED_LP_FILE);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        coordinator.stop().await;
+        let original = std::fs::read(&path).unwrap();
+        let mut receipt = RankedLp::decode(&original, &media, &binding.game_id, 420).unwrap();
+        let guard = DirectoryGuard::recover(&locator).unwrap();
+        assert!(guard.install_ranked_lp(&receipt).is_ok());
+        receipt.delta = 19;
+        assert_eq!(guard.install_ranked_lp(&receipt), Err("ranked_lp_existing"));
+        assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+
     #[test]
     fn unavailable_history_cannot_block_new_matches_after_restart() {
         let jobs = (0..24).map(|_| job()).collect::<Vec<_>>();
@@ -703,6 +958,7 @@ mod tests {
             next_ms: 0,
             result: Some(result),
             done: false,
+            lp: None,
         };
         std::fs::write(
             root.path().join("league_history_jobs.json"),

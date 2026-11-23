@@ -17,6 +17,7 @@ pub(super) struct Changes {
     pub clip_ids: BTreeSet<ClipId>,
     // true also discovers a newly published bundle; telemetry alone does not.
     pub bundles: BTreeMap<String, bool>,
+    pub ranked_lp: BTreeSet<String>,
 }
 impl Changes {
     pub fn all() -> Self {
@@ -26,7 +27,7 @@ impl Changes {
         }
     }
     pub fn is_empty(&self) -> bool {
-        !self.rescan && self.bundles.is_empty()
+        !self.rescan && self.bundles.is_empty() && self.ranked_lp.is_empty()
     }
     pub fn merge(&mut self, other: Self) {
         let clips = self.clips || other.clips;
@@ -47,9 +48,11 @@ impl Changes {
         for (bundle, discover) in other.bundles {
             *self.bundles.entry(bundle).or_default() |= discover;
         }
-        if self.bundles.len() > 256 {
+        self.ranked_lp.extend(other.ranked_lp);
+        if self.bundles.len() + self.ranked_lp.len() > 256 {
             self.rescan = true;
             self.bundles.clear();
+            self.ranked_lp.clear();
         }
     }
     fn event(&mut self, root: &Path, database: &Path, event: &Event) {
@@ -116,6 +119,12 @@ impl Changes {
             }
             let leaf = parts.next().and_then(|part| part.to_str());
             if parts.next().is_some() {
+                continue;
+            }
+            if leaf == Some(chronobreak_league_data::RANKED_LP_FILE) {
+                let mut change = Self::default();
+                change.ranked_lp.insert(bundle.into());
+                self.merge(change);
                 continue;
             }
             let discover = match leaf {
@@ -259,6 +268,27 @@ mod tests {
         );
         assert!(changes.clips);
     }
+    #[test]
+    fn ranked_lp_hints_coalesce_without_waking_catalog_or_replay_preparation() {
+        let root = PathBuf::from("library");
+        let db = PathBuf::from("cache/index.sqlite3");
+        let receipt = root
+            .join("games/100")
+            .join(chronobreak_league_data::RANKED_LP_FILE);
+        let mut hints = Changes::default();
+        for _ in 0..10 {
+            hints.event(
+                &root,
+                &db,
+                &Event::new(EventKind::Create(CreateKind::File)).add_path(receipt.clone()),
+            );
+        }
+        assert!(!hints.is_empty());
+        assert!(!hints.rescan);
+        assert!(hints.bundles.is_empty());
+        assert_eq!(hints.ranked_lp, BTreeSet::from(["100".into()]));
+    }
+
     #[test]
     fn native_notification_targets_a_new_history_sidecar() {
         let root = tempfile::tempdir().unwrap();

@@ -199,6 +199,7 @@ mod tests {
         let index = Index {
             db: Connection::open_in_memory().unwrap(),
             history_coverage_ready: false,
+            ranked_lp_ready: false,
             _writer: None,
         };
         index.db.execute_batch(include_str!("schema.sql")).unwrap();

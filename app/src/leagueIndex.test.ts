@@ -45,6 +45,13 @@ it("decodes History rosters with unresolved, zero or positive clip counts", () =
     expect(() => decodeHistoryPage(page({ clip_count }))).toThrow();
   }
   expect(() => decodeHistoryPage(page({ clip_count: 0, extra: true }))).toThrow();
+  expect(decodeHistoryPage(page()).rows[0].ranked_lp_delta).toBeUndefined();
+  for (const ranked_lp_delta of [-24, 0, 27]) {
+    expect(decodeHistoryPage(page({ ranked_lp_delta })).rows[0].ranked_lp_delta).toBe(ranked_lp_delta);
+  }
+  for (const ranked_lp_delta of [null, "24", 1.5, 2147483648]) {
+    expect(() => decodeHistoryPage(page({ ranked_lp_delta }))).toThrow("history ranked LP");
+  }
   const event_tag = { id: "builtin:herald_steal", label: "Herald Steal", tier: null, builtin: true, source: "detected" };
   expect(decodeHistoryPage(page({ event_tag })).rows[0].event_tag).toEqual(event_tag);
   expect(() => decodeHistoryPage(page({ event_tag: { ...event_tag, source: "manual" } }))).toThrow("history event tag");

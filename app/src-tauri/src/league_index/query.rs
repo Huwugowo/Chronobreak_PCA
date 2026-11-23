@@ -4,12 +4,26 @@ use obs::events::{ActorRole, EventRevision};
 
 pub(super) const MAX_WINDOW_ROWS: usize = 512;
 pub(super) const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+macro_rules! ranked_lp_projection {
+    () => {
+        "
+    CASE WHEN r.facts_current=1 AND r.queue_id IN (420,440) THEN (
+        SELECT CASE WHEN MIN(lp.ranked_lp_delta)=MAX(lp.ranked_lp_delta)
+            AND MIN(lp.queue_id)=r.queue_id AND MAX(lp.queue_id)=r.queue_id
+            THEN MIN(lp.ranked_lp_delta) END
+        FROM recordings lp WHERE lp.match_group=g.match_group
+          AND lp.facts_current=1 AND lp.ranked_lp_delta IS NOT NULL
+    ) END"
+    };
+}
 // The newest member stands for its match in the date index. Card facts can
 // come from another member without changing the cursor or page membership.
 // Uncorrelated player and tag checks prune candidates before card lookup.
-pub(super) const HISTORY_SQL: &str = "
+pub(super) const HISTORY_SQL: &str = concat!("
     /* match tag candidates */
-    SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved
+    SELECT r.media_id,r.summary_json,r.result_json,r.telemetry_status,r.facts_current,g.recorded_at,g.media_id,r.saved, ",
+    // Keep query-plan measurements on the production shape.
+    ranked_lp_projection!(), "
     FROM recordings g INDEXED BY recordings_date CROSS JOIN recordings r ON r.media_id=(
         SELECT part.media_id FROM recordings part WHERE part.match_group=g.match_group
         ORDER BY CASE
@@ -56,7 +70,7 @@ pub(super) const HISTORY_SQL: &str = "
     AND (?20 IS NULL OR unixepoch(g.recorded_at)>=?20)
     AND (?21 IS NULL OR unixepoch(g.recorded_at)<?21)
     /* match tag predicates */
-    ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12";
+    ORDER BY g.recorded_at DESC,g.media_id LIMIT ?12");
 // Resolve assignment filters before the date-ordered recording and match detail lookups.
 const HISTORY_MATCH_TAG_CANDIDATES: &str = "
     WITH tag_candidates AS MATERIALIZED (
@@ -300,6 +314,8 @@ impl HistoryStats {
 pub(crate) struct HistoryRow {
     pub media_id: MediaId,
     pub game: GameSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ranked_lp_delta: Option<i32>,
     pub stats: HistoryStats,
     pub index_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -669,14 +685,21 @@ impl Index {
             || query.minimum_kill_streak.is_some()
             || query.role.is_some();
         let filter_tags = !query.tags.is_empty();
+        let legacy_sql;
+        let sql = if self.ranked_lp_ready {
+            HISTORY_SQL
+        } else {
+            legacy_sql = HISTORY_SQL.replace(ranked_lp_projection!(), "NULL");
+            &legacy_sql
+        };
         let tagged_sql;
         let sql = if filter_tags {
-            tagged_sql = HISTORY_SQL
+            tagged_sql = sql
                 .replace("/* match tag candidates */", HISTORY_MATCH_TAG_CANDIDATES)
                 .replace("/* match tag predicates */", HISTORY_MATCH_TAG_PREDICATE);
             &tagged_sql
         } else {
-            HISTORY_SQL
+            sql
         };
         let tagged_keys = if filter_tags {
             json_list(
@@ -765,6 +788,7 @@ impl Index {
             let item = HistoryRow {
                 media_id: media,
                 game,
+                ranked_lp_delta: row.get(8)?,
                 stats,
                 index_status: if current {
                     row.get(3)?

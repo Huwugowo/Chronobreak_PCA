@@ -61,6 +61,19 @@ are preserved for comparison. Final match duration and acquisition receipts do
 not replace the recorded video/game clock mapping. No end timestamp is invented
 from game creation plus duration.
 
+Ranked LP uses the same coordinator and ledger. A confirmed capture process end
+starts at most four small current-notification GET attempts over 90 seconds for
+ranked solo/duo or flex. Recording splits share that budget. Exact game, queue,
+current account and a qualifying post-game cause are required. The first
+accepted signed delta is persisted before guarded, no-overwrite installation of
+`league_ranked_lp.json`. Capture publication and match results are independent
+of LP availability. Unmatched or unavailable adjustments remain absent.
+
+The optional LP receipt has its own targeted index update and never enters the
+replay source fingerprint. Each paged History query looks up agreed LP in a
+partial index by match group, including when the representative recording has
+no receipt. A rebuilt cache recovers the scalar from the same local receipts.
+
 LCU timeline acquisition is intentionally absent from this implementation: no
 current feature needs its additional minute-spaced data, and it cannot replace
 the useful live events/player states. Spell usage/cooldowns are not synthesized.

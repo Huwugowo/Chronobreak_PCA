@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS recordings(
   journal_header TEXT, source_identity TEXT, position_json TEXT, checkpoint_json TEXT, timeline_json TEXT,
   telemetry_status TEXT NOT NULL DEFAULT 'pending', tail_bytes INTEGER NOT NULL DEFAULT 0,
   facts_current INTEGER NOT NULL DEFAULT 0 CHECK(facts_current IN (0,1)),
-  history_flags INTEGER NOT NULL DEFAULT 31 CHECK(history_flags BETWEEN 0 AND 31)
+  history_flags INTEGER NOT NULL DEFAULT 31 CHECK(history_flags BETWEEN 0 AND 31),
+  ranked_lp_delta INTEGER
 );
 CREATE INDEX IF NOT EXISTS recordings_date ON recordings(recorded_at DESC,media_id,match_group) WHERE match_group IS NOT NULL;
 CREATE INDEX IF NOT EXISTS recordings_match ON recordings(match_group,recorded_at DESC,media_id,saved,facts_current,history_flags) WHERE match_group IS NOT NULL;

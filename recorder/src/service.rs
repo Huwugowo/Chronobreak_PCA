@@ -1650,7 +1650,7 @@ async fn stop_recording_inner(
                 (&post_game, candidate, &match_directory)
             && let Ok(directory) = directory.try_clone()
         {
-            handle.submit(&candidate, directory);
+            handle.submit(&candidate, directory, process_end_required);
         }
     }
     let context_stop = async {

@@ -33,7 +33,7 @@ export type HistoryQuery = { after?: HistoryCursor | null; limit: number; queue_
 export type HistoryStats = { source: "final_eog" | "recorded_snapshot" | "unavailable"; kills: number | null; deaths: number | null; assists: number | null;
   items: Array<number | null> | null; summoner_spells: Array<string | null> | null; keystone_id: number | null; secondary_style: number | null; creep_score: number | null; duration_seconds: number | null;
   evidence: Evidence | null; final_evidence: ResultEvidence | null; game_tick: string | null };
-export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; event_tag?: TagAssignment; clip_count?: number };
+export type HistoryRow = { media_id: MediaId; game: GameSummary; stats: HistoryStats; index_status: string; event_tag?: TagAssignment; clip_count?: number; ranked_lp_delta?: number };
 export type HistoryPage = { rows: HistoryRow[]; next: HistoryCursor | null; indexed_recordings: number; catalog_recordings: number; unknown_recordings: number };
 export type ImportProgress = { media_id: MediaId; status: string; batches: number; position: Position | null; tail_bytes: number; history_ready?: boolean };
 type Position = { end_offset: number; last_sequence: number; checksum: number[] };
@@ -118,7 +118,13 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
     if (hasEventTag) keys.push("event_tag");
     const hasClipCount = Object.prototype.hasOwnProperty.call(object(value), "clip_count");
     if (hasClipCount) keys.push("clip_count");
+    const hasRankedLp = Object.prototype.hasOwnProperty.call(object(value), "ranked_lp_delta");
+    if (hasRankedLp) keys.push("ranked_lp_delta");
     const row = exact(value, keys, "history.row");
+    const lp = row.ranked_lp_delta;
+    if (hasRankedLp && (typeof lp !== "number" || !Number.isInteger(lp) || lp < -2147483648 || lp > 2147483647)) {
+      throw new Error("history ranked LP");
+    }
     const media = parseMediaId(row.media_id); const game = decodeGameSummary(row.game, "history.game");
     if (media !== game.media_id) throw new Error("history media identity");
     const s = exact(row.stats, ["source", "kills", "deaths", "assists", "items", "summoner_spells", "keystone_id", "secondary_style", "creep_score", "duration_seconds", "evidence", "final_evidence", "game_tick"]);
@@ -138,7 +144,8 @@ export function decodeHistoryPage(value: unknown): HistoryPage {
     }
     return { media_id: media, game, stats, index_status: status(row.index_status),
       ...(eventTag ? { event_tag: eventTag } : {}),
-      ...(hasClipCount ? { clip_count: integer(row.clip_count) } : {}) };
+      ...(hasClipCount ? { clip_count: integer(row.clip_count) } : {}),
+      ...(typeof lp === "number" ? { ranked_lp_delta: lp } : {}) };
   });
   let next: HistoryCursor | null = null; if (r.next !== null) { const c = exact(r.next, ["recorded_at", "media_id"]); next = { recorded_at: text(c.recorded_at, 64), media_id: parseMediaId(c.media_id) }; }
   const indexed = integer(r.indexed_recordings), catalog = integer(r.catalog_recordings), unknown = integer(r.unknown_recordings);

@@ -619,6 +619,172 @@ fn prepared_replay_does_not_hide_stale_card_facts() {
     }
 }
 
+#[test]
+fn ranked_lp_is_grouped_and_targeted_with_no_replay_invalidation() {
+    use chronobreak_league_data::{RANKED_LP_FILE, RankedLp};
+    let f = Fixture::new(1);
+    let root = f.root.path();
+    let first_media = f.source.media_id.clone();
+    let second_media = MediaId::new_v4();
+    let second = library::tests::write_game(root, "101", "2026-08-06T10:00:00Z", false);
+    let metadata = second.join("metadata.json");
+    let text = fs::read_to_string(&metadata).unwrap();
+    fs::write(
+        &metadata,
+        text.replace(first_media.as_str(), second_media.as_str()),
+    )
+    .unwrap();
+    for (part, media) in [(&f.directory, &first_media), (&second, &second_media)] {
+        let mut candidate = crate::league_match::fixture(media);
+        candidate["queue_id"] = 420.into();
+        fs::write(
+            part.join("league_match.json"),
+            serde_json::to_vec(&candidate).unwrap(),
+        )
+        .unwrap();
+    }
+    let games = library::list_games(root).unwrap();
+    let mut index = f.index();
+    index.reconcile(&games, "ranked-parts").unwrap();
+    for game in &games {
+        index
+            .history_recording(root, game, false, &|| Ok(()))
+            .unwrap();
+    }
+    f.ready(&mut index);
+    for _ in 0..10 {
+        if index
+            .prepare_recording(root, &f.summary, &|| Ok(()))
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        index.prepared_progress(root, &f.summary).unwrap().status,
+        "ready"
+    );
+    let approved = crate::playback_file::ApprovedRoot::new(root).unwrap();
+    let write = |part: &Path, media: &MediaId, delta| {
+        let receipt = RankedLp {
+            schema_version: 1,
+            media_id: media.clone(),
+            game_id: "9007199254740993".into(),
+            queue_id: 420,
+            delta,
+        };
+        fs::write(
+            part.join(RANKED_LP_FILE),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+    };
+    let row = |index: &Index| {
+        index
+            .history(
+                &HistoryQuery {
+                    limit: 1,
+                    ..Default::default()
+                },
+                1,
+            )
+            .unwrap()
+            .rows
+            .remove(0)
+    };
+    let mut plan = index
+        .db
+        .prepare(&format!("EXPLAIN QUERY PLAN {HISTORY_SQL}"))
+        .unwrap();
+    let mut operations = plan.raw_query();
+    let mut uses_lp_index = false;
+    while let Some(operation) = operations.next().unwrap() {
+        let detail: String = operation.get(3).unwrap();
+        uses_lp_index |=
+            detail.contains("SEARCH lp USING") && detail.contains("recordings_ranked_lp");
+    }
+    assert!(uses_lp_index);
+    drop(operations);
+    drop(plan);
+    let original_stamp = source_stamp(&f.directory).unwrap();
+    assert_eq!(row(&index).ranked_lp_delta, None);
+    // The ready journal is on part 100. Only part 101 has a new receipt.
+    write(&second, &second_media, 24);
+    let target = std::collections::BTreeSet::from(["101".to_owned()]);
+    assert_eq!(
+        index.refresh_ranked_lp(&approved, &target, false).unwrap(),
+        [second_media.as_str()]
+    );
+    let initial = row(&index);
+    assert_eq!(initial.media_id, first_media);
+    assert_eq!(initial.ranked_lp_delta, Some(24));
+    assert_eq!(source_stamp(&f.directory).unwrap(), original_stamp);
+    assert_eq!(
+        index.prepared_progress(root, &f.summary).unwrap().status,
+        "ready"
+    );
+
+    // An alternate representative still gets the same group value.
+    index
+        .db
+        .execute(
+            "UPDATE recordings SET telemetry_status='pending' WHERE media_id=?1",
+            [first_media.as_str()],
+        )
+        .unwrap();
+    let alternate = row(&index);
+    assert_eq!(alternate.media_id, second_media);
+    assert_eq!(alternate.ranked_lp_delta, Some(24));
+
+    // A conflicting receipt suppresses the group. Removing it or replacing
+    // it with a misbound file cannot change a confirmed sibling's value.
+    let first = std::collections::BTreeSet::from(["100".to_owned()]);
+    write(&f.directory, &first_media, -8);
+    index.refresh_ranked_lp(&approved, &first, false).unwrap();
+    assert_eq!(row(&index).ranked_lp_delta, None);
+    write(&f.directory, &second_media, -8);
+    index.refresh_ranked_lp(&approved, &first, false).unwrap();
+    assert_eq!(row(&index).ranked_lp_delta, Some(24));
+    fs::remove_file(second.join(RANKED_LP_FILE)).unwrap();
+    index.refresh_ranked_lp(&approved, &target, false).unwrap();
+    assert_eq!(row(&index).ranked_lp_delta, None);
+}
+
+#[test]
+fn ranked_lp_migration_preserves_legacy_snapshot_and_existing_cards() {
+    let f = Fixture::new(1);
+    let root = f.root.path();
+    let cache = f.cache.path();
+    let before = f.index();
+    before
+        .db
+        .execute_batch(
+            "DROP INDEX recordings_ranked_lp; ALTER TABLE recordings DROP COLUMN ranked_lp_delta;",
+        )
+        .unwrap();
+    drop(before);
+    let legacy = Index::reader(cache, root).unwrap();
+    assert!(!legacy.ranked_lp_ready);
+    let query = HistoryQuery {
+        limit: 1,
+        ..Default::default()
+    };
+    let row = legacy.history(&query, 1).unwrap().rows.remove(0);
+    assert_eq!(row.media_id, f.source.media_id);
+    assert_eq!(row.ranked_lp_delta, None);
+
+    let upgraded = Index::open(cache, root).unwrap();
+    assert!(Index::reader(cache, root).unwrap().ranked_lp_ready);
+    assert_eq!(
+        upgraded.history(&query, 1).unwrap().rows[0].media_id,
+        row.media_id
+    );
+    assert_eq!(
+        legacy.history(&query, 1).unwrap().rows[0].ranked_lp_delta,
+        None
+    );
+}
+
 #[tokio::test]
 async fn history_groups_recording_parts_before_filters_counts_and_pagination() {
     let f = Fixture::new(1);

@@ -12,6 +12,43 @@ pub const MAX_PLAYERS: usize = 64;
 pub const MAX_TEAMS: usize = 16;
 pub const MAX_COUNTER: u64 = 9_007_199_254_740_991;
 
+pub const RANKED_LP_FILE: &str = "league_ranked_lp.json";
+pub const MAX_RANKED_LP_BYTES: usize = 1024;
+
+pub fn ranked_lp_queue(queue_id: u32) -> Option<&'static str> {
+    match queue_id {
+        420 => Some("RANKED_SOLO_5x5"),
+        440 => Some("RANKED_FLEX_SR"),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RankedLp {
+    pub schema_version: u32,
+    pub media_id: MediaId,
+    pub game_id: String,
+    pub queue_id: u32,
+    pub delta: i32,
+}
+
+impl RankedLp {
+    pub fn decode(bytes: &[u8], media: &MediaId, game: &str, queue: u32) -> Option<Self> {
+        if bytes.len() > MAX_RANKED_LP_BYTES {
+            return None;
+        }
+        let receipt: Self = serde_json::from_slice(bytes).ok()?;
+        (receipt.schema_version == 1
+            && &receipt.media_id == media
+            && receipt.game_id == game
+            && canonical_game_id(game)
+            && receipt.queue_id == queue
+            && ranked_lp_queue(queue).is_some())
+        .then_some(receipt)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {

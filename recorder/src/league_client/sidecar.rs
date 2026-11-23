@@ -82,7 +82,7 @@ impl DirectoryGuard {
     pub(super) fn result_published(&self, game_id: &str) -> bool {
         #[cfg(windows)]
         {
-            self.inner.validate_result_core(game_id).is_ok()
+            self.inner.validate_result_core(game_id, None).is_ok()
         }
         #[cfg(not(windows))]
         {
@@ -187,7 +187,7 @@ impl DirectoryGuard {
         }
         #[cfg(windows)]
         {
-            self.inner.validate_result_core(&result.game_id)?;
+            self.inner.validate_result_core(&result.game_id, None)?;
             self.inner
                 .replace_telemetry(chronobreak_league_data::HISTORY_RESULT_FILE, &bytes)
         }
@@ -196,6 +196,21 @@ impl DirectoryGuard {
             Err("context_non_windows")
         }
     }
+    pub(super) fn install_ranked_lp(
+        &self,
+        receipt: &chronobreak_league_data::RankedLp,
+    ) -> Result<(), &'static str> {
+        #[cfg(windows)]
+        {
+            self.inner.install_ranked_lp(receipt)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = receipt;
+            Err("context_non_windows")
+        }
+    }
+
     pub(super) fn replace_history_jobs(&self, bytes: &[u8]) -> Result<(), &'static str> {
         if bytes.len() > 8 * 1024 * 1024 {
             return Err("history_jobs_size");
@@ -465,7 +480,7 @@ mod platform {
                 .map_err(|_| "result_write")?;
             temporary.file.sync_all().map_err(|_| "result_flush")?;
             before_validate();
-            self.validate_result_core(&result.game_id)?;
+            self.validate_result_core(&result.game_id, None)?;
             let existing = self.path.join(chronobreak_league_data::RESULT_FILE);
             match std::fs::symlink_metadata(&existing) {
                 Ok(_) => {
@@ -490,6 +505,53 @@ mod platform {
             }
             temporary.install_leaf(&pinned, chronobreak_league_data::RESULT_FILE)?;
             Ok(())
+        }
+
+        pub fn install_ranked_lp(
+            &self,
+            receipt: &chronobreak_league_data::RankedLp,
+        ) -> Result<(), &'static str> {
+            use chronobreak_league_data::{MAX_RANKED_LP_BYTES, RANKED_LP_FILE, RankedLp};
+            let bytes = serde_json::to_vec(receipt).map_err(|_| "ranked_lp_encode")?;
+            if RankedLp::decode(&bytes, &self.media_id, &receipt.game_id, receipt.queue_id)
+                .is_none()
+            {
+                return Err("ranked_lp_identity");
+            }
+            let pinned = self.pin_current()?;
+            self.validate_result_core(&receipt.game_id, Some(receipt.queue_id))?;
+            match std::fs::symlink_metadata(self.path.join(RANKED_LP_FILE)) {
+                Ok(_) => {
+                    let existing = self
+                        .read_result_file(RANKED_LP_FILE, MAX_RANKED_LP_BYTES as u64)
+                        .map_err(|_| "ranked_lp_existing")?;
+                    self.pin_current()?;
+                    return if existing == bytes
+                        || RankedLp::decode(
+                            &existing,
+                            &self.media_id,
+                            &receipt.game_id,
+                            receipt.queue_id,
+                        )
+                        .as_ref()
+                            == Some(receipt)
+                    {
+                        Ok(())
+                    } else {
+                        Err("ranked_lp_existing")
+                    };
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("ranked_lp_existing"),
+            }
+            let mut temporary = OwnedTemporary::create_shared(&pinned, true)?;
+            temporary
+                .file
+                .write_all(&bytes)
+                .map_err(|_| "ranked_lp_write")?;
+            temporary.file.sync_all().map_err(|_| "ranked_lp_flush")?;
+            self.pin_current()?;
+            temporary.install_leaf(&pinned, RANKED_LP_FILE)
         }
 
         fn read_result_file(&self, leaf: &str, cap: u64) -> Result<Vec<u8>, &'static str> {
@@ -518,7 +580,11 @@ mod platform {
             Ok(bytes)
         }
 
-        pub fn validate_result_core(&self, game_id: &str) -> Result<(), &'static str> {
+        pub fn validate_result_core(
+            &self,
+            game_id: &str,
+            queue: Option<u32>,
+        ) -> Result<(), &'static str> {
             self.pin_current()?;
             #[derive(serde::Deserialize)]
             struct Core {
@@ -532,6 +598,7 @@ mod platform {
                 status: String,
                 media_id: MediaId,
                 game_id: String,
+                queue_id: Option<u32>,
             }
             let core: Core =
                 serde_json::from_slice(&self.read_result_file("metadata.json", 64 * 1024)?)
@@ -553,6 +620,7 @@ mod platform {
                 || provisional.status != "provisional"
                 || provisional.media_id != self.media_id
                 || provisional.game_id != game_id
+                || queue.is_some_and(|queue| provisional.queue_id != Some(queue))
             {
                 return Err("result_core_identity");
             }

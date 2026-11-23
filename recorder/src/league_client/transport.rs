@@ -263,6 +263,7 @@ enum Endpoint {
     Gameflow,
     Eog,
     History(u64),
+    RankedLp,
 }
 impl Endpoint {
     fn path(&self) -> String {
@@ -270,6 +271,7 @@ impl Endpoint {
             Self::Summoner => "/lol-summoner/v1/current-summoner".into(),
             Self::Gameflow => "/lol-gameflow/v1/session".into(),
             Self::Eog => "/lol-end-of-game/v1/eog-stats-block".into(),
+            Self::RankedLp => "/lol-ranked/v1/current-lp-change-notification".into(),
             Self::History(id) => format!("/lol-match-history/v1/games/{id}"),
         }
     }
@@ -320,6 +322,28 @@ impl Transport {
         result.set_receipt(start)?;
         Ok(result)
     }
+    pub(super) async fn ranked_lp(
+        &self,
+        discovered: &Discovered,
+        metrics: &mut Metrics,
+    ) -> Result<super::ranked_lp::Notification, &'static str> {
+        self.get(&discovered.credentials, Endpoint::RankedLp, metrics)
+            .await
+    }
+
+    pub(super) async fn confirms_account(
+        &self,
+        discovered: Discovered,
+        metrics: &mut Metrics,
+        puuid: &str,
+    ) -> bool {
+        let account: Result<Summoner, _> = self
+            .get(&discovered.credentials, Endpoint::Summoner, metrics)
+            .await;
+        account.is_ok_and(|account| account.puuid.as_deref() == Some(puuid))
+            && unchanged(discovered).await == Ok(true)
+    }
+
     pub(super) fn new() -> Result<Self, &'static str> {
         Ok(Self {
             http: Client::builder()
@@ -374,6 +398,7 @@ impl Transport {
             Endpoint::Gameflow => "gameflow",
             Endpoint::Eog => "eog",
             Endpoint::History(_) => "match_history",
+            Endpoint::RankedLp => "ranked_lp",
         });
         metrics.last_http_status = None;
         // No public URL/method override and no reqwest/serde error strings escape.
@@ -392,10 +417,10 @@ impl Transport {
         if !response.status().is_success() {
             return Err("lcu_http_status");
         }
-        let response_limit = if matches!(endpoint, Endpoint::History(_)) {
-            2 * 1024 * 1024
-        } else {
-            RESPONSE_LIMIT
+        let response_limit = match endpoint {
+            Endpoint::History(_) => 2 * 1024 * 1024,
+            Endpoint::RankedLp => 16 * 1024,
+            _ => RESPONSE_LIMIT,
         };
         if response
             .content_length()

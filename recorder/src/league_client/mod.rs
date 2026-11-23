@@ -6,6 +6,7 @@ mod history;
 pub(crate) mod post_game;
 mod post_game_ledger;
 pub mod probe;
+mod ranked_lp;
 mod result;
 pub(crate) mod sidecar;
 mod transport;
