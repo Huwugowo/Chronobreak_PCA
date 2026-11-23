@@ -300,6 +300,23 @@ async fn simulated_live_responses_reach_durable_sql_and_application_queries() {
         StatsSource::RecordedSnapshot
     ));
     assert_eq!(history.rows[0].stats.kills, Some(0));
+    let mut clip_game = library::recording_export_authority(&directory, None)
+        .unwrap()
+        .game;
+    let clip_stats = index
+        .enrich_clip_game(
+            &catalog_key(std::slice::from_ref(&summary)).unwrap(),
+            &mut clip_game,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(clip_stats.kda, Some([Some(0); 3]));
+    assert_eq!(clip_stats.items, Some(vec![Some(2003)]));
+    assert_eq!(clip_stats.game_tick, history.rows[0].stats.game_tick);
+    assert!(clip_game.final_kda.is_none());
+    assert!(clip_game.final_items.is_none());
+    assert!(clip_game.outcome.is_none());
+    assert!(clip_game.duration_seconds.is_none());
     assert_eq!(
         index
             .recording(root.path(), &summary, false, &|| Ok(()))

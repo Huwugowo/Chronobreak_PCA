@@ -43,7 +43,13 @@ export type ClipHeader = {
   game: ClipGame; exported_at: number; preset: ClipExportPreset; duration: string;
   events: Availability; tags: TagAssignment[];
 };
-export type ClipCard = { header: ClipHeader; title: string; video_url: string; thumbnail_url: string; game_clock?: string };
+export type ClipRecordedStats = {
+  kda: ClipGame["final_kda"]; items: Array<number | null> | null; game_tick: string | null;
+};
+export type ClipCard = {
+  header: ClipHeader; title: string; video_url: string; thumbnail_url: string;
+  game_clock?: string; recorded_stats?: ClipRecordedStats;
+};
 export type GroupCursor = [number, string];
 export type ClipCursor = [number, number, string];
 export type ClipGroup = { key: string; clips: ClipCard[]; next: ClipCursor | null };

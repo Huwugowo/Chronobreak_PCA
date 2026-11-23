@@ -231,13 +231,16 @@ it("opens the sole clip once, discards a lookup after leaving History and restor
   await vi.waitFor(() => expect(document.activeElement).toBe(host.querySelector('[data-testid="play-single"]')));
 });
 
-it.each([false, true])("opens a grid clip in place with saved context and accessible actions (missing metadata: %s)", async missing => {
+it.each(["final", "recorded", "missing"])("opens a grid clip in place with %s match stats and accessible actions", async stats => {
   harness.renderManagedGrid = true;
   harness.sourceMissing = true;
   const clip = makeClip();
   harness.clip = clip;
-  if (missing) clip.header.game.champion = null;
-  else Object.assign(clip.header.game, {
+  if (stats === "missing") clip.header.game.champion = null;
+  else if (stats === "recorded") {
+    Object.assign(clip.header.game, { champion: "MasterYi", mode: "SWIFTPLAY", played_at: "2026-11-02T00:00:00Z" });
+    clip.recorded_stats = { kda: [38, 3, 3], items: [6672, null, 3031], game_tick: "803277771" };
+  } else Object.assign(clip.header.game, {
     champion: "Ahri", outcome: "win", queue_id: 420, played_at: "2026-07-03T12:00:00Z",
     final_kda: [7, 0, 3], summoner_spells: ["4", "14"], final_items: [1001], duration_seconds: 1_503,
   });
@@ -265,11 +268,15 @@ it.each([false, true])("opens a grid clip in place with saved context and access
   expect(video.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(video.src).toBe(clip.video_url);
   expect(details.textContent).toContain("0:05 · 3.50 MB");
-  if (missing) {
+  expect(summary.textContent).not.toContain("Final KDA");
+  if (stats === "missing") {
     expect(summary.textContent).toMatch(/Unknown result.*Queue unavailable.*KDA unavailable.*Final items unavailable.*Date unavailable.*Duration unavailable/);
     expect(summary.querySelector('[aria-label="Champion unavailable"]')).not.toBeNull();
+  } else if (stats === "recorded") {
+    expect(summary.textContent).toMatch(/Unknown result.*SWIFTPLAY.*38 \/ 3 \/ 3.*13\.67:1 KDA.*Stats at 13:23/i);
+    expect(summary.querySelector('[aria-label="Recorded items"]')).not.toBeNull();
   } else {
-    expect(summary.textContent).toMatch(/Victory.*Ranked Solo\/Duo.*7 \/ 0 \/ 3.*25m 3s/);
+    expect(summary.textContent).toMatch(/Victory.*Ranked Solo\/Duo.*7 \/ 0 \/ 3.*PERFECT KDA.*25m 3s/);
     expect(summary.querySelector("[aria-label='Ahri']")).not.toBeNull();
     expect(summary.querySelector("[aria-label='4']")).not.toBeNull();
   }

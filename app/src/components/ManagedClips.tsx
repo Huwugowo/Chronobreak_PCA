@@ -1,10 +1,10 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { createClipGrid } from "../clipGrid";
 import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
-import { formatBytes, formatDate, formatDuration, formatMatchDuration } from "../format";
+import { formatBytes, formatDate, formatDuration, formatKdaRatio, formatMatchDuration } from "../format";
 import { libraryError } from "../libraryController";
 import { clipDurationMs, clipTitleError, detectedTagAssignments, manualTagDefinitions, readClipDetail, readClipPage, replaceTagDefinition, type ClipCard,
-  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGridQuery, type ClipGroup, type ClipQuery,
+  type ClipCursor, type ClipEdit, type ClipFilters, type ClipGame, type ClipGridCard, type ClipGridQuery, type ClipGroup, type ClipQuery, type ClipRecordedStats,
   type ClipTagUpdate, type GroupCursor, type Tag, type TagAssignment, type TagDefinitionWriter } from "../managedClips";
 import { matchQueueLabel } from "../matchQueues";
 import { parseReplayTick } from "../replayTime";
@@ -45,11 +45,22 @@ function ClipChampionPortrait(props: { champion: string | null; ddragon: Ddragon
   </span>;
 }
 
-function ClipMatchHeader(props: { game: ClipGame; ddragon: DdragonStatus }) {
+function ClipMatchHeader(props: { game: ClipGame; recorded?: ClipRecordedStats; ddragon: DdragonStatus }) {
   const outcome = () => props.game.outcome;
   const result = () => outcome() === "win" ? "Victory" : outcome() === "loss" ? "Defeat" : "Unknown result";
   const queue = () => matchQueueLabel(props.game.queue_id, props.game.mode) ?? "Queue unavailable";
   const playedAt = () => props.game.played_at ?? props.game.part_recorded_at;
+  const kda = () => props.game.final_kda ?? props.recorded?.kda;
+  const items = () => props.game.final_items ?? props.recorded?.items;
+  const recordedStatsVisible = () => (!props.game.final_kda && props.recorded?.kda) ||
+    (!props.game.final_items && props.recorded?.items);
+  const durationLabel = () => {
+    if (props.game.duration_seconds) return formatMatchDuration(props.game.duration_seconds * 1_000);
+    if (recordedStatsVisible()) {
+      return props.recorded?.game_tick ? `Stats at ${recordedGameClock(props.recorded.game_tick)}` : "Recorded stats";
+    }
+    return "Duration unavailable";
+  };
 
   return <div class={styles.matchRow} role="group" aria-label="Match summary" data-outcome={outcome() ?? undefined}>
     <div class={styles.matchContext}>
@@ -70,16 +81,19 @@ function ClipMatchHeader(props: { game: ClipGame; ddragon: DdragonStatus }) {
         }}</For>
       </span>
     </span>
-    <span class={`${matchStyles.kda} ${styles.matchKda}`}>
-      <Show when={props.game.final_kda} fallback={<span class={styles.matchMeta}>KDA unavailable</span>}>
-        {score => <><strong>{score()[0] ?? "—"} <i>/</i> {score()[1] ?? "—"} <i>/</i> {score()[2] ?? "—"}</strong><em>Final KDA</em></>}
+    <span class={`${matchStyles.kda} ${styles.matchKda}`} title={!props.game.final_kda && kda() ? "Recorded KDA" : undefined}>
+      <Show when={kda()} fallback={<span class={styles.matchMeta}>KDA unavailable</span>}>
+        {score => <>
+          <strong>{score()[0] ?? "—"} <i>/</i> {score()[1] ?? "—"} <i>/</i> {score()[2] ?? "—"}</strong>
+          <Show when={formatKdaRatio(...score())}>{ratio => <span class={styles.matchMeta}>{ratio()}</span>}</Show>
+        </>}
       </Show>
     </span>
-    <Show when={props.game.final_items} fallback={<span class={styles.matchMeta}>Final items unavailable</span>}>
-      {items => <span class={matchStyles.items} role="group" aria-label="Final items">
+    <Show when={items()} fallback={<span class={styles.matchMeta}>Final items unavailable</span>}>
+      {loadout => <span class={matchStyles.items} role="group" aria-label={props.game.final_items ? "Final items" : "Recorded items"}>
         <For each={itemSlots}>{slot => <span class={matchStyles.itemSlot}>
-          <Show when={ddragonAsset(props.ddragon, "item", items()[slot])} keyed>
-            {src => <img src={src} alt={`Item ${items()[slot]}`} loading="lazy" decoding="async" onError={hideFailedImage} />}
+          <Show when={ddragonAsset(props.ddragon, "item", loadout()[slot])} keyed>
+            {src => <img src={src} alt={`Item ${loadout()[slot]}`} loading="lazy" decoding="async" onError={hideFailedImage} />}
           </Show>
         </span>}</For>
       </span>}
@@ -88,9 +102,7 @@ function ClipMatchHeader(props: { game: ClipGame; ddragon: DdragonStatus }) {
       <Show when={playedAt()} fallback={<span>Date unavailable</span>}>
         {date => <time dateTime={date()} title={formatDate(date())}>{formatDate(date(), true)}</time>}
       </Show>
-      <Show when={props.game.duration_seconds} fallback={<span class={styles.matchMeta}>Duration unavailable</span>}>
-        {seconds => <span class={styles.matchMeta}>{formatMatchDuration(seconds() * 1_000)}</span>}
-      </Show>
+      <span class={styles.matchMeta}>{durationLabel()}</span>
     </span>
   </div>;
 }
@@ -423,7 +435,7 @@ export function ManagedClipPlayer(props: {
           {close()}
         </header>}>
           {library => <div class={styles.playerTop}>
-            <ClipMatchHeader game={props.clip.header.game} ddragon={library().ddragon} />
+            <ClipMatchHeader game={props.clip.header.game} recorded={props.clip.recorded_stats} ddragon={library().ddragon} />
             {close()}
           </div>}
         </Show>

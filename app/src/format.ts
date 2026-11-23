@@ -27,6 +27,12 @@ export const formatMatchDuration = (durationMs: number): string => {
   return `${minutes}m ${seconds}s`;
 };
 
+export const formatKdaRatio = (kills: number | null, deaths: number | null, assists: number | null): string | null => {
+  if (kills === null || deaths === null || assists === null) return null;
+  if (deaths === 0) return "PERFECT KDA";
+  return `${((kills + assists) / deaths).toFixed(2)}:1 KDA`;
+};
+
 export const formatDate = (value: string, compact = false): string => {
   if (!value) return "Date unavailable";
   const date = new Date(value);

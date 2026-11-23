@@ -384,6 +384,10 @@ mapped factual observations for all actors and is opened for explicit clip
 detail. Export derives detected tags from verified recording-player events
 within the exported frame range. Edits replace only manual assignments.
 Playback, match context, and saved tags survive deletion of the source recording.
+The Clips player enriches saved context from the checked account-scoped match
+when available. Without a final result, it can display the local player's
+recorded KDA and item snapshot with its observed game clock. The snapshot is
+resolved at playback. Match outcome and duration require confirmed result facts.
 
 Match History uses the built-in event vocabulary, projected only from checked
 recording parts with a resolved local killer. Its Tags filter requires all

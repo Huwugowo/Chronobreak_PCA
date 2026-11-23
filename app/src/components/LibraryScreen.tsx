@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
-import { formatBytes, formatDate, formatDuration, formatMatchDuration, formatTimestampDate } from "../format";
+import { formatBytes, formatDate, formatDuration, formatKdaRatio, formatMatchDuration, formatTimestampDate } from "../format";
 import { ddragonAsset, hideFailedImage } from "../ddragonAssets";
 import { previewMatchOutcomeFor, type PreviewMatchOutcome } from "../dev/matchHistoryPreview";
 import type { ClipSummary, DdragonStatus, GameSummary, LibraryTab } from "../types";
@@ -53,12 +53,6 @@ const itemSlots = Array.from({ length: 7 }, (_, slot) => slot);
 const rosterTeams = ["ally", "enemy"] as const;
 
 const unavailableStats: HistoryStats = { source: "unavailable", kills: null, deaths: null, assists: null, items: null, keystone_id: null, secondary_style: null, summoner_spells: null, creep_score: null, duration_seconds: null, evidence: null, final_evidence: null, game_tick: null };
-
-const formatKdaRatio = (stats: HistoryStats): string => {
-  if (stats.kills === null || stats.deaths === null || stats.assists === null) return "—";
-  if (stats.deaths === 0) return "PERFECT KDA";
-  return `${((stats.kills + stats.assists) / stats.deaths).toFixed(2)}:1 KDA`;
-};
 
 function equalCardList<T>(before: readonly T[] | null, after: readonly T[] | null) {
   return before === after || (before !== null && after !== null &&
@@ -468,7 +462,7 @@ function GamesLibrary(props: Props) {
                               {stats().assists ?? "—"}
                             </strong>
                             <span class={matchStyles.kdaDetails}>
-                              <em>{formatKdaRatio(stats())}</em>
+                              <em>{formatKdaRatio(stats().kills, stats().deaths, stats().assists) ?? "—"}</em>
                               <Show when={eventTag()}>{tag => <TagBadges tags={[tag()]} />}</Show>
                             </span>
                           </span>

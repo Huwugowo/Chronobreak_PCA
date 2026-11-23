@@ -105,6 +105,8 @@ pub(crate) struct ClipCard {
     pub thumbnail_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub game_clock: Option<GameTick>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_stats: Option<ClipRecordedStats>,
 }
 
 impl ClipCard {
@@ -120,8 +122,16 @@ impl ClipCard {
             header,
             title: clip.title().into(),
             game_clock: None,
+            recorded_stats: None,
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ClipRecordedStats {
+    pub kda: Option<[Option<u64>; 3]>,
+    pub items: Option<Vec<Option<u64>>>,
+    pub game_tick: Option<GameTick>,
 }
 
 #[derive(Debug, Serialize)]
@@ -388,9 +398,14 @@ impl Index {
         let mut header: ClipHeader = serde_json::from_str(&json)?;
         header.tags = self.resolve_tags(header.tags)?;
         // A missing or rebuilding match index never blocks independent playback.
-        let _ = self.enrich_clip_game(&snapshot.catalog_key, &mut header.game);
+        let recorded_stats = self
+            .enrich_clip_game(&snapshot.catalog_key, &mut header.game)
+            .ok()
+            .flatten();
+        let mut clip = ClipCard::new(descriptor, header, origin, capability);
+        clip.recorded_stats = recorded_stats;
         Ok(ClipPlayback {
-            clip: ClipCard::new(descriptor, header, origin, capability),
+            clip,
             file_size_bytes: descriptor.video.length(),
         })
     }
@@ -492,9 +507,13 @@ impl Index {
         Ok(ClipPage { groups, next })
     }
 
-    pub(crate) fn enrich_clip_game(&self, catalog_key: &str, game: &mut ClipGame) -> Result<()> {
+    pub(crate) fn enrich_clip_game(
+        &self,
+        catalog_key: &str,
+        game: &mut ClipGame,
+    ) -> Result<Option<ClipRecordedStats>> {
         let Some(group) = &game.match_group else {
-            return Ok(());
+            return Ok(None);
         };
         self.require_catalog(catalog_key)?;
         // Use the same checked part priority as History. Parts without final
@@ -522,16 +541,24 @@ impl Index {
             }
             if let Some(result) = result {
                 game.apply_final_result(&serde_json::from_str::<ResultFile>(&result)?);
-            } else if let Some(spells) = self
-                .history_stats(&MediaId::parse(&media)?, None)?
-                .summoner_spells
-            {
-                // A recorded roster can supply spells, but its items, KDA and
-                // game clock are snapshots rather than final match statistics.
-                game.fill_spells(spells);
+            } else {
+                let stats = self.history_stats(&MediaId::parse(&media)?, None)?;
+                if let Some(spells) = stats.summoner_spells {
+                    game.fill_spells(spells);
+                }
+                let scores = [stats.kills, stats.deaths, stats.assists];
+                let kda = scores.iter().any(Option::is_some).then_some(scores);
+                // Snapshot facts are display-only and never persisted as final results.
+                if kda.is_some() || stats.items.is_some() {
+                    return Ok(Some(ClipRecordedStats {
+                        kda,
+                        items: stats.items,
+                        game_tick: stats.game_tick,
+                    }));
+                }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     pub(crate) fn add_clip_game_clocks(
@@ -1113,6 +1140,7 @@ mod tests {
             .clip_playback(&before, &older_match_part, "http://fixture", "generation")
             .unwrap()
             .clip;
+        assert!(playback.recorded_stats.is_none());
         let facts = &playback.header.game;
         assert_eq!(facts.champion.as_deref(), Some("Syndra"));
         assert_eq!(facts.outcome, Some(chronobreak_league_data::Outcome::Loss));
@@ -1323,6 +1351,7 @@ mod tests {
             .clip_playback(&after, &durable.id, "http://fixture", "generation")
             .unwrap();
         assert_eq!(persisted.clip.header.game, durable.game);
+        assert!(persisted.clip.recorded_stats.is_none());
         assert_eq!(persisted.file_size_bytes, b"fixture video".len() as u64);
         let partial = index
             .clip_playback(&after, &selected, "http://fixture", "generation")

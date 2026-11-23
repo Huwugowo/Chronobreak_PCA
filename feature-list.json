@@ -5736,7 +5736,7 @@
       "kind": "feature",
       "stage": "ready",
       "name": "Compact match headers in Clips",
-      "description": "Summarize the game above each clip group in a slim row styled like Match History.",
+      "description": "Summarize the match above the Clips player in a slim row styled like Match History.",
       "priority": "P2",
       "area": "clip-library",
       "status": "done",
@@ -5744,8 +5744,8 @@
       "dependencies": ["QB-LIB-002", "QB-LIB-030"],
       "execution": {"workflow": "direct", "plan": null},
       "acceptance_criteria": [
-        "Each standalone Clips group shows a slim header with Match History win or loss styling, champion portrait, two summoner spell slots, final KDA and items, played date and game duration. The header omits team rosters and fits at narrow desktop widths.",
-        "Existing clips use available checked match data and keep their saved context when source recordings are unavailable. Unknown results are neutral, missing final facts remain unavailable, and clip or recording length is never used as game duration.",
+        "The Clips player shows a slim match header with result styling, champion portrait, two summoner spell slots, K/D/A with the Match History ratio, items, played date and confirmed game duration. The header omits team rosters and fits at narrow desktop widths.",
+        "Existing clips use checked match data and keep their saved context when source recordings are unavailable. In the absence of a final result, the header can show checked recorded KDA and items with the latest snapshot's game clock. Unknown results remain neutral, and observed game time and media length never supply a final duration.",
         "Clip filtering, ordering, pagination and playback retain their behavior. Clips attached to a Match History card keep their existing layout."
       ],
       "verification": [
@@ -5755,7 +5755,9 @@
       "evidence": [
         "2026-11-19: The native clip fixture verified final spells, KDA, items and duration from the checked account-scoped match, including an older recording part, filtered results, and saved context after source removal and cache rebuild.",
         "Edge fixtures at 500, 800 and 1280 px verified loaded icons, blue win/red loss/neutral unknown styling, no horizontal overflow, filtering, continuation and clip activation. Desktop-width rows were 58 px tall. Evidence: build/verification/qb-lib-038/browser-report.json.",
-        "All 619 frontend tests and 217 enabled desktop tests passed (11 opt-in tests ignored). TypeScript, frontend production build, Rust formatting and strict Clippy passed."
+        "All 619 frontend tests and 217 enabled desktop tests passed (11 opt-in tests ignored). TypeScript, frontend production build, Rust formatting and strict Clippy passed.",
+        "2026-11-22 regression check verified shared KDA ratios and recorded snapshot fallback without final results. The release app showed the same KDA as Match History and loaded seven item icons at 500, 800 and 1280 px with no header overflow on two isolated runs. An initial run timed out before the clip opened. Evidence is in build/verification/qb-lib-038/clip-header-AKy4SZ/browser-report.json.",
+        "All 641 frontend tests and 241 enabled desktop tests passed (14 opt-in tests ignored). TypeScript, release build, Rust formatting and strict Clippy passed."
       ]
     },
     {
