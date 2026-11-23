@@ -32,6 +32,7 @@ pub(crate) mod reset;
 mod tag_catalog;
 pub(crate) use authored::AuthoredPage;
 pub(crate) use overlay::{OverlayPage, OverlayQuery};
+pub(crate) use ranked_lp::RankedLpProjection;
 pub(crate) use replay::{ReplayWindow, ReplayWindowQuery};
 pub(crate) use reset::ResetResult;
 #[cfg(test)]

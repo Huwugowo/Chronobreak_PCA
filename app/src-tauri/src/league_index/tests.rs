@@ -711,10 +711,11 @@ fn ranked_lp_is_grouped_and_targeted_with_no_replay_invalidation() {
     // The ready journal is on part 100. Only part 101 has a new receipt.
     write(&second, &second_media, 24);
     let target = std::collections::BTreeSet::from(["101".to_owned()]);
-    assert_eq!(
-        index.refresh_ranked_lp(&approved, &target, false).unwrap(),
-        [second_media.as_str()]
-    );
+    let projected = index.refresh_ranked_lp(&approved, &target, false).unwrap();
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].media, second_media.as_str());
+    assert_eq!(projected[0].delta, Some(24));
+    assert!(projected[0].updated);
     let initial = row(&index);
     assert_eq!(initial.media_id, first_media);
     assert_eq!(initial.ranked_lp_delta, Some(24));

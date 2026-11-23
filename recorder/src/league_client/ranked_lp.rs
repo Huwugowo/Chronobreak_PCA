@@ -1,6 +1,6 @@
 //! Match-scoped ranked notification validation and a bounded recovery schedule.
 use super::result::Binding;
-use chronobreak_league_data::{Outcome, ResultFile, ranked_lp_queue};
+use chronobreak_league_data::ranked_lp_queue;
 use serde::{Deserialize, Serialize};
 
 const FETCH_OFFSETS_MS: [i64; 4] = [0, 5_000, 20_000, 60_000];
@@ -36,14 +36,6 @@ pub(super) fn same_match(a: &Binding, b: &Binding) -> bool {
     a.game_id == b.game_id && a.queue_id == b.queue_id && a.puuid == b.puuid
 }
 
-pub(super) fn completed_ranked_match(binding: &Binding, result: Option<&ResultFile>) -> bool {
-    result.is_some_and(|result| {
-        result.valid_for(&binding.media_id, &binding.game_id)
-            && result.queue_id == Some(u64::from(binding.queue_id))
-            && result.outcome != Outcome::Unknown
-    })
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Notification {
@@ -54,33 +46,26 @@ pub(super) struct Notification {
     notify_reason: String,
 }
 impl Notification {
-    pub fn confirm(self, binding: &Binding, completed: impl FnOnce() -> bool) -> Option<i32> {
+    pub fn confirm(self, binding: &Binding) -> Option<i32> {
         if Some(self.game_id) != binding.game_id.parse().ok()
             || self.game_id == 0
             || ranked_lp_queue(binding.queue_id) != Some(self.queue_type.as_str())
+            || self.change_reason != "GAME_END"
         {
             return None;
         }
-        let postgame_notice = matches!(
+        // The captures cover ordinary LP updates. Riot's post-game and leagues
+        // plugins also handle these rank and placement transitions.
+        matches!(
             self.notify_reason.as_str(),
-            "LEAGUE_PROMOTED"
+            "LEAGUE_POINTS_UPDATE"
+                | "LEAGUE_PROMOTED"
                 | "LEAGUE_DEMOTED"
                 | "LEAGUE_SEEDED"
                 | "MINISERIES_START"
                 | "MINISERIES_LOST"
                 | "COMPLETED_PROVISIONALS"
-        );
-        let ordinary_notice = matches!(
-            self.notify_reason.as_str(),
-            "" | "NONE" | "LP_CHANGED" | "LEAGUE_POINTS_CHANGED" | "GAME" | "GAME_PLAYED"
-        );
-        let match_cause = matches!(
-            self.change_reason.as_str(),
-            "GAME" | "GAME_PLAYED" | "MATCH_COMPLETE" | "MATCH_COMPLETED"
-        );
-        let neutral_cause = matches!(self.change_reason.as_str(), "" | "NONE");
-        ((postgame_notice && (match_cause || neutral_cause))
-            || (ordinary_notice && (match_cause || (neutral_cause && completed()))))
+        )
         .then_some(self.league_points_delta)
     }
 }
@@ -90,60 +75,110 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn validates_postgame_notification_identity_and_cause() {
-        let binding = Binding {
+    const CAPTURED_LOSS: &str =
+        include_str!("../../tests/fixtures/lcu_endgame/lp_change_notification.json");
+    const CAPTURED_WIN: &str =
+        include_str!("../../tests/fixtures/spike_gameplay/current-lp-change-notification.json");
+
+    fn binding(game_id: &str) -> Binding {
+        Binding {
             media_id: chronobreak_replay_time::MediaId::new_v4(),
-            game_id: "7891230123".into(),
+            game_id: game_id.into(),
             puuid: "local".into(),
             riot_id: "Player#EUW".into(),
             map_id: 11,
             mode: "CLASSIC".into(),
             queue_id: 420,
-        };
-        let check = |game, queue, cause, reason, delta| {
-            serde_json::from_value::<Notification>(json!({
-                "gameId":game,"queueType":queue,"changeReason":cause,
-                "notifyReason":reason,"leaguePointsDelta":delta,"displayType":"NONE",
-                "previousLeaguePoints":90,"leaguePoints":4,
-            }))
-            .unwrap()
-            .confirm(&binding, || false)
-        };
-        let solo = "RANKED_SOLO_5x5";
-        for (cause, reason, delta) in [
-            ("GAME_PLAYED", "NONE", 24),
-            ("GAME", "LEAGUE_PROMOTED", 18),
-            ("", "LEAGUE_DEMOTED", -27),
-            ("GAME", "NONE", 0),
-            ("GAME_PLAYED", "LEAGUE_POINTS_CHANGED", -2),
+        }
+    }
+
+    #[test]
+    fn accepts_captured_lcu_ranked_loss_and_win_for_the_exact_game() {
+        for (payload, game, other_game, delta) in [
+            (CAPTURED_LOSS, "8006463758", "7998195590", -20),
+            (CAPTURED_WIN, "7998195590", "8006463758", 19),
         ] {
-            assert_eq!(
-                check(7891230123_i64, solo, cause, reason, delta),
-                Some(delta)
+            let confirm = |binding: &Binding| {
+                serde_json::from_str::<Notification>(payload)
+                    .unwrap()
+                    .confirm(binding)
+            };
+            assert_eq!(confirm(&binding(game)), Some(delta));
+            assert_eq!(confirm(&binding(other_game)), None);
+            let mut flex = binding(game);
+            flex.queue_id = 440;
+            assert_eq!(confirm(&flex), None);
+        }
+    }
+
+    #[test]
+    fn validates_ranked_queue_and_postgame_reason_pair_without_recalculating_lp() {
+        let base: serde_json::Value = serde_json::from_str(CAPTURED_LOSS).unwrap();
+        let solo = binding("8006463758");
+        let check = |binding: &Binding, queue, cause, notice, delta| {
+            let mut payload = base.clone();
+            payload["queueType"] = json!(queue);
+            payload["changeReason"] = json!(cause);
+            payload["notifyReason"] = json!(notice);
+            payload["leaguePointsDelta"] = json!(delta);
+            serde_json::from_value::<Notification>(payload)
+                .unwrap()
+                .confirm(binding)
+        };
+        let queue = "RANKED_SOLO_5x5";
+        for (notice, delta) in [
+            ("LEAGUE_PROMOTED", 18),
+            ("LEAGUE_DEMOTED", -27),
+            ("LEAGUE_SEEDED", 0),
+            ("LEAGUE_POINTS_UPDATE", -2),
+        ] {
+            assert_eq!(check(&solo, queue, "GAME_END", notice, delta), Some(delta));
+        }
+        let mut flex = solo.clone();
+        flex.queue_id = 440;
+        assert_eq!(
+            check(
+                &flex,
+                "RANKED_FLEX_SR",
+                "GAME_END",
+                "LEAGUE_POINTS_UPDATE",
+                16
+            ),
+            Some(16)
+        );
+        let mut unranked = solo.clone();
+        unranked.queue_id = 400;
+        assert_eq!(
+            check(&unranked, queue, "GAME_END", "LEAGUE_POINTS_UPDATE", 16),
+            None
+        );
+
+        for (cause, notice) in [
+            ("INACTIVITY", "LEAGUE_DEMOTED"),
+            ("", "LEAGUE_PROMOTED"),
+            ("NONE", "LEAGUE_POINTS_UPDATE"),
+            ("GAME_PLAYED", "LEAGUE_POINTS_UPDATE"),
+            ("GAME_END", "LEAGUE_REWARD"),
+            ("GAME_END", "LEAGUE_DECAY_WARNING"),
+            ("GAME_END", "LEAGUE_POINTS_CHANGED"),
+            ("GAME_END", "LEAGUE_POINTS_UPDATE_SKIPPED_FULL_PARTY"),
+        ] {
+            assert_eq!(check(&solo, queue, cause, notice, -20), None);
+        }
+        for field in [
+            "gameId",
+            "queueType",
+            "changeReason",
+            "notifyReason",
+            "leaguePointsDelta",
+        ] {
+            let mut incomplete = base.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert!(
+                serde_json::from_value::<Notification>(incomplete).is_err(),
+                "{field}"
             );
         }
-        assert_eq!(check(7891230122, solo, "GAME", "NONE", 25), None);
-        assert_eq!(
-            check(7891230123, "RANKED_FLEX_SR", "GAME", "NONE", 25),
-            None
-        );
-        assert_eq!(
-            check(7891230123, solo, "INACTIVITY", "LEAGUE_DEMOTED", -50),
-            None
-        );
-        assert_eq!(
-            check(7891230123, solo, "ADMIN", "LEAGUE_PROMOTED", 25),
-            None
-        );
-        assert_eq!(check(7891230123, solo, "GAME", "LEAGUE_REWARD", 25), None);
-        assert_eq!(check(7891230123, solo, "", "NONE", 25), None);
-        assert!(
-            serde_json::from_value::<Notification>(json!({
-                "gameId":7891230123_i64,"queueType":solo,"changeReason":"GAME","notifyReason":"NONE"
-            }))
-            .is_err()
-        );
     }
 
     #[test]

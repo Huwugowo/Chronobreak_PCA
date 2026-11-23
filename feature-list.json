@@ -35,7 +35,8 @@
       ],
       "evidence": [
         "2026-11-23: Implemented bounded post-game GET acquisition with exact game, ranked queue, account and reason validation. Recorder fixtures verified shared request reservations, restart and publication ordering, guarded receipt deduplication, and signed values.",
-        "2026-11-23: Grouped History tests verified representative independence, conflict suppression, indexed lookup, targeted projection and legacy cache compatibility. Mounted UI tests verified stable card, focus and artwork. All 304 recorder, 230 desktop Rust and 643 frontend tests passed, with opt-in Rust tests skipped. Real-client notification shape and timing remain unverified."
+        "2026-11-23: Grouped History tests verified representative independence, conflict suppression, indexed lookup, targeted projection and legacy cache compatibility. Mounted UI tests verified stable card, focus and artwork.",
+        "2026-11-23: Two captured LCU responses reproduce the +19 and -20 LP cases with exact game and queue binding. Desktop tests verify one History refresh signal per changed LP observation even when the headless worker writes first. Live sampling timing remains unverified."
       ]
     },
     {

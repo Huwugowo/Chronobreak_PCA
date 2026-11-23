@@ -1,6 +1,6 @@
 //! Window-independent, resumable preparation. No media decoder or WebView is needed.
 use crate::{
-    league_index::{self, Index},
+    league_index::{self, Index, RankedLpProjection},
     library,
     playback_file::ApprovedRoot,
 };
@@ -24,7 +24,42 @@ struct Preparation {
     approved: Option<ApprovedRoot>,
     games: Option<Vec<library::GameSummary>>,
     completed: HashMap<PathBuf, String>,
+    ranked_lp: HashMap<String, (String, Option<i32>)>,
     catalog_changed: bool,
+}
+
+impl Preparation {
+    fn observe_ranked_lp(
+        &mut self,
+        projections: Vec<RankedLpProjection>,
+        announce_first: bool,
+        full: bool,
+    ) -> Vec<String> {
+        let mut changed = Vec::new();
+        for RankedLpProjection {
+            bundle,
+            media,
+            delta,
+            updated,
+        } in projections
+        {
+            // A separate headless worker may already have projected the receipt.
+            // Compare with our previous observation before treating a hint as a no-op.
+            let previous = self.ranked_lp.get(&bundle).filter(|(id, _)| id == &media);
+            if updated
+                || match previous {
+                    Some((_, previous)) => *previous != delta,
+                    None => announce_first && (!full || delta.is_some()),
+                }
+            {
+                changed.push(media.clone());
+            }
+            if previous.is_some() || !full || delta.is_some() {
+                self.ranked_lp.insert(bundle, (media, delta));
+            }
+        }
+        changed
+    }
 }
 
 struct Background {
@@ -194,7 +229,7 @@ async fn prepare_ranked_lp(
     root: &Path,
     cache: &Path,
     stop: &Arc<AtomicBool>,
-    state: &Preparation,
+    state: &mut Preparation,
     changes: &Changes,
 ) -> Result<Vec<String>> {
     if changes.ranked_lp.is_empty() {
@@ -205,7 +240,7 @@ async fn prepare_ranked_lp(
     let bundles = changes.ranked_lp.clone();
     let previous = state.approved.clone();
     let stop = Arc::clone(stop);
-    tokio::task::spawn_blocking(move || {
+    let projections = tokio::task::spawn_blocking(move || {
         ensure!(!stop.load(Ordering::Acquire), "preparation stopped");
         let approved = ApprovedRoot::new(&root)?;
         ensure!(
@@ -215,7 +250,8 @@ async fn prepare_ranked_lp(
         let index = Index::open(&cache, approved.path())?;
         index.refresh_ranked_lp(&approved, &bundles, false)
     })
-    .await?
+    .await??;
+    Ok(state.observe_ranked_lp(projections, true, false))
 }
 
 async fn prepare(
@@ -334,11 +370,12 @@ async fn prepare(
         })
         .await??
     };
-    changed.extend(projected_lp);
     // Keep the previous catalog on writer contention so retries still see a
     // pending removal as a change.
-    if state.approved.as_ref() != Some(&approved) {
+    let same_root = state.approved.as_ref() == Some(&approved);
+    if !same_root {
         state.completed.clear();
+        state.ranked_lp.clear();
     } else {
         let bundles: HashSet<_> = games
             .iter()
@@ -349,6 +386,9 @@ async fn prepare(
                 .file_name()
                 .is_some_and(|name| bundles.contains(name))
         });
+        state
+            .ranked_lp
+            .retain(|bundle, _| bundles.contains(std::ffi::OsStr::new(bundle)));
     }
     state.catalog_changed |=
         state.approved.as_ref() != Some(&approved) || state.games.as_ref() != Some(&*games);
@@ -437,6 +477,7 @@ async fn prepare(
             tokio::task::yield_now().await;
         }
     }
+    changed.extend(state.observe_ranked_lp(projected_lp, same_root, full));
     Ok(changed)
 }
 
@@ -485,6 +526,85 @@ pub fn headless(args: &[std::ffi::OsString]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::league_index::{OverlayQuery, ScopeQuery};
+
+    #[tokio::test]
+    async fn ranked_lp_hints_announce_headless_projection_once_per_value() {
+        use chronobreak_league_data::{RANKED_LP_FILE, RankedLp};
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = ApprovedRoot::new(directory.path()).unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let bundle =
+            library::tests::write_matched_game(root.path(), "100", "2026-08-05T10:00:00Z", false);
+        let context_path = bundle.join("league_match.json");
+        let mut context: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&context_path).unwrap()).unwrap();
+        context["queue_id"] = 420.into();
+        std::fs::write(context_path, serde_json::to_vec(&context).unwrap()).unwrap();
+
+        let mut desktop = Preparation::default();
+        prepare(
+            root.path(),
+            cache.path(),
+            &stop,
+            &mut desktop,
+            &Changes::all(),
+        )
+        .await
+        .unwrap();
+        let game = &desktop.games.as_ref().unwrap()[0];
+        let media = game.media_id.clone().unwrap();
+        let receipt_path = bundle.join(RANKED_LP_FILE);
+        let hints = Changes {
+            ranked_lp: BTreeSet::from(["100".into()]),
+            ..Changes::default()
+        };
+        let headless_projects = || {
+            Index::open(cache.path(), root.path())
+                .unwrap()
+                .refresh_ranked_lp(&root, &hints.ranked_lp, false)
+                .unwrap();
+        };
+        let projected_value = || {
+            Index::reader(cache.path(), root.path())
+                .unwrap()
+                .history(
+                    &crate::league_index::HistoryQuery {
+                        limit: 1,
+                        ..Default::default()
+                    },
+                    1,
+                )
+                .unwrap()
+                .rows[0]
+                .ranked_lp_delta
+        };
+        assert_eq!(projected_value(), None);
+
+        for delta in [Some(19), Some(0), None] {
+            if let Some(delta) = delta {
+                let receipt = RankedLp {
+                    schema_version: 1,
+                    media_id: media.clone(),
+                    game_id: "9007199254740993".into(),
+                    queue_id: 420,
+                    delta,
+                };
+                std::fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+            } else {
+                std::fs::remove_file(&receipt_path).unwrap();
+            }
+            headless_projects();
+            assert_eq!(projected_value(), delta);
+            for expected in [vec![media.as_str()], Vec::new(), Vec::new()] {
+                let announced = prepare(root.path(), cache.path(), &stop, &mut desktop, &hints)
+                    .await
+                    .unwrap();
+                assert_eq!(announced, expected);
+            }
+        }
+    }
 
     #[cfg(windows)]
     #[tokio::test]

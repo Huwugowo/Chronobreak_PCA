@@ -1,6 +1,6 @@
 //! Recoverable match-history acquisition. EOG remains an independent comparison source.
 use super::{
-    ranked_lp::{Acquisition, INSTALL_DELAYS_MS, completed_ranked_match, same_match},
+    ranked_lp::{Acquisition, INSTALL_DELAYS_MS, same_match},
     result::{Binding, Eog},
     sidecar::{DirectoryGuard, DirectoryLocator},
     transport::{self, Metrics, Transport},
@@ -580,10 +580,7 @@ async fn run(path: PathBuf, mut receive: mpsc::Receiver<Command>, mut stop: watc
                 candidate = async {
                     let discovered = transport::discover().await.ok()?;
                     let notification = transport.ranked_lp(&discovered, &mut metrics).await.ok()?;
-                    let delta = notification.confirm(&binding, || {
-                        jobs.iter().any(|part| same_match(&part.binding, &binding)
-                            && completed_ranked_match(&part.binding, part.result.as_ref()))
-                    })?;
+                    let delta = notification.confirm(&binding)?;
                     Some((discovered, delta))
                 } => candidate,
             };

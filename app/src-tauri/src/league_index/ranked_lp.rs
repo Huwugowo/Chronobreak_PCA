@@ -4,6 +4,13 @@ use crate::playback_file::ApprovedRoot;
 use chronobreak_league_data::{MAX_RANKED_LP_BYTES, RANKED_LP_FILE, RankedLp, ranked_lp_queue};
 use std::collections::BTreeSet;
 
+pub(crate) struct RankedLpProjection {
+    pub bundle: String,
+    pub media: String,
+    pub delta: Option<i32>,
+    pub updated: bool,
+}
+
 pub(super) fn receipt_delta(
     directory: &Path,
     media: &MediaId,
@@ -44,7 +51,7 @@ impl Index {
         root: &ApprovedRoot,
         bundles: &BTreeSet<String>,
         full: bool,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<RankedLpProjection>> {
         const SELECT: &str =
             "SELECT bundle,media_id,game_id,queue_id,ranked_lp_delta FROM recordings
             WHERE facts_current=1 AND queue_id IN (420,440) AND game_id IS NOT NULL";
@@ -78,7 +85,7 @@ impl Index {
 
         let guarded_root = guard_root(root)?;
         let games = guarded_root.child("games", false)?;
-        let mut changed = Vec::new();
+        let mut projections = Vec::with_capacity(parts.len());
         let mut update = self.db.prepare_cached(
             "UPDATE recordings SET ranked_lp_delta=?2
              WHERE media_id=?1 AND ranked_lp_delta IS NOT ?2",
@@ -95,15 +102,18 @@ impl Index {
             } else {
                 guarded_delta(&games, &bundle, &media, &game, queue)
             };
-            if current != previous {
+            let updated = current != previous;
+            if updated {
                 update.execute(params![media, current])?;
             }
-            // The headless writer may already have projected the same hint.
-            if current != previous || !full {
-                changed.push(media);
-            }
+            projections.push(RankedLpProjection {
+                bundle,
+                media,
+                delta: current,
+                updated,
+            });
         }
-        Ok(changed)
+        Ok(projections)
     }
 }
 
