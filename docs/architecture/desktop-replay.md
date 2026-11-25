@@ -298,7 +298,7 @@ bound, calculated by a binary-search memo. An index selector notifies elapsed
 bindings when that boundary changes; individual anchors do not subscribe directly
 to each presented frame. Head/fill/overview geometry retains continuous updates.
 
-Data Dragon manifests/icons enrich champion and item presentation but do not gate playback. Cached versions continue to work offline; unavailable images fall back to fixed-layout placeholders.
+Data Dragon manifests/icons enrich champion and item presentation but do not gate playback. The playback server indexes champion aliases once per cached patch and uses that lookup for both numeric and named portrait requests. Cached versions continue to work offline; unavailable images fall back to fixed-layout placeholders.
 
 ## Clip flow
 

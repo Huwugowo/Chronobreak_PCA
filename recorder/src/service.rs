@@ -1,5 +1,7 @@
 use std::env;
 use std::fs;
+#[cfg(windows)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -560,13 +562,41 @@ pub struct SettingsSession {
 #[cfg(windows)]
 struct ManagedSettings {
     session: SettingsSession,
-    libraries: Libraries,
+    libraries: Option<Libraries>,
+    current_registered: bool,
     handled: u64,
     published: RecorderSettings,
 }
 
 #[cfg(windows)]
 impl ManagedSettings {
+    fn start(session: SettingsSession, output_path: &Path) -> Self {
+        let mut libraries = Libraries::open(&session.config_path)
+            .inspect_err(|error| warn!(%error, "optional post-game library registry unavailable"))
+            .ok();
+        let current_registered = libraries.as_mut().is_some_and(|libraries| {
+            // Recover the accepted roots even if the capture destination fails admission.
+            libraries.resume();
+            let registered = libraries
+                .register(output_path)
+                .inspect_err(|error| {
+                    warn!(%error, "optional post-game enrichment unavailable at capture destination");
+                })
+                .is_ok();
+            if registered {
+                libraries.resume();
+            }
+            registered
+        });
+        Self {
+            session,
+            libraries,
+            current_registered,
+            handled: 0,
+            published: RecorderSettings::default(),
+        }
+    }
+
     fn publish(&mut self, state: ApplyState) {
         self.published.apply_state = state;
         self.session
@@ -588,6 +618,11 @@ impl ManagedSettings {
         &mut self,
         current: &Generation,
     ) -> std::result::Result<Generation, ApplyState> {
+        let libraries = self
+            .libraries
+            .as_mut()
+            .filter(|_| self.current_registered)
+            .ok_or(ApplyState::LibraryRecoveryUnavailable)?;
         let path = self.session.config_path.clone();
         let previous_path = current.output_path.clone();
         let replacement = tokio::task::spawn_blocking(move || {
@@ -605,14 +640,14 @@ impl ManagedSettings {
         })
         .await
         .map_err(|_| ApplyState::InvalidConfiguration)??;
-        self.libraries
+        libraries
             .retire_settled(&current.output_path)
             .await
             .map_err(|_| ApplyState::LibraryRecoveryUnavailable)?;
-        self.libraries
+        libraries
             .register(&replacement.output_path)
             .map_err(|_| ApplyState::LibraryRecoveryUnavailable)?;
-        self.libraries.resume();
+        libraries.resume();
         Ok(replacement)
     }
 }
@@ -673,19 +708,8 @@ pub async fn run_recorder(
     );
 
     #[cfg(windows)]
-    let mut managed = if let Some(session) = settings {
-        let mut libraries = Libraries::open(&session.config_path)?;
-        libraries.register(&generation.output_path)?;
-        libraries.resume();
-        Some(ManagedSettings {
-            session,
-            libraries,
-            handled: 0,
-            published: RecorderSettings::default(),
-        })
-    } else {
-        None
-    };
+    let mut managed =
+        settings.map(|session| ManagedSettings::start(session, &generation.output_path));
     #[cfg(not(windows))]
     let _ = settings;
 
@@ -710,8 +734,8 @@ pub async fn run_recorder(
             GenerationExit::Apply(next) => generation = next,
             GenerationExit::Shutdown => {
                 #[cfg(windows)]
-                if let Some(managed) = managed {
-                    managed.libraries.stop().await;
+                if let Some(libraries) = managed.and_then(|managed| managed.libraries) {
+                    libraries.stop().await;
                 }
                 events(ServiceEvent::ShutdownComplete);
                 return Ok(());
@@ -759,9 +783,13 @@ async fn run_generation(
         None
     };
     #[cfg(windows)]
-    let managed_post_game = managed
-        .as_ref()
-        .and_then(|managed| managed.libraries.handle(output_path));
+    let managed_post_game = managed.as_ref().and_then(|managed| {
+        managed
+            .libraries
+            .as_ref()
+            .filter(|_| managed.current_registered)?
+            .handle(output_path)
+    });
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     #[cfg(windows)]
@@ -2071,6 +2099,145 @@ fn maximum_texture_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn settings_registry_conflict_keeps_previous_library_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join("config.toml");
+        let older = root.path().join("older");
+        let current = root.path().join("current");
+        fs::create_dir_all(older.join("games")).unwrap();
+        fs::create_dir_all(current.join("games")).unwrap();
+        let mut registered = Libraries::open(&config_path).unwrap();
+        registered.register(&older).unwrap();
+        registered.register(&current).unwrap();
+        fs::rename(&current, root.path().join("displaced")).unwrap();
+        fs::create_dir(&current).unwrap();
+        let registry = root.path().join("config.toml.recorder-libraries.json");
+        let original = fs::read(&registry).unwrap();
+
+        let managed = ManagedSettings::start(
+            SettingsSession {
+                control: SettingsControl::default(),
+                config_path,
+            },
+            &current,
+        );
+        assert!(!managed.current_registered);
+        let libraries = managed.libraries.unwrap();
+        assert!(libraries.handle(&older).is_some());
+        assert!(libraries.handle(&current).is_none());
+        libraries.stop().await;
+        assert_eq!(fs::read(&registry).unwrap(), original);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires the staged media runtime and an isolated watcher process name"]
+    async fn settings_registry_corruption_allows_recorder_startup() {
+        assert_eq!(
+            env::var("LEAGUE_REPLAY_PROCESS_NAME").as_deref(),
+            Ok("chronobreak-settings-fixture-no-game.exe")
+        );
+        assert!(env::var_os("QUEUEBACK_MEDIA_RUNTIME_DIR").is_some());
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join("config.toml");
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        let registry = root.path().join("config.toml.recorder-libraries.json");
+        let corrupt = b"unreadable recorder library registry";
+        fs::write(&registry, corrupt).unwrap();
+        let mut config = Config::default();
+        config.storage.output_path = first.to_string_lossy().into_owned();
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        let (send, receive) = mpsc::unbounded_channel();
+        let (event_send, mut event_receive) = mpsc::unbounded_channel();
+        let control = SettingsControl::default();
+        let service = tokio::spawn(run_recorder(
+            config.clone(),
+            receive,
+            Arc::new(move |event| {
+                let _ = event_send.send(event);
+            }),
+            Some(SettingsSession {
+                control: control.clone(),
+                config_path: config_path.clone(),
+            }),
+        ));
+
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(15), event_receive.recv())
+                .await
+                .unwrap(),
+            Some(ServiceEvent::Idle)
+        ));
+        let effective = control.snapshot().effective.unwrap();
+        assert_eq!(Path::new(&effective.output_path), first);
+        assert!(first.join("games").is_dir());
+        config.storage.output_path = second.to_string_lossy().into_owned();
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        control.request_apply();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while control.snapshot().apply_state != ApplyState::LibraryRecoveryUnavailable {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(control.snapshot().effective, Some(effective));
+        assert!(!second.exists());
+
+        // Exercise actual capture and finalization when the Windows graphics fixture is available.
+        if let Some(fixture) = env::var_os("CHRONOBREAK_SETTINGS_WGC_FIXTURE") {
+            let target = root.path().join("chronobreak-settings-fixture-no-game.exe");
+            fs::copy(fixture, &target).unwrap();
+            let mut child = tokio::process::Command::new(target)
+                .args(["--duration-seconds", "12", "--always-on-top"])
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let directory = tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    match event_receive.recv().await.unwrap() {
+                        ServiceEvent::Recording { directory } => break directory,
+                        ServiceEvent::Error { message } => panic!("{message}"),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("the recorder should start capturing the fixture window");
+            assert!(
+                tokio::time::timeout(Duration::from_secs(20), child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .success()
+            );
+            tokio::time::timeout(Duration::from_secs(45), async {
+                loop {
+                    match event_receive.recv().await.unwrap() {
+                        ServiceEvent::Availability(AvailabilityEvent::Capture(
+                            CaptureActivity::Idle,
+                        )) => break,
+                        ServiceEvent::Error { message } => panic!("{message}"),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("the recorder should finish publishing the fixture capture");
+            let video = directory.join(crate::storage::VIDEO_MP4);
+            assert!(fs::metadata(&video).unwrap().len() > 0);
+            assert!(directory.join(crate::storage::METADATA_JSON).is_file());
+            println!("published validated fixture recording with corrupt enrichment registry");
+        }
+
+        send.send(ServiceCommand::Shutdown).unwrap();
+        service.await.unwrap().unwrap();
+        assert_eq!(fs::read(&registry).unwrap(), corrupt);
+    }
 
     #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

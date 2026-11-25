@@ -67,6 +67,7 @@
 }
 
 .matchList {
+  --match-actions-inset: 4px;
   display: grid;
   min-width: 0;
   gap: var(--space-2);
@@ -511,8 +512,6 @@
 }
 
 .matchActions {
-  --match-action-size: 28px;
-  --match-action-gap: 2px;
   position: relative;
   display: flex;
   grid-area: 1 / 1;
@@ -520,12 +519,12 @@
   justify-self: end;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--match-action-gap);
-  padding-inline: 4px;
+  gap: 2px;
+  padding-inline: var(--match-actions-inset);
   pointer-events: none;
 }
 
-.matchActions > * {
+.matchActions > button {
   pointer-events: auto;
 }
 
@@ -565,6 +564,7 @@
 
 .recordingParts {
   padding: var(--space-3) var(--space-4);
+  padding-inline-end: var(--match-actions-inset);
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-surface);
   background: var(--surface-panel);
@@ -597,17 +597,26 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+.recordingActions {
+  --recording-action-size: 28px;
+  display: grid;
+  grid-template-columns: repeat(2, var(--recording-action-size));
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+
 .starButton,
 .moreMenu {
-  flex: 0 0 var(--match-action-size);
   pointer-events: auto;
 }
 
 .starButton,
 .moreMenu > summary {
   display: grid;
-  width: var(--match-action-size);
-  height: var(--match-action-size);
+  width: var(--recording-action-size);
+  height: var(--recording-action-size);
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
@@ -616,10 +625,6 @@
   background: transparent;
   cursor: pointer;
   transition: color var(--motion-fast), border-color var(--motion-fast), background-color var(--motion-fast);
-}
-
-.starButton:last-child {
-  margin-inline-end: calc(var(--match-action-size) + var(--match-action-gap));
 }
 
 .starButton:hover,

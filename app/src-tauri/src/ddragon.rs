@@ -1,6 +1,7 @@
+use std::collections::{HashMap, hash_map::Entry};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -113,6 +114,7 @@ pub fn resolve_item_name(
 pub async fn ensure_asset(
     client: &reqwest::Client,
     cache_directory: &Path,
+    champions: &ChampionLookups,
     version: &str,
     kind: &str,
     asset: &str,
@@ -127,11 +129,12 @@ pub async fn ensure_asset(
     if path.is_file() {
         return Ok(path);
     }
-    let champion_filename = if kind == "champion" && cache_key.bytes().all(|b| b.is_ascii_digit()) {
-        let (filename, name_key) = champion_icon(cache_directory, version, asset)?;
+    let champion_filename = if kind == "champion" {
+        let ChampionIcon { filename, name_key } =
+            champions.get(cache_directory, version, &cache_key)?;
         let id_key = normalized_asset_key(filename.trim_end_matches(".png"));
         path = icons.join(format!("{name_key}.png"));
-        // Reuse the same portrait already cached by the replay's named route.
+        // Keep using portraits cached under either the display name or Riot's ID.
         let id_path = icons.join(format!("{id_key}.png"));
         for candidate in [&path, &id_path] {
             if candidate.is_file() {
@@ -222,10 +225,6 @@ fn asset_remote_url(
     asset: &str,
 ) -> Result<String> {
     match kind {
-        "champion" => {
-            let (filename, _) = champion_icon(cache_directory, version, asset)?;
-            Ok(format!("{BASE_URL}/cdn/{version}/img/champion/{filename}"))
-        }
         "spell" => {
             let filename = spell_icon_filename(cache_directory, version, asset)?;
             Ok(format!("{BASE_URL}/cdn/{version}/img/spell/{filename}"))
@@ -274,23 +273,64 @@ fn spell_icon_filename(cache_directory: &Path, version: &str, spell: &str) -> Re
     Ok(filename.to_owned())
 }
 
-fn champion_icon(
+#[derive(Clone)]
+struct ChampionIcon {
+    filename: String,
+    name_key: String,
+}
+
+#[derive(Default)]
+pub(crate) struct ChampionLookups(Mutex<HashMap<String, HashMap<String, ChampionIcon>>>);
+
+impl ChampionLookups {
+    fn get(&self, cache_directory: &Path, version: &str, key: &str) -> Result<ChampionIcon> {
+        let mut versions = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let icons = match versions.entry(version.to_owned()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            // Failed reads remain retryable after the manifest is cached.
+            Entry::Vacant(entry) => entry.insert(read_champion_icons(cache_directory, version)?),
+        };
+        icons
+            .get(key)
+            .cloned()
+            .context("champion icon is absent from the cached manifest")
+    }
+}
+
+fn read_champion_icons(
     cache_directory: &Path,
     version: &str,
-    champion: &str,
-) -> Result<(String, String)> {
+) -> Result<HashMap<String, ChampionIcon>> {
     let path = cache_directory.join(version).join("champion.json");
     let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("failed to parse {}", path.display()))?;
-    let wanted = normalized_asset_key(champion);
     let data = value
         .get("data")
         .and_then(serde_json::Value::as_object)
         .context("champion manifest has no data map")?;
-    let icon = data.iter().find_map(|(key, champion)| {
+    let mut icons = HashMap::new();
+    for (key, champion) in data {
         let name = champion.get("name").and_then(serde_json::Value::as_str);
-        let matches = [
+        let filename = champion
+            .get("image")
+            .and_then(|image| image.get("full"))
+            .and_then(serde_json::Value::as_str);
+        let Some(filename) = filename.filter(|name| valid_icon_filename(name)) else {
+            continue;
+        };
+        let name_key = normalized_asset_key(name.unwrap_or(key));
+        if name_key.is_empty() {
+            continue;
+        }
+        let icon = ChampionIcon {
+            filename: filename.to_owned(),
+            name_key,
+        };
+        for alias in [
             Some(key.as_str()),
             champion.get("id").and_then(serde_json::Value::as_str),
             name,
@@ -298,20 +338,18 @@ fn champion_icon(
         ]
         .into_iter()
         .flatten()
-        .any(|candidate| normalized_asset_key(candidate) == wanted);
-        let filename = champion.get("image")?.get("full")?.as_str()?;
-        matches.then(|| (filename, name.unwrap_or(key)))
-    });
-    let (filename, name) = icon.context("champion icon is absent from the cached manifest")?;
-    if !valid_icon_filename(filename) {
-        bail!("champion manifest contains an invalid icon filename");
+        {
+            let alias = normalized_asset_key(alias);
+            if !alias.is_empty() {
+                icons.entry(alias).or_insert_with(|| icon.clone());
+            }
+        }
     }
-    let name_key = normalized_asset_key(name);
     ensure!(
-        !name_key.is_empty(),
-        "champion manifest contains an invalid name"
+        !icons.is_empty(),
+        "champion manifest has no valid portraits"
     );
-    Ok((filename.to_owned(), name_key))
+    Ok(icons)
 }
 
 fn rune_icon_path(cache_directory: &Path, version: &str, rune_id: u32) -> Result<String> {
@@ -679,14 +717,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            asset_remote_url(root.path(), "15.10.1", "champion", "Wukong").unwrap(),
-            "https://ddragon.leagueoflegends.com/cdn/15.10.1/img/champion/MonkeyKing.png"
-        );
-        assert_eq!(
-            asset_remote_url(root.path(), "15.10.1", "champion", "62").unwrap(),
-            asset_remote_url(root.path(), "15.10.1", "champion", "Wukong").unwrap()
-        );
+        let lookups = ChampionLookups::default();
+        for alias in ["62", "monkeyking", "wukong"] {
+            assert_eq!(
+                lookups.get(root.path(), "15.10.1", alias).unwrap().filename,
+                "MonkeyKing.png"
+            );
+        }
         assert_eq!(
             asset_remote_url(root.path(), "15.10.1", "rune", "8214").unwrap(),
             "https://ddragon.leagueoflegends.com/cdn/img/perk-images/Styles/Sorcery/SummonAery/SummonAery.png"
@@ -699,23 +736,96 @@ mod tests {
         let version = root.path().join("15.10.1");
         let icons = version.join("icons/champion");
         fs::create_dir_all(&icons).unwrap();
-        fs::write(
-            version.join("champion.json"),
-            br#"{"data":{"MonkeyKing":{"id":"MonkeyKing","key":"62","name":"Wukong","image":{"full":"MonkeyKing.png"}}}}"#,
-        ).unwrap();
+        let client = reqwest::Client::new();
+        let lookups = ChampionLookups::default();
+        let manifest = version.join("champion.json");
+        fs::write(&manifest, b"{").unwrap();
+        assert!(
+            ensure_asset(
+                &client,
+                root.path(),
+                &lookups,
+                "15.10.1",
+                "champion",
+                "62",
+                false
+            )
+            .await
+            .is_err()
+        );
+        fs::write(&manifest, br#"{"data":{"MonkeyKing":{"id":"MonkeyKing","key":"62","name":"Wukong","image":{"full":"MonkeyKing.png"}},"Syndra":{"key":"134","name":"Syndra","image":{"full":"Syndra.png"}}}}"#).unwrap();
         let cached = icons.join("wukong.png");
         fs::write(&cached, b"cached image").unwrap();
-        let client = reqwest::Client::new();
         assert_eq!(
-            ensure_asset(&client, root.path(), "15.10.1", "champion", "62", false)
-                .await
-                .unwrap(),
+            ensure_asset(
+                &client,
+                root.path(),
+                &lookups,
+                "15.10.1",
+                "champion",
+                "62",
+                false
+            )
+            .await
+            .unwrap(),
+            cached
+        );
+        fs::remove_file(&manifest).unwrap();
+        let syndra = icons.join("syndra.png");
+        fs::write(&syndra, b"cached image").unwrap();
+        assert_eq!(
+            ensure_asset(
+                &client,
+                root.path(),
+                &lookups,
+                "15.10.1",
+                "champion",
+                "134",
+                false
+            )
+            .await
+            .unwrap(),
+            syndra
+        );
+        assert_eq!(
+            ensure_asset(
+                &client,
+                root.path(),
+                &lookups,
+                "15.10.1",
+                "champion",
+                "MonkeyKing",
+                false
+            )
+            .await
+            .unwrap(),
             cached
         );
         assert!(
-            ensure_asset(&client, root.path(), "15.10.1", "champion", "9999", false)
-                .await
-                .is_err()
+            ensure_asset(
+                &client,
+                root.path(),
+                &lookups,
+                "15.10.2",
+                "champion",
+                "134",
+                false
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            ensure_asset(
+                &client,
+                root.path(),
+                &lookups,
+                "15.10.1",
+                "champion",
+                "9999",
+                false
+            )
+            .await
+            .is_err()
         );
     }
 

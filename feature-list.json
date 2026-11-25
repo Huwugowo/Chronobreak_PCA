@@ -359,14 +359,15 @@
       "execution": { "workflow": "direct", "plan": null },
       "acceptance_criteria": [
         "Finalized rosters resolve both name and numeric ID artwork using the existing Data Dragon cache. A genuinely unavailable portrait has a visible fallback.",
-        "Each recording part has the standard save star and actions menu. Delete remains in the menu, and saved recordings remain protected."
+        "Ordinary cards and recording parts share the same rendered save star and actions menu dimensions, spacing, alignment and behavior. Delete remains in the menu, and saved recordings remain protected."
       ],
       "verification": [
-        { "type": "automated", "description": "Exercise numeric final-result rosters, existing cached portraits, the unavailable-artwork fallback and per-part actions. Run frontend and native project checks and verify the production desktop build." }
+        { "type": "automated", "description": "Exercise numeric and named final-result rosters, per-patch cache reuse, the unavailable-artwork fallback and both action contexts. Measure the rendered controls and exercise them in the production Windows build." }
       ],
       "evidence": [
         "2026-11-25: The production desktop app 79ab79a18b28 decoded all ten roster portraits from a copied final-result fixture containing numeric champion IDs only. Component checks cover unavailable portraits, cache version changes and the standard save and protected delete controls for split recordings. Evidence: build/windows-installer/ui-native-ux82JP/.",
-        "TypeScript, all 644 frontend tests, 233 enabled desktop tests (13 opt-in or fixture tests skipped), Rust formatting, strict Clippy and the Windows installer build passed. Isolated replacement of the previous 0.1.1 payload, interrupted repair and uninstall preserved the configuration and media sentinels. Fresh live normal-game and Practice Tool confirmation is pending."
+        "TypeScript, all 644 frontend tests, 233 enabled desktop tests (13 opt-in or fixture tests skipped), Rust formatting, strict Clippy and the Windows installer build passed. Isolated replacement of the previous 0.1.1 payload, interrupted repair and uninstall preserved the configuration and media sentinels. Fresh live normal-game and Practice Tool confirmation is pending.",
+        "2026-11-25 follow-up: The production Windows app rendered both action pairs at 28 × 28 px with a 2 px gap, aligned centers and the same right edge. Both favorite buttons worked and both delete confirmations opened and canceled. A numeric-only fixture decoded ten portraits, and a variant decoded nine with a visible fallback for the unavailable ID. Focused tests confirmed patch isolation, offline cache reuse and successful lookup after the parsed manifest file was removed."
       ]
     },
     {
@@ -391,18 +392,28 @@
     {
       "id": "QB-UI-006",
       "kind": "feature",
-      "stage": "draft",
-      "name": "Group newly recorded Match History details before first display",
-      "description": "Consider a short grace period for items and team rosters to arrive together on new Match History cards, while preserving immediate access to existing recordings and timely display for partial matches.",
+      "stage": "ready",
+      "name": "Prepare visible Match History cards before first display",
+      "description": "Prepare available card facts and artwork concurrently so visible cards first appear together with their content while keeping History responsive and stable.",
       "priority": "P3",
       "area": "desktop-ui",
-      "status": "not-started",
+      "status": "in-progress",
       "dependencies": ["QB-LIB-030"],
-      "execution": { "workflow": "adaptive", "plan": null },
-      "acceptance_criteria": [],
-      "verification": [],
-      "evidence": [],
-      "notes": "2026-11-25 preview feedback. Proposed behavior gives newly published match groups up to eight seconds for card facts, releases them early when items and roster are available and otherwise uses available facts at the deadline. Artwork downloads and replay preparation are independent. Refine readiness, root changes, filtering and late parts before implementation."
+      "execution": { "workflow": "direct", "plan": null },
+      "acceptance_criteria": [
+        "Near-viewport cards prepare available facts and artwork concurrently, appear independently as soon as ready, and fall back promptly for slow or absent inputs.",
+        "Previously displayed cards remain stable across refresh, filtering and replay navigation. Preserve existing library requests, replay and recorder behavior.",
+        "Retain the presentation change only when production cold and warm measurements show smoother display without materially worse responsiveness."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Run production Windows WebView comparisons on isolated cold and warm fixture profiles. Measure first visible and visibly complete cards and exercise slow or unavailable input, settled card identity and History/replay navigation." }
+      ],
+      "evidence": [
+        "2026-11-25: Alternating production Windows WebView launches on two copied recordings, four cold/warm pairs per build, with the on-disk artwork cache seeded. Baseline versus bounded reveal medians from launch in ms: cold first visible 1446/1208 and complete 2076/1725; warm first visible 1007/1148 and complete 1197/1234. The prototype showed incomplete first paint on all four cold runs and two of four warm runs. It was removed after the comparison. Evidence: build/history-readiness-voJg7a/report.json.",
+        "2026-11-25: A separate four-pair comparison of the baseline with the final production build measured cold first visible 1051/1078 ms and complete 1546/1557 ms, and warm first visible 989/1013 ms and complete 1157/1139 ms. The native stability fixture passed delayed data preparation, two favorite mutations and two replay round trips. Evidence: build/history-readiness-lj4WqY/report.json.",
+        "2026-11-25: Four additional alternating baseline/prototype pairs started with an empty artwork cache. Cold first visible was 1051/1187 ms and complete 1525/1559 ms. Warm first visible was 997/1089 ms and complete 1121/1122 ms. Prototype cold first paint was incomplete in all four runs. Evidence: build/history-readiness-jP7AZ8/report.json."
+      ],
+      "notes": "Application-side investigation remains open. First display stays immediate. A future attempt needs a way to prepare more of the card before display without gating a usable card on late optional input."
     },
     {
       "kind": "feature",
@@ -3839,18 +3850,20 @@
       ],
       "evidence": [
         "2026-11-24: Configured and effective recording settings are separate. Explicit apply requests a new capture generation through the existing recorder process. Original libraries retain their pending result, match-history and ranked LP work across destination changes and restart.",
-        "Windows desktop (232 tests), frontend (643 tests), recorder (307 tests) and recorder-control (16 tests) verified locally. A staged-runtime fixture kept explicit apply queued while a disposable watched process was present, switched folders after it exited, and preserved effective settings on rejection. Installed capture, finalization and Windows sign-in remain pending."
+        "Windows desktop (232 tests), frontend (643 tests), recorder (307 tests) and recorder-control (16 tests) verified locally. A staged-runtime fixture kept explicit apply queued while a disposable watched process was present, switched folders after it exited, and preserved effective settings on rejection. Installed capture, finalization and Windows sign-in remain pending.",
+        "2026-11-25: With a corrupt enrichment registry, the managed recorder initialized, rejected unsafe settings apply and published a validated video and metadata from a synthetic WGC window. The registry remained intact. A replaced-library fixture preserved the previous verified recovery worker, and the healthy staged-runtime destination change passed again."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": "docs/exec-plans/qb-dist-003-installed-settings.md",
+        "plan": "docs/exec-plans/qb-dist-003-installed-settings-v2.md",
         "progress": "docs/execution/qb-dist-003.md"
       },
       "acceptance_criteria": [
         "Every shipped setting has one validated durable representation shared by the responsible app/recorder component.",
         "The app shows configured profile, codec and output root separately from the running recorder's confirmed effective values, and exposes retention and actual login startup.",
         "An explicit apply waits for recorder-owned idle admission, with no capture start, active recording or finalization interrupted. A destination change preserves pending post-game and ranked LP work at its original library through recorder restart.",
-        "Invalid paths or values fail without corrupting the previous configuration. Unsupported legacy recording choices can be repaired explicitly."
+        "Invalid paths or values fail without corrupting the previous configuration. Unsupported legacy recording choices can be repaired explicitly.",
+        "The current valid capture generation starts even when optional library recovery or identity validation fails. Preserve accepted roots and prevent untracked enrichment. Explicit apply retains the existing generation when registry guarantees cannot be met."
       ],
       "verification": [
         {

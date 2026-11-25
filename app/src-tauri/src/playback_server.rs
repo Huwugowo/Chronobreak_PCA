@@ -699,6 +699,7 @@ struct PlaybackState {
     #[cfg(feature = "replay-benchmark")]
     benchmark_requests: Option<Arc<BenchmarkRequestTelemetry>>,
     ddragon_cache: PathBuf,
+    champion_lookups: Arc<ddragon::ChampionLookups>,
     ddragon_root: ApprovedRoot,
     ddragon_client: reqwest::Client,
     allow_ddragon_network: bool,
@@ -826,6 +827,7 @@ pub async fn start(
         #[cfg(feature = "replay-benchmark")]
         benchmark_requests,
         ddragon_cache,
+        champion_lookups: Arc::default(),
         ddragon_root,
         ddragon_client,
         allow_ddragon_network,
@@ -1096,6 +1098,7 @@ async fn ddragon_asset(
     let path = match ddragon::ensure_asset(
         &state.ddragon_client,
         &state.ddragon_cache,
+        &state.champion_lookups,
         &version,
         &kind,
         &asset,
@@ -1632,6 +1635,7 @@ mod tests {
             #[cfg(feature = "replay-benchmark")]
             benchmark_requests: None,
             ddragon_cache: directory.path().join("ddragon"),
+            champion_lookups: Arc::default(),
             ddragon_root: ApprovedRoot::new(directory.path()).unwrap(),
             ddragon_client: reqwest::Client::new(),
             allow_ddragon_network: true,
@@ -1698,6 +1702,7 @@ mod tests {
             metrics: Arc::new(PlaybackMetrics::default()),
             benchmark_requests: Some(Arc::clone(&telemetry)),
             ddragon_cache: directory.path().join("ddragon"),
+            champion_lookups: Arc::default(),
             ddragon_root: ApprovedRoot::new(directory.path()).unwrap(),
             ddragon_client: reqwest::Client::new(),
             allow_ddragon_network: true,

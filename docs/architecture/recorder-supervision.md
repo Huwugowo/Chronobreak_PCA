@@ -69,9 +69,15 @@ generation reuses the existing process, tray and ownership lease.
 
 Post-game workers belong to the recorder process and keep each library's existing
 ledgers. A bounded registry beside the shared config records the path and
-directory identity before admitting recordings. A recorder restart reopens those
-identities. Prior libraries can retire after their result and history workers
-have durably settled. Unavailable or replaced libraries remain registered.
+directory identity before admitting new work to those workers. A recorder
+restart reopens verified identities and resumes accepted libraries independently
+of admitting the current destination. A corrupt registry or a destination
+identity conflict leaves video capture available at the effective destination
+after normal storage checks. The affected destination receives no new registered
+enrichment work, and explicit settings apply stays blocked until a restart can
+restore registry admission. Prior libraries can retire after their result and
+history workers have durably settled. Unavailable or replaced libraries remain
+registered.
 
 ## QB-DIST-004 stable path and update contract
 

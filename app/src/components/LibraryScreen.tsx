@@ -136,7 +136,7 @@ function RecordingActions(props: {
   onSave: () => void;
   onDelete: () => void;
 }) {
-  return <>
+  return <div class={matchStyles.recordingActions}>
     <button class={matchStyles.starButton} type="button" aria-disabled={props.disabled}
       aria-label={`${props.game.saved ? "Unsave" : "Save"} ${props.label}`}
       title={props.game.saved ? "Saved" : "Save"} data-saved={props.game.saved}
@@ -157,7 +157,7 @@ function RecordingActions(props: {
         </div>
       </details>
     </Show>
-  </>;
+  </div>;
 }
 
 function LibraryScreen(props: Props) {
@@ -358,7 +358,6 @@ function GamesLibrary(props: Props) {
                   const seconds = stats().duration_seconds;
                   return seconds === null ? game().duration_ms : seconds * 1_000;
                 };
-
                 return (
                   <><article class={matchStyles.matchItem} data-outcome={outcome() ?? undefined}>
                     <div class={matchStyles.matchSummary}>

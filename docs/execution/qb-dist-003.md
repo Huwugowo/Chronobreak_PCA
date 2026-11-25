@@ -1,8 +1,8 @@
 # QB-DIST-003 execution checkpoint
 
 Feature: `QB-DIST-003`
-ExecPlan: `docs/exec-plans/qb-dist-003-installed-settings.md`
-Updated: 2026-11-24
+ExecPlan: `docs/exec-plans/qb-dist-003-installed-settings-v2.md`
+Updated: 2026-11-25
 
 ## Current milestone
 
@@ -10,15 +10,15 @@ Milestone 4, verification and installed acceptance.
 
 ## Active unit
 
-Exercise the installed settings and login workflow when the installer reaches installed acceptance.
+Installed acceptance with League and Windows sign-in.
 
 ## Completed
 
-Shared Windows validation and field-level persistence, legacy repair UI, authenticated effective settings, idle apply and guarded recovery of original libraries. Local automated verification and the staged-media fixture passed.
+Shared Windows validation and field-level persistence, legacy repair UI, authenticated effective settings, idle apply and guarded recovery of original libraries. Optional registry errors no longer prevent a valid capture generation from starting. Local startup, capture, finalization and healthy apply passed with disposable fixtures.
 
 ## In flight
 
-None. Installed acceptance is pending.
+Installed acceptance is pending.
 
 ## Remaining
 
@@ -30,9 +30,11 @@ The Windows desktop suite passed 232 tests, including concurrent recording, stor
 
 The five-minute recorder-control reliability check passed. Handle and thread counts remained within the existing bounds across 60 simulated observer and launch cycles. The optimized Windows desktop build with bundling disabled also passed.
 
+2026-11-25: The recorder suite passed 308 tests across all targets and features. The replaced-root test retained access to the older verified worker and left the registry unchanged. With the staged Windows runtime and the synthetic WGC window, the managed recorder reached Idle with a corrupt registry, rejected settings apply without creating the requested new root, captured the window and published a validated MP4 with metadata in the effective root. The corrupt registry bytes survived shutdown. The healthy staged-runtime destination change passed again.
+
 ## Deviations
 
-None.
+The original plan required library registration before capture startup. Preview review established that unreadable registry data or conflicting enrichment identity could then disable valid video capture. The user requested independent capture startup. The superseding plan retains mandatory identity and registry admission for enrichment and explicit settings replacement.
 
 ## Decisions
 
@@ -44,4 +46,4 @@ The real League/NVIDIA run is an installed acceptance dependency. It does not bl
 
 ## Next action
 
-Once the installed pair is available, exercise outstanding acceptance through a real match and finalization.
+Run the installed destination-change, real-game capture/finalization and Windows sign-in acceptance checks.
