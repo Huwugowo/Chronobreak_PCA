@@ -186,10 +186,15 @@ it("opens one chooser for all parts and loads the scoped clip strip only when ex
     const action = (index: number, label: string) => [...parts[index].querySelectorAll("button")].find(button => button.textContent === label);
     parts.forEach((_, index) => action(index, "Play")!.click());
     expect(open.mock.calls.slice(1)).toEqual([earliest, middle, newest].map(game => [game.timestamp, origin]));
-    expect(action(0, "Delete")).toBeUndefined();
-    action(0, "Unsave")!.click();
-    action(1, "Save")!.click();
-    action(2, "Delete")!.click();
+    expect(parts[0].querySelector("details")).toBeNull();
+    parts[0].querySelector<HTMLButtonElement>('[aria-label="Unsave part 1"]')!.click();
+    parts[1].querySelector<HTMLButtonElement>('[aria-label="Save part 2"]')!.click();
+    const menu = parts[2].querySelector<HTMLDetailsElement>("details")!;
+    expect(menu.open).toBe(false);
+    expect(menu.querySelector("summary")?.getAttribute("aria-label")).toBe("More actions for part 3");
+    menu.open = true;
+    action(2, "Delete recording")!.click();
+    expect(menu.open).toBe(false);
     expect(toggle.mock.calls).toEqual([[earliest, origin], [middle, origin]]);
     expect(remove).toHaveBeenCalledExactlyOnceWith(newest, origin);
     setClipHistory({ ...history, page: { ...history.page!, rows: history.page!.rows.map(row =>
@@ -356,7 +361,7 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", asy
     participants: [
       { summoner_name: "Indexed ally#EUW", champion: "Lux", relation: "ally" as const, is_local: true },
       { summoner_name: "Indexed ally#NA1", champion: "Lux", relation: "ally" as const, is_local: false },
-      { summoner_name: "Indexed enemy with a long game name#NA1", champion: "Garen", relation: "enemy" as const },
+      { summoner_name: "Indexed enemy with a long game name#NA1", champion: "86", relation: "enemy" as const },
     ],
   };
   setHistory({...history(),page:{...history().page!,rows:[{media_id:game.media_id!,game:indexedGame,stats:{...stats,creep_score:0},index_status:"ready"}]}});
@@ -364,6 +369,15 @@ it("renders Games from the core snapshot when Data Dragon enrichment fails", asy
   expect(rosterName("ally")?.getAttribute("title")).toBe("Indexed ally#EUW");
   expect(rosterName("enemy")?.textContent).toBe("Indexed enemy with a long game name");
   expect(rosterName("enemy")?.getAttribute("title")).toBe("Indexed enemy with a long game name#NA1");
+  const portraits = () => [...roster.querySelectorAll("img")];
+  expect(portraits().map(img => img.getAttribute("src"))).toEqual([
+    "http://assets.test/ddragon/16.20.1/champion/Lux", "http://assets.test/ddragon/16.20.1/champion/Lux",
+    "http://assets.test/ddragon/16.20.1/champion/86",
+  ]);
+  portraits()[2].dispatchEvent(new Event("error"));
+  expect(portraits().map(img => img.hidden)).toEqual([false, false, true]);
+  setAssets({ ...ddragon, state: "ready", asset_base_url: "http://assets.test/ddragon/16.21.1" });
+  expect(portraits()[2].hidden).toBe(false);
   expect(highlightedNames()).toEqual(["Indexed ally#EUW"]);
   const rosterNodes = [...roster.querySelectorAll("[class*=rosterPlayer]")];
   setHistory(JSON.parse(JSON.stringify(history())));

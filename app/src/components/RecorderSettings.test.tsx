@@ -11,6 +11,8 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock("../api", () => ({
   loadRecorderStatus: vi.fn(async () => ({ state: fixture.state, message: "Fixture recorder state", recording_capable_here: fixture.state === "available", can_retry: fixture.canRetry })),
+  loadEffectiveRecordingSettings: vi.fn(async () => null),
+  applyRecordingSettings: vi.fn(async () => null),
   retryRecorder: vi.fn(async () => {}),
   loadAutostartStatus: vi.fn(async () => ({ desired_autostart: fixture.desired, actual_registration: fixture.actual, effective_startup: "unknown", disabled_for_test: false, error: null })),
   setAutostart: vi.fn(async (enabled: boolean) => ({ desired_autostart: enabled, actual_registration: enabled ? "matching" : "absent", effective_startup: "unknown", disabled_for_test: false, error: null })),

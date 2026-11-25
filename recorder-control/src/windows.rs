@@ -18,7 +18,7 @@ use windows::Win32::Security::Authorization::{
 use windows::Win32::Security::{
     GetTokenInformation, PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+use windows::Win32::System::Pipes::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
@@ -26,6 +26,9 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{PCWSTR, PWSTR};
 
+use crate::recording_settings::{
+    RecorderSettings, SettingsAction, SettingsControl, SettingsRequest,
+};
 use crate::{
     AvailabilityEvent, PROTOCOL_VERSION, REQUEST_TIMEOUT, Status, StatusRequest, read_frame,
     write_frame,
@@ -43,6 +46,14 @@ pub struct FileLease {
 
 impl FileLease {
     pub fn try_acquire(path: &Path) -> Result<Option<Self>> {
+        Self::try_acquire_with_share(path, 1)
+    }
+
+    pub(crate) fn try_acquire_shared(path: &Path) -> Result<Option<Self>> {
+        Self::try_acquire_with_share(path, 3)
+    }
+
+    fn try_acquire_with_share(path: &Path, share_mode: u32) -> Result<Option<Self>> {
         let parent = path.parent().context("lease has no parent")?;
         std::fs::create_dir_all(parent)?;
         reject_reparse_ancestors(parent)?;
@@ -59,7 +70,7 @@ impl FileLease {
             .write(true)
             .create(true)
             .truncate(false)
-            .share_mode(1)
+            .share_mode(share_mode)
             .custom_flags(OPEN_REPARSE)
             .open(path)
         {
@@ -258,10 +269,18 @@ fn create_server(pipe: &str, first: bool) -> Result<NamedPipeServer> {
     })
 }
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum Request {
+    Status(StatusRequest),
+    Settings(SettingsRequest),
+}
+
 async fn serve(
     mut server: NamedPipeServer,
     name: &str,
     status: watch::Receiver<Status>,
+    settings: SettingsControl,
 ) -> Result<()> {
     loop {
         server.connect().await?;
@@ -270,12 +289,35 @@ async fn serve(
         // preserves them and the waiting instance keeps the namespace occupied.
         let next = create_server(name, false)?;
         let _ = tokio::time::timeout(REQUEST_TIMEOUT, async {
-            let request: StatusRequest = read_frame(&mut server).await?;
-            if request.protocol_version != PROTOCOL_VERSION {
-                bail!("incompatible status request");
-            }
             let reply = status.borrow().clone();
-            write_frame(&mut server, &reply).await
+            match read_frame(&mut server).await? {
+                Request::Status(request) if request.protocol_version == PROTOCOL_VERSION => {
+                    write_frame(&mut server, &reply).await
+                }
+                Request::Settings(request)
+                    if request.protocol_version == PROTOCOL_VERSION
+                        && request.instance == reply.instance =>
+                {
+                    let mut pid = 0;
+                    // SAFETY: live pipe handle and writable output PID.
+                    unsafe {
+                        GetNamedPipeClientProcessId(HANDLE(server.as_raw_handle()), &mut pid)?;
+                    }
+                    let sibling = std::env::current_exe()?.with_file_name("league-replay-app.exe");
+                    verify_executable(pid, &sibling)?;
+                    if process_session(pid)? != reply.session_id {
+                        bail!("desktop session mismatch");
+                    }
+                    if matches!(request.settings, SettingsAction::Apply) {
+                        if reply.service_state != crate::ServiceState::Available {
+                            bail!("recorder is not accepting settings");
+                        }
+                        settings.request_apply();
+                    }
+                    write_frame(&mut server, &settings.snapshot()).await
+                }
+                _ => bail!("incompatible recorder request"),
+            }
         })
         .await;
         drop(server);
@@ -287,6 +329,7 @@ async fn serve(
 pub struct ControlOwner {
     _lease: FileLease,
     status: watch::Sender<Status>,
+    settings: SettingsControl,
     stop: Option<oneshot::Sender<()>>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -308,6 +351,8 @@ impl ControlOwner {
         let (ready, readiness) = mpsc::sync_channel(1);
         let pipe = namespace.pipe.clone();
         let failures = status.clone();
+        let settings = SettingsControl::default();
+        let pipe_settings = settings.clone();
         let thread = thread::Builder::new()
             .name("recorder-status".into())
             .spawn(move || {
@@ -320,7 +365,7 @@ impl ControlOwner {
                         let _ = ready.send(Ok(()));
                         tokio::select! {
                             _ = stopped => Ok(()),
-                            result = serve(server, &pipe, rx) => result,
+                            result = serve(server, &pipe, rx, pipe_settings) => result,
                         }
                     })
                 })();
@@ -337,6 +382,7 @@ impl ControlOwner {
             Ok(Ok(())) => Ok(Some(Self {
                 _lease: lease,
                 status,
+                settings,
                 stop: Some(stop),
                 thread: Some(thread),
             })),
@@ -350,6 +396,9 @@ impl ControlOwner {
 
     pub fn status_sender(&self) -> watch::Sender<Status> {
         self.status.clone()
+    }
+    pub fn settings_control(&self) -> SettingsControl {
+        self.settings.clone()
     }
     pub fn apply(&self, event: AvailabilityEvent) {
         self.status.send_modify(|s| s.apply(event));
@@ -367,38 +416,51 @@ impl Drop for ControlOwner {
     }
 }
 
+fn verify_executable(pid: u32, expected_executable: &Path) -> Result<()> {
+    // SAFETY: bounded query access only; no mutation or termination rights requested.
+    let process =
+        owned_handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)? });
+    if process_sid(HANDLE(process.as_raw_handle()))? != current_sid()? {
+        bail!("control peer user mismatch");
+    }
+    let mut path = vec![0u16; 32768];
+    let mut length = path.len() as u32;
+    // SAFETY: path is a writable UTF-16 buffer of the stated length.
+    unsafe {
+        QueryFullProcessImageNameW(
+            HANDLE(process.as_raw_handle()),
+            PROCESS_NAME_WIN32,
+            PWSTR(path.as_mut_ptr()),
+            &mut length,
+        )?;
+    }
+    let actual = PathBuf::from(String::from_utf16(&path[..length as usize])?);
+    if !regular_executable(&actual)?
+        .as_os_str()
+        .eq_ignore_ascii_case(regular_executable(expected_executable)?.as_os_str())
+    {
+        bail!("control peer executable mismatch");
+    }
+    Ok(())
+}
+
+fn connect(
+    namespace: &Namespace,
+    expected_executable: &Path,
+) -> Result<(tokio::net::windows::named_pipe::NamedPipeClient, u32)> {
+    let pipe = ClientOptions::new().open(&namespace.pipe)?;
+    let mut pid = 0;
+    // SAFETY: live pipe handle and writable output PID.
+    unsafe {
+        GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid)?;
+    }
+    verify_executable(pid, expected_executable)?;
+    Ok((pipe, pid))
+}
+
 pub async fn query(namespace: &Namespace, expected_executable: &Path) -> Result<Status> {
     tokio::time::timeout(REQUEST_TIMEOUT, async {
-        let mut pipe = ClientOptions::new().open(&namespace.pipe)?;
-        let mut pid = 0;
-        // SAFETY: live pipe handle and writable output PID.
-        unsafe {
-            GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid)?;
-        }
-        // SAFETY: bounded query access only; no mutation or termination rights requested.
-        let process =
-            owned_handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)? });
-        if process_sid(HANDLE(process.as_raw_handle()))? != current_sid()? {
-            bail!("recorder user mismatch");
-        }
-        let mut path = vec![0u16; 32768];
-        let mut length = path.len() as u32;
-        // SAFETY: path is a writable UTF-16 buffer of the stated length.
-        unsafe {
-            QueryFullProcessImageNameW(
-                HANDLE(process.as_raw_handle()),
-                PROCESS_NAME_WIN32,
-                PWSTR(path.as_mut_ptr()),
-                &mut length,
-            )?;
-        }
-        let actual = PathBuf::from(String::from_utf16(&path[..length as usize])?);
-        if !regular_executable(&actual)?
-            .as_os_str()
-            .eq_ignore_ascii_case(regular_executable(expected_executable)?.as_os_str())
-        {
-            bail!("recorder executable mismatch");
-        }
+        let (mut pipe, pid) = connect(namespace, expected_executable)?;
         write_frame(
             &mut pipe,
             &StatusRequest {
@@ -415,4 +477,30 @@ pub async fn query(namespace: &Namespace, expected_executable: &Path) -> Result<
     })
     .await
     .context("recorder status request timed out")?
+}
+
+pub async fn settings(
+    namespace: &Namespace,
+    expected_executable: &Path,
+    action: SettingsAction,
+) -> Result<RecorderSettings> {
+    let status = query(namespace, expected_executable).await?;
+    tokio::time::timeout(REQUEST_TIMEOUT, async {
+        let (mut pipe, pid) = connect(namespace, expected_executable)?;
+        if pid != status.pid || process_session(pid)? != current_session()? {
+            bail!("recorder session or process changed");
+        }
+        write_frame(
+            &mut pipe,
+            &SettingsRequest {
+                protocol_version: PROTOCOL_VERSION,
+                instance: status.instance,
+                settings: action,
+            },
+        )
+        .await?;
+        read_frame(&mut pipe).await
+    })
+    .await
+    .context("recorder settings request timed out")?
 }

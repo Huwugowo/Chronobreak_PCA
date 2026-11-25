@@ -4,7 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+#[cfg(windows)]
+use chronobreak_recorder_control::recording_settings::{
+    ApplyState, EffectiveSettings, RecorderSettings, SettingsControl,
+};
 use chronobreak_recorder_control::{AvailabilityEvent, CaptureActivity, CaptureProblem};
 use chronobreak_replay_time::{
     CaptureAnchorsV2, FinalizationExpectationsV2, MediaId, ProducerEvidenceV2,
@@ -17,7 +21,9 @@ use tokio::time::Instant as TokioInstant;
 use tracing::Instrument;
 use tracing::{error, info, warn};
 
-use crate::config::{CodecPreference, Config, RecordingConfig, RecordingProfile};
+#[cfg(windows)]
+use crate::config::CodecPreference;
+use crate::config::{Config, RecordingConfig, RecordingProfile};
 #[cfg(not(target_os = "windows"))]
 use crate::encoder::RecordingSession;
 use crate::encoder::{
@@ -29,6 +35,8 @@ use crate::league_client::collector::ContextSession;
 use crate::league_client::post_game::{
     Coordinator as PostGameCoordinator, Handle as PostGameHandle,
 };
+#[cfg(windows)]
+use crate::league_client::recorder_libraries::Libraries;
 use crate::league_client::sidecar::{ContextWriter, DirectoryGuard};
 #[cfg(target_os = "windows")]
 use crate::native::{
@@ -537,19 +545,117 @@ impl CaptureProgressWatchdog {
 
 pub async fn run(
     config: Config,
-    mut commands: mpsc::UnboundedReceiver<ServiceCommand>,
+    commands: mpsc::UnboundedReceiver<ServiceCommand>,
     events: EventSink,
 ) -> Result<()> {
-    let output_path = config.output_path()?;
-    fs::create_dir_all(output_path.join("games")).with_context(|| {
-        format!(
-            "failed to create recorder output at {}",
-            output_path.display()
-        )
-    })?;
+    run_recorder(config, commands, events, None).await
+}
 
+#[cfg(windows)]
+pub struct SettingsSession {
+    pub control: SettingsControl,
+    pub config_path: PathBuf,
+}
+
+#[cfg(windows)]
+struct ManagedSettings {
+    session: SettingsSession,
+    libraries: Libraries,
+    handled: u64,
+    published: RecorderSettings,
+}
+
+#[cfg(windows)]
+impl ManagedSettings {
+    fn publish(&mut self, state: ApplyState) {
+        self.published.apply_state = state;
+        self.session
+            .control
+            .publish(self.handled, self.published.clone());
+    }
+
+    fn effective(&mut self, generation: &Generation) {
+        self.published.effective = Some(EffectiveSettings {
+            output_path: generation.output_path.to_string_lossy().into_owned(),
+            preferences: generation.config.recording.clone(),
+            profile: RecordingProfile::High,
+            codec: CodecPreference::H264,
+        });
+        self.publish(ApplyState::Idle);
+    }
+
+    async fn prepare(
+        &mut self,
+        current: &Generation,
+    ) -> std::result::Result<Generation, ApplyState> {
+        let path = self.session.config_path.clone();
+        let previous_path = current.output_path.clone();
+        let replacement = tokio::task::spawn_blocking(move || {
+            let config =
+                Config::load_or_create(&path).map_err(|_| ApplyState::InvalidConfiguration)?;
+            native_recording_plan(&config.recording)
+                .map_err(|_| ApplyState::InvalidConfiguration)?;
+            let replacement =
+                Generation::open(config).map_err(|_| ApplyState::DestinationUnavailable)?;
+            if replacement.output_path != previous_path {
+                crate::storage::preflight_recording_storage(&replacement.output_path.join("games"))
+                    .map_err(|_| ApplyState::DestinationUnavailable)?;
+            }
+            Ok(replacement)
+        })
+        .await
+        .map_err(|_| ApplyState::InvalidConfiguration)??;
+        self.libraries
+            .retire_settled(&current.output_path)
+            .await
+            .map_err(|_| ApplyState::LibraryRecoveryUnavailable)?;
+        self.libraries
+            .register(&replacement.output_path)
+            .map_err(|_| ApplyState::LibraryRecoveryUnavailable)?;
+        self.libraries.resume();
+        Ok(replacement)
+    }
+}
+
+#[cfg(not(windows))]
+pub type SettingsSession = std::convert::Infallible;
+
+enum GenerationExit {
+    Shutdown,
+    #[cfg(windows)]
+    Apply(Generation),
+}
+
+struct Generation {
+    config: Config,
+    output_path: PathBuf,
+}
+
+impl Generation {
+    fn open(config: Config) -> Result<Self> {
+        let output_path = std::path::absolute(config.output_path()?)?;
+        fs::create_dir_all(output_path.join("games")).with_context(|| {
+            format!(
+                "failed to create recorder output at {}",
+                output_path.display()
+            )
+        })?;
+        Ok(Self {
+            config,
+            output_path,
+        })
+    }
+}
+
+pub async fn run_recorder(
+    config: Config,
+    mut commands: mpsc::UnboundedReceiver<ServiceCommand>,
+    events: EventSink,
+    settings: Option<SettingsSession>,
+) -> Result<()> {
+    let mut generation = Generation::open(config)?;
     #[cfg(target_os = "windows")]
-    let _ = native_recording_plan(&config.recording)
+    let _ = native_recording_plan(&generation.config.recording)
         .context("unsupported Windows recorder configuration")?;
     let ffmpeg = Ffmpeg::resolve().await?;
     let audio = ffmpeg.detect_audio_source().await;
@@ -562,12 +668,70 @@ pub async fn run(
         ffmpeg = %ffmpeg.path().display(),
         media_runtime = ffmpeg.runtime_id(),
         audio = %audio.description(),
-        output = %output_path.display(),
+        output = %generation.output_path.display(),
         "recorder initialized; capture plan awaits the exact League HWND and adapter"
     );
 
-    events(ServiceEvent::Idle);
+    #[cfg(windows)]
+    let mut managed = if let Some(session) = settings {
+        let mut libraries = Libraries::open(&session.config_path)?;
+        libraries.register(&generation.output_path)?;
+        libraries.resume();
+        Some(ManagedSettings {
+            session,
+            libraries,
+            handled: 0,
+            published: RecorderSettings::default(),
+        })
+    } else {
+        None
+    };
+    #[cfg(not(windows))]
+    let _ = settings;
 
+    loop {
+        #[cfg(windows)]
+        if let Some(managed) = managed.as_mut() {
+            managed.effective(&generation);
+        }
+        events(ServiceEvent::Idle);
+        match run_generation(
+            &generation,
+            &ffmpeg,
+            &audio,
+            &mut commands,
+            &events,
+            #[cfg(windows)]
+            managed.as_mut(),
+        )
+        .await?
+        {
+            #[cfg(windows)]
+            GenerationExit::Apply(next) => generation = next,
+            GenerationExit::Shutdown => {
+                #[cfg(windows)]
+                if let Some(managed) = managed {
+                    managed.libraries.stop().await;
+                }
+                events(ServiceEvent::ShutdownComplete);
+                return Ok(());
+            }
+        }
+    }
+}
+
+async fn run_generation(
+    generation: &Generation,
+    ffmpeg: &Ffmpeg,
+    audio: &AudioSource,
+    commands: &mut mpsc::UnboundedReceiver<ServiceCommand>,
+    events: &EventSink,
+    #[cfg(windows)] mut managed: Option<&mut ManagedSettings>,
+) -> Result<GenerationExit> {
+    let Generation {
+        config,
+        output_path,
+    } = generation;
     let process_name =
         env::var("LEAGUE_REPLAY_PROCESS_NAME").unwrap_or_else(|_| DEFAULT_PROCESS_NAME.to_owned());
     let mut watcher = ProcessWatcher::new(&process_name);
@@ -578,14 +742,26 @@ pub async fn run(
     let mut control_telemetry = RecorderControlTelemetry::default();
     let mut control_report_due = Instant::now() + CONTROL_TELEMETRY_INTERVAL;
     let mut interval = tokio::time::interval(POLL_INTERVAL);
-    let _preparation = crate::preparation::Owner(crate::preparation::start(&output_path));
-    let post_game = match PostGameCoordinator::start(&output_path) {
-        Ok(coordinator) => Some(coordinator),
-        Err(code) => {
-            warn!(code, "optional post-game enrichment unavailable");
-            None
+    let _preparation = crate::preparation::Owner(crate::preparation::start(output_path));
+    #[cfg(windows)]
+    let unmanaged = managed.is_none();
+    #[cfg(not(windows))]
+    let unmanaged = true;
+    let post_game = if unmanaged {
+        match PostGameCoordinator::start(output_path) {
+            Ok(coordinator) => Some(coordinator),
+            Err(code) => {
+                warn!(code, "optional post-game enrichment unavailable");
+                None
+            }
         }
+    } else {
+        None
     };
+    #[cfg(windows)]
+    let managed_post_game = managed
+        .as_ref()
+        .and_then(|managed| managed.libraries.handle(output_path));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     #[cfg(windows)]
@@ -595,9 +771,9 @@ pub async fn run(
             command = commands.recv() => {
                 if matches!(command, Some(ServiceCommand::Shutdown) | None) {
                     events(ServiceEvent::Availability(AvailabilityEvent::Stopping));
-                    cancel_starting(starting.take(), &events, &mut watcher, false).await;
+                    cancel_starting(starting.take(), events, &mut watcher, false).await;
                     if let Some(recording) = active.take() {
-                        stop_recording(recording, &events, &mut watcher).await;
+                        stop_recording(recording, events, &mut watcher).await;
                     }
                     log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
                     if let Some(post_game)=post_game { post_game.stop().await; }
@@ -605,13 +781,12 @@ pub async fn run(
                     // Historical filesystem work must never precede a watcher tick.
                     #[cfg(windows)]
                     if let Err(error) = crate::finalizer::recovery::run(
-                        &output_path, ffmpeg.ffprobe_path(), || watcher.refresh().is_none(),
+                        output_path, ffmpeg.ffprobe_path(), || watcher.refresh().is_none(),
                     ).await {
                         warn!(error = %format!("{error:#}"),
                             "interrupted recording maintenance unavailable; artifacts retained");
                     }
-                    events(ServiceEvent::ShutdownComplete);
-                    return Ok(());
+                    return Ok(GenerationExit::Shutdown);
                 }
             }
             _ = interval.tick() => {
@@ -631,16 +806,16 @@ pub async fn run(
                     }
                     ProcessTransition::Replaced(process) => {
                         warn!(pid = process.pid, "League process was replaced between watcher polls");
-                        cancel_starting(starting.take(), &events, &mut watcher, true).await;
+                        cancel_starting(starting.take(), events, &mut watcher, true).await;
                         if let Some(recording) = active.take() {
-                            stop_recording_with_process_confirmation(recording, &events, &mut watcher).await;
+                            stop_recording_with_process_confirmation(recording, events, &mut watcher).await;
                         }
                         startup_retry.reset();
                     }
                     ProcessTransition::Disappeared => {
-                        cancel_starting(starting.take(), &events, &mut watcher, true).await;
+                        cancel_starting(starting.take(), events, &mut watcher, true).await;
                         if let Some(recording) = active.take()
-                            && stop_recording_with_process_confirmation(recording, &events, &mut watcher).await
+                            && stop_recording_with_process_confirmation(recording, events, &mut watcher).await
                         {
                             events(ServiceEvent::Idle);
                         }
@@ -658,6 +833,10 @@ pub async fn run(
                     match attempt.task.await {
                         Ok(Ok(mut recording)) if current_process == Some(process) => {
                             recording.post_game = post_game.as_ref().map(PostGameCoordinator::handle);
+                            #[cfg(windows)]
+                            if recording.post_game.is_none() {
+                                recording.post_game = managed_post_game.clone();
+                            }
                             control_telemetry.startup_ready =
                                 control_telemetry.startup_ready.saturating_add(1);
                             startup_retry.reset();
@@ -668,7 +847,7 @@ pub async fn run(
                         }
                         Ok(Ok(recording)) => {
                             warn!(pid = process.pid, "recording became ready after its League process changed");
-                            stop_recording_with_process_confirmation(recording, &events, &mut watcher).await;
+                            stop_recording_with_process_confirmation(recording, events, &mut watcher).await;
                         }
                         Ok(Err(start_error)) => {
                             events(ServiceEvent::Availability(if start_error.disposition == RecordingStartupDisposition::Cancelled {
@@ -804,20 +983,20 @@ pub async fn run(
                                     Err(error) => {
                                         let recording = active.take().expect("active recording exists");
                                         blocked_original = Some(Arc::clone(&recording.original_process));
-                                        stop_recording_with_failure(recording, &events, format!("capture rediscovery failed: {error:#}")).await;
+                                        stop_recording_with_failure(recording, events, format!("capture rediscovery failed: {error:#}")).await;
                                         startup_retry.block_active_process(current_process);
                                     }
                                 }
                             } else {
                                 let recording = active.take().expect("active recording exists");
                                 blocked_original = Some(Arc::clone(&recording.original_process));
-                                stop_recording_with_failure(recording, &events, format!("capture target failed: {target_error:#}")).await;
+                                stop_recording_with_failure(recording, events, format!("capture target failed: {target_error:#}")).await;
                                 startup_retry.block_active_process(current_process);
                             }
                             #[cfg(not(windows))]
                             {
                                 let recording = active.take().expect("active recording exists");
-                                stop_recording_with_failure(recording, &events, format!("capture target failed: {target_error:#}")).await;
+                                stop_recording_with_failure(recording, events, format!("capture target failed: {target_error:#}")).await;
                                 startup_retry.block_active_process(current_process);
                             }
                         }
@@ -834,7 +1013,7 @@ pub async fn run(
                             Err(error) => {
                                 let recording = active.take().expect("active recording exists");
                                 blocked_original = Some(Arc::clone(&recording.original_process));
-                                stop_recording_with_failure(recording, &events, format!("capture rediscovery failed: {error:#}")).await;
+                                stop_recording_with_failure(recording, events, format!("capture rediscovery failed: {error:#}")).await;
                                 startup_retry.block_active_process(current_process);
                                 continue;
                             }
@@ -863,7 +1042,7 @@ pub async fn run(
                             let recording = active.take().expect("active recording exists");
                             #[cfg(windows)] { blocked_original = Some(Arc::clone(&recording.original_process)); }
                             warn!(reason = %stall_reason, "the active GPU capture graph stopped advancing");
-                            stop_recording_with_failure(recording, &events, stall_reason).await;
+                            stop_recording_with_failure(recording, events, stall_reason).await;
                             startup_retry.block_active_process(current_process);
                         }
                         CaptureProgressObservation::WaitingForSource => {
@@ -896,7 +1075,7 @@ pub async fn run(
                             let recording = active.take().expect("active recording exists");
                             #[cfg(windows)] { blocked_original = Some(Arc::clone(&recording.original_process)); }
                             info!("recorder backend exited; checking its terminal result before publication");
-                            if stop_recording(recording, &events, &mut watcher).await {
+                            if stop_recording(recording, events, &mut watcher).await {
                                 events(ServiceEvent::Idle);
                             }
                             startup_retry.block_active_process(current_process);
@@ -908,6 +1087,28 @@ pub async fn run(
                     }
                 }
 
+                #[cfg(windows)]
+                if current_process.is_none() && active.is_none() && starting.is_none()
+                    && !crate::native::cleanup_unproven()
+                    && let Some(managed) = managed.as_deref_mut()
+                {
+                    let request = managed.session.control.requested();
+                    if request != managed.handled {
+                        match managed.prepare(generation).await {
+                            Ok(next) if managed.session.control.requested() == request
+                                && watcher.refresh_for_original(blocked_original.as_deref())?.is_none() => {
+                                log_control_telemetry(watcher.telemetry(), &control_telemetry, true);
+                                managed.handled = request;
+                                return Ok(GenerationExit::Apply(next));
+                            }
+                            Ok(_) => {}
+                            Err(state) => {
+                                managed.handled = request;
+                                managed.publish(state);
+                            }
+                        }
+                    }
+                }
                 if let Some(process) = startup_candidate(
                     current_process,
                     active.is_some(),
@@ -941,7 +1142,7 @@ pub async fn run(
                                 process,
                                 #[cfg(not(target_os = "windows"))]
                                 target: _target,
-                                events: Arc::clone(&events),
+                                events: Arc::clone(events),
                             }));
                         }
                         Err(target_error) => {
@@ -1566,15 +1767,7 @@ fn native_startup_disposition(
 
 #[cfg(target_os = "windows")]
 fn native_recording_plan(recording: &RecordingConfig) -> Result<RecordingPlan> {
-    if recording.codec == CodecPreference::Hevc {
-        bail!("the native recorder currently supports H.264 only");
-    }
-    if !matches!(
-        recording.profile,
-        RecordingProfile::Auto | RecordingProfile::High
-    ) {
-        bail!("the native recorder currently requires the auto or high 1080p60 profile");
-    }
+    recording.validate_windows()?;
     RecordingPlan::new(EncoderKind::Nvenc, VideoCodec::H264, RecordingProfile::High)
         .context("could not select the fixed native 1080p60 H.264 plan")
 }
@@ -1878,6 +2071,111 @@ fn maximum_texture_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires the staged media runtime and an isolated watcher process name"]
+    async fn saved_destination_changes_only_on_explicit_idle_apply() {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Child, Command};
+
+        struct FixtureProcess(Child);
+        impl Drop for FixtureProcess {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let watcher_name = env::var("LEAGUE_REPLAY_PROCESS_NAME").unwrap_or_default();
+        assert_eq!(watcher_name, "chronobreak-settings-fixture-no-game.exe");
+        assert!(env::var_os("QUEUEBACK_MEDIA_RUNTIME_DIR").is_some());
+        let root = tempfile::tempdir().unwrap();
+        let config_path = root.path().join("config.toml");
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        let mut config = Config::default();
+        config.storage.output_path = first.to_string_lossy().into_owned();
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        let (send, receive) = mpsc::unbounded_channel();
+        let settings = SettingsControl::default();
+        let service = tokio::spawn(run_recorder(
+            config.clone(),
+            receive,
+            Arc::new(|_| {}),
+            Some(SettingsSession {
+                control: settings.clone(),
+                config_path: config_path.clone(),
+            }),
+        ));
+        let wait_for = |path: PathBuf, control: SettingsControl| async move {
+            tokio::time::timeout(Duration::from_secs(15), async {
+                loop {
+                    if let Some(effective) = control.snapshot().effective
+                        && std::path::Path::new(&effective.output_path) == path
+                    {
+                        return effective;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap()
+        };
+        wait_for(first.clone(), settings.clone()).await;
+
+        config.storage.output_path = second.to_string_lossy().into_owned();
+        config.recording.profile = RecordingProfile::High;
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(
+            wait_for(first.clone(), settings.clone())
+                .await
+                .preferences
+                .profile,
+            RecordingProfile::Auto
+        );
+        assert!(!second.exists());
+
+        let fixture = root.path().join(&watcher_name);
+        let system = PathBuf::from(env::var_os("SystemRoot").unwrap());
+        fs::copy(system.join("System32/ping.exe"), &fixture).unwrap();
+        let process = FixtureProcess(
+            Command::new(fixture)
+                .args(["-n", "30", "127.0.0.1"])
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                .spawn()
+                .unwrap(),
+        );
+        let mut watcher = ProcessWatcher::new(watcher_name);
+        assert_eq!(watcher.refresh().unwrap().pid, process.0.id());
+        settings.request_apply();
+        tokio::time::sleep(POLL_INTERVAL * 3).await;
+        assert_eq!(settings.snapshot().apply_state, ApplyState::Waiting);
+        assert_eq!(
+            wait_for(first, settings.clone()).await.preferences.profile,
+            RecordingProfile::Auto
+        );
+        assert!(!second.exists());
+        drop(process);
+
+        let applied = wait_for(second.clone(), settings.clone()).await;
+        assert_eq!(applied.preferences.profile, RecordingProfile::High);
+        assert!(second.join("games").is_dir());
+
+        config.recording.codec = CodecPreference::Hevc;
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        settings.request_apply();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while settings.snapshot().apply_state != ApplyState::InvalidConfiguration {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(settings.snapshot().effective.unwrap(), applied);
+        send.send(ServiceCommand::Shutdown).unwrap();
+        service.await.unwrap().unwrap();
+    }
 
     #[cfg(target_os = "windows")]
     #[test]

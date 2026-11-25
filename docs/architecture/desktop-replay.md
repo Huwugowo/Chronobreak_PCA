@@ -198,9 +198,11 @@ scrubbing focuses the position slider; event and clip controls retain their own
 focus and activation behavior.
 
 The HUD hides after 3.2 seconds only during fullscreen playback with no clip
-selection or hover/focus/pointer interaction hold. Pause, windowed mode and clip
-selection reveal controls immediately. Pointer capture loss and window focus
-transitions reconcile interaction holds. Window capture listeners observe activity
+selection, hover, keyboard focus or active pointer interaction. Focus retained
+after a pointer click does not hold the HUD open once the pointer leaves.
+Pause, windowed mode and clip selection reveal controls immediately. Pointer
+capture loss and window focus transitions reconcile interaction holds. Window
+capture listeners observe activity
 while the overlay root remains pointer-transparent, so a hidden HUD does not
 consume the first video click. Disposal removes the inactivity timer and listeners.
 

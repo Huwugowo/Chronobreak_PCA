@@ -563,9 +563,96 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
         .settings()
 }
 
+#[tauri::command(async)]
+fn get_recording_preferences(
+    state: State<'_, AppState>,
+) -> Result<config::RecordingConfig, String> {
+    Ok(config::ConfigMutation::open(&state.config_path)
+        .map_err(error_string)?
+        .config
+        .recording
+        .clone())
+}
+
+#[tauri::command(async)]
+fn save_recording_preferences(
+    state: State<'_, AppState>,
+    preferences: config::RecordingUpdate,
+) -> Result<config::RecordingConfig, String> {
+    ensure_user_mutation_allowed(&state)?;
+    let _local = state.config_mutations.lock().map_err(error_string)?;
+    let next = config::mutate(
+        &state.config_path,
+        config::ConfigPatch::Recording(preferences),
+    )
+    .map_err(error_string)?;
+    state
+        .config
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .recording = next.recording.clone();
+    Ok(next.recording)
+}
+
 #[tauri::command]
 fn get_recorder_status(state: State<'_, AppState>) -> recorder_supervisor::RecorderStatus {
     state.recorder.status()
+}
+
+#[tauri::command]
+async fn get_effective_recording_settings(
+    state: State<'_, AppState>,
+) -> Result<Option<chronobreak_recorder_control::recording_settings::RecorderSettings>, String> {
+    if state.recorder.disabled || !state.recorder.status().recording_capable_here {
+        return Ok(None);
+    }
+    #[cfg(windows)]
+    {
+        use chronobreak_recorder_control::recording_settings::SettingsAction;
+        request_recording_settings(SettingsAction::Query)
+            .await
+            .map(Some)
+    }
+    #[cfg(not(windows))]
+    Ok(None)
+}
+
+#[tauri::command]
+async fn apply_recording_settings(
+    state: State<'_, AppState>,
+) -> Result<Option<chronobreak_recorder_control::recording_settings::RecorderSettings>, String> {
+    ensure_user_mutation_allowed(&state)?;
+    let status = state.recorder.status();
+    if status.can_retry {
+        state.recorder.retry()?;
+        return Ok(None);
+    }
+    if !status.recording_capable_here {
+        return Err("Recorder settings are unavailable in this session.".into());
+    }
+    #[cfg(windows)]
+    {
+        use chronobreak_recorder_control::recording_settings::SettingsAction;
+        request_recording_settings(SettingsAction::Apply)
+            .await
+            .map(Some)
+    }
+    #[cfg(not(windows))]
+    Ok(None)
+}
+
+#[cfg(windows)]
+async fn request_recording_settings(
+    action: chronobreak_recorder_control::recording_settings::SettingsAction,
+) -> Result<chronobreak_recorder_control::recording_settings::RecorderSettings, String> {
+    use chronobreak_recorder_control::windows::{Namespace, settings};
+    let namespace = Namespace::production().map_err(error_string)?;
+    let executable = recorder_supervisor::sibling_recorder().map_err(error_string)?;
+    settings(&namespace, &executable, action)
+        .await
+        .map_err(|_| {
+            "Recorder settings could not be confirmed. Check recorder status and retry.".into()
+        })
 }
 
 #[tauri::command]
@@ -1492,6 +1579,10 @@ pub fn run() {
         run_auto_delete,
         get_settings,
         save_settings,
+        get_recording_preferences,
+        save_recording_preferences,
+        get_effective_recording_settings,
+        apply_recording_settings,
         open_output_folder,
         open_unmatched_recordings_folder,
         open_clips_folder,
@@ -1559,6 +1650,10 @@ pub fn run() {
         run_auto_delete,
         get_settings,
         save_settings,
+        get_recording_preferences,
+        save_recording_preferences,
+        get_effective_recording_settings,
+        apply_recording_settings,
         open_output_folder,
         open_unmatched_recordings_folder,
         open_clips_folder,

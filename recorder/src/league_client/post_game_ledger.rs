@@ -201,8 +201,20 @@ pub(super) struct Store {
 impl Store {
     /// Called by the owned coordinator's blocking task. A lock survives until
     /// that coordinator and every pending save have joined; no game is created.
+    #[cfg(test)]
     pub fn open(path: &Path, now_ms: i64) -> Result<(Arc<Self>, Ledger), &'static str> {
+        Self::open_at(path, now_ms, None)
+    }
+
+    pub fn open_at(
+        path: &Path,
+        now_ms: i64,
+        expected: Option<&DirectoryLocator>,
+    ) -> Result<(Arc<Self>, Ledger), &'static str> {
         let root = DirectoryGuard::capture(path, MediaId::new_v4())?;
+        if expected.is_some_and(|expected| !root.same_directory(expected)) {
+            return Err("ledger_root_replaced");
+        }
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(windows)]

@@ -348,6 +348,64 @@
     },
     {
       "kind": "feature",
+      "id": "QB-UI-004",
+      "stage": "ready",
+      "name": "Resolve Match History roster portraits and unify recording actions",
+      "description": "Show roster artwork for finalized matches with numeric champion IDs and use the same save and delete controls for individual recordings and recordings split into parts.",
+      "priority": "P2",
+      "area": "desktop-ui",
+      "status": "done",
+      "dependencies": ["QB-REPLAY-019", "QB-LIB-030"],
+      "execution": { "workflow": "direct", "plan": null },
+      "acceptance_criteria": [
+        "Finalized rosters resolve both name and numeric ID artwork using the existing Data Dragon cache. A genuinely unavailable portrait has a visible fallback.",
+        "Each recording part has the standard save star and actions menu. Delete remains in the menu, and saved recordings remain protected."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Exercise numeric final-result rosters, existing cached portraits, the unavailable-artwork fallback and per-part actions. Run frontend and native project checks and verify the production desktop build." }
+      ],
+      "evidence": [
+        "2026-11-25: The production desktop app 79ab79a18b28 decoded all ten roster portraits from a copied final-result fixture containing numeric champion IDs only. Component checks cover unavailable portraits, cache version changes and the standard save and protected delete controls for split recordings. Evidence: build/windows-installer/ui-native-ux82JP/.",
+        "TypeScript, all 644 frontend tests, 233 enabled desktop tests (13 opt-in or fixture tests skipped), Rust formatting, strict Clippy and the Windows installer build passed. Isolated replacement of the previous 0.1.1 payload, interrupted repair and uninstall preserved the configuration and media sentinels. Fresh live normal-game and Practice Tool confirmation is pending."
+      ]
+    },
+    {
+      "id": "QB-UI-005",
+      "kind": "feature",
+      "stage": "ready",
+      "name": "Open the Windows app maximized",
+      "description": "Start the desktop window maximized with the normal Windows controls available.",
+      "priority": "P3",
+      "area": "desktop-ui",
+      "status": "done",
+      "dependencies": ["QB-UI-003"],
+      "execution": { "workflow": "direct", "plan": null },
+      "acceptance_criteria": ["The desktop app starts maximized and remains a standard Windows window."],
+      "verification": [
+        { "type": "automated", "description": "Build the production desktop application and check the startup placement of its native window using an isolated profile." }
+      ],
+      "evidence": [
+        "2026-11-25: The isolated production desktop app 79ab79a18b28 reported native maximized=true and fullscreen=false immediately after launch. Evidence: build/windows-installer/ui-native-ux82JP/evidence.json."
+      ]
+    },
+    {
+      "id": "QB-UI-006",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Group newly recorded Match History details before first display",
+      "description": "Consider a short grace period for items and team rosters to arrive together on new Match History cards, while preserving immediate access to existing recordings and timely display for partial matches.",
+      "priority": "P3",
+      "area": "desktop-ui",
+      "status": "not-started",
+      "dependencies": ["QB-LIB-030"],
+      "execution": { "workflow": "adaptive", "plan": null },
+      "acceptance_criteria": [],
+      "verification": [],
+      "evidence": [],
+      "notes": "2026-11-25 preview feedback. Proposed behavior gives newly published match groups up to eight seconds for card facts, releases them early when items and roster are available and otherwise uses available facts at the deadline. Artwork downloads and replay preparation are independent. Refine readiness, root changes, filtering and late parts before implementation."
+    },
+    {
+      "kind": "feature",
       "id": "QB-DEV-009",
       "stage": "ready",
       "name": "Unify current desktop development library",
@@ -3620,8 +3678,8 @@
     {
       "id": "EPIC-DIST",
       "kind": "epic",
-      "name": "Self-contained Windows Beta",
-      "description": "Ship the proven local record-to-clip workflow on Windows without requiring users to install ffmpeg, Rust, Node.js, or developer tooling.",
+      "name": "Self-contained Windows Distribution",
+      "description": "Ship the local record-to-clip workflow in an installer for personal use and then for supported Windows x64 NVIDIA systems.",
       "priority": "P1",
       "area": "distribution",
       "status": "not-started",
@@ -3632,9 +3690,10 @@
         "A clean supported Windows machine can install Chronobreak and run the complete record, browse, replay, and export workflow with packaged dependencies.",
         "Exactly one background recorder instance follows the user's login-startup setting without a console window.",
         "Upgrade and uninstall preserve user recordings and remove only application-owned binaries and startup registration.",
-        "Bundled third-party tools and assets include required notices and licenses."
+        "Bundled third-party tools and assets include required notices and licenses.",
+        "Every first public download, including a beta, is gated on QB-DIST-007 and a passing QB-PERF-002 NVIDIA League matrix with every capped frame and resource-safety budget satisfied."
       ],
-      "notes": "Reconciled from the unimplemented Phase 8 scope in PHASES.md. Public signing, updates, and macOS distribution require later refinement and are not implied by this beta epic.",
+      "notes": "Use the same installer for personal use and public distribution. Local installer candidates may be unsigned. Keep one static public channel and advance integrated updates once manual upgrade and recovery are validated.",
       "user_value": 5,
       "differentiation": 2,
       "difficulty": 5,
@@ -3772,38 +3831,40 @@
       "description": "Expose and persist the recording profile, codec preference, output root, retention period, and login-startup settings needed for the installed Windows workflow.",
       "priority": "P1",
       "area": "settings",
-      "status": "not-started",
+      "status": "in-progress",
       "parent_id": "EPIC-DIST",
       "dependencies": [
         "QB-DIST-002",
         "QB-LIB-009"
       ],
       "evidence": [
-        "Shared configuration and app controls currently cover output root and age retention; recorder profile/codec exist in TOML but are not fully exposed, and login startup does not exist."
+        "2026-11-24: Configured and effective recording settings are separate. Explicit apply requests a new capture generation through the existing recorder process. Original libraries retain their pending result, match-history and ranked LP work across destination changes and restart.",
+        "Windows desktop (232 tests), frontend (643 tests), recorder (307 tests) and recorder-control (16 tests) verified locally. A staged-runtime fixture kept explicit apply queued while a disposable watched process was present, switched folders after it exited, and preserved effective settings on rejection. Installed capture, finalization and Windows sign-in remain pending."
       ],
       "execution": {
         "workflow": "planned",
-        "plan": null
+        "plan": "docs/exec-plans/qb-dist-003-installed-settings.md",
+        "progress": "docs/execution/qb-dist-003.md"
       },
       "acceptance_criteria": [
         "Every shipped setting has one validated durable representation shared by the responsible app/recorder component.",
-        "The app exposes recording profile, codec preference, output root, retention period, and login startup with truthful current values.",
-        "Changes take effect at a documented safe lifecycle boundary and never mutate an active recording unexpectedly.",
-        "Invalid paths or values fail without corrupting the previous configuration."
+        "The app shows configured profile, codec and output root separately from the running recorder's confirmed effective values, and exposes retention and actual login startup.",
+        "An explicit apply waits for recorder-owned idle admission, with no capture start, active recording or finalization interrupted. A destination change preserves pending post-game and ranked LP work at its original library through recorder restart.",
+        "Invalid paths or values fail without corrupting the previous configuration. Unsupported legacy recording choices can be repaired explicitly."
       ],
       "verification": [
         {
           "type": "automated",
-          "description": "Round-trip all shipped settings, reject invalid updates, and preserve unknown configuration fields atomically.",
+          "description": "Round-trip all shipped settings, reject invalid updates, preserve concurrent field changes, and exercise bounded apply, graceful restart and pending enrichment across fixture libraries.",
           "command": "cargo test --manifest-path app/src-tauri/Cargo.toml"
         },
         {
           "type": "manual",
-          "description": "Change every setting in the installed app and verify the next safe recorder/retention lifecycle uses it.",
+          "description": "Change settings in the installed app, including the destination during capture and finalization. Confirm old and new libraries, pending enrichment, retention, and actual login registration.",
           "command": null
         }
       ],
-      "notes": "Shared persistence and recorder lifecycle effects make this planned work.",
+      "notes": "Use the existing recorder lifecycle and shared configuration lock. Validate the supported native Windows profile and codec without changing capture support.",
       "user_value": 4.5,
       "differentiation": 2,
       "difficulty": 4,
@@ -3829,7 +3890,10 @@
         "2026-10-26: npm run tauri --prefix app -- build passed on clean source revision 28be415 using existing development/build caches, producing MSI (40,030,208 bytes) and NSIS (29,459,471 bytes). This is not a clean-machine installed-workflow pass. Artifact SHA-256 values and exact paths are recorded in docs/reviews/windows-installer-readiness-2026-10-26.md.",
         "Read-only MSI table inspection and cabinet expansion found 11 payload files; all eight locked media-runtime files and its manifest exactly match r6. The recorder executable is absent from the MSI and both generated installer sources. Raw inventory/hashes/tables: build/verification/qb-dist-004/payload-20261026/result.json. Staged runtime verification passed.",
         "Generated WiX/NSIS uninstall and upgrade ownership inspected without installation or registry changes. Default rules enumerate installed files; optional NSIS app-data deletion and media-root overlap still need validation. No real recordings were touched. Fresh clean-machine install, real match-to-clip, upgrade and uninstall remain not run.",
-        "2026-11-16: Built and hash-verified a local Windows x64 portable preview from de38126a1832 with the desktop, sibling recorder, and locked r6 runtime. All 602 frontend tests passed. Extracted recorder diagnostics confirmed packaged H.264 NVENC, and generated-media smoke passed with sanitized PATH. This verifies the portable payload, with installer acceptance pending."
+        "2026-11-16: Built and hash-verified a local Windows x64 portable preview from de38126a1832 with the desktop, sibling recorder, and locked r6 runtime. All 602 frontend tests passed. Extracted recorder diagnostics confirmed packaged H.264 NVENC, and generated-media smoke passed with sanitized PATH. This verifies the portable payload, with installer acceptance pending.",
+        "2026-11-24: Built unsigned Windows x64 payload verification package 0.1.1 from a clean local snapshot. Same-source identity, native imports, 11 extracted payload files, the setup envelope and generated-media smoke passed. The package exits before installation. Setup transaction, beta migration and clean-machine acceptance remain pending.",
+        "2026-11-24: Reconstructed the exact historical NSIS 0.1.0 uninstaller offline. The coordinator accepted its exact 11-file fixture and rejected added material without mutation. Exclusive maintenance remained blocked until an installed-use fixture process actually exited.",
+        "2026-11-24: Built functional unsigned Windows x64 setup 0.1.1 from clean snapshot 111869324dbe. The extracted production payload passed isolated fresh installation, exact historical beta upgrade, interrupted repair, installed media processing and uninstall with configuration and media preserved. Hashes, failure-injection results, synthetic NVIDIA diagnostics and verification logs are in docs/execution/qb-dist-004.md. Clean-machine and real League acceptance remain open."
       ],
       "execution": {
         "workflow": "planned",
@@ -3859,11 +3923,122 @@
           "command": null
         }
       ],
-      "notes": "The linked plan specifies one per-user installer with the stable sibling layout, a guarded beta upgrade, and preservation of configuration and media. Installer acceptance remains blocked by QB-DIST-002 manual supervision/login acceptance and QB-DIST-003 installed settings. Same-revision candidate packaging can proceed. See the execution checkpoint for portable preview evidence and the first installer milestone.",
+      "notes": "The linked plan specifies one per-user installer with the stable sibling layout, a guarded beta upgrade, and preservation of configuration and media. Installer acceptance remains blocked by QB-DIST-002 manual supervision/login acceptance and QB-DIST-003 installed settings. Same-revision unsigned local candidate packaging and fixture verification can proceed before signing credentials are available. QB-DIST-007 owns signed public promotion.",
       "user_value": 5,
       "differentiation": 2,
       "difficulty": 5,
       "stage": "ready"
+    },
+    {
+      "id": "QB-DIST-005",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Public Update Notices",
+      "description": "Tell players when a newer Chronobreak version is available and link to the official download page.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": [],
+      "evidence": [],
+      "execution": { "workflow": "adaptive", "plan": null },
+      "acceptance_criteria": [
+        "The desktop checks one static HTTPS version record at most daily and offers a dismissible notice pointing to the fixed official release page.",
+        "Missing, malformed, stale or offline results do not affect startup or recording. The recorder does no update work."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Exercise version comparison, refresh limits, unavailable service, and the fixed release link." }
+      ]
+    },
+    {
+      "id": "QB-DIST-006",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Recording Compatibility and Support Diagnostics",
+      "description": "Make recording failures diagnosable locally, including when no recording directory or replay was published.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": ["QB-DIST-002"],
+      "evidence": [],
+      "execution": { "workflow": "planned", "plan": null },
+      "acceptance_criteria": [
+        "Use the existing recorder, supervisor, storage and finalizer evidence to show tested compatibility, bounded local attempt history and actionable failure reasons after restart, including failures before bundle creation.",
+        "A user-initiated preview and export contains only allowlisted support fields. Credentials, raw logs, identifying paths, player identifiers, and media cannot enter the report."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Inject failures with no published recording, restart, verify retention bounds, and seed sensitive inputs to prove exclusion from preview and export." }
+      ]
+    },
+    {
+      "id": "QB-DIST-007",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Signed Public Release",
+      "description": "Prepare and verify a candidate locally and deliberately promote its exact bytes to one static public channel.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": ["QB-DIST-004", "QB-DIST-005", "QB-DIST-006", "QB-LIB-040", "QB-PERF-002", "QB-AUDIO-003"],
+      "evidence": [],
+      "execution": { "workflow": "planned", "plan": null },
+      "acceptance_criteria": [
+        "The released candidate passes clean-machine installed record-to-clip and audio acceptance, safe upgrade and uninstall, and the valid QB-PERF-002 NVIDIA League matrix with all capped frame and resource-safety gates passed.",
+        "Sign and timestamp app and recorder before generating the payload manifest, sign the manifest-bound coordinator before the envelope hash, sign final setup before its public checksum, and extract final setup to verify embedded bytes. Locked media runtime bytes stay unchanged.",
+        "The release page provides tested hardware, driver and same-adapter requirements, first-run audio and storage disclosures, support and recovery instructions, signed installer, checksum, release notes and anonymously accessible corresponding media-runtime source.",
+        "Complete Riot registration and applicable audit and notices. Rehearse manual A-to-B upgrade and withdrawal of a faulty release. Publish the update notice after the release assets."
+      ],
+      "verification": [
+        { "type": "manual", "description": "Verify candidate promotion against the installed test receipts, gameplay report, signature, extracted bytes, public download links and manual release and withdrawal rehearsal." }
+      ],
+      "notes": "Unsigned local candidates can be built and exercised before signing credentials are available. A trusted signing identity is required for public promotion."
+    },
+    {
+      "id": "QB-DIST-008",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Integrated Windows Updates",
+      "description": "Verify and apply a complete Windows release through the existing guarded installer when a player approves.",
+      "priority": "P1",
+      "area": "distribution",
+      "status": "not-started",
+      "parent_id": "EPIC-DIST",
+      "dependencies": ["QB-DIST-004", "QB-DIST-007"],
+      "evidence": [],
+      "execution": { "workflow": "planned", "plan": null },
+      "acceptance_criteria": [
+        "Authenticate update metadata and the complete installer. The player can defer installation until the app and recorder exit after actual finalization.",
+        "Reuse the installer for repair and recovery. Document key rotation and preserve settings, recordings and clips during interrupted or failed updates."
+      ],
+      "verification": [
+        { "type": "manual", "description": "Rehearse two versions, invalid signatures, deferral, interruption and verified recovery on a disposable profile." }
+      ],
+      "notes": "Next distribution milestone once manual upgrades and recovery are validated."
+    },
+    {
+      "id": "QB-LIB-040",
+      "kind": "feature",
+      "stage": "draft",
+      "name": "Preserve Mixed-content Recordings During Retention",
+      "description": "Keep automatic cleanup within the current recording destination and preserve bundles containing unrecognized files.",
+      "priority": "P1",
+      "area": "storage",
+      "status": "not-started",
+      "parent_id": "EPIC-LIBRARY",
+      "dependencies": ["QB-LIB-009", "QB-LIB-025", "QB-LIB-026"],
+      "evidence": [
+        "2026-11-24 disposable fixture: automatic retention removed a user note inside an eligible old recording directory. The control file outside the bundle survived."
+      ],
+      "execution": { "workflow": "adaptive", "plan": null },
+      "acceptance_criteria": [
+        "Automatic retention skips an entire ordinary or unmatched recording bundle containing an unrecognized entry and preserves saved or incomplete recordings and clips.",
+        "A stale desktop instance honors a newer Never setting or recording destination before deleting eligible recordings."
+      ],
+      "verification": [
+        { "type": "automated", "description": "Use disposable mixed-content libraries and cross-process configuration fixtures to exercise startup and on-demand age retention." }
+      ]
     },
     {
       "id": "EPIC-AUDIO",
@@ -4531,7 +4706,8 @@
       ],
       "evidence": [
         "2026-10-21: nine fake-time HUD regressions pass, including independent focus/hover/pointer holds, eligibility transitions, lost capture/window focus recovery and listener/timer cleanup. Combined 278 frontend tests / 31 files, TypeScript, Vite and fresh production Tauri build pass.",
-        "Isolated production WebView smoke passes paused/windowed/fullscreen/clip-preview/focused-control visibility. Idle fullscreen playback hides controls (opacity 0, pointer-events none); the first video click pauses playback and reveals controls. Native Windows screenshot capture remains unavailable; these checks used the actual production WebView through a temporary local diagnostic connection."
+        "Isolated production WebView smoke passes paused/windowed/fullscreen/clip-preview/focused-control visibility. Idle fullscreen playback hides controls (opacity 0, pointer-events none); the first video click pauses playback and reveals controls. Native Windows screenshot capture remains unavailable; these checks used the actual production WebView through a temporary local diagnostic connection.",
+        "2026-11-25: Windowed and paused eligibility and keyboard focus holds remain covered by component tests. In production desktop app 79ab79a18b28, fullscreen replay continued playing and hid the HUD after the pointer moved away from a clicked mute control that still held DOM focus. Evidence: build/windows-installer/ui-native-ux82JP/evidence.json."
       ],
       "notes": "Centralized inactivity observation preserves pointer-transparent video interaction. Synthetic preprod media proves control behavior, not gameplay alignment."
     },

@@ -143,39 +143,39 @@ struct ProfileSpec {
     speed: EncoderSpeed,
 }
 
-impl RecordingProfile {
-    fn spec(self) -> Option<ProfileSpec> {
-        match self {
-            Self::Auto => None,
-            Self::VeryLow => Some(ProfileSpec {
+impl ProfileSpec {
+    fn for_profile(profile: RecordingProfile) -> Option<Self> {
+        match profile {
+            RecordingProfile::Auto => None,
+            RecordingProfile::VeryLow => Some(Self {
                 max_dimensions: (1280, 720),
                 fps: 30,
                 h264_bitrate_kbps: 3_000,
                 hevc_bitrate_kbps: 2_000,
                 speed: EncoderSpeed::Speed,
             }),
-            Self::Low => Some(ProfileSpec {
+            RecordingProfile::Low => Some(Self {
                 max_dimensions: (1280, 720),
                 fps: 60,
                 h264_bitrate_kbps: 5_000,
                 hevc_bitrate_kbps: 3_500,
                 speed: EncoderSpeed::Speed,
             }),
-            Self::Medium => Some(ProfileSpec {
+            RecordingProfile::Medium => Some(Self {
                 max_dimensions: (1920, 1080),
                 fps: 30,
                 h264_bitrate_kbps: 7_000,
                 hevc_bitrate_kbps: 5_000,
                 speed: EncoderSpeed::Balanced,
             }),
-            Self::High => Some(ProfileSpec {
+            RecordingProfile::High => Some(Self {
                 max_dimensions: (1920, 1080),
                 fps: 60,
                 h264_bitrate_kbps: 12_000,
                 hevc_bitrate_kbps: 8_000,
                 speed: EncoderSpeed::Balanced,
             }),
-            Self::VeryHigh => Some(ProfileSpec {
+            RecordingProfile::VeryHigh => Some(Self {
                 max_dimensions: (2560, 1440),
                 fps: 60,
                 h264_bitrate_kbps: 18_000,
@@ -217,7 +217,7 @@ impl RecordingPlan {
         codec: VideoCodec,
         profile: RecordingProfile,
     ) -> std::result::Result<Self, RecordingPlanError> {
-        let Some(spec) = profile.spec() else {
+        let Some(spec) = ProfileSpec::for_profile(profile) else {
             return Err(RecordingPlanError::AutoProfile);
         };
         Ok(Self {

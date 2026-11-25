@@ -5,7 +5,11 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 pub mod config_lock;
 pub mod login;
+pub mod recording_settings;
+pub mod release_identity;
 
+#[cfg(windows)]
+pub mod install_guard;
 #[cfg(windows)]
 pub mod windows;
 

@@ -895,6 +895,12 @@ impl Index {
                             champion: player
                                 .champion_name
                                 .clone()
+                                .or_else(|| {
+                                    player
+                                        .champion_id
+                                        .filter(|&id| id > 0)
+                                        .map(|id| id.to_string())
+                                })
                                 .unwrap_or_else(|| "Unknown".into()),
                             relation: match (local_team, team_id) {
                                 (Some(a), Some(b)) if a == b => library::EventRelation::Ally,

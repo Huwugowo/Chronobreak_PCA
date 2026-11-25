@@ -1,7 +1,18 @@
 import { createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { loadAutostartStatus, loadRecorderStatus, retryRecorder, setAutostart } from "../api";
+import {
+  applyRecordingSettings, loadAutostartStatus, loadEffectiveRecordingSettings, loadRecorderStatus,
+  retryRecorder, setAutostart,
+} from "../api";
 import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
+
+const applyMessages = {
+  waiting: "Waiting for the recorder to finish capture and finalization.",
+  invalid_configuration: "The recorder could not load the saved settings. Check your preferences and try again.",
+  destination_unavailable: "The recorder could not use the configured folder. Check its access and free space, then try again.",
+  library_recovery_unavailable: "The recorder could not preserve its library recovery state. The previous settings are still active.",
+  idle: "",
+};
 
 export default function RecorderSettings() {
   const [error, setError] = createSignal("");
@@ -14,10 +25,23 @@ export default function RecorderSettings() {
     catch { setError("Windows startup registration could not be loaded."); return undefined; }
   });
   const [busy, setBusy] = createSignal(false);
+  const [effective, { mutate: setEffective, refetch: refetchEffective }] = createResource(async () => {
+    try { return await loadEffectiveRecordingSettings(); }
+    catch { return null; }
+  });
   onMount(() => {
-    const timer = window.setInterval(() => void refetch(), 5000);
+    const timer = window.setInterval(() => {
+      void refetch();
+      if (!busy()) void refetchEffective();
+    }, 5000);
     onCleanup(() => window.clearInterval(timer));
   });
+  const apply = async () => {
+    setBusy(true); setError("");
+    try { setEffective(await applyRecordingSettings()); await refetch(); }
+    catch (failure) { setError(String(failure)); }
+    finally { setBusy(false); }
+  };
   const retry = async () => {
     setBusy(true); setError("");
     try { await retryRecorder(); await refetch(); }
@@ -33,6 +57,22 @@ export default function RecorderSettings() {
   return <section class={styles.settingsPanel}>
     <header><div><p>RECORDER</p><h2>Automatic recording</h2></div></header>
     <p class={styles.settingDetail} role="status">{status()?.message ?? "Checking recorder…"}</p>
+    <Show when={effective()?.effective} fallback={<p class={styles.settingDetail}>Current recording settings are unavailable.</p>}>
+      {(current) => <>
+        <label class={styles.pathField}>
+          <span>RECORDER DESTINATION</span>
+          <input value={current().output_path} readOnly />
+        </label>
+        <p class={styles.settingDetail}>Current recording mode: High (1080p, 60 fps), H.264.</p>
+      </>}
+    </Show>
+    <Show when={effective()?.apply_state && applyMessages[effective()!.apply_state]}>
+      <p class={styles.settingDetail} role="status">{applyMessages[effective()!.apply_state]}</p>
+    </Show>
+    <Show when={status()?.recording_capable_here || status()?.can_retry}>
+      <button class={controlStyles.control} type="button" disabled={busy() || effective()?.apply_state === "waiting"}
+        onClick={() => void apply()}>Apply saved recording settings</button>
+    </Show>
     <Show when={status()?.can_retry}>
       <button class={controlStyles.control} type="button" disabled={busy()} onClick={() => void retry()}>Retry recorder</button>
     </Show>

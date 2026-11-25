@@ -72,6 +72,7 @@ mod tests {
                 clock: Clock::real(),
                 failed: false,
                 control_failed,
+                settlement: None,
             },
         )
         .await;
@@ -131,6 +132,7 @@ mod tests {
                 clock: Clock::real(),
                 failed: false,
                 control_failed: Arc::new(AtomicBool::new(false)),
+                settlement: None,
             },
         )
         .await;
@@ -188,6 +190,7 @@ mod tests {
                     clock: Clock::real(),
                     failed: false,
                     control_failed: Arc::new(AtomicBool::new(false)),
+                    settlement: None,
                 },
             )
             .await;
@@ -452,27 +455,36 @@ pub(crate) struct Coordinator {
     task: Option<JoinHandle<Totals>>,
     runtime: tokio::runtime::Handle,
     history: Option<super::history::Coordinator>,
+    settled: watch::Receiver<bool>,
 }
 impl Coordinator {
     pub(crate) fn start(root: &Path) -> Result<Self, &'static str> {
+        Self::start_at(root, None)
+    }
+
+    pub(super) fn start_at(
+        root: &Path,
+        expected: Option<super::sidecar::DirectoryLocator>,
+    ) -> Result<Self, &'static str> {
         let runtime = tokio::runtime::Handle::current();
         if runtime.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
             return Err("result_runtime");
         }
-        let history = super::history::Coordinator::start(root);
         let (send, receive) = mpsc::channel(16);
         let (stop, cancel) = watch::channel(false);
+        let (settlement, settled) = watch::channel(false);
         let control_failed = Arc::new(AtomicBool::new(false));
         let task_failed = Arc::clone(&control_failed);
         let source = LocalSource {
             transport: Transport::new()?,
             metrics: Metrics::default(),
         };
+        let history = super::history::Coordinator::start(root, expected.clone());
         let root = root.to_owned();
         let task = tokio::spawn(async move {
             let loaded = tokio::task::spawn_blocking(move || {
                 let now = ledger::wall_ms()?;
-                let (store, saved) = Store::open(&root, now)?;
+                let (store, saved) = Store::open_at(&root, now, expected.as_ref())?;
                 let jobs = restore_jobs(&saved, now);
                 Ok::<_, &'static str>((store, saved, jobs))
             })
@@ -490,6 +502,7 @@ impl Coordinator {
                             clock: Clock::real(),
                             failed: false,
                             control_failed: task_failed,
+                            settlement: Some(settlement),
                         },
                     )
                     .await
@@ -514,20 +527,30 @@ impl Coordinator {
             task: Some(task),
             runtime,
             history: Some(history),
+            settled,
         })
     }
     pub(crate) fn handle(&self) -> Handle {
         self.handle.clone()
     }
-    pub(crate) async fn stop(mut self) {
-        if let Some(history) = self.history.take() {
-            history.stop().await;
-        }
+    pub(crate) fn settled(&self) -> bool {
+        *self.settled.borrow()
+            && self
+                .history
+                .as_ref()
+                .is_some_and(|history| history.settled())
+    }
+    pub(crate) async fn stop(mut self) -> bool {
+        let history_settled = match self.history.take() {
+            Some(history) => history.stop().await,
+            None => false,
+        };
         self.stop.send_replace(true);
-        if let Some(task) = self.task.as_mut() {
-            let _ = task.await;
-        }
-        self.task.take();
+        let joined = match self.task.take() {
+            Some(task) => task.await.is_ok(),
+            None => false,
+        };
+        joined && history_settled && *self.settled.borrow()
     }
 }
 impl Drop for Coordinator {
@@ -619,6 +642,7 @@ struct Durability {
     clock: Clock,
     failed: bool,
     control_failed: Arc<AtomicBool>,
+    settlement: Option<watch::Sender<bool>>,
 }
 impl Durability {
     async fn persist(&mut self, jobs: &mut VecDeque<Job>) -> Result<(), &'static str> {
@@ -839,6 +863,7 @@ async fn work(
             },
             failed: false,
             control_failed: Arc::new(AtomicBool::new(false)),
+            settlement: None,
         },
     )
     .await
@@ -868,11 +893,17 @@ async fn work_state(
         // Every transition is saved before another request or result install.
         // Shutdown preserves accepted pending work at its original deadline.
         if let Err(code) = durability.persist(&mut jobs).await {
+            if let Some(settlement) = &durability.settlement {
+                settlement.send_replace(false);
+            }
             tracing::warn!(
                 code,
                 "post-game durability unavailable; acquisition stopped"
             );
             break;
+        }
+        if let Some(settlement) = &durability.settlement {
+            settlement.send_replace(pending(&jobs) == 0);
         }
         if *cancel.borrow() {
             break;

@@ -343,23 +343,34 @@ pub(super) struct Coordinator {
     pub handle: Handle,
     stop: watch::Sender<bool>,
     task: Option<JoinHandle<()>>,
+    settled: watch::Receiver<bool>,
 }
 impl Coordinator {
-    pub(super) fn start(root: &Path) -> Self {
+    pub(super) fn start(root: &Path, expected: Option<super::sidecar::DirectoryLocator>) -> Self {
         let (send, receive) = mpsc::channel(16);
         let (stop, cancel) = watch::channel(false);
+        let (settlement, settled) = watch::channel(false);
         let root = root.to_owned();
         Self {
             handle: Handle(send),
             stop,
-            task: Some(tokio::spawn(run(root, receive, cancel))),
+            task: Some(tokio::spawn(run(
+                root, expected, receive, cancel, settlement,
+            ))),
+            settled,
         }
     }
-    pub(super) async fn stop(mut self) {
+    pub(super) fn settled(&self) -> bool {
+        *self.settled.borrow()
+    }
+    pub(super) async fn stop(mut self) -> bool {
         self.stop.send_replace(true);
-        if let Some(task) = self.task.take() {
-            let _ = task.await;
+        if let Some(task) = self.task.take()
+            && task.await.is_err()
+        {
+            return false;
         }
+        self.settled()
     }
 }
 impl Drop for Coordinator {
@@ -471,7 +482,13 @@ async fn save(root: Arc<DirectoryGuard>, jobs: &[Job]) -> Result<(), &'static st
         .await
         .map_err(|_| "history_jobs_worker")?
 }
-async fn run(path: PathBuf, mut receive: mpsc::Receiver<Command>, mut stop: watch::Receiver<bool>) {
+async fn run(
+    path: PathBuf,
+    expected: Option<super::sidecar::DirectoryLocator>,
+    mut receive: mpsc::Receiver<Command>,
+    mut stop: watch::Receiver<bool>,
+    settlement: watch::Sender<bool>,
+) {
     let loaded = tokio::task::spawn_blocking(move || {
         use std::{
             fs::{File, OpenOptions},
@@ -481,6 +498,12 @@ async fn run(path: PathBuf, mut receive: mpsc::Receiver<Command>, mut stop: watc
             &path,
             chronobreak_replay_time::MediaId::new_v4(),
         )?);
+        if expected
+            .as_ref()
+            .is_some_and(|expected| !root.same_directory(expected))
+        {
+            return Err("history_root_replaced");
+        }
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -546,15 +569,29 @@ async fn run(path: PathBuf, mut receive: mpsc::Receiver<Command>, mut stop: watc
         }
         if dirty {
             if save(Arc::clone(&root), &jobs).await.is_err() {
+                settlement.send_replace(false);
                 tracing::warn!("history persistence unavailable");
                 break;
             }
             dirty = false;
         }
+        let now = wall();
+        settlement.send_if_modified(|settled| {
+            let next = jobs.iter().all(|job| {
+                job.done
+                    && job.lp.as_ref().is_none_or(|lp| {
+                        lp.finished
+                            || (lp.acquisition.delta.is_none()
+                                && !lp.acquisition.has_pending_fetch(now))
+                    })
+            });
+            let changed = *settled != next;
+            *settled = next;
+            changed
+        });
         if *stop.borrow() {
             break;
         }
-        let now = wall();
         if let Some(i) = jobs.iter().position(|j| {
             j.lp.as_ref().is_some_and(|lp| {
                 !lp.finished && lp.acquisition.delta.is_some() && lp.next_install_ms <= now
@@ -847,7 +884,7 @@ mod tests {
     }
 
     #[cfg(windows)]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ranked_receipt_waits_for_publication_and_survives_restart_without_rewrite() {
         use chronobreak_league_data::RANKED_LP_FILE;
         let root = tempfile::tempdir().unwrap();
@@ -883,7 +920,8 @@ mod tests {
             serde_json::to_vec(&vec![part]).unwrap(),
         )
         .unwrap();
-        let coordinator = Coordinator::start(root.path());
+        let current = tempfile::tempdir().unwrap();
+        let libraries = reopen_prior_library(root.path(), current.path()).await;
         let path = directory.join(RANKED_LP_FILE);
         tokio::time::timeout(Duration::from_secs(5), async {
             while !path.exists() {
@@ -892,7 +930,8 @@ mod tests {
         })
         .await
         .unwrap();
-        coordinator.stop().await;
+        libraries.stop().await;
+        assert!(!current.path().join("games").exists());
         let original = std::fs::read(&path).unwrap();
         let mut receipt = RankedLp::decode(&original, &media, &binding.game_id, 420).unwrap();
         let guard = DirectoryGuard::recover(&locator).unwrap();
@@ -962,7 +1001,8 @@ mod tests {
             serde_json::to_vec(&vec![job]).unwrap(),
         )
         .unwrap();
-        let coordinator = Coordinator::start(root.path());
+        let current = tempfile::tempdir().unwrap();
+        let libraries = reopen_prior_library(root.path(), current.path()).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             while !directory
                 .join(chronobreak_league_data::HISTORY_RESULT_FILE)
@@ -973,7 +1013,8 @@ mod tests {
         })
         .await
         .unwrap();
-        coordinator.stop().await;
+        libraries.stop().await;
+        assert!(!current.path().join("games").exists());
         assert_eq!(
             std::fs::read(directory.join(chronobreak_league_data::RESULT_FILE)).unwrap(),
             original
@@ -988,5 +1029,25 @@ mod tests {
         )
         .unwrap();
         assert!(installed.valid_for(&media, &saved[0].binding.game_id));
+    }
+
+    #[cfg(windows)]
+    async fn reopen_prior_library(
+        prior: &Path,
+        current: &Path,
+    ) -> crate::league_client::recorder_libraries::Libraries {
+        use crate::league_client::recorder_libraries::Libraries;
+
+        let config = current.join("fixture-config.toml");
+        let mut initial = Libraries::open(&config).unwrap();
+        initial.register(prior).unwrap();
+        initial.register(current).unwrap();
+        initial.stop().await;
+
+        let mut restarted = Libraries::open(&config).unwrap();
+        restarted.register(current).unwrap();
+        restarted.resume();
+        assert!(restarted.handle(current).is_some());
+        restarted
     }
 }

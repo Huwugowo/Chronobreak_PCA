@@ -5,6 +5,9 @@ import mockItemNames from "./dev/mockItemNames.json";
 import type {
   AppSettings,
   RecorderStatus,
+  RecordingPreferences,
+  RecordingPreferencesUpdate,
+  EffectiveRecordingSettings,
   AutostartStatus,
   AutoDeleteResult,
   BuiltInMusicTrack,
@@ -266,6 +269,7 @@ let mockSettings: AppSettings = {
   auto_delete_days: 30,
   hevc_playback_supported: true,
 };
+let mockRecordingPreferences: RecordingPreferences = { profile: "auto", codec: "auto" };
 
 const pausePreview = () => new Promise((resolve) => window.setTimeout(resolve, 60));
 
@@ -689,6 +693,29 @@ export const loadSettings = async (): Promise<AppSettings> => {
 export const loadRecorderStatus = async (): Promise<RecorderStatus> => {
   if (useMockApi()) return { state: "disabled_for_test", recording_capable_here: false, can_retry: false, message: "Recorder startup is disabled in this preview." };
   return invoke<RecorderStatus>("get_recorder_status");
+};
+
+export const loadRecordingPreferences = async (): Promise<RecordingPreferences> => {
+  if (useMockApi()) return { ...mockRecordingPreferences };
+  return invoke<RecordingPreferences>("get_recording_preferences");
+};
+
+export const saveRecordingPreferences = async (preferences: RecordingPreferencesUpdate): Promise<RecordingPreferences> => {
+  if (useMockApi()) {
+    mockRecordingPreferences = { ...preferences };
+    return { ...mockRecordingPreferences };
+  }
+  return invoke<RecordingPreferences>("save_recording_preferences", { preferences });
+};
+
+export const loadEffectiveRecordingSettings = async (): Promise<EffectiveRecordingSettings | null> => {
+  if (useMockApi()) return null;
+  return invoke("get_effective_recording_settings");
+};
+
+export const applyRecordingSettings = async (): Promise<EffectiveRecordingSettings | null> => {
+  if (useMockApi()) return null;
+  return invoke("apply_recording_settings");
 };
 
 export const retryRecorder = async (): Promise<void> => {

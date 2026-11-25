@@ -4,7 +4,10 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use chronobreak_recorder_control::windows::{ControlOwner, FileLease, Namespace, query};
+use chronobreak_recorder_control::recording_settings::{
+    ApplyState, EffectiveSettings, RecorderSettings, RecordingConfig, SettingsAction,
+};
+use chronobreak_recorder_control::windows::{ControlOwner, FileLease, Namespace, query, settings};
 use chronobreak_recorder_control::{AvailabilityEvent, CaptureActivity, ServiceState};
 
 fn namespace(root: &Path) -> Namespace {
@@ -26,9 +29,13 @@ impl Drop for FixtureChild {
 }
 
 fn spawn(root: &Path, id: &str) -> FixtureChild {
+    spawn_as(&std::env::current_exe().unwrap(), root, id, "fixture_child")
+}
+
+fn spawn_as(exe: &Path, root: &Path, id: &str, test: &str) -> FixtureChild {
     FixtureChild(
-        Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "fixture_child", "--nocapture"])
+        Command::new(exe)
+            .args(["--exact", test, "--nocapture"])
             .env("CHRONOBREAK_CONTROL_FIXTURE", root)
             .env("CHRONOBREAK_CONTROL_FIXTURE_ID", id)
             .stdin(Stdio::null())
@@ -91,10 +98,72 @@ fn fixture_child() {
         return;
     };
     owner.apply(AvailabilityEvent::Initialized);
+    if id == "settings-owner" {
+        use chronobreak_recorder_control::recording_settings::{CodecPreference, RecordingProfile};
+        owner.settings_control().publish(
+            0,
+            RecorderSettings {
+                effective: Some(EffectiveSettings {
+                    output_path: "fixture library A".into(),
+                    preferences: RecordingConfig::default(),
+                    profile: RecordingProfile::High,
+                    codec: CodecPreference::H264,
+                }),
+                apply_state: ApplyState::Idle,
+            },
+        );
+        publish_receipt(&root.join("settings-ready"), "ready");
+    }
     let start = Instant::now();
     while !root.join("stop-fixture").exists() && start.elapsed() < Duration::from_secs(15) {
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[tokio::test]
+async fn fixture_settings_client() {
+    let Some(root) = std::env::var_os("CHRONOBREAK_CONTROL_FIXTURE") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    assert!(root.join("fixture-sentinel").is_file());
+    let reply = settings(
+        &namespace(&root),
+        &root.join("recorder.exe"),
+        SettingsAction::Apply,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.apply_state, ApplyState::Waiting);
+    assert_eq!(reply.effective.unwrap().output_path, "fixture library A");
+}
+
+#[tokio::test]
+async fn protected_settings_accept_the_sibling_but_deny_other_local_processes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    std::fs::write(path.join("fixture-sentinel"), "fixture").unwrap();
+    let current = std::env::current_exe().unwrap();
+    let recorder = path.join("recorder.exe");
+    let desktop = path.join("league-replay-app.exe");
+    std::fs::copy(&current, &recorder).unwrap();
+    std::fs::copy(&current, &desktop).unwrap();
+    let mut owner = spawn_as(&recorder, path, "settings-owner", "fixture_child");
+    wait_for(&path.join("settings-ready"));
+    assert!(
+        settings(&namespace(path), &recorder, SettingsAction::Query)
+            .await
+            .is_err()
+    );
+    assert!(
+        settings(&namespace(path), &recorder, SettingsAction::Apply)
+            .await
+            .is_err()
+    );
+    let mut desktop = spawn_as(&desktop, path, "settings-client", "fixture_settings_client");
+    assert!(desktop.0.wait().unwrap().success());
+    std::fs::write(path.join("stop-fixture"), "stop").unwrap();
+    assert!(owner.0.wait().unwrap().success());
 }
 
 #[test]

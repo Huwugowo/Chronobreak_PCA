@@ -20,9 +20,10 @@ ownership never permits force termination or takeover.
 
 The SID-named pipe permits that user and SYSTEM and rejects remote clients. First
 instance creation reserves the namespace; one active request and one waiting
-instance bound resources. Protocol v1 accepts only Status, with 4-KiB frames and
-two-second deadlines. Clients verify OS pipe PID, token SID, executable path and
-session against the reply, plus protocol and process-instance nonce.
+instance bound resources. The v1 Status request stays compatible, with 4-KiB
+frames and two-second deadlines. The additional settings request is bound to the
+reported recorder instance. The recorder verifies the requesting Windows user,
+session and sibling desktop executable before returning settings or queuing apply.
 
 Service availability and capture activity are independent. Initialized Idle means
 Available. Capture Starting/Recording/Finalizing/Idle and bounded capture-problem
@@ -54,23 +55,51 @@ this mutation's value; crash between registry/TOML can leave a visible mismatch.
 
 Every config writer holds the same adjacent `config.toml.lock`, reads/validates
 latest persisted TOML under it, patches only owned fields and atomically publishes.
-Storage owns output path/retention, HEVC its capability bit, login autostart.
+Storage owns output path/retention, HEVC its capability bit, and login autostart.
+Recording preferences use shared native validation for the supported choices.
 Unknown fields survive. Both consumers recheck creation under the lock. Merged
 config returns to in-memory callers; root changes use the existing coordinator.
 There is no production API for saving a stale full Config snapshot.
 
+The desktop library opens a newly saved folder immediately. The recorder
+publishes its own effective destination and capture mode through authenticated
+settings queries. Apply coalesces requests and reads the shared configuration
+once capture admission, startup and finalization are idle. A validated successor
+generation reuses the existing process, tray and ownership lease.
+
+Post-game workers belong to the recorder process and keep each library's existing
+ledgers. A bounded registry beside the shared config records the path and
+directory identity before admitting recordings. A recorder restart reopens those
+identities. Prior libraries can retire after their result and history workers
+have durably settled. Unavailable or replaced libraries remain registered.
+
 ## QB-DIST-004 stable path and update contract
 
 Portable staging retains sibling app/recorder and shared `resources/media-runtime`.
-The installer must preserve a stable product path; Run cannot point into versioned
-staging. Upgrade preserves that path or explicitly migrates the exact owned value.
+The per-user setup publishes the pair at `%LOCALAPPDATA%\League Replay`. The
+owned Run value points at the recorder in that stable folder and stays unchanged
+during upgrade.
 Lease/pipe names remain version independent. Image/protocol mismatch means
 unavailable, never permission to replace an owner.
 
-Status v1 cannot request shutdown. Upgrade asks the user to Quit the tray and waits
-for actual owner exit/finalization before replacing the paired binaries/runtime,
-unless a later separately approved shutdown integration exists. Never force-kill,
-overwrite a live recorder or leave incompatible mixed components. Failure preserves
-a usable installed pair. Uninstall removes only exact owned registration and
-preserves config/media. Installer payload and clean-machine certification remain
-QB-DIST-004.
+Setup takes the exclusive installation guard and the recorder ownership lease.
+The desktop and recorder hold shared installed use through actual process exit.
+An occupied lease asks the user to close the desktop and Quit the recorder from
+its tray menu before retrying. This covers capture, finalization and worker
+shutdown. The supported historical beta predates these leases. Setup verifies
+its files and registration, checks for existing processes, and denies new
+image opens by NTFS file ID through transaction settlement.
+
+Setup stages the complete pair and media runtime on the same volume. A
+flushed transaction record in `%LOCALAPPDATA%\.Chronobreak-setup` identifies the
+candidate, previous installation and product registration. Setup moves the
+verified old tree aside, then moves the complete candidate into the stable path.
+Rerunning setup repairs an interruption before proceeding. Setup restores the
+verified prior generation before commit and retains a verified new generation
+after commit. An unrecognized generation or registration stops recovery.
+
+Uninstall removes verified application files, the owned shortcut and Windows
+registration, and the exact recorder Run value. It leaves other files in place,
+including clips or captures beneath the product folder. Setup uses the same
+configuration lock as app settings writers when reading or removing recorder
+startup registration.

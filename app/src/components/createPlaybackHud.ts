@@ -4,6 +4,7 @@ export function createPlaybackHud(canAutoHide: () => boolean) {
   let idleTimer: number | undefined;
   let overlay: HTMLElement | undefined;
   let heldPointer: number | undefined;
+  let pointerFocus = false;
 
   const [topBarVisible, setTopBarVisible] = createSignal(true);
   const [hovered, setHovered] = createSignal(false);
@@ -30,7 +31,12 @@ export function createPlaybackHud(canAutoHide: () => boolean) {
     noteActivity();
   };
   const pointerDown = (event: PointerEvent) => {
-    if (inHud(event.target)) { heldPointer = event.pointerId; setPressed(true); }
+    if (inHud(event.target)) {
+      heldPointer = event.pointerId;
+      pointerFocus = true;
+      setPressed(true);
+      setFocused(false);
+    }
     noteActivity();
   };
   const pointerUp = (event: PointerEvent) => {
@@ -45,8 +51,12 @@ export function createPlaybackHud(canAutoHide: () => boolean) {
     noteActivity();
   };
   const windowFocus = () => {
-    setFocused(inHud(document.activeElement));
+    setFocused(!pointerFocus && inHud(document.activeElement));
     noteActivity();
+  };
+  const keyboardActivity = () => {
+    pointerFocus = false;
+    windowFocus();
   };
 
   onMount(() => {
@@ -64,7 +74,7 @@ export function createPlaybackHud(canAutoHide: () => boolean) {
     window.addEventListener("lostpointercapture", pointerUp, true);
     window.addEventListener("blur", windowBlur);
     window.addEventListener("focus", windowFocus);
-    window.addEventListener("keydown", noteActivity, true);
+    window.addEventListener("keydown", keyboardActivity, true);
 
     onCleanup(() => {
       window.removeEventListener("pointermove", pointerMove, true);
@@ -74,7 +84,7 @@ export function createPlaybackHud(canAutoHide: () => boolean) {
       window.removeEventListener("lostpointercapture", pointerUp, true);
       window.removeEventListener("blur", windowBlur);
       window.removeEventListener("focus", windowFocus);
-      window.removeEventListener("keydown", noteActivity, true);
+      window.removeEventListener("keydown", keyboardActivity, true);
       if (idleTimer !== undefined) window.clearTimeout(idleTimer);
     });
   });
@@ -85,8 +95,8 @@ export function createPlaybackHud(canAutoHide: () => boolean) {
     regionEvents: {
       onPointerEnter: () => setHovered(true),
       onPointerLeave: () => setHovered(false),
-      onFocusIn: () => setFocused(true),
-      onFocusOut: (event: FocusEvent) => setFocused(inHud(event.relatedTarget)),
+      onFocusIn: () => setFocused(!pointerFocus),
+      onFocusOut: (event: FocusEvent) => setFocused(!pointerFocus && inHud(event.relatedTarget)),
     },
   };
 }

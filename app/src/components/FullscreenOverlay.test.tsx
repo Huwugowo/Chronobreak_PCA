@@ -63,6 +63,25 @@ it("holds hover and keyboard focus independently, including pointer activity and
   await vi.advanceTimersByTimeAsync(3200); expect(h.hidden()).toBe(true);
 });
 
+it("a clicked control does not pin the HUD after the pointer leaves, and keyboard use restores the focus hold", async () => {
+  const h = mount();
+  const button = h.hud.querySelector<HTMLButtonElement>("button")!;
+  h.hud.dispatchEvent(new Event("pointerenter"));
+  button.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  button.focus();
+  window.dispatchEvent(new Event("pointerup"));
+  window.dispatchEvent(new Event("pointermove"));
+  expect(document.activeElement).toBe(button);
+  await vi.advanceTimersByTimeAsync(3200);
+  expect(h.hidden()).toBe(true);
+  button.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+  await vi.advanceTimersByTimeAsync(6400);
+  expect(h.hidden()).toBe(false);
+  button.blur();
+  await vi.advanceTimersByTimeAsync(3200);
+  expect(h.hidden()).toBe(true);
+});
+
 it.each(["pointerup", "pointercancel", "lostpointercapture"])("holds a pointer interaction outside the HUD until %s", async ending => {
   const h = mount();
   h.hud.querySelector("button")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));

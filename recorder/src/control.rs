@@ -43,9 +43,10 @@ pub async fn run(
     commands: mpsc::UnboundedReceiver<ServiceCommand>,
     downstream: EventSink,
     status: StatusSender,
+    settings: Option<service::SettingsSession>,
 ) -> Result<()> {
     let sink = event_sink(status.clone(), downstream.clone());
-    let result = tokio::spawn(service::run(config, commands, sink)).await;
+    let result = tokio::spawn(service::run_recorder(config, commands, sink, settings)).await;
     let failure = match result {
         Ok(Ok(())) => {
             if status
@@ -125,7 +126,13 @@ mod tests {
         let (status, _) = watch::channel(Status::starting(1, 1, "a".repeat(32)));
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            run(config, receiver, Arc::new(|_| {}), Some(status.clone())),
+            run(
+                config,
+                receiver,
+                Arc::new(|_| {}),
+                Some(status.clone()),
+                None,
+            ),
         )
         .await;
         assert!(result.unwrap().is_err());

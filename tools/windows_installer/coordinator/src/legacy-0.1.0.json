@@ -1,0 +1,13 @@
+{
+  "league-replay-app.exe": { "bytes": 23783936, "sha256": "18604aa0f6b0a90b7d92d76f8b9fd4495dc05fab38661a14dd4a63814d80cc69" },
+  "uninstall.exe": { "bytes": 79377, "sha256": "6087acd7ba48cc909fb17ca9e784c254a684a373266f6fc23ae43f96918d457e" },
+  "resources/media-runtime/runtime-manifest.json": { "bytes": 3933, "sha256": "1693360d152583d3d3bd044d0f2c4fda43438fc90f92d5b8eb10e6cbfcb9f4b2" },
+  "resources/media-runtime/bin/ffmpeg.exe": { "bytes": 34627072, "sha256": "1dc19648acdcaa7ac2497689837feb32788d404e7705f756e331a2f535bfe015" },
+  "resources/media-runtime/bin/ffprobe.exe": { "bytes": 34416640, "sha256": "639da6703f05c4e0f436d8602b39f44070cbe8233c5dd942775e00f25004615e" },
+  "resources/media-runtime/licenses/AMF_LICENSE.txt": { "bytes": 1434, "sha256": "22c29dae014ba2203ca07d191e545b1d58ae513b59cc0c1936552e86a4784c67" },
+  "resources/media-runtime/licenses/COPYING.GPLv3.txt": { "bytes": 35821, "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b" },
+  "resources/media-runtime/licenses/LIBVPL_LICENSE.txt": { "bytes": 1074, "sha256": "bf1cfac2e2792b6e1e995ce103d70796aecaf2ec7e4c5fe5474f7acec7b4a677" },
+  "resources/media-runtime/licenses/NVCODEC_LICENSE.txt": { "bytes": 1067, "sha256": "e4dae7d5b4a0c2ae84e8200bd9b10b2650ac98e63e7dbc012c60c77bb06922f3" },
+  "resources/media-runtime/licenses/SOURCE_AND_BUILD.md": { "bytes": 4671, "sha256": "23e795057cbf4ddc77cbc995de9d5f34aed375527cd41dd8e16ba75e44943cc0" },
+  "resources/media-runtime/licenses/THIRD_PARTY_NOTICES.md": { "bytes": 1490, "sha256": "4ee2e82f74abd2eb260699e4016a902f898429e0d4f22a490a80fabf3197edab" }
+}

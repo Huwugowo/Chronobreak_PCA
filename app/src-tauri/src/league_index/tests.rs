@@ -1685,7 +1685,8 @@ async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
     result.teams[0].players[0].riot_id = Some("Player#EUW".into());
     result.teams[0].players[0].champion_name = Some("Syndra".into());
     result.teams[0].players[1].riot_id = Some("Player#NA1".into());
-    result.teams[0].players[1].champion_name = Some("Syndra".into());
+    result.teams[0].players[1].champion_name = None;
+    result.teams[0].players[1].champion_id = Some(134);
     result.source_facts.local_player = Some(obs::FinalPlayer {
         game_id: Some(result.game_id.clone()),
         items: Some(vec![Some(3_085)]),
@@ -1722,7 +1723,9 @@ async fn favorite_refresh_keeps_prepared_card_facts_without_repreparing() {
         "Player#EUW"
     );
     assert!(page.rows[0].game.participants[0].is_local);
+    assert_eq!(page.rows[0].game.participants[0].champion, "Syndra");
     assert!(!page.rows[0].game.participants[1].is_local);
+    assert_eq!(page.rows[0].game.participants[1].champion, "134");
     let mut expected = serde_json::to_value(&page.rows[0]).unwrap();
     let expected_stats = expected["stats"].clone();
     let expected_participants = expected["game"]["participants"].clone();

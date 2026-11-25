@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use atomicwrites::{AllowOverwrite, AtomicFile};
 use chronobreak_recorder_control::config_lock::ConfigLock;
+pub use chronobreak_recorder_control::recording_settings::RecordingConfig as RecordingUpdate;
 use directories::{BaseDirs, ProjectDirs};
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, Item, Table, value};
@@ -162,6 +163,7 @@ fn app_data_path_with_override(
 
 pub enum ConfigPatch {
     Storage(SettingsUpdate),
+    Recording(RecordingUpdate),
     Hevc(bool),
     Autostart(bool),
 }
@@ -210,6 +212,16 @@ impl ConfigMutation {
                 let table = table_mut(&mut self.document, "storage");
                 table["output_path"] = value(&self.config.storage.output_path);
                 table["auto_delete_days"] = value(i64::from(self.config.storage.auto_delete_days));
+            }
+            ConfigPatch::Recording(update) => {
+                update.validate_windows()?;
+                self.config.recording = RecordingConfig {
+                    profile: update.profile.label().into(),
+                    codec: update.codec.label().into(),
+                };
+                let table = table_mut(&mut self.document, "recording");
+                table["profile"] = value(&self.config.recording.profile);
+                table["codec"] = value(&self.config.recording.codec);
             }
             ConfigPatch::Hevc(supported) => {
                 self.config.app.hevc_playback_supported = supported;
@@ -309,6 +321,10 @@ mod tests {
             }),
             "hevc" => ConfigPatch::Hevc(!stale.app.hevc_playback_supported),
             "autostart" => ConfigPatch::Autostart(!stale.app.autostart),
+            "recording" => ConfigPatch::Recording(RecordingUpdate {
+                profile: chronobreak_recorder_control::recording_settings::RecordingProfile::High,
+                codec: chronobreak_recorder_control::recording_settings::CodecPreference::H264,
+            }),
             _ => panic!("unexpected fixture field"),
         };
         mutate(&path, patch).unwrap();
@@ -336,7 +352,7 @@ mod tests {
             }
         }
         let mut children = Children(Vec::new());
-        for field in ["storage", "hevc", "autostart"] {
+        for field in ["storage", "hevc", "autostart", "recording"] {
             children.0.push(
                 Command::new(std::env::current_exe().unwrap())
                     .args([
@@ -354,7 +370,7 @@ mod tests {
             );
         }
         let started = std::time::Instant::now();
-        for field in ["storage", "hevc", "autostart"] {
+        for field in ["storage", "hevc", "autostart", "recording"] {
             while !root.path().join(format!("ready-{field}")).exists() {
                 assert!(
                     started.elapsed() < std::time::Duration::from_secs(10),
@@ -382,6 +398,27 @@ mod tests {
         assert_eq!(recorder.storage.auto_delete_days, 14);
         assert!(recorder.app.hevc_playback_supported);
         assert!(!recorder.app.autostart);
+        assert_eq!(recorder.recording.profile.label(), "high");
+        assert_eq!(recorder.recording.codec.label(), "h264");
+    }
+
+    #[test]
+    fn recording_patch_rejects_unsupported_values_and_can_repair_legacy_preferences() {
+        use chronobreak_recorder_control::recording_settings::{CodecPreference, RecordingProfile};
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let legacy = "[recording]\nprofile = \"future\"\ncodec = \"hevc\"\nextra = 7\n";
+        fs::write(&path, legacy).unwrap();
+        let unsupported = RecordingUpdate {
+            profile: RecordingProfile::Medium,
+            codec: CodecPreference::Hevc,
+        };
+        assert!(mutate(&path, ConfigPatch::Recording(unsupported)).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+        let fixed = mutate(&path, ConfigPatch::Recording(RecordingUpdate::default())).unwrap();
+        assert_eq!(fixed.recording, RecordingConfig::default());
+        assert!(fs::read_to_string(&path).unwrap().contains("extra = 7"));
     }
 
     #[test]

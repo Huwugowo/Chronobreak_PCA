@@ -6,6 +6,9 @@ rust-version = "1.95"
 license = "MIT"
 description = "Bounded local recorder ownership and service availability"
 
+[features]
+setup-fixture = []
+
 [dependencies]
 anyhow = "1"
 directories = "6"

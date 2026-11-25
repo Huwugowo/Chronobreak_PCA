@@ -14,6 +14,14 @@ pub(super) struct Acquisition {
     pub delta: Option<i32>,
 }
 impl Acquisition {
+    pub fn has_pending_fetch(self, now: i64) -> bool {
+        self.delta.is_none()
+            && self.next_slot < FETCH_OFFSETS_MS.len()
+            && self
+                .closed_ms
+                .is_some_and(|closed| now.saturating_sub(closed) < FETCH_WINDOW_MS)
+    }
+
     pub fn due(self, now: i64) -> bool {
         self.delta.is_none()
             && self.closed_ms.is_some_and(|closed| {

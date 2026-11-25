@@ -129,6 +129,37 @@ const closeActionMenu = (event: MouseEvent) => {
   current.closest("details")?.removeAttribute("open");
 };
 
+function RecordingActions(props: {
+  game: GameSummary;
+  label: string;
+  disabled: boolean;
+  onSave: () => void;
+  onDelete: () => void;
+}) {
+  return <>
+    <button class={matchStyles.starButton} type="button" aria-disabled={props.disabled}
+      aria-label={`${props.game.saved ? "Unsave" : "Save"} ${props.label}`}
+      title={props.game.saved ? "Saved" : "Save"} data-saved={props.game.saved}
+      onClick={() => { if (!props.disabled) props.onSave(); }}>
+      <StarIcon size={17} filled={props.game.saved} />
+    </button>
+    <Show when={!props.game.saved}>
+      <details class={matchStyles.moreMenu}>
+        <summary aria-label={`More actions for ${props.label}`} title="More actions"
+          aria-disabled={props.disabled} onClick={event => { if (props.disabled) event.preventDefault(); }}>
+          <MoreIcon size={17} />
+        </summary>
+        <div class={matchStyles.actionMenu}>
+          <button type="button" data-danger disabled={props.disabled} onClick={event => {
+            closeActionMenu(event);
+            props.onDelete();
+          }}>Delete recording</button>
+        </div>
+      </details>
+    </Show>
+  </>;
+}
+
 function LibraryScreen(props: Props) {
   return (
     <div class={styles.library}>
@@ -500,13 +531,14 @@ function GamesLibrary(props: Props) {
                                 {(participant) => (
                                   <span class={matchStyles.rosterPlayer}>
                                     <span class={matchStyles.rosterChampion} aria-hidden="true">
-                                      <Show when={ddragonAsset(
+                                      <span>?</span>
+                                      <Show keyed when={ddragonAsset(
                                         props.ddragon,
                                         "champion",
                                         participant.champion === "Unknown" ? null : participant.champion,
                                       )}>
                                         {(src) => (
-                                          <img src={src()} alt="" loading="lazy" decoding="async" onError={hideFailedImage} />
+                                          <img src={src} alt="" loading="lazy" decoding="async" onError={hideFailedImage} />
                                         )}
                                       </Show>
                                     </span>
@@ -553,42 +585,9 @@ function GamesLibrary(props: Props) {
                          </button>
                        </Show>
                        <Show when={!multipart()}>
-                      <button
-                        class={matchStyles.starButton}
-                        type="button"
-                        onClick={() => {
-                          if (!mutationsBlocked()) props.onToggleSaved(game(), props.snapshotOrigin);
-                        }}
-                        aria-disabled={mutationsBlocked()}
-                        aria-label={game().saved ? `Unsave ${game().champion} recording` : `Save ${game().champion} recording`}
-                        title={game().saved ? "Saved" : "Save"}
-                        data-saved={game().saved}
-                      >
-                        <StarIcon size={17} filled={game().saved} />
-                      </button>
-
-                      <Show when={!game().saved}>
-                        <details class={matchStyles.moreMenu}>
-                          <summary aria-label={`More actions for ${game().champion} recording`} title="More actions"
-                            aria-disabled={props.busyId === game().timestamp}
-                            onClick={event => { if (props.busyId === game().timestamp) event.preventDefault(); }}>
-                            <MoreIcon size={17} />
-                          </summary>
-                          <div class={matchStyles.actionMenu}>
-                            <button
-                              type="button"
-                              data-danger
-                              onClick={(event: MouseEvent) => {
-                                closeActionMenu(event);
-                                props.onDeleteGame(game(), props.snapshotOrigin);
-                              }}
-                              disabled={props.busyId !== null || !props.actionable}
-                            >
-                              Delete recording
-                            </button>
-                          </div>
-                        </details>
-                      </Show>
+                         <RecordingActions game={game()} label={`${game().champion} recording`} disabled={mutationsBlocked()}
+                           onSave={() => props.onToggleSaved(game(), props.snapshotOrigin)}
+                           onDelete={() => props.onDeleteGame(game(), props.snapshotOrigin)} />
                        </Show>
                      </div>
                     </div>
@@ -613,10 +612,9 @@ function GamesLibrary(props: Props) {
                             <span>{formatMatchDuration(part.duration_ms)}</span>
                             <div>
                               <button class={controlStyles.control} type="button" disabled={!props.actionable} onClick={() => props.onOpenGame(part.timestamp, props.snapshotOrigin)}>Play</button>
-                              <button class={controlStyles.control} type="button" disabled={props.busyId !== null || !props.actionable} onClick={() => props.onToggleSaved(part, props.snapshotOrigin)}>{part.saved ? "Unsave" : "Save"}</button>
-                              <Show when={!part.saved}>
-                                <button class={controlStyles.control} type="button" disabled={props.busyId !== null || !props.actionable} onClick={() => props.onDeleteGame(part, props.snapshotOrigin)}>Delete</button>
-                              </Show>
+                              <RecordingActions game={part} label={`part ${index() + 1}`} disabled={mutationsBlocked()}
+                                onSave={() => props.onToggleSaved(part, props.snapshotOrigin)}
+                                onDelete={() => props.onDeleteGame(part, props.snapshotOrigin)} />
                             </div>
                           </li>
                         )}</For>

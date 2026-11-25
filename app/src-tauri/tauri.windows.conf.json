@@ -1,5 +1,16 @@
 {
+  "version": "0.1.1",
+  "build": {
+    "beforeBundleCommand": "pwsh -NoProfile -NonInteractive -File ../tools/windows_installer/before_bundle.ps1"
+  },
   "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "template": "../../tools/windows_installer/candidate.nsi"
+      }
+    },
     "resources": {
       "../../build/media-runtime/windows-x86_64/": "resources/media-runtime/"
     }

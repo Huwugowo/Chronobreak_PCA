@@ -462,12 +462,15 @@
 
 .rosterChampion {
   position: relative;
-  display: block;
+  display: grid;
+  place-items: center;
   width: 18px;
   height: 18px;
   overflow: hidden;
   border-radius: var(--radius-surface);
   background: var(--surface-app);
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 .rosterChampion img {
@@ -589,8 +592,9 @@
   font-size: var(--type-secondary-size);
 }
 
-.recordingParts li div {
+.recordingParts li > div {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
 }
 .starButton,

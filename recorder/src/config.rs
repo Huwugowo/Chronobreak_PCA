@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+pub use chronobreak_recorder_control::recording_settings::{
+    CodecPreference, RecordingConfig, RecordingProfile,
+};
 use directories::{BaseDirs, ProjectDirs};
 use serde::{Deserialize, Serialize};
 
@@ -20,47 +23,6 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-pub struct RecordingConfig {
-    pub profile: RecordingProfile,
-    pub codec: CodecPreference,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RecordingProfile {
-    #[default]
-    Auto,
-    VeryLow,
-    Low,
-    Medium,
-    High,
-    VeryHigh,
-}
-
-impl RecordingProfile {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::VeryLow => "very_low",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::VeryHigh => "very_high",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum CodecPreference {
-    #[default]
-    Auto,
-    H264,
-    Hevc,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
 pub struct StorageConfig {
     pub output_path: String,
     pub auto_delete_days: u32,
@@ -71,15 +33,6 @@ pub struct StorageConfig {
 pub struct AppConfig {
     pub autostart: bool,
     pub hevc_playback_supported: bool,
-}
-
-impl Default for RecordingConfig {
-    fn default() -> Self {
-        Self {
-            profile: RecordingProfile::Auto,
-            codec: CodecPreference::Auto,
-        }
-    }
 }
 
 impl Default for StorageConfig {

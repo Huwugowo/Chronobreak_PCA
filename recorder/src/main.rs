@@ -45,6 +45,15 @@ fn build_diagnostic_runtime() -> Result<tokio::runtime::Runtime> {
 }
 
 fn run() -> Result<()> {
+    if chronobreak_recorder_control::release_identity::report(
+        &env::args_os().skip(1).collect::<Vec<_>>(),
+        option_env!("CHRONOBREAK_RELEASE_REVISION"),
+        option_env!("CHRONOBREAK_RELEASE_VERSION"),
+    )? {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    chronobreak_recorder_control::install_guard::Installation::protect_current_process()?;
     let arguments: Vec<String> = env::args().collect();
     let isolated = arguments
         .iter()
@@ -77,7 +86,11 @@ fn run() -> Result<()> {
         let _ = isolated;
         None
     };
-    let result = run_owned(arguments, status.clone());
+    #[cfg(windows)]
+    let settings = owner.as_ref().map(|owner| owner.settings_control());
+    #[cfg(not(windows))]
+    let settings = None;
+    let result = run_owned(arguments, status.clone(), settings);
     if result.is_err()
         && let Some(sender) = &status
     {
@@ -97,7 +110,11 @@ fn run() -> Result<()> {
     result
 }
 
-fn run_owned(arguments: Vec<String>, status: StatusSender) -> Result<()> {
+fn run_owned(
+    arguments: Vec<String>,
+    status: StatusSender,
+    settings: Option<chronobreak_recorder_control::recording_settings::SettingsControl>,
+) -> Result<()> {
     let _log_guard = initialize_logging()?;
     let config_path = default_config_path()?;
     let config = Config::load_or_create(&config_path)?;
@@ -106,8 +123,18 @@ fn run_owned(arguments: Vec<String>, status: StatusSender) -> Result<()> {
     if arguments.iter().any(|argument| argument == "--diagnose") {
         return run_diagnostics(&config);
     }
+    #[cfg(windows)]
+    let settings = settings.map(|control| service::SettingsSession {
+        control,
+        config_path,
+    });
+    #[cfg(not(windows))]
+    let settings = {
+        let _ = settings;
+        None
+    };
     if arguments.iter().any(|argument| argument == "--headless") {
-        return run_headless(config, status);
+        return run_headless(config, status, settings);
     }
     let smoke_test_timeout = arguments
         .iter()
@@ -121,6 +148,7 @@ fn run_owned(arguments: Vec<String>, status: StatusSender) -> Result<()> {
         command_receiver,
         smoke_test_timeout,
         status,
+        settings,
     )
 }
 
@@ -143,7 +171,11 @@ fn run_diagnostics(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn run_headless(config: Config, status: StatusSender) -> Result<()> {
+fn run_headless(
+    config: Config,
+    status: StatusSender,
+    settings: Option<service::SettingsSession>,
+) -> Result<()> {
     let runtime = build_service_runtime()?;
     runtime.block_on(async move {
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
@@ -159,7 +191,7 @@ fn run_headless(config: Config, status: StatusSender) -> Result<()> {
                 tracing::debug!(?event, "capture/service lifecycle")
             }
         });
-        let mut service = tokio::spawn(control::run(config, command_receiver, sink, status));
+        let mut service = tokio::spawn(control::run(config, command_receiver, sink, status, settings));
         tokio::select! {
             result = &mut service => result.context("recorder supervisor task panicked")?,
             signal = tokio::signal::ctrl_c() => {
@@ -226,7 +258,7 @@ mod tests {
         config.storage.output_path = blocked.to_str().unwrap().into();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = sender.send(run_headless(config, None));
+            let _ = sender.send(run_headless(config, None, None));
         });
         assert!(
             receiver

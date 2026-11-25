@@ -210,6 +210,18 @@ export type AppSettings = {
 
 export type SettingsUpdate = Pick<AppSettings, "output_path" | "auto_delete_days">;
 
+export type RecordingPreferences = { profile: string; codec: string };
+export type RecordingPreferencesUpdate = { profile: "auto" | "high"; codec: "auto" | "h264" };
+export type EffectiveRecordingSettings = {
+  effective: {
+    output_path: string;
+    preferences: RecordingPreferences;
+    profile: "high";
+    codec: "h264";
+  } | null;
+  apply_state: "idle" | "waiting" | "invalid_configuration" | "destination_unavailable" | "library_recovery_unavailable";
+};
+
 export type RecorderStatus = {
   state: "disabled_for_test" | "starting" | "available" | "recording" | "capture_problem" | "stopping" | "unavailable" | "service_failed" | "owner_in_other_session";
   recording_capable_here: boolean;

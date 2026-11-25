@@ -5,6 +5,7 @@ import { ExternalLinkIcon } from "../ui/icons";
 import controlStyles from "../ui/controls.module.css";
 import styles from "./Library.module.css";
 import RecorderSettings from "./RecorderSettings";
+import RecordingPreferences from "./RecordingPreferences";
 
 type Props = {
   settings: AppSettings;
@@ -42,6 +43,7 @@ function SettingsScreen(props: Props) {
 
       <div class={styles.settingsGrid}>
         <RecorderSettings />
+        <RecordingPreferences />
         <section class={styles.settingsPanel}>
           <header>
             <div>
@@ -50,10 +52,10 @@ function SettingsScreen(props: Props) {
             </div>
           </header>
           <p class={styles.settingDetail}>
-            New recordings and the library use this location. Changes apply from the next recording.
+            The desktop library opens the configured folder. Use Apply saved recording settings to switch the recorder when it is idle.
           </p>
           <label class={styles.pathField}>
-            <span>OUTPUT PATH</span>
+            <span>CONFIGURED DESTINATION</span>
             <input value={props.settings.output_path} readOnly aria-label="Recording output path" />
           </label>
           <div class={styles.settingActions}>

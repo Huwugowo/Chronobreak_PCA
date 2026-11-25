@@ -37,7 +37,7 @@ pub(crate) struct DirectoryGuard {
 }
 
 /// Durable allocation identity; never a credential or an open handle.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DirectoryLocator {
     pub path: std::path::PathBuf,
@@ -47,6 +47,12 @@ pub(super) struct DirectoryLocator {
 }
 
 impl DirectoryGuard {
+    pub(super) fn same_directory(&self, expected: &DirectoryLocator) -> bool {
+        self.locator().is_ok_and(|actual| {
+            actual.volume == expected.volume && actual.file_id == expected.file_id
+        })
+    }
+
     pub(super) fn locator(&self) -> Result<DirectoryLocator, &'static str> {
         #[cfg(windows)]
         {

@@ -12,7 +12,7 @@ use winit::window::WindowId;
 
 use league_replay_recorder::config::Config;
 use league_replay_recorder::control::{self, StatusSender};
-use league_replay_recorder::service::{ServiceCommand, ServiceEvent};
+use league_replay_recorder::service::{ServiceCommand, ServiceEvent, SettingsSession};
 
 #[derive(Debug)]
 enum UserEvent {
@@ -26,6 +26,7 @@ pub fn run(
     command_receiver: mpsc::UnboundedReceiver<ServiceCommand>,
     smoke_test_timeout: Option<Duration>,
     status: StatusSender,
+    settings: Option<SettingsSession>,
 ) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
@@ -40,6 +41,7 @@ pub fn run(
         command_sender.clone(),
         smoke_test_timeout,
         status.clone(),
+        settings,
     )?;
 
     let menu_proxy = proxy.clone();
@@ -74,6 +76,7 @@ fn spawn_worker(
     command_sender: mpsc::UnboundedSender<ServiceCommand>,
     smoke_test_timeout: Option<Duration>,
     status: StatusSender,
+    settings: Option<SettingsSession>,
 ) -> Result<std::thread::JoinHandle<Result<()>>> {
     let worker = std::thread::Builder::new()
         .name("recorder-service".to_owned())
@@ -91,7 +94,9 @@ fn spawn_worker(
                             let _ = command_sender.send(ServiceCommand::Shutdown);
                         })
                     });
-                    let result = control::run(config, command_receiver, service_sink, status).await;
+                    let result =
+                        control::run(config, command_receiver, service_sink, status, settings)
+                            .await;
                     if let Some(task) = smoke_task {
                         task.abort();
                         let _ = task.await;
